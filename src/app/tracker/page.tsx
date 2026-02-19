@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-const DEFAULT_DEVICE_ID = 'phone-tracker-1';
+const DEFAULT_DEVICE_ID = 'phone-1';
 
 interface LocationData {
   lat: number;
@@ -33,7 +33,7 @@ export default function TrackerPage() {
     setLocation(data);
 
     try {
-      const res = await fetch('/api/mobile/location', {
+      const res = await fetch('/api/phone-location', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deviceId, ...data }),

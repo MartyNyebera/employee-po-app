@@ -17,7 +17,7 @@ declare global {
   interface Window { maplibregl: any; }
 }
 
-const DEVICE_ID = 'phone-tracker-1';
+const DEVICE_ID = 'phone-1';
 const POLL_MS = 2000;
 const OFFLINE_THRESHOLD_MS = 30000;
 const MOVING_SPEED_KMH = 2;
@@ -114,7 +114,7 @@ export function SuperSimpleMap() {
 
     const poll = async () => {
       try {
-        const res = await fetch(`/api/mobile/${encodeURIComponent(deviceId)}/latest`, { headers });
+        const res = await fetch(`/api/phone-location/${encodeURIComponent(deviceId)}/latest`, { headers });
         if (res.status === 404) return;
         if (!res.ok) return;
         const data: MobilePos = await res.json();

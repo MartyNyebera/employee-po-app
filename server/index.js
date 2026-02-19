@@ -1,6 +1,11 @@
 import express from 'express';
 import cors from 'cors';
+import https from 'https';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { query, testConnection } from './db.js';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { seed } from './seed.js';
 import { hashPassword, comparePassword, signToken, requireAuth, requireAdmin, requireSuperAdmin } from './auth.js';
 import { sendEmailToAdminsNewRequest, sendEmailToApplicant } from './email.js';
@@ -156,7 +161,32 @@ app.get('/api/mobile/:deviceId/latest', (req, res) => {
   res.json(pos);
 });
 
-// GET /api/mobile/devices - list all active devices (requires auth, handled below)
+// Aliases: /api/phone-location (same store, same logic)
+app.post('/api/phone-location', (req, res) => {
+  const { deviceId, lat, lng, accuracy, speed, heading, timestamp } = req.body;
+  if (!deviceId || typeof lat !== 'number' || typeof lng !== 'number') {
+    return res.status(400).json({ error: 'deviceId, lat, lng are required' });
+  }
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    return res.status(400).json({ error: 'Invalid lat/lng range' });
+  }
+  mobileLocations.set(String(deviceId), {
+    deviceId: String(deviceId),
+    lat, lng,
+    accuracy: accuracy ?? null,
+    speed: speed ?? null,
+    heading: heading ?? null,
+    timestamp: timestamp || Date.now(),
+  });
+  res.json({ ok: true });
+});
+
+app.get('/api/phone-location/:deviceId/latest', (req, res) => {
+  const pos = mobileLocations.get(req.params.deviceId);
+  if (!pos) return res.status(404).json({ error: 'No location found for this device' });
+  res.json(pos);
+});
+
 // ----- All routes below require auth -----
 app.use('/api', requireAuth);
 
@@ -720,3 +750,36 @@ app.post('/api/init', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`API server running at http://localhost:${PORT}`);
 });
+
+// ----- HTTPS server for phone GPS tracker (geolocation requires HTTPS) -----
+const HTTPS_PORT = process.env.HTTPS_PORT || 3443;
+const certPath = path.join(__dirname, 'cert.pem');
+const keyPath = path.join(__dirname, 'cert.key');
+const publicDir = path.join(__dirname, '..', 'public');
+
+if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+  const httpsServer = https.createServer(
+    { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) },
+    (req, res) => {
+      // Serve static files from public/
+      let filePath = path.join(publicDir, req.url === '/' ? 'tracker.html' : req.url);
+      // Strip query string
+      filePath = filePath.split('?')[0];
+      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+        const ext = path.extname(filePath);
+        const mime = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json' }[ext] || 'text/plain';
+        res.writeHead(200, { 'Content-Type': mime });
+        fs.createReadStream(filePath).pipe(res);
+      } else {
+        // Forward API calls to the express app
+        app(req, res);
+      }
+    }
+  );
+  httpsServer.listen(HTTPS_PORT, '0.0.0.0', () => {
+    console.log(`HTTPS server running at https://localhost:${HTTPS_PORT}`);
+    console.log(`Phone tracker: https://192.168.254.108:${HTTPS_PORT}/tracker.html`);
+  });
+} else {
+  console.log('No cert found. Run: node server/gen-cert.cjs');
+}
