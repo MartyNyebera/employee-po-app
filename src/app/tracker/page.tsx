@@ -1,209 +1,176 @@
-'use client';
+import { useEffect, useRef, useState } from 'react';
 
-import { useEffect, useState } from 'react';
-import { gpsService, GPSLocation } from '../../services/gpsService';
+const DEFAULT_DEVICE_ID = 'phone-tracker-1';
+
+interface LocationData {
+  lat: number;
+  lng: number;
+  accuracy: number | null;
+  speed: number | null;
+  heading: number | null;
+  timestamp: number;
+}
 
 export default function TrackerPage() {
+  const [deviceId, setDeviceId] = useState(DEFAULT_DEVICE_ID);
   const [isTracking, setIsTracking] = useState(false);
-  const [location, setLocation] = useState<GPSLocation | null>(null);
+  const [location, setLocation] = useState<LocationData | null>(null);
+  const [lastSent, setLastSent] = useState<string | null>(null);
+  const [sendCount, setSendCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [vehicleId] = useState('vehicle-001'); // Default vehicle ID
+  const watchIdRef = useRef<number | null>(null);
 
-  const sendLocation = async (position: GeolocationPosition) => {
-    const locationData: GPSLocation = {
-      vehicleId,
-      lat: position.coords.latitude,
-      lng: position.coords.longitude,
-      speed: position.coords.speed ? position.coords.speed * 3.6 : null, // Convert m/s to km/h
-      heading: position.coords.heading,
-      timestamp: Date.now()
+  const postLocation = async (pos: GeolocationPosition) => {
+    const data: LocationData = {
+      lat: pos.coords.latitude,
+      lng: pos.coords.longitude,
+      accuracy: pos.coords.accuracy ?? null,
+      speed: pos.coords.speed != null ? pos.coords.speed * 3.6 : null, // m/s → km/h
+      heading: pos.coords.heading ?? null,
+      timestamp: Date.now(),
     };
 
+    setLocation(data);
+
     try {
-      // Send to GPS service
-      const result = await gpsService.saveLocation(locationData);
-      
-      if (result.success) {
-        setLocation(locationData);
-        setError(null);
-        console.log('Location sent successfully:', locationData);
-      } else {
-        throw new Error(result.message);
+      const res = await fetch('/api/mobile/location', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId, ...data }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
       }
-    } catch (err) {
-      console.error('Error sending location:', err);
-      setError('Failed to send location');
+      setLastSent(new Date().toLocaleTimeString());
+      setSendCount(c => c + 1);
+      setError(null);
+    } catch (err: any) {
+      setError('Send failed: ' + err.message);
     }
   };
 
   const startTracking = () => {
     if (!navigator.geolocation) {
-      setError('Geolocation is not supported by this browser');
+      setError('Geolocation not supported by this browser');
       return;
     }
-
-    setIsTracking(true);
     setError(null);
+    setIsTracking(true);
 
-    const watchId = navigator.geolocation.watchPosition(
-      sendLocation,
-      (error) => {
-        console.error('Geolocation error:', error);
-        setError(`Geolocation error: ${error.message}`);
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      postLocation,
+      (err) => {
+        setError(`GPS error: ${err.message}`);
         setIsTracking(false);
       },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0
-      }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
-
-    // Send initial location immediately
-    navigator.geolocation.getCurrentPosition(
-      sendLocation,
-      (error) => {
-        console.error('Initial location error:', error);
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0
-      }
-    );
-
-    // Store watchId for cleanup
-    (window as any).locationWatchId = watchId;
   };
 
   const stopTracking = () => {
-    if ((window as any).locationWatchId) {
-      navigator.geolocation.clearWatch((window as any).locationWatchId);
-      delete (window as any).locationWatchId;
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
     }
     setIsTracking(false);
   };
 
   useEffect(() => {
     return () => {
-      // Cleanup on unmount
-      if ((window as any).locationWatchId) {
-        navigator.geolocation.clearWatch((window as any).locationWatchId);
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
       }
     };
   }, []);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-slate-900 dark:to-slate-800">
-      <div className="container mx-auto px-4 py-8">
-        <div className="max-w-md mx-auto">
-          {/* Header */}
-          <div className="bg-white rounded-2xl shadow-xl p-6 mb-6 dark:bg-slate-800">
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-2">
-              🚗 Vehicle Tracker
-            </h1>
-            <p className="text-slate-600 dark:text-slate-400">
-              Mobile GPS tracking for vehicle {vehicleId}
-            </p>
+    <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%)', padding: '16px', fontFamily: 'system-ui, sans-serif' }}>
+      <div style={{ maxWidth: '420px', margin: '0 auto' }}>
+
+        {/* Header */}
+        <div style={{ background: 'rgba(255,255,255,0.08)', borderRadius: '16px', padding: '20px', marginBottom: '16px', border: '1px solid rgba(255,255,255,0.12)' }}>
+          <div style={{ fontSize: '24px', fontWeight: 700, color: '#fff', marginBottom: '4px' }}>� Phone GPS Tracker</div>
+          <div style={{ fontSize: '13px', color: '#94a3b8' }}>Sends your location to the fleet dashboard</div>
+        </div>
+
+        {/* iOS Warning */}
+        <div style={{ background: 'rgba(251,191,36,0.15)', border: '1px solid rgba(251,191,36,0.4)', borderRadius: '12px', padding: '14px', marginBottom: '16px' }}>
+          <div style={{ fontSize: '13px', color: '#fbbf24', fontWeight: 600, marginBottom: '4px' }}>⚠️ iOS Safari Notice</div>
+          <div style={{ fontSize: '12px', color: '#fcd34d', lineHeight: '1.5' }}>
+            iOS Safari stops GPS when the screen locks. Keep this page open and screen awake while tracking. For best results use Chrome on Android.
+          </div>
+        </div>
+
+        {/* Device ID */}
+        <div style={{ background: 'rgba(255,255,255,0.08)', borderRadius: '12px', padding: '16px', marginBottom: '16px', border: '1px solid rgba(255,255,255,0.1)' }}>
+          <label style={{ fontSize: '12px', color: '#94a3b8', display: 'block', marginBottom: '6px' }}>Device ID (shown on map)</label>
+          <input
+            type="text"
+            value={deviceId}
+            onChange={e => setDeviceId(e.target.value.trim())}
+            disabled={isTracking}
+            style={{ width: '100%', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '8px', padding: '10px 12px', color: '#fff', fontSize: '14px', boxSizing: 'border-box' }}
+          />
+        </div>
+
+        {/* Status */}
+        <div style={{ background: 'rgba(255,255,255,0.08)', borderRadius: '12px', padding: '16px', marginBottom: '16px', border: '1px solid rgba(255,255,255,0.1)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+            <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: isTracking ? '#22c55e' : '#64748b', boxShadow: isTracking ? '0 0 8px #22c55e' : 'none' }} />
+            <span style={{ color: '#fff', fontWeight: 600, fontSize: '15px' }}>{isTracking ? 'Tracking Active' : 'Not Tracking'}</span>
           </div>
 
-          {/* Status Card */}
-          <div className="bg-white rounded-2xl shadow-xl p-6 mb-6 dark:bg-slate-800">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                Status
-              </h2>
-              <div className={`w-3 h-3 rounded-full ${
-                isTracking ? 'bg-green-500 animate-pulse' : 'bg-gray-400'
-              }`} />
+          {location && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+              {[
+                ['Latitude', location.lat.toFixed(6)],
+                ['Longitude', location.lng.toFixed(6)],
+                ['Speed', location.speed != null ? `${location.speed.toFixed(1)} km/h` : '—'],
+                ['Heading', location.heading != null ? `${location.heading.toFixed(0)}°` : '—'],
+                ['Accuracy', location.accuracy != null ? `±${location.accuracy.toFixed(0)}m` : '—'],
+                ['Sent', `${sendCount} times`],
+              ].map(([label, value]) => (
+                <div key={label} style={{ background: 'rgba(255,255,255,0.06)', borderRadius: '8px', padding: '10px' }}>
+                  <div style={{ fontSize: '11px', color: '#64748b', marginBottom: '2px' }}>{label}</div>
+                  <div style={{ fontSize: '13px', color: '#e2e8f0', fontWeight: 600, fontFamily: 'monospace' }}>{value}</div>
+                </div>
+              ))}
             </div>
+          )}
 
-            <div className="space-y-3">
-              <div className="flex justify-between">
-                <span className="text-slate-600 dark:text-slate-400">Tracking:</span>
-                <span className={`font-semibold ${
-                  isTracking ? 'text-green-600' : 'text-gray-500'
-                }`}>
-                  {isTracking ? 'Active' : 'Inactive'}
-                </span>
-              </div>
-
-              {location && (
-                <>
-                  <div className="flex justify-between">
-                    <span className="text-slate-600 dark:text-slate-400">Latitude:</span>
-                    <span className="font-mono text-sm">
-                      {location.lat.toFixed(6)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-600 dark:text-slate-400">Longitude:</span>
-                    <span className="font-mono text-sm">
-                      {location.lng.toFixed(6)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-600 dark:text-slate-400">Speed:</span>
-                    <span className="font-mono text-sm">
-                      {location.speed ? `${location.speed.toFixed(1)} km/h` : 'N/A'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-600 dark:text-slate-400">Heading:</span>
-                    <span className="font-mono text-sm">
-                      {location.heading ? `${location.heading.toFixed(0)}°` : 'N/A'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-600 dark:text-slate-400">Last Update:</span>
-                    <span className="font-mono text-sm">
-                      {new Date(location.timestamp).toLocaleTimeString()}
-                    </span>
-                  </div>
-                </>
-              )}
+          {lastSent && (
+            <div style={{ marginTop: '10px', fontSize: '12px', color: '#22c55e' }}>
+              ✓ Last sent: {lastSent}
             </div>
+          )}
 
-            {error && (
-              <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg dark:bg-red-900/20 dark:border-red-800">
-                <p className="text-red-600 dark:text-red-400 text-sm">{error}</p>
-              </div>
-            )}
-          </div>
-
-          {/* Controls */}
-          <div className="bg-white rounded-2xl shadow-xl p-6 dark:bg-slate-800">
-            <div className="space-y-4">
-              {!isTracking ? (
-                <button
-                  onClick={startTracking}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-4 px-6 rounded-xl transition-colors duration-200 flex items-center justify-center gap-2"
-                >
-                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  Start Tracking
-                </button>
-              ) : (
-                <button
-                  onClick={stopTracking}
-                  className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-4 px-6 rounded-xl transition-colors duration-200 flex items-center justify-center gap-2"
-                >
-                  <div className="w-5 h-5 bg-white rounded-sm" />
-                  Stop Tracking
-                </button>
-              )}
-
-              <div className="text-center text-sm text-slate-500 dark:text-slate-400">
-                <p>Location updates every 2 seconds</p>
-                <p>High accuracy mode enabled</p>
-              </div>
+          {error && (
+            <div style={{ marginTop: '10px', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', borderRadius: '8px', padding: '10px', fontSize: '12px', color: '#f87171' }}>
+              ⚠️ {error}
             </div>
-          </div>
+          )}
+        </div>
 
-          {/* Info */}
-          <div className="mt-6 text-center text-sm text-slate-500 dark:text-slate-400">
-            <p>Keep this page open to track vehicle movement</p>
-            <p>View live map on dashboard</p>
-          </div>
+        {/* Controls */}
+        {!isTracking ? (
+          <button
+            onClick={startTracking}
+            style={{ width: '100%', background: '#2563eb', color: '#fff', border: 'none', borderRadius: '14px', padding: '18px', fontSize: '17px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}
+          >
+            <span style={{ fontSize: '22px' }}>▶</span> Start Tracking
+          </button>
+        ) : (
+          <button
+            onClick={stopTracking}
+            style={{ width: '100%', background: '#dc2626', color: '#fff', border: 'none', borderRadius: '14px', padding: '18px', fontSize: '17px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}
+          >
+            <span style={{ fontSize: '22px' }}>⏹</span> Stop Tracking
+          </button>
+        )}
+
+        <div style={{ textAlign: 'center', marginTop: '16px', fontSize: '12px', color: '#475569' }}>
+          View live position on the dashboard GPS map
         </div>
       </div>
     </div>

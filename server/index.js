@@ -124,6 +124,39 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+// ----- Mobile GPS Tracking (no auth required - phone sends location) -----
+// In-memory store: deviceId -> latest position
+const mobileLocations = new Map();
+
+// POST /api/mobile/location
+app.post('/api/mobile/location', (req, res) => {
+  const { deviceId, lat, lng, accuracy, speed, heading, timestamp } = req.body;
+  if (!deviceId || typeof lat !== 'number' || typeof lng !== 'number') {
+    return res.status(400).json({ error: 'deviceId, lat, lng are required' });
+  }
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    return res.status(400).json({ error: 'Invalid lat/lng range' });
+  }
+  mobileLocations.set(String(deviceId), {
+    deviceId: String(deviceId),
+    lat,
+    lng,
+    accuracy: accuracy ?? null,
+    speed: speed ?? null,
+    heading: heading ?? null,
+    timestamp: timestamp || Date.now(),
+  });
+  res.json({ ok: true });
+});
+
+// GET /api/mobile/:deviceId/latest
+app.get('/api/mobile/:deviceId/latest', (req, res) => {
+  const pos = mobileLocations.get(req.params.deviceId);
+  if (!pos) return res.status(404).json({ error: 'No location found for this device' });
+  res.json(pos);
+});
+
+// GET /api/mobile/devices - list all active devices (requires auth, handled below)
 // ----- All routes below require auth -----
 app.use('/api', requireAuth);
 
