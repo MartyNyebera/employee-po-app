@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPS Sender - Quick Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .active { background: #d4edda; color: #155724; }
+        .inactive { background: #f8d7da; color: #721c24; }
+        .success { background: #d1ecf1; color: #0c5460; }
+        .info {
+            background: #e7f3ff;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-size: 14px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 15px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            margin: 5px 0;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        .coords {
+            font-family: monospace;
+            font-size: 12px;
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .input-group {
+            margin: 10px 0;
+        }
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        .input-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            box-sizing: border-box;
+        }
+        .gps-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+        .gps-active { background: #28a745; }
+        .gps-inactive { background: #dc3545; }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        .mode-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 10px;
+            margin: 20px 0;
+        }
+        .mode-btn {
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.3s;
+        }
+        .mode-btn.active {
+            border-color: #007bff;
+            background: #e7f3ff;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>📍 GPS Sender - Quick Test</h2>
+        <div class="info">
+            <strong>Send GPS data to the live tracking system</strong><br>
+            Choose a mode and start sending location data.
+        </div>
+        
+        <div id="status" class="status inactive">
+            <span class="gps-indicator gps-inactive"></span>
+            GPS Not Active
+        </div>
+        
+        <!-- Mode Selection -->
+        <div class="mode-buttons">
+            <div class="mode-btn active" onclick="setMode('manual')" id="manualMode">
+                📍 Manual
+            </div>
+            <div class="mode-btn" onclick="setMode('automatic')" id="automaticMode">
+                📱 Auto GPS
+            </div>
+            <div class="mode-btn" onclick="setMode('simulation')" id="simulationMode">
+                🎮 Simulation
+            </div>
+        </div>
+        
+        <!-- Manual Mode -->
+        <div id="manualModeContent">
+            <div class="input-group">
+                <label for="vehicleId">🚗 Vehicle ID:</label>
+                <input type="text" id="vehicleId" value="vehicle-001" placeholder="vehicle-001">
+            </div>
+            
+            <div class="input-group">
+                <label for="latitude">📍 Latitude:</label>
+                <input type="number" id="latitude" step="0.000001" value="14.5995" placeholder="14.5995">
+            </div>
+            
+            <div class="input-group">
+                <label for="longitude">📍 Longitude:</label>
+                <input type="number" id="longitude" step="0.000001" value="120.9842" placeholder="120.9842">
+            </div>
+            
+            <div class="input-group">
+                <label for="speed">🚗 Speed (km/h):</label>
+                <input type="number" id="speed" value="45" placeholder="45">
+            </div>
+            
+            <div class="input-group">
+                <label for="heading">🧭 Heading (degrees):</label>
+                <input type="number" id="heading" min="0" max="360" value="90" placeholder="90">
+            </div>
+            
+            <button id="sendBtn" onclick="sendManualGPS()">
+                📍 Send GPS Location
+            </button>
+        </div>
+        
+        <!-- Automatic Mode -->
+        <div id="automaticModeContent" style="display: none;">
+            <div class="input-group">
+                <label for="autoVehicleId">🚗 Vehicle ID:</label>
+                <input type="text" id="autoVehicleId" value="vehicle-001" placeholder="vehicle-001">
+            </div>
+            
+            <button id="startAutoBtn" onclick="startAutomaticGPS()">
+                📱 Start Automatic GPS
+            </button>
+            
+            <button id="stopAutoBtn" onclick="stopAutomaticGPS()" disabled>
+                ⏹️ Stop GPS Tracking
+            </button>
+            
+            <div class="info">
+                <strong>Automatic GPS Features:</strong><br>
+                • Uses device GPS sensor<br>
+                • Updates every 2 seconds<br>
+                • High accuracy mode enabled<br>
+                • Requires GPS permissions
+            </div>
+        </div>
+        
+        <!-- Simulation Mode -->
+        <div id="simulationModeContent" style="display: none;">
+            <div class="input-group">
+                <label for="simVehicleId">🚗 Vehicle ID:</label>
+                <input type="text" id="simVehicleId" value="vehicle-001" placeholder="vehicle-001">
+            </div>
+            
+            <button id="startSimBtn" onclick="startSimulation()">
+                🎮 Start Simulation
+            </button>
+            
+            <button id="stopSimBtn" onclick="stopSimulation()" disabled>
+                ⏹️ Stop Simulation
+            </button>
+            
+            <div class="info">
+                <strong>Simulation Features:</strong><br>
+                • Simulates movement around Manila<br>
+                • Random speed and heading changes<br>
+                • Updates every 2 seconds<br>
+                • Perfect for testing
+            </div>
+        </div>
+        
+        <div class="coords">
+            <strong>📍 Current Location:</strong><br>
+            <div id="coords">Waiting for GPS...</div>
+        </div>
+        
+        <div class="info">
+            <strong>📊 Statistics:</strong><br>
+            <div id="stats">Sent: 0 locations</div>
+        </div>
+    </div>
+
+    <script>
+        let isTracking = false;
+        let currentMode = 'manual';
+        let updateInterval = null;
+        let watchId = null;
+        let sentCount = 0;
+        
+        function updateStatus(message, isActive, isSuccess = false) {
+            const statusEl = document.getElementById('status');
+            const indicator = statusEl.querySelector('.gps-indicator');
+            
+            statusEl.textContent = message;
+            statusEl.className = `status ${isActive ? 'active' : (isSuccess ? 'success' : 'inactive')}`;
+            
+            if (isActive) {
+                indicator.className = 'gps-indicator gps-active';
+            } else {
+                indicator.className = 'gps-indicator gps-inactive';
+            }
+        }
+        
+        function updateCoords(lat, lng, speed, heading, timestamp) {
+            const coordsEl = document.getElementById('coords');
+            coordsEl.innerHTML = `
+                📍 Lat: ${lat.toFixed(6)}<br>
+                📍 Lng: ${lng.toFixed(6)}<br>
+                🚗 Speed: ${speed.toFixed(1)} km/h<br>
+                🧭 Heading: ${heading.toFixed(0)}°<br>
+                ⏰ Time: ${new Date(timestamp).toLocaleTimeString()}
+            `;
+            
+            // Update stats
+            document.getElementById('stats').textContent = `Sent: ${sentCount} locations`;
+        }
+        
+        function setMode(mode) {
+            currentMode = mode;
+            
+            // Update mode buttons
+            document.querySelectorAll('.mode-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.getElementById(mode + 'Mode').classList.add('active');
+            
+            // Hide all mode content
+            document.getElementById('manualModeContent').style.display = 'none';
+            document.getElementById('automaticModeContent').style.display = 'none';
+            document.getElementById('simulationModeContent').style.display = 'none';
+            
+            // Show selected mode content
+            document.getElementById(mode + 'ModeContent').style.display = 'block';
+            
+            // Stop any tracking
+            if (isTracking) {
+                stopTracking();
+            }
+        }
+        
+        function sendGPSData(vehicleId, lat, lng, speed, heading) {
+            const gpsData = {
+                vehicleId: vehicleId,
+                lat: lat,
+                lng: lng,
+                speed: speed,
+                heading: heading,
+                timestamp: Date.now()
+            };
+            
+            // Send to GPS service via localStorage (for React app to pick up)
+            localStorage.setItem('gpsData_' + vehicleId, JSON.stringify(gpsData));
+            
+            // Also trigger a storage event for immediate pickup
+            window.dispatchEvent(new StorageEvent('storage', {
+                key: 'gpsData_' + vehicleId,
+                newValue: JSON.stringify(gpsData),
+                oldValue: null,
+                storageArea: localStorage,
+                url: window.location.href
+            }));
+            
+            sentCount++;
+            updateCoords(lat, lng, speed, heading, gpsData.timestamp);
+            updateStatus('✅ GPS Sent Successfully', false, true);
+            console.log('GPS data sent:', gpsData);
+        }
+        
+        function sendManualGPS() {
+            const vehicleId = document.getElementById('vehicleId').value;
+            const lat = parseFloat(document.getElementById('latitude').value);
+            const lng = parseFloat(document.getElementById('longitude').value);
+            const speed = parseFloat(document.getElementById('speed').value) || 0;
+            const heading = parseFloat(document.getElementById('heading').value) || 0;
+            
+            if (isNaN(lat) || isNaN(lng)) {
+                alert('Please enter valid latitude and longitude');
+                return;
+            }
+            
+            sendGPSData(vehicleId, lat, lng, speed, heading);
+        }
+        
+        function startAutomaticGPS() {
+            if (!navigator.geolocation) {
+                alert('Geolocation is not supported by this browser');
+                return;
+            }
+            
+            const vehicleId = document.getElementById('autoVehicleId').value;
+            
+            isTracking = true;
+            updateStatus('📱 Automatic GPS Active', true);
+            
+            const sendLocation = (position) => {
+                const lat = position.coords.latitude;
+                const lng = position.coords.longitude;
+                const speed = position.coords.speed ? position.coords.speed * 3.6 : 0; // Convert m/s to km/h
+                const heading = position.coords.heading || 0;
+                
+                sendGPSData(vehicleId, lat, lng, speed, heading);
+            };
+            
+            // Start watching position
+            watchId = navigator.geolocation.watchPosition(
+                sendLocation,
+                (err) => {
+                    console.error('Geolocation error:', err);
+                    updateStatus('❌ GPS Error: ' + err.message, false);
+                },
+                {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 0
+                }
+            );
+            
+            // Send initial position
+            navigator.geolocation.getCurrentPosition(sendLocation, (err) => {
+                console.error('Initial position error:', err);
+            });
+            
+            // Update UI
+            document.getElementById('startAutoBtn').disabled = true;
+            document.getElementById('stopAutoBtn').disabled = false;
+        }
+        
+        function startSimulation() {
+            const vehicleId = document.getElementById('simVehicleId').value;
+            let angle = Math.random() * 360;
+            const baseLat = 14.5995;
+            const baseLng = 120.9842;
+            const radius = 0.01;
+            
+            isTracking = true;
+            updateStatus('🎮 Simulation Active', true);
+            
+            updateInterval = setInterval(() => {
+                // Simulate movement
+                angle += (Math.random() - 0.5) * 30;
+                const lat = baseLat + Math.sin(angle * Math.PI / 180) * radius;
+                const lng = baseLng + Math.cos(angle * Math.PI / 180) * radius;
+                const speed = 20 + Math.random() * 40; // 20-60 km/h
+                const heading = angle % 360;
+                
+                sendGPSData(vehicleId, lat, lng, speed, heading);
+            }, 2000);
+            
+            // Update UI
+            document.getElementById('startSimBtn').disabled = true;
+            document.getElementById('stopSimBtn').disabled = false;
+        }
+        
+        function stopTracking() {
+            isTracking = false;
+            updateStatus('⏹️ GPS Stopped', false);
+            
+            // Clear intervals
+            if (updateInterval) {
+                clearInterval(updateInterval);
+                updateInterval = null;
+            }
+            
+            // Clear geolocation watch
+            if (watchId) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+            }
+            
+            // Update UI
+            document.getElementById('startAutoBtn').disabled = false;
+            document.getElementById('stopAutoBtn').disabled = true;
+            document.getElementById('startSimBtn').disabled = false;
+            document.getElementById('stopSimBtn').disabled = true;
+        }
+        
+        function stopAutomaticGPS() {
+            stopTracking();
+        }
+        
+        function stopSimulation() {
+            stopTracking();
+        }
+        
+        // Initialize
+        console.log('GPS Sender loaded');
+    </script>
+</body>
+</html>

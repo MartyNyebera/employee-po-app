@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clean GPS Sender</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 500px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .active { background: #d4edda; color: #155724; }
+        .inactive { background: #f8d7da; color: #721c24; }
+        .loading { background: #fff3cd; color: #856404; }
+        .info {
+            background: #e7f3ff;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-size: 14px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 15px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            margin: 5px 0;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        .coords {
+            font-family: monospace;
+            font-size: 12px;
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .input-group {
+            margin: 10px 0;
+        }
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        .input-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            box-sizing: border-box;
+        }
+        .gps-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+        .gps-active { background: #28a745; }
+        .gps-inactive { background: #dc3545; }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>📍 Clean GPS Sender</h2>
+        <div class="info">
+            <strong>Simple GPS tracking without bugs</strong><br>
+            Enter coordinates and start tracking. Works every time.
+        </div>
+        
+        <div id="status" class="status inactive">
+            <span class="gps-indicator gps-inactive"></span>
+            GPS Not Active
+        </div>
+        
+        <div class="input-group">
+            <label for="latitude">📍 Latitude:</label>
+            <input type="number" id="latitude" placeholder="Enter latitude" step="0.000001" value="">
+        </div>
+        
+        <div class="input-group">
+            <label for="longitude">📍 Longitude:</label>
+            <input type="number" id="longitude" placeholder="Enter longitude" step="0.000001" value="">
+        </div>
+        
+        <div class="input-group">
+            <label for="speed">🚗 Speed (km/h):</label>
+            <input type="number" id="speed" placeholder="Enter speed" value="0">
+        </div>
+        
+        <button id="startBtn" onclick="startGPS()">
+            📍 Start GPS
+        </button>
+        
+        <button id="stopBtn" onclick="stopGPS()" disabled>
+            ⏹️ Stop GPS
+        </button>
+        
+        <button id="clearBtn" onclick="clearAll()">
+            🔄 Clear All
+        </button>
+        
+        <div class="coords">
+            <strong>📍 Current Location:</strong><br>
+            <div id="coords">Waiting for GPS...</div>
+        </div>
+        
+        <div class="info">
+            <strong>📋 Instructions:</strong><br>
+            1. Enter GPS coordinates<br>
+            2. Click "Start GPS"<br>
+            3. Your location appears on map<br>
+            4. Click "Stop GPS" to stop<br>
+            5. Click "Clear All" to reset everything
+        </div>
+    </div>
+
+    <script>
+        let isTracking = false;
+        let updateInterval = null;
+        
+        function updateStatus(message, isActive, isLoading = false) {
+            const statusEl = document.getElementById('status');
+            const indicator = statusEl.querySelector('.gps-indicator');
+            
+            statusEl.textContent = message;
+            statusEl.className = `status ${isActive ? 'active' : (isLoading ? 'loading' : 'inactive')}`;
+            
+            if (isActive) {
+                indicator.className = 'gps-indicator gps-active';
+            } else {
+                indicator.className = 'gps-indicator gps-inactive';
+            }
+        }
+        
+        function updateCoords(lat, lng, speed = 0) {
+            const coordsEl = document.getElementById('coords');
+            const heading = Math.floor(Math.random() * 360);
+            const accuracy = Math.floor(Math.random() * 5) + 5;
+            
+            coordsEl.innerHTML = `
+                📍 Lat: ${lat.toFixed(6)}<br>
+                📍 Lng: ${lng.toFixed(6)}<br>
+                🚗 Speed: ${speed.toFixed(1)} km/h<br>
+                🧭 Direction: ${heading}°<br>
+                🎯 Accuracy: ${accuracy}m<br>
+                ⏰ Time: ${new Date().toLocaleTimeString()}
+            `;
+        }
+        
+        function sendGPSData(lat, lng, speed = 0) {
+            const gpsData = {
+                id: 777,
+                name: 'GPS Device',
+                uniqueId: 'GPS_DEVICE',
+                status: 'online',
+                lastUpdate: new Date().toISOString(),
+                positionId: 777,
+                category: 'phone',
+                position: {
+                    id: 777,
+                    deviceId: 777,
+                    latitude: lat,
+                    longitude: lng,
+                    speed: speed,
+                    course: Math.floor(Math.random() * 360),
+                    altitude: Math.floor(Math.random() * 100) + 10,
+                    accuracy: Math.floor(Math.random() * 5) + 5,
+                    fixTime: new Date().toISOString(),
+                    deviceTime: new Date().toISOString(),
+                    serverTime: new Date().toISOString(),
+                    attributes: {}
+                }
+            };
+            
+            // Send to fleet app via localStorage
+            localStorage.setItem('phoneGPSData', JSON.stringify(gpsData));
+            
+            console.log('GPS data sent:', { lat, lng, speed });
+        }
+        
+        function startGPS() {
+            console.log('=== START GPS CALLED ===');
+            
+            // Get current values
+            const lat = parseFloat(document.getElementById('latitude').value);
+            const lng = parseFloat(document.getElementById('longitude').value);
+            const speed = parseFloat(document.getElementById('speed').value) || 0;
+            
+            console.log('Input values:', { lat, lng, speed });
+            
+            // Validate coordinates
+            if (isNaN(lat) || isNaN(lng)) {
+                alert('Please enter valid latitude and longitude coordinates');
+                return;
+            }
+            
+            // Clear any existing interval
+            if (updateInterval) {
+                console.log('Clearing existing interval');
+                clearInterval(updateInterval);
+                updateInterval = null;
+            }
+            
+            // Update UI
+            updateStatus('✅ GPS Active', true);
+            updateCoords(lat, lng, speed);
+            sendGPSData(lat, lng, speed);
+            
+            // Start tracking
+            let movementAngle = Math.random() * 360;
+            let currentSpeed = speed;
+            let baseLat = lat;
+            let baseLng = lng;
+            
+            console.log('Starting GPS tracking with base coordinates:', { baseLat, baseLng });
+            
+            updateInterval = setInterval(() => {
+                // Simulate small movement
+                const movement = 0.00001;
+                const currentLat = baseLat + Math.cos(movementAngle * Math.PI / 180) * movement;
+                const currentLng = baseLng + Math.sin(movementAngle * Math.PI / 180) * movement;
+                
+                // Vary speed
+                currentSpeed = Math.max(0, currentSpeed + (Math.random() - 0.5) * 2);
+                
+                updateCoords(currentLat, currentLng, currentSpeed);
+                sendGPSData(currentLat, currentLng, currentSpeed);
+                
+                // Random changes
+                if (Math.random() < 0.2) {
+                    movementAngle = (movementAngle + (Math.random() - 0.5) * 30) % 360;
+                }
+                if (Math.random() < 0.1) {
+                    currentSpeed = Math.random() * 10 + 1;
+                }
+            }, 3000);
+            
+            // Update button states
+            isTracking = true;
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+            document.getElementById('clearBtn').disabled = false;
+            
+            console.log('GPS tracking started successfully');
+        }
+        
+        function stopGPS() {
+            console.log('=== STOP GPS CALLED ===');
+            
+            // Clear interval
+            if (updateInterval) {
+                console.log('Clearing interval');
+                clearInterval(updateInterval);
+                updateInterval = null;
+            }
+            
+            // Update UI
+            isTracking = false;
+            updateStatus('⏹️ GPS Stopped', false);
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            
+            // Clear GPS data
+            localStorage.removeItem('phoneGPSData');
+            
+            console.log('GPS tracking stopped');
+        }
+        
+        function clearAll() {
+            console.log('=== CLEAR ALL CALLED ===');
+            
+            // Stop tracking if active
+            if (isTracking) {
+                stopGPS();
+            }
+            
+            // Clear all inputs
+            document.getElementById('latitude').value = '';
+            document.getElementById('longitude').value = '';
+            document.getElementById('speed').value = '0';
+            
+            // Clear display
+            document.getElementById('coords').innerHTML = 'Waiting for GPS...';
+            
+            // Clear GPS data
+            localStorage.removeItem('phoneGPSData');
+            
+            // Reset status
+            updateStatus('🔄 Cleared', false);
+            
+            // Reset button states
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            document.getElementById('clearBtn').disabled = false;
+            
+            console.log('All cleared successfully');
+            
+            // Reset status after a moment
+            setTimeout(() => {
+                updateStatus('GPS Not Active', false);
+            }, 1000);
+        }
+        
+        // Auto-stop when page closes
+        window.addEventListener('beforeunload', () => {
+            if (updateInterval) {
+                clearInterval(updateInterval);
+            }
+        });
+        
+        // Initialize
+        console.log('Clean GPS Sender loaded');
+    </script>
+</body>
+</html>

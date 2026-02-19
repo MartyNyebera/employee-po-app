@@ -1,0 +1,58 @@
+/* Vehicle Marker Styles */
+.vehicle-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: rgba(59, 130, 246, 0.9);
+  border-radius: 50%;
+  border: 2px solid white;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  transition: all 0.3s ease;
+}
+
+.vehicle-marker:hover {
+  transform: scale(1.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.vehicle-icon {
+  transition: transform 0.5s ease;
+  transform-origin: center;
+}
+
+/* Map Container */
+.maplibregl-map {
+  border-radius: 0 0 0.5rem 0.5rem;
+}
+
+/* Status Badge Animation */
+@keyframes pulse {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+.status-indicator {
+  animation: pulse 2s infinite;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .vehicle-marker {
+    width: 28px;
+    height: 28px;
+  }
+  
+  .vehicle-marker svg {
+    width: 20px;
+    height: 20px;
+  }
+}

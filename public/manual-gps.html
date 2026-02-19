@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual GPS Sender</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 400px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            background: #d4edda;
+            color: #155724;
+        }
+        .info {
+            background: #e7f3ff;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-size: 14px;
+        }
+        input {
+            width: 100%;
+            padding: 8px;
+            margin: 5px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            margin: 5px 0;
+        }
+        button:hover { background: #0056b3; }
+        .coords {
+            font-family: monospace;
+            font-size: 12px;
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .preset-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 5px;
+            margin: 10px 0;
+        }
+        .preset-btn {
+            background: #28a745;
+            font-size: 12px;
+            padding: 8px;
+        }
+        .preset-btn:hover { background: #218838; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>📍 Manual GPS Sender</h2>
+        <div class="info">
+            Enter GPS coordinates manually or use preset locations to test fleet tracking.
+        </div>
+        
+        <div class="status">
+            ✅ Ready to send GPS data
+        </div>
+        
+        <label><strong>Latitude:</strong></label>
+        <input type="number" id="latitude" placeholder="14.5995" step="0.0001" value="14.5995">
+        
+        <label><strong>Longitude:</strong></label>
+        <input type="number" id="longitude" placeholder="120.9842" step="0.0001" value="120.9842">
+        
+        <label><strong>Speed (km/h):</strong></label>
+        <input type="number" id="speed" placeholder="0" value="0">
+        
+        <label><strong>Direction (degrees):</strong></label>
+        <input type="number" id="direction" placeholder="0" value="0">
+        
+        <button onclick="sendManualGPS()">
+            📍 Send GPS Location
+        </button>
+        
+        <div class="preset-buttons">
+            <button class="preset-btn" onclick="setLocation(14.5995, 120.9842, 0, 0)">🏠 Home</button>
+            <button class="preset-btn" onclick="setLocation(14.6091, 120.9925, 30, 90)">🏢 Office</button>
+            <button class="preset-btn" onclick="setLocation(14.5890, 120.9768, 45, 180)">🛍️ Mall</button>
+            <button class="preset-btn" onclick="setLocation(14.6170, 121.0050, 60, 270)">🏪 Store</button>
+        </div>
+        
+        <div class="coords">
+            <strong>Last Sent:</strong><br>
+            <div id="lastSent">No data sent yet</div>
+        </div>
+        
+        <div class="info">
+            <strong>Instructions:</strong><br>
+            1. Enter coordinates or use preset locations<br>
+            2. Click "Send GPS Location"<br>
+            3. Your phone will appear as "iPhone GPS" in your laptop's fleet tracking system<br>
+            4. Move to different locations to test tracking
+        </div>
+    </div>
+
+    <script>
+        function setLocation(lat, lng, speed, direction) {
+            document.getElementById('latitude').value = lat;
+            document.getElementById('longitude').value = lng;
+            document.getElementById('speed').value = speed;
+            document.getElementById('direction').value = direction;
+        }
+        
+        function sendManualGPS() {
+            const lat = parseFloat(document.getElementById('latitude').value);
+            const lng = parseFloat(document.getElementById('longitude').value);
+            const speed = parseFloat(document.getElementById('speed').value) || 0;
+            const direction = parseFloat(document.getElementById('direction').value) || 0;
+            
+            if (isNaN(lat) || isNaN(lng)) {
+                alert('Please enter valid latitude and longitude');
+                return;
+            }
+            
+            const gpsData = {
+                id: 888,
+                name: 'iPhone GPS',
+                uniqueId: 'IPHONE_GPS',
+                status: 'online',
+                lastUpdate: new Date().toISOString(),
+                positionId: 888,
+                category: 'phone',
+                position: {
+                    id: 888,
+                    deviceId: 888,
+                    latitude: lat,
+                    longitude: lng,
+                    speed: speed,
+                    course: direction,
+                    altitude: 0,
+                    accuracy: 10,
+                    fixTime: new Date().toISOString(),
+                    deviceTime: new Date().toISOString(),
+                    serverTime: new Date().toISOString(),
+                    attributes: {}
+                }
+            };
+            
+            // Send to laptop via localStorage
+            localStorage.setItem('phoneGPSData', JSON.stringify(gpsData));
+            
+            // Update display
+            const lastSentEl = document.getElementById('lastSent');
+            lastSentEl.innerHTML = `
+                Lat: ${lat.toFixed(6)}<br>
+                Lng: ${lng.toFixed(6)}<br>
+                Speed: ${speed} km/h<br>
+                Direction: ${direction}°<br>
+                Time: ${new Date().toLocaleTimeString()}
+            `;
+            
+            // Visual feedback
+            const statusEl = document.querySelector('.status');
+            statusEl.innerHTML = '✅ GPS data sent successfully!';
+            statusEl.style.background = '#d4edda';
+            
+            setTimeout(() => {
+                statusEl.innerHTML = '✅ Ready to send GPS data';
+            }, 2000);
+        }
+        
+        // Auto-send every 5 seconds if data is entered
+        let autoSendInterval = null;
+        
+        function startAutoSend() {
+            if (autoSendInterval) clearInterval(autoSendInterval);
+            
+            autoSendInterval = setInterval(() => {
+                const lat = document.getElementById('latitude').value;
+                const lng = document.getElementById('longitude').value;
+                
+                if (lat && lng) {
+                    // Slightly modify coordinates to simulate movement
+                    const currentLat = parseFloat(lat);
+                    const currentLng = parseFloat(lng);
+                    const newLat = currentLat + (Math.random() - 0.5) * 0.001;
+                    const newLng = currentLng + (Math.random() - 0.5) * 0.001;
+                    
+                    document.getElementById('latitude').value = newLat.toFixed(6);
+                    document.getElementById('longitude').value = newLng.toFixed(6);
+                    document.getElementById('speed').value = Math.floor(Math.random() * 40 + 10);
+                    document.getElementById('direction').value = Math.floor(Math.random() * 360);
+                    
+                    sendManualGPS();
+                }
+            }, 5000);
+        }
+        
+        // Start auto-send when page loads
+        window.addEventListener('load', () => {
+            sendManualGPS(); // Send initial location
+            startAutoSend(); // Start auto-sending
+        });
+    </script>
+</body>
+</html>

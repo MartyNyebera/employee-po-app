@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KIMOEL Fleet Management</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f8fafc;
+            color: #1e293b;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .login-form {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            max-width: 400px;
+            margin: 0 auto;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #374151;
+        }
+        
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e5e7eb;
+            border-radius: 6px;
+            font-size: 16px;
+            transition: border-color 0.2s;
+        }
+        
+        input:focus {
+            outline: none;
+            border-color: #3b82f6;
+        }
+        
+        button {
+            width: 100%;
+            padding: 12px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        button:hover {
+            background: #2563eb;
+        }
+        
+        .dashboard {
+            display: none;
+        }
+        
+        .nav {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .nav-buttons {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .nav-btn {
+            padding: 10px 20px;
+            background: #f1f5f9;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .nav-btn.active {
+            background: #3b82f6;
+            color: white;
+        }
+        
+        .content {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            min-height: 400px;
+        }
+        
+        .gps-container {
+            text-align: center;
+        }
+        
+        .gps-status {
+            background: #f0f9ff;
+            border: 2px solid #0ea5e9;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        
+        .error {
+            color: #dc2626;
+            background: #fef2f2;
+            padding: 10px;
+            border-radius: 6px;
+            margin: 10px 0;
+        }
+        
+        .success {
+            color: #059669;
+            background: #f0fdf4;
+            padding: 10px;
+            border-radius: 6px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        function App() {
+            const [isLoggedIn, setIsLoggedIn] = useState(false);
+            const [user, setUser] = useState(null);
+            const [currentView, setCurrentView] = useState('fleet');
+            const [error, setError] = useState('');
+            const [success, setSuccess] = useState('');
+
+            useEffect(() => {
+                // Check if already logged in
+                const storedAuth = localStorage.getItem('fleet_auth');
+                if (storedAuth) {
+                    try {
+                        const auth = JSON.parse(storedAuth);
+                        setUser(auth.user);
+                        setIsLoggedIn(true);
+                    } catch (err) {
+                        localStorage.removeItem('fleet_auth');
+                    }
+                }
+            }, []);
+
+            const handleLogin = async (e) => {
+                e.preventDefault();
+                const email = e.target.email.value;
+                const password = e.target.password.value;
+
+                try {
+                    const response = await fetch('http://192.168.1.100:3001/api/auth/login', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ email, password }),
+                    });
+
+                    const data = await response.json();
+
+                    if (response.ok) {
+                        localStorage.setItem('fleet_auth', JSON.stringify(data));
+                        setUser(data.user);
+                        setIsLoggedIn(true);
+                        setSuccess('Login successful!');
+                        setError('');
+                    } else {
+                        setError(data.error || 'Login failed');
+                        setSuccess('');
+                    }
+                } catch (err) {
+                    setError('Network error. Please check your connection.');
+                    setSuccess('');
+                }
+            };
+
+            const handleLogout = () => {
+                localStorage.removeItem('fleet_auth');
+                setUser(null);
+                setIsLoggedIn(false);
+            };
+
+            const startGPSTracking = () => {
+                const gpsWindow = window.open('http://192.168.1.100:3000/track-uncle', 'gps', 'width=400,height=600');
+                if (gpsWindow) {
+                    setSuccess('GPS tracking window opened!');
+                } else {
+                    setError('Please allow popups for GPS tracking');
+                }
+            };
+
+            if (!isLoggedIn) {
+                return (
+                    <div className="container">
+                        <div className="header">
+                            <h1>🚛 KIMOEL Fleet Management</h1>
+                            <p>Vehicle Tracking & Management System</p>
+                        </div>
+                        
+                        <div className="login-form">
+                            <h2>Login</h2>
+                            {error && <div className="error">{error}</div>}
+                            {success && <div className="success">{success}</div>}
+                            
+                            <form onSubmit={handleLogin}>
+                                <div className="form-group">
+                                    <label>Email:</label>
+                                    <input 
+                                        type="email" 
+                                        name="email" 
+                                        required 
+                                        defaultValue="owner@kimoel.local"
+                                    />
+                                </div>
+                                
+                                <div className="form-group">
+                                    <label>Password:</label>
+                                    <input 
+                                        type="password" 
+                                        name="password" 
+                                        required 
+                                        defaultValue="ChangeMe123!"
+                                    />
+                                </div>
+                                
+                                <button type="submit">Login</button>
+                            </form>
+                            
+                            <p style={{marginTop: '20px', fontSize: '14px', color: '#6b7280'}}>
+                                Demo credentials:<br/>
+                                Email: owner@kimoel.local<br/>
+                                Password: ChangeMe123!
+                            </p>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="container">
+                    <div className="header">
+                        <h1>🚛 KIMOEL Fleet Management</h1>
+                        <p>Welcome, {user?.name}!</p>
+                        <button onClick={handleLogout} style={{width: 'auto', padding: '8px 16px'}}>
+                            Logout
+                        </button>
+                    </div>
+                    
+                    <div className="nav">
+                        <div className="nav-buttons">
+                            <button 
+                                className={`nav-btn ${currentView === 'fleet' ? 'active' : ''}`}
+                                onClick={() => setCurrentView('fleet')}
+                            >
+                                🚛 Fleet
+                            </button>
+                            <button 
+                                className={`nav-btn ${currentView === 'gps' ? 'active' : ''}`}
+                                onClick={() => setCurrentView('gps')}
+                            >
+                                📍 GPS Tracking
+                            </button>
+                            <button 
+                                className={`nav-btn ${currentView === 'orders' ? 'active' : ''}`}
+                                onClick={() => setCurrentView('orders')}
+                            >
+                                📋 Orders
+                            </button>
+                            <button 
+                                className={`nav-btn ${currentView === 'transactions' ? 'active' : ''}`}
+                                onClick={() => setCurrentView('transactions')}
+                            >
+                                💰 Transactions
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div className="content">
+                        {currentView === 'fleet' && (
+                            <div>
+                                <h2>Fleet Overview</h2>
+                                <p>Your fleet vehicles will appear here.</p>
+                            </div>
+                        )}
+                        
+                        {currentView === 'gps' && (
+                            <div className="gps-container">
+                                <h2>📍 GPS Tracking</h2>
+                                <p>Track your vehicles in real-time</p>
+                                
+                                <div className="gps-status">
+                                    <h3>Live GPS Tracking</h3>
+                                    <p>Click below to start GPS tracking for uncle's phone</p>
+                                    <button onClick={startGPSTracking} style={{width: 'auto', marginTop: '10px'}}>
+                                        📱 Start GPS Tracking
+                                    </button>
+                                </div>
+                                
+                                {error && <div className="error">{error}</div>}
+                                {success && <div className="success">{success}</div>}
+                            </div>
+                        )}
+                        
+                        {currentView === 'orders' && (
+                            <div>
+                                <h2>Purchase Orders</h2>
+                                <p>Manage your purchase orders here.</p>
+                            </div>
+                        )}
+                        
+                        {currentView === 'transactions' && (
+                            <div>
+                                <h2>Transactions</h2>
+                                <p>View financial transactions here.</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>

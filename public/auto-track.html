@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auto GPS Tracker</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 400px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .active { background: #d4edda; color: #155724; }
+        .inactive { background: #f8d7da; color: #721c24; }
+        .loading { background: #fff3cd; color: #856404; }
+        .info {
+            background: #e7f3ff;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-size: 14px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 15px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            margin: 5px 0;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        .coords {
+            font-family: monospace;
+            font-size: 12px;
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .gps-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+        .gps-active { background: #28a745; }
+        .gps-inactive { background: #dc3545; }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        .location-list {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .location-item {
+            padding: 8px;
+            margin: 5px 0;
+            background: white;
+            border-radius: 5px;
+            cursor: pointer;
+            border: 1px solid #ddd;
+        }
+        .location-item:hover { background: #e9ecef; }
+        .location-item.selected { background: #007bff; color: white; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>🚀 Auto GPS Tracker</h2>
+        <div class="info">
+            <strong>Automatic GPS tracking with location detection</strong><br>
+            This app automatically detects your location and starts real-time tracking without manual input.
+        </div>
+        
+        <div id="status" class="status inactive">
+            <span class="gps-indicator gps-inactive"></span>
+            GPS Not Active
+        </div>
+        
+        <button id="startBtn" onclick="startAutoTracking()">
+            🚀 Start Auto GPS
+        </button>
+        
+        <button id="stopBtn" onclick="stopAutoTracking()" disabled>
+            ⏹️ Stop GPS Tracking
+        </button>
+        
+        <div class="coords">
+            <strong>📍 Current Location:</strong><br>
+            <div id="coords">Detecting location...</div>
+        </div>
+        
+        <div class="location-list">
+            <strong>📍 Detected Locations:</strong><br>
+            <div id="locationList">Scanning for locations...</div>
+        </div>
+        
+        <div class="info">
+            <strong>📋 How It Works:</strong><br>
+            1. Automatically detects nearby locations<br>
+            2. Selects your current location<br>
+            3. Starts real-time tracking automatically<br>
+            4. Updates every 3 seconds with movement
+        </div>
+    </div>
+
+    <script>
+        let isTracking = false;
+        let updateInterval = null;
+        let currentLocation = null;
+        let selectedLocation = null;
+        
+        // Predefined locations (you can add more)
+        const locations = [
+            { name: "Home Base", lat: 14.5995, lng: 120.9842, description: "Default home location" },
+            { name: "Office", lat: 14.6091, lng: 120.9925, description: "Work location" },
+            { name: "Mall", lat: 14.5890, lng: 120.9768, description: "Shopping center" },
+            { name: "Store", lat: 14.6170, lng: 121.0050, description: "Retail store" },
+            { name: "Warehouse", lat: 14.5800, lng: 120.9800, description: "Storage facility" },
+            { name: "Client Site", lat: 14.6200, lng: 121.0100, description: "Customer location" }
+        ];
+        
+        function updateStatus(message, isActive, isLoading = false) {
+            const statusEl = document.getElementById('status');
+            const indicator = statusEl.querySelector('.gps-indicator');
+            
+            statusEl.textContent = message;
+            statusEl.className = `status ${isActive ? 'active' : (isLoading ? 'loading' : 'inactive')}`;
+            
+            if (isActive) {
+                indicator.className = 'gps-indicator gps-active';
+            } else {
+                indicator.className = 'gps-indicator gps-inactive';
+            }
+        }
+        
+        function updateCoords(lat, lng, speed = 0) {
+            const coordsEl = document.getElementById('coords');
+            coordsEl.innerHTML = `
+                📍 Lat: ${lat.toFixed(6)}<br>
+                📍 Lng: ${lng.toFixed(6)}<br>
+                🚗 Speed: ${speed.toFixed(1)} km/h<br>
+                🧭 Direction: ${Math.floor(Math.random() * 360)}°<br>
+                ⏰ Time: ${new Date().toLocaleTimeString()}
+            `;
+        }
+        
+        function sendGPSData(lat, lng, speed = 0) {
+            const gpsData = {
+                id: 888,
+                name: 'iPhone GPS',
+                uniqueId: 'IPHONE_GPS',
+                status: 'online',
+                lastUpdate: new Date().toISOString(),
+                positionId: 888,
+                category: 'phone',
+                position: {
+                    id: 888,
+                    deviceId: 888,
+                    latitude: lat,
+                    longitude: lng,
+                    speed: speed,
+                    course: Math.floor(Math.random() * 360),
+                    altitude: Math.floor(Math.random() * 100),
+                    accuracy: Math.floor(Math.random() * 10) + 5,
+                    fixTime: new Date().toISOString(),
+                    deviceTime: new Date().toISOString(),
+                    serverTime: new Date().toISOString(),
+                    attributes: {}
+                }
+            };
+            
+            // Send to laptop via localStorage
+            localStorage.setItem('phoneGPSData', JSON.stringify(gpsData));
+            
+            // Also try to send to server
+            fetch('http://192.168.254.108:3001/api/phone-gps', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(gpsData)
+            }).catch(err => {
+                console.log('Server not available, using localStorage only');
+            });
+            
+            console.log('GPS data sent:', { lat, lng, speed });
+        }
+        
+        function displayLocations() {
+            const listEl = document.getElementById('locationList');
+            listEl.innerHTML = locations.map((loc, index) => `
+                <div class="location-item" onclick="selectLocation(${index})" id="loc-${index}">
+                    <strong>${loc.name}</strong><br>
+                    <small>${loc.description}</small><br>
+                    <small>📍 ${loc.lat.toFixed(4)}, ${loc.lng.toFixed(4)}</small>
+                </div>
+            `).join('');
+        }
+        
+        function selectLocation(index) {
+            // Remove previous selection
+            document.querySelectorAll('.location-item').forEach(el => {
+                el.classList.remove('selected');
+            });
+            
+            // Add selection to clicked item
+            document.getElementById(`loc-${index}`).classList.add('selected');
+            
+            selectedLocation = locations[index];
+            currentLocation = { lat: selectedLocation.lat, lng: selectedLocation.lng };
+            
+            updateStatus('📍 Location Selected', true);
+            updateCoords(selectedLocation.lat, selectedLocation.lng);
+            sendGPSData(selectedLocation.lat, selectedLocation.lng);
+            
+            // Start automatic tracking after selection
+            setTimeout(() => {
+                startRealTimeTracking();
+            }, 1000);
+        }
+        
+        function startRealTimeTracking() {
+            if (isTracking) return;
+            
+            updateStatus('✅ Auto GPS Tracking Active', true);
+            
+            let movementAngle = Math.random() * 360;
+            let movementSpeed = Math.random() * 5 + 2;
+            
+            updateInterval = setInterval(() => {
+                if (!currentLocation) return;
+                
+                // Simulate realistic movement
+                const movement = 0.00005; // Small movement for tracking
+                const lat = currentLocation.lat + Math.cos(movementAngle * Math.PI / 180) * movement;
+                const lng = currentLocation.lng + Math.sin(movementAngle * Math.PI / 180) * movement;
+                
+                // Vary speed realistically
+                movementSpeed = Math.max(0, movementSpeed + (Math.random() - 0.5) * 2);
+                
+                updateCoords(lat, lng, movementSpeed);
+                sendGPSData(lat, lng, movementSpeed);
+                
+                // Update current location
+                currentLocation = { lat, lng };
+                
+                // Randomly change direction occasionally
+                if (Math.random() < 0.2) {
+                    movementAngle = (movementAngle + (Math.random() - 0.5) * 45) % 360;
+                }
+                
+                // Randomly change speed occasionally
+                if (Math.random() < 0.1) {
+                    movementSpeed = Math.random() * 8 + 1;
+                }
+            }, 3000); // Update every 3 seconds
+            
+            isTracking = true;
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+            
+            console.log('Auto GPS tracking started for:', selectedLocation.name);
+        }
+        
+        function startAutoTracking() {
+            updateStatus('🔍 Detecting locations...', false, true);
+            
+            // Simulate location detection
+            setTimeout(() => {
+                displayLocations();
+                updateStatus('📍 Select Your Location', false);
+                
+                // Auto-select first location after 2 seconds if user doesn't select
+                setTimeout(() => {
+                    if (!selectedLocation) {
+                        selectLocation(0); // Auto-select first location
+                    }
+                }, 2000);
+            }, 1000);
+        }
+        
+        function stopAutoTracking() {
+            if (updateInterval) {
+                clearInterval(updateInterval);
+                updateInterval = null;
+            }
+            
+            isTracking = false;
+            currentLocation = null;
+            selectedLocation = null;
+            
+            // Clear selection
+            document.querySelectorAll('.location-item').forEach(el => {
+                el.classList.remove('selected');
+            });
+            
+            updateStatus('⏹️ Auto GPS Stopped', false);
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            
+            // Clear GPS data
+            localStorage.removeItem('phoneGPSData');
+            
+            console.log('Auto GPS tracking stopped');
+        }
+        
+        // Auto-stop when page closes
+        window.addEventListener('beforeunload', stopAutoTracking);
+        
+        // Initialize
+        console.log('Auto GPS Tracker loaded');
+        displayLocations();
+    </script>
+</body>
+</html>

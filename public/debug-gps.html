@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPS Debug</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .active { background: #d4edda; color: #155724; }
+        .inactive { background: #f8d7da; color: #721c24; }
+        .loading { background: #fff3cd; color: #856404; }
+        .info {
+            background: #e7f3ff;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-size: 14px;
+        }
+        .coords {
+            font-family: monospace;
+            font-size: 12px;
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .debug {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 15px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            margin: 5px 0;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>🔍 GPS Debug Tool</h2>
+        <div class="info">
+            <strong>Debug GPS tracking issues</strong><br>
+            This tool helps identify why GPS tracking is not working in your fleet app.
+        </div>
+        
+        <div id="status" class="status inactive">
+            GPS Not Active
+        </div>
+        
+        <button id="testBtn" onclick="testGPS()">
+            🧪 Test GPS Connection
+        </button>
+        
+        <button id="sendBtn" onclick="sendTestData()">
+            📤 Send Test Data
+        </button>
+        
+        <div class="coords">
+            <strong>📍 Current Location:</strong><br>
+            <div id="coords">Waiting for GPS...</div>
+        </div>
+        
+        <div class="debug">
+            <strong>🔍 Debug Info:</strong><br>
+            <div id="debug">Initializing...</div>
+        </div>
+        
+        <div class="info">
+            <strong>📋 Test Steps:</strong><br>
+            1. Click "Test GPS Connection"<br>
+            2. Check debug information<br>
+            3. Click "Send Test Data" to simulate GPS<br>
+            4. Check your fleet app for updates
+        </div>
+    </div>
+
+    <script>
+        let debugLog = [];
+        
+        function addDebug(message) {
+            debugLog.push(new Date().toLocaleTimeString() + ': ' + message);
+            const debugEl = document.getElementById('debug');
+            debugEl.innerHTML = debugLog.slice(-10).join('<br>');
+            console.log(message);
+        }
+        
+        function updateStatus(message, isActive, isLoading = false) {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = `status ${isActive ? 'active' : (isLoading ? 'loading' : 'inactive')}`;
+        }
+        
+        function updateCoords(lat, lng, speed = 0) {
+            const coordsEl = document.getElementById('coords');
+            coordsEl.innerHTML = `
+                📍 Lat: ${lat.toFixed(6)}<br>
+                📍 Lng: ${lng.toFixed(6)}<br>
+                🚗 Speed: ${speed.toFixed(1)} km/h<br>
+                ⏰ Time: ${new Date().toLocaleTimeString()}
+            `;
+        }
+        
+        function sendGPSData(lat, lng, speed = 0) {
+            const gpsData = {
+                id: 777,
+                name: 'Test GPS Device',
+                uniqueId: 'TEST_GPS',
+                status: 'online',
+                lastUpdate: new Date().toISOString(),
+                positionId: 777,
+                category: 'phone',
+                position: {
+                    id: 777,
+                    deviceId: 777,
+                    latitude: lat,
+                    longitude: lng,
+                    speed: speed,
+                    course: Math.floor(Math.random() * 360),
+                    altitude: 0,
+                    accuracy: 10,
+                    fixTime: new Date().toISOString(),
+                    deviceTime: new Date().toISOString(),
+                    serverTime: new Date().toISOString(),
+                    attributes: {}
+                }
+            };
+            
+            // Send to fleet app via localStorage
+            localStorage.setItem('phoneGPSData', JSON.stringify(gpsData));
+            
+            addDebug('GPS data sent: ' + JSON.stringify({
+                lat: lat.toFixed(6),
+                lng: lng.toFixed(6),
+                speed: speed
+            }));
+        }
+        
+        function testGPS() {
+            addDebug('Testing GPS connection...');
+            updateStatus('🔄 Testing GPS...', false, true);
+            
+            // Test 1: Check if localStorage is available
+            try {
+                localStorage.setItem('test', 'test');
+                const test = localStorage.getItem('test');
+                addDebug('✅ LocalStorage available: ' + test);
+                localStorage.removeItem('test');
+            } catch (error) {
+                addDebug('❌ LocalStorage error: ' + error.message);
+                updateStatus('❌ LocalStorage Error', false);
+                return;
+            }
+            
+            // Test 2: Check if fleet app is running
+            try {
+                const response = fetch('http://192.168.254.108:3000/api/assets/index.js');
+                addDebug('✅ Fleet app running: ' + response.status);
+            } catch (error) {
+                addDebug('❌ Fleet app not reachable: ' + error.message);
+                updateStatus('❌ Fleet App Not Running', false);
+                return;
+            }
+            
+            // Test 3: Send test GPS data
+            setTimeout(() => {
+                sendGPSData(14.5995, 120.9842, 25);
+                updateStatus('✅ Test GPS Sent', true);
+                updateCoords(14.5995, 120.9842, 25);
+            }, 1000);
+        }
+        
+        function sendTestData() {
+            addDebug('Sending test GPS data...');
+            updateStatus('📤 Sending Test Data', true);
+            
+            // Send multiple test positions
+            const testPositions = [
+                { lat: 14.5995, lng: 120.9842, speed: 25 },
+                { lat: 14.6005, lng: 120.9850, speed: 30 },
+                { lat: 14.6015, lng: 120.9860, speed: 35 },
+                { lat: 14.6091, lng: 120.9925, speed: 40 }
+            ];
+            
+            let index = 0;
+            const interval = setInterval(() => {
+                if (index < testPositions.length) {
+                    const pos = testPositions[index];
+                    updateCoords(pos.lat, pos.lng, pos.speed);
+                    sendGPSData(pos.lat, pos.lng, pos.speed);
+                    addDebug('Sent test position ' + (index + 1) + ': ' + JSON.stringify(pos));
+                    index++;
+                } else {
+                    clearInterval(interval);
+                    updateStatus('✅ Test Complete', true);
+                }
+            }, 2000);
+        }
+        
+        // Check for existing GPS data
+        const checkExistingData = () => {
+            const phoneData = localStorage.getItem('phoneGPSData');
+            const laptopData = localStorage.getItem('laptopGPSData');
+            
+            if (phoneData) {
+                try {
+                    const parsed = JSON.parse(phoneData);
+                    addDebug('✅ Found existing phone GPS data: ' + parsed.name);
+                    updateStatus('✅ Phone GPS Active', true);
+                    updateCoords(parsed.position.latitude, parsed.position.longitude, parsed.position.speed);
+                } catch (error) {
+                    addDebug('❌ Error parsing phone GPS data: ' + error.message);
+                }
+            }
+            
+            if (laptopData) {
+                try {
+                    const parsed = JSON.parse(laptopData);
+                    addDebug('✅ Found existing laptop GPS data: ' + parsed.name);
+                    updateStatus('✅ Laptop GPS Active', true);
+                } catch (error) {
+                    addDebug('❌ Error parsing laptop GPS data: ' + error.message);
+                }
+            }
+            
+            if (!phoneData && !laptopData) {
+                addDebug('No existing GPS data found');
+                updateStatus('⚠️ No GPS Data Found', false);
+            }
+        };
+        
+        // Auto-check every 5 seconds
+        setInterval(checkExistingData, 5000);
+        
+        // Initialize
+        addDebug('GPS Debug Tool loaded');
+        addDebug('Checking for existing GPS data...');
+        checkExistingData();
+    </script>
+</body>
+</html>
