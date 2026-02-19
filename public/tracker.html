@@ -184,6 +184,9 @@
       }
     }
 
+    let lastPosition = null;
+    let resendInterval = null;
+
     function startTracking() {
       if (!navigator.geolocation) {
         showError('Geolocation not supported by this browser');
@@ -197,13 +200,18 @@
       el('statusLabel').textContent = 'Tracking Active';
 
       watchId = navigator.geolocation.watchPosition(
-        sendLocation,
+        function(pos) { lastPosition = pos; sendLocation(pos); },
         function(err) {
           showError('GPS error: ' + err.message);
           stopTracking();
         },
         { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
       );
+
+      // Re-send last known position every 1s so dashboard stays fresh
+      resendInterval = setInterval(function() {
+        if (lastPosition) sendLocation(lastPosition);
+      }, 1000);
     }
 
     function stopTracking() {
@@ -211,6 +219,11 @@
         navigator.geolocation.clearWatch(watchId);
         watchId = null;
       }
+      if (resendInterval !== null) {
+        clearInterval(resendInterval);
+        resendInterval = null;
+      }
+      lastPosition = null;
       el('deviceId').disabled = false;
       el('startBtn').style.display = 'flex';
       el('stopBtn').style.display = 'none';
