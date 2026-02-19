@@ -321,9 +321,9 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
         </aside>
 
         {/* Content Area */}
-        <main className="flex-1 overflow-y-auto">
+        <div className={`flex-1 ${currentView === 'gps' ? 'overflow-hidden flex flex-col' : 'overflow-auto'}`}>
           {renderContent()}
-        </main>
+        </div>
       </div>
 
       {/* Bottom Navigation - Mobile Only */}

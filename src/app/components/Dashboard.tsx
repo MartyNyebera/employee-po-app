@@ -165,7 +165,7 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
         </nav>
 
         {/* Content Area */}
-        <div className="flex-1 overflow-auto">
+        <div className={`flex-1 ${currentView === 'gps' ? 'overflow-hidden flex flex-col' : 'overflow-auto'}`}>
           {renderView()}
         </div>
       </main>
