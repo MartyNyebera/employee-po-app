@@ -75,7 +75,7 @@
         // Update status bar
         const ageSec = Math.round((Date.now() - pos.timestamp) / 1000);
         statusBar.style.display = 'block';
-        statusBar.textContent = `${status === 'Moving' ? '🟢' : status === 'Idle' ? '🟡' : status === 'Offline' ? '🔴' : '⚫'} ${status} · ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)} · ${ageSec}s ago`;
+        statusBar.textContent = `📡 Connected · ${status === 'Moving' ? '🟢' : status === 'Idle' ? '🟡' : status === 'Offline' ? '🔴' : status === 'Waiting' ? '⚫' : '⚫'} ${status} · ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)} · ${ageSec}s ago`;
 
         // Place/update marker
         if (!marker) {
@@ -110,7 +110,7 @@
     });
 
     poll();
-    setInterval(poll, 500);
+    setInterval(poll, 200);
   </script>
 </body>
 </html>

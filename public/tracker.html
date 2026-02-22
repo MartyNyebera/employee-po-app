@@ -211,7 +211,7 @@
       // Re-send last known position every 1s so dashboard stays fresh
       resendInterval = setInterval(function() {
         if (lastPosition) sendLocation(lastPosition);
-      }, 1000);
+      }, 500);
     }
 
     function stopTracking() {
