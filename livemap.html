@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Map</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body, #map { width: 100%; height: 100%; }
+  </style>
+</head>
+<body>
+  <!-- Status bar inside map -->
+  <div id="statusBar" style="position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:1000;background:rgba(0,0,0,0.7);color:#fff;padding:6px 16px;border-radius:20px;font-size:13px;font-family:system-ui;pointer-events:none;display:none;"></div>
+
+  <div id="map"></div>
+  <script>
+    const map = L.map('map').setView([14.6, 121.0], 13);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors',
+      maxZoom: 19
+    }).addTo(map);
+
+    let marker = null;
+    let follow = true;
+    let lastPos = null;
+    const statusBar = document.getElementById('statusBar');
+
+    const STATUS_COLORS = { Moving: '#22c55e', Idle: '#f59e0b', Offline: '#ef4444', Waiting: '#64748b' };
+
+    function makeIcon(color, heading) {
+      const arrow = heading != null
+        ? `<div style="transform:rotate(${heading}deg);font-size:14px;line-height:1;">▲</div>`
+        : `<div style="font-size:16px;">📱</div>`;
+      return L.divIcon({
+        className: '',
+        html: `<div style="width:36px;height:36px;border-radius:50%;background:${color};border:3px solid white;box-shadow:0 2px 10px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;color:white;">${arrow}</div>`,
+        iconSize: [36, 36],
+        iconAnchor: [18, 18]
+      });
+    }
+
+    function haversine(lat1, lng1, lat2, lng2) {
+      const R = 6371000, dLat = (lat2-lat1)*Math.PI/180, dLng = (lng2-lng1)*Math.PI/180;
+      const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
+
+    function getStatus(pos, prev) {
+      if (!pos) return 'Waiting';
+      const ageSec = (Date.now() - pos.timestamp) / 1000;
+      if (ageSec > 60) return 'Offline';          // 60s threshold
+      if (pos.speed != null && pos.speed > 2) return 'Moving';
+      if (prev && haversine(prev.lat, prev.lng, pos.lat, pos.lng) > 10) return 'Moving';
+      return 'Idle';
+    }
+
+    async function poll() {
+      const deviceId = window.deviceId || 'phone-1';
+      try {
+        const res = await fetch(`https://employee-po-app.onrender.com/api/phone-location/${encodeURIComponent(deviceId)}/latest`);
+        if (res.status === 404) {
+          statusBar.style.display = 'block';
+          statusBar.textContent = '📡 Waiting for phone...';
+          return;
+        }
+        if (!res.ok) return;
+        const pos = await res.json();
+        const status = getStatus(pos, lastPos);
+        const color = STATUS_COLORS[status];
+
+        // Update status bar
+        const ageSec = Math.round((Date.now() - pos.timestamp) / 1000);
+        statusBar.style.display = 'block';
+        statusBar.textContent = `${status === 'Moving' ? '🟢' : status === 'Idle' ? '🟡' : status === 'Offline' ? '🔴' : '⚫'} ${status} · ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)} · ${ageSec}s ago`;
+
+        // Place/update marker
+        if (!marker) {
+          marker = L.marker([pos.lat, pos.lng], { icon: makeIcon(color, pos.heading) }).addTo(map);
+        } else {
+          marker.setLatLng([pos.lat, pos.lng]);
+          marker.setIcon(makeIcon(color, pos.heading));
+        }
+
+        if (follow) map.setView([pos.lat, pos.lng], map.getZoom() < 15 ? 15 : map.getZoom());
+
+        // Notify parent React component
+        try { window.parent.postMessage({ type: 'gps_update', pos, status }, '*'); } catch(e) {}
+        lastPos = pos;
+      } catch(e) {
+        statusBar.style.display = 'block';
+        statusBar.textContent = '⚠️ API error: ' + e.message;
+      }
+    }
+
+    // Listen for control messages from parent
+    window.addEventListener('message', (e) => {
+      if (!e.data) return;
+      if (e.data.type === 'set_follow') follow = e.data.value;
+      if (e.data.type === 'set_device') {
+        window.deviceId = e.data.value;
+        lastPos = null;
+        if (marker) { marker.remove(); marker = null; }
+      }
+    });
+
+    poll();
+    setInterval(poll, 500);
+  </script>
+</body>
+</html>
