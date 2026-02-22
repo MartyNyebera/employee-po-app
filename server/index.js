@@ -752,34 +752,37 @@ app.listen(PORT, () => {
 });
 
 // ----- HTTPS server for phone GPS tracker (geolocation requires HTTPS) -----
-const HTTPS_PORT = process.env.HTTPS_PORT || 3443;
-const certPath = path.join(__dirname, 'cert.pem');
-const keyPath = path.join(__dirname, 'cert.key');
-const publicDir = path.join(__dirname, '..', 'public');
+// Skip HTTPS server on Render (only run locally)
+if (!process.env.RENDER) {
+  const HTTPS_PORT = process.env.HTTPS_PORT || 3443;
+  const certPath = path.join(__dirname, 'cert.pem');
+  const keyPath = path.join(__dirname, 'cert.key');
+  const publicDir = path.join(__dirname, '..', 'public');
 
-if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
-  const httpsServer = https.createServer(
-    { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) },
-    (req, res) => {
-      // Serve static files from public/
-      let filePath = path.join(publicDir, req.url === '/' ? 'tracker.html' : req.url);
-      // Strip query string
-      filePath = filePath.split('?')[0];
-      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-        const ext = path.extname(filePath);
-        const mime = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json' }[ext] || 'text/plain';
-        res.writeHead(200, { 'Content-Type': mime });
-        fs.createReadStream(filePath).pipe(res);
-      } else {
-        // Forward API calls to the express app
-        app(req, res);
+  if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+    const httpsServer = https.createServer(
+      { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) },
+      (req, res) => {
+        // Serve static files from public/
+        let filePath = path.join(publicDir, req.url === '/' ? 'tracker.html' : req.url);
+        // Strip query string
+        filePath = filePath.split('?')[0];
+        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+          const ext = path.extname(filePath);
+          const mime = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json' }[ext] || 'text/plain';
+          res.writeHead(200, { 'Content-Type': mime });
+          fs.createReadStream(filePath).pipe(res);
+        } else {
+          // Forward API calls to the express app
+          app(req, res);
+        }
       }
-    }
-  );
-  httpsServer.listen(HTTPS_PORT, '0.0.0.0', () => {
-    console.log(`HTTPS server running at https://localhost:${HTTPS_PORT}`);
-    console.log(`Phone tracker: https://192.168.254.108:${HTTPS_PORT}/tracker.html`);
-  });
-} else {
-  console.log('No cert found. Run: node server/gen-cert.cjs');
+    );
+    httpsServer.listen(HTTPS_PORT, '0.0.0.0', () => {
+      console.log(`HTTPS server running at https://localhost:${HTTPS_PORT}`);
+      console.log(`Phone tracker: https://192.168.254.108:${HTTPS_PORT}/tracker.html`);
+    });
+  } else {
+    console.log('No cert found. Run: node server/gen-cert.cjs');
+  }
 }
