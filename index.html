@@ -1,27 +1,52 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GPS Tracker - Redirect</title>
-  <style>
-    body { font-family: system-ui; text-align: center; padding: 40px; }
-    .container { max-width: 400px; margin: 0 auto; }
-    .links { margin: 20px 0; }
-    .links a { display: block; margin: 10px 0; padding: 15px; background: #1e3a5f; color: white; text-decoration: none; border-radius: 8px; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>🚗 Kimoel GPS Tracking</h1>
-    <p>Choose an option:</p>
-    <div class="links">
-      <a href="tracker.html">📱 Phone GPS Tracker</a>
-      <a href="livemap.html">🗺️ Live Map View</a>
-    </div>
-    <p style="font-size: 12px; color: #666; margin-top: 30px;">
-      Phone tracker sends GPS to backend • Live map shows real-time location
-    </p>
-  </div>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="description" content="Kimoel Tracking System - Fleet tracking and purchase order management" />
+    
+    <!-- PWA Meta Tags -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Kimoel Tracking" />
+    
+    <!-- Manifest -->
+    <link rel="manifest" href="/manifest.json" />
+    
+    <!-- Icons -->
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/kimoel-logo.png" />
+    
+    <title>Kimoel Tracking System</title>
+
+    <!-- Apply theme before React mounts to prevent flash -->
+    <script>
+      (function() {
+        var theme = localStorage.getItem('theme') || 'light';
+        document.documentElement.classList.add(theme);
+      })();
+    </script>
+    
+    <script type="module" src="/src/app/index.tsx"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    
+    <!-- Service Worker Registration -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then((registration) => {
+              console.log('SW registered: ', registration);
+            })
+            .catch((registrationError) => {
+              console.log('SW registration failed: ', registrationError);
+            });
+        });
+      }
+    </script>
+  </body>
 </html>
