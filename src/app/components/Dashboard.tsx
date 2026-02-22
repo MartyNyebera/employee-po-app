@@ -65,7 +65,24 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
     }
     
     if (currentView === 'gps') {
-      return <SuperSimpleMap />;
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+          <div style={{ padding: '12px 16px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '14px', color: '#64748b' }}>📱 Open this on your phone to start tracking:</span>
+            <a 
+              href="https://martynyebera.github.io/employee-po-app/tracker.html" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              style={{ fontSize: '12px', padding: '6px 12px', background: '#2563eb', color: 'white', textDecoration: 'none', borderRadius: '6px' }}
+            >
+              Open Tracker
+            </a>
+          </div>
+          <div style={{ flex: 1 }}>
+            <SuperSimpleMap />
+          </div>
+        </div>
+      );
     }
 
     if (currentView === 'fleet') {

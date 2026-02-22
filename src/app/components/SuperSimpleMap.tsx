@@ -81,7 +81,7 @@ export function SuperSimpleMap() {
       <div style={{ position: 'relative', flex: 1 }}>
         <iframe
           ref={iframeRef}
-          src="/livemap.html"
+          src="https://martynyebera.github.io/employee-po-app/livemap.html"
           style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
           title="Live GPS Map"
         />
