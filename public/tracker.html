@@ -168,7 +168,7 @@
       el('accuracy').textContent = data.accuracy != null ? '±' + data.accuracy.toFixed(0) + 'm' : '—';
 
       try {
-        const res = await fetch('/api/phone-location', {
+        const res = await fetch('https://employee-po-app.onrender.com/api/phone-location', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(data)

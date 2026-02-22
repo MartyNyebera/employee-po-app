@@ -61,7 +61,7 @@
     async function poll() {
       const deviceId = window.deviceId || 'phone-1';
       try {
-        const res = await fetch(`/api/phone-location/${encodeURIComponent(deviceId)}/latest`);
+        const res = await fetch(`https://employee-po-app.onrender.com/api/phone-location/${encodeURIComponent(deviceId)}/latest`);
         if (res.status === 404) {
           statusBar.style.display = 'block';
           statusBar.textContent = '📡 Waiting for phone...';
