@@ -81,10 +81,12 @@
         if (!marker) {
           marker = L.marker([pos.lat, pos.lng], { icon: makeIcon(color, pos.heading) }).addTo(map);
         } else {
-          marker.setLatLng([pos.lat, pos.lng]);
-          marker.setIcon(makeIcon(color, pos.heading));
+          if (pos.lat && pos.lng) {
+            marker.setLatLng([pos.lat, pos.lng]);
+            // Always center on new location for better tracking
+            map.setView([pos.lat, pos.lng], 16);
+          }
         }
-
         if (follow) map.setView([pos.lat, pos.lng], map.getZoom() < 15 ? 15 : map.getZoom());
 
         // Notify parent React component
