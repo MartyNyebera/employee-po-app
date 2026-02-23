@@ -49,6 +49,30 @@
       return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     }
 
+    function animateMarker(startPos, endPos, duration) {
+      const startTime = Date.now();
+      
+      function animate() {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        
+        // Smooth easing function
+        const easeProgress = 1 - Math.pow(1 - progress, 3); // Ease-out cubic
+        
+        // Interpolate position
+        const lat = startPos.lat + (endPos.lat - startPos.lat) * easeProgress;
+        const lng = startPos.lng + (endPos.lng - startPos.lng) * easeProgress;
+        
+        marker.setLatLng([lat, lng]);
+        
+        if (progress < 1) {
+          requestAnimationFrame(animate);
+        }
+      }
+      
+      requestAnimationFrame(animate);
+    }
+
     function getStatus(pos, prev) {
       if (!pos) return 'Waiting';
       const ageSec = (Date.now() - pos.timestamp) / 1000;
@@ -77,12 +101,26 @@
         statusBar.style.display = 'block';
         statusBar.textContent = `${status === 'Offline' ? '📴 Disconnected' : '📡 Connected'} · ${status === 'Moving' ? '🟢' : status === 'Idle' ? '🟡' : status === 'Offline' ? '🔴' : status === 'Waiting' ? '⚫' : '⚫'} ${status} · ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)} · ${ageSec}s ago`;
 
-        // Place/update marker
+        // Place/update marker with smooth animation
         if (!marker) {
           marker = L.marker([pos.lat, pos.lng], { icon: makeIcon(color, pos.heading) }).addTo(map);
         } else {
-          marker.setLatLng([pos.lat, pos.lng]);
-          marker.setIcon(makeIcon(color, pos.heading));
+          if (pos.lat && pos.lng) {
+            // Smooth animation to new position
+            const currentPos = marker.getLatLng();
+            const targetPos = L.latLng(pos.lat, pos.lng);
+            
+            // Animate marker movement
+            animateMarker(currentPos, targetPos, 500); // 500ms animation
+            
+            // Smooth map pan
+            map.panTo(targetPos, {
+              animate: true,
+              duration: 0.5 // 500ms smooth pan
+            });
+            
+            marker.setIcon(makeIcon(color, pos.heading));
+          }
         }
 
         if (follow) map.setView([pos.lat, pos.lng], map.getZoom() < 15 ? 15 : map.getZoom());
