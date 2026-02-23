@@ -52,7 +52,7 @@
     function getStatus(pos, prev) {
       if (!pos) return 'Waiting';
       const ageSec = (Date.now() - pos.timestamp) / 1000;
-      if (ageSec > 60) return 'Offline';          // 60s threshold
+      if (ageSec > 10) return 'Offline';          // 10s threshold - faster disconnection detection
       if (pos.speed != null && pos.speed > 2) return 'Moving';
       if (prev && haversine(prev.lat, prev.lng, pos.lat, pos.lng) > 10) return 'Moving';
       return 'Idle';
@@ -75,7 +75,7 @@
         // Update status bar
         const ageSec = Math.round((Date.now() - pos.timestamp) / 1000);
         statusBar.style.display = 'block';
-        statusBar.textContent = `${status === 'Moving' ? '🟢' : status === 'Idle' ? '🟡' : status === 'Offline' ? '🔴' : '⚫'} ${status} · ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)} · ${ageSec}s ago`;
+        statusBar.textContent = `${status === 'Offline' ? '📴 Disconnected' : '📡 Connected'} · ${status === 'Moving' ? '🟢' : status === 'Idle' ? '🟡' : status === 'Offline' ? '🔴' : status === 'Waiting' ? '⚫' : '⚫'} ${status} · ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)} · ${ageSec}s ago`;
 
         // Place/update marker
         if (!marker) {
