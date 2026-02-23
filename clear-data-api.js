@@ -8,30 +8,55 @@ async function clearAllData() {
   
   console.log('🧹 Clearing ALL data from database...');
   
+  // Get auth token from localStorage
+  const auth = JSON.parse(localStorage.getItem('auth') || '{}');
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(auth.token ? { 'Authorization': `Bearer ${auth.token}` } : {})
+  };
+  
   try {
     // Clear in correct order (respecting foreign keys)
     console.log('Step 1: Clearing transactions...');
-    await fetch('http://192.168.254.107:3001/api/transactions', { method: 'DELETE' });
+    await fetch('http://192.168.254.107:3001/api/transactions', { 
+      method: 'DELETE',
+      headers: headers
+    });
     console.log('✅ Transactions cleared');
     
     console.log('Step 2: Clearing maintenance records...');
-    await fetch('http://192.168.254.107:3001/api/maintenance', { method: 'DELETE' });
+    await fetch('http://192.168.254.107:3001/api/maintenance', { 
+      method: 'DELETE',
+      headers: headers
+    });
     console.log('✅ Maintenance records cleared');
     
     console.log('Step 3: Clearing odometer logs...');
-    await fetch('http://192.168.254.107:3001/api/odometer-logs', { method: 'DELETE' });
+    await fetch('http://192.168.254.107:3001/api/odometer-logs', { 
+      method: 'DELETE',
+      headers: headers
+    });
     console.log('✅ Odometer logs cleared');
     
     console.log('Step 4: Clearing purchase orders...');
-    await fetch('http://192.168.254.107:3001/api/purchase-orders', { method: 'DELETE' });
+    await fetch('http://192.168.254.107:3001/api/purchase-orders', { 
+      method: 'DELETE',
+      headers: headers
+    });
     console.log('✅ Purchase orders cleared');
     
     console.log('Step 5: Clearing vehicles...');
-    await fetch('http://192.168.254.107:3001/api/vehicles', { method: 'DELETE' });
+    await fetch('http://192.168.254.107:3001/api/vehicles', { 
+      method: 'DELETE',
+      headers: headers
+    });
     console.log('✅ Vehicles cleared');
     
     console.log('Step 6: Clearing assets...');
-    await fetch('http://192.168.254.107:3001/api/assets', { method: 'DELETE' });
+    await fetch('http://192.168.254.107:3001/api/assets', { 
+      method: 'DELETE',
+      headers: headers
+    });
     console.log('✅ Assets cleared');
     
     console.log('🎉 ALL DATA CLEARED! Refresh the page to see completely empty dashboard.');
