@@ -220,6 +220,33 @@
         });
       }
 
+      // Detect when browser is minimized and keep sending last position
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+          showError('⚠️ Browser minimized - Using last known position.');
+          el('statusLabel').textContent = '⚠️ Browser Minimized (Using Cache)';
+          
+          // Increase resend frequency when minimized to compensate
+          if (resendInterval) {
+            clearInterval(resendInterval);
+            resendInterval = setInterval(function() {
+              if (lastPosition) sendLocation(lastPosition);
+            }, 200); // Send every 200ms when minimized
+          }
+        } else {
+          clearError();
+          el('statusLabel').textContent = '📱 Tracking Active (Screen Awake)';
+          
+          // Return to normal frequency when browser is visible
+          if (resendInterval) {
+            clearInterval(resendInterval);
+            resendInterval = setInterval(function() {
+              if (lastPosition) sendLocation(lastPosition);
+            }, 500);
+          }
+        }
+      });
+
       watchId = navigator.geolocation.watchPosition(
         function(pos) { lastPosition = pos; sendLocation(pos); },
         function(err) {
