@@ -179,6 +179,20 @@
         el('lastSent').textContent = '✓ Last sent: ' + new Date().toLocaleTimeString();
         el('lastSent').style.display = 'block';
         clearError();
+
+        // Update service worker with latest position
+        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+          navigator.serviceWorker.controller.postMessage({
+            type: 'UPDATE_POSITION',
+            position: {
+              lat: data.lat,
+              lng: data.lng,
+              accuracy: data.accuracy,
+              speed: data.speed,
+              heading: data.heading
+            }
+          });
+        }
       } catch(err) {
         showError('Send failed: ' + err.message);
       }
@@ -198,6 +212,20 @@
       el('stopBtn').style.display = 'flex';
       el('dot').classList.add('active');
       el('statusLabel').textContent = 'Tracking Active';
+
+      // Register service worker for background tracking
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw-gps.js').then(registration => {
+          console.log('GPS Service Worker registered');
+          
+          // Start background tracking
+          const deviceId = el('deviceId').value.trim() || 'phone-1';
+          registration.active.postMessage({
+            type: 'START_TRACKING',
+            deviceId: deviceId
+          });
+        });
+      }
 
       watchId = navigator.geolocation.watchPosition(
         function(pos) { lastPosition = pos; sendLocation(pos); },
@@ -223,12 +251,19 @@
         clearInterval(resendInterval);
         resendInterval = null;
       }
-      lastPosition = null;
+      
+      // Stop background tracking
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: 'STOP_TRACKING'
+        });
+      }
+      
       el('deviceId').disabled = false;
       el('startBtn').style.display = 'flex';
       el('stopBtn').style.display = 'none';
       el('dot').classList.remove('active');
-      el('statusLabel').textContent = 'Not Tracking';
+      el('statusLabel').textContent = 'Tracking Stopped';
     }
   </script>
 </body>
