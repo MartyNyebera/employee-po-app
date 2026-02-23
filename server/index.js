@@ -223,6 +223,16 @@ app.delete('/api/maintenance', requireAdmin, async (req, res) => {
   }
 });
 
+// DELETE /api/odometer-logs (admin only - clear all odometer logs)
+app.delete('/api/odometer-logs', requireAdmin, async (req, res) => {
+  try {
+    await query('DELETE FROM odometer_logs');
+    res.json({ message: 'All odometer logs cleared' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/fleet/seed', async (req, res) => {
   try { await seedFleet(); res.json({ message: 'Fleet seeded' }); }
   catch (err) { res.status(500).json({ error: err.message }); }

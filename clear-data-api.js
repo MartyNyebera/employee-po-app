@@ -25,6 +25,10 @@ async function clearAllData() {
     await fetch('/api/vehicles', { method: 'DELETE' });
     console.log('✅ Vehicles cleared');
     
+    // Clear odometer logs
+    await fetch('/api/odometer-logs', { method: 'DELETE' });
+    console.log('✅ Odometer logs cleared');
+    
     // Clear assets
     await fetch('/api/assets', { method: 'DELETE' });
     console.log('✅ Assets cleared');
