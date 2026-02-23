@@ -18,42 +18,42 @@ async function clearAllData() {
   try {
     // Clear in correct order (respecting foreign keys)
     console.log('Step 1: Clearing transactions...');
-    await fetch('http://192.168.254.107:3001/api/transactions', { 
+    await fetch('/api/transactions', { 
       method: 'DELETE',
       headers: headers
     });
     console.log('✅ Transactions cleared');
     
     console.log('Step 2: Clearing maintenance records...');
-    await fetch('http://192.168.254.107:3001/api/maintenance', { 
+    await fetch('/api/maintenance', { 
       method: 'DELETE',
       headers: headers
     });
     console.log('✅ Maintenance records cleared');
     
     console.log('Step 3: Clearing odometer logs...');
-    await fetch('http://192.168.254.107:3001/api/odometer-logs', { 
+    await fetch('/api/odometer-logs', { 
       method: 'DELETE',
       headers: headers
     });
     console.log('✅ Odometer logs cleared');
     
     console.log('Step 4: Clearing purchase orders...');
-    await fetch('http://192.168.254.107:3001/api/purchase-orders', { 
+    await fetch('/api/purchase-orders', { 
       method: 'DELETE',
       headers: headers
     });
     console.log('✅ Purchase orders cleared');
     
     console.log('Step 5: Clearing vehicles...');
-    await fetch('http://192.168.254.107:3001/api/vehicles', { 
+    await fetch('/api/vehicles', { 
       method: 'DELETE',
       headers: headers
     });
     console.log('✅ Vehicles cleared');
     
     console.log('Step 6: Clearing assets...');
-    await fetch('http://192.168.254.107:3001/api/assets', { 
+    await fetch('/api/assets', { 
       method: 'DELETE',
       headers: headers
     });
