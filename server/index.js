@@ -202,6 +202,27 @@ app.post('/api/fleet/vehicles/:id/maintenance', createMaintenance);
 app.get('/api/fleet/vehicles/:id/purchase-orders', getVehiclePOs);
 app.post('/api/fleet/vehicles/:id/purchase-orders', createVehiclePO);
 app.get('/api/fleet/pms-reminders', getPmsReminders);
+
+// DELETE /api/vehicles (admin only - clear all vehicles)
+app.delete('/api/vehicles', requireAdmin, async (req, res) => {
+  try {
+    await query('DELETE FROM vehicles');
+    res.json({ message: 'All vehicles cleared' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/maintenance (admin only - clear all maintenance records)
+app.delete('/api/maintenance', requireAdmin, async (req, res) => {
+  try {
+    await query('DELETE FROM maintenance_records');
+    res.json({ message: 'All maintenance records cleared' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/fleet/seed', async (req, res) => {
   try { await seedFleet(); res.json({ message: 'Fleet seeded' }); }
   catch (err) { res.status(500).json({ error: err.message }); }
@@ -350,6 +371,16 @@ app.get('/api/assets/:id', async (req, res) => {
       driver: row.driver || undefined,
       efficiencyScore: row.efficiency_score,
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/assets (admin only - clear all assets)
+app.delete('/api/assets', requireAdmin, async (req, res) => {
+  try {
+    await query('DELETE FROM assets');
+    res.json({ message: 'All assets cleared' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -529,6 +560,16 @@ app.post('/api/purchase-orders', requireAdmin, async (req, res) => {
   }
 });
 
+// DELETE /api/purchase-orders (admin only - clear all purchase orders)
+app.delete('/api/purchase-orders', requireAdmin, async (req, res) => {
+  try {
+    await query('DELETE FROM purchase_orders');
+    res.json({ message: 'All purchase orders cleared' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // PATCH /api/purchase-orders/:id (admin only)
 app.patch('/api/purchase-orders/:id', requireAdmin, async (req, res) => {
   try {
@@ -594,6 +635,16 @@ app.get('/api/transactions', async (req, res) => {
       receipt: row.receipt,
     }));
     res.json(transactions);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/transactions (admin only - clear all transactions)
+app.delete('/api/transactions', requireAdmin, async (req, res) => {
+  try {
+    await query('DELETE FROM transactions');
+    res.json({ message: 'All transactions cleared' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
