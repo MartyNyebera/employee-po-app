@@ -198,9 +198,6 @@
       }
     }
 
-    let lastPosition = null;
-    let resendInterval = null;
-
     function startTracking() {
       if (!navigator.geolocation) {
         showError('Geolocation not supported by this browser');
@@ -211,19 +208,15 @@
       el('startBtn').style.display = 'none';
       el('stopBtn').style.display = 'flex';
       el('dot').classList.add('active');
-      el('statusLabel').textContent = 'Tracking Active';
+      el('statusLabel').textContent = '📱 Tracking Active (Screen Awake)';
 
-      // Register service worker for background tracking
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/sw-gps.js').then(registration => {
-          console.log('GPS Service Worker registered');
-          
-          // Start background tracking
-          const deviceId = el('deviceId').value.trim() || 'phone-1';
-          registration.active.postMessage({
-            type: 'START_TRACKING',
-            deviceId: deviceId
-          });
+      // Keep screen awake to prevent GPS stopping
+      if ('wakeLock' in navigator) {
+        navigator.wakeLock.request('screen').then(lock => {
+          wakeLock = lock;
+          console.log('Screen wake lock activated');
+        }).catch(err => {
+          console.log('Wake lock failed:', err);
         });
       }
 
@@ -252,11 +245,11 @@
         resendInterval = null;
       }
       
-      // Stop background tracking
-      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-        navigator.serviceWorker.controller.postMessage({
-          type: 'STOP_TRACKING'
-        });
+      // Release wake lock
+      if (wakeLock) {
+        wakeLock.release();
+        wakeLock = null;
+        console.log('Screen wake lock released');
       }
       
       el('deviceId').disabled = false;
