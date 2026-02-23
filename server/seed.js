@@ -7,29 +7,9 @@ dotenv.config();
 
 const isRunDirectly = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
 
-const seedAssets = [
-  { id: 'TRK-001', name: 'Delivery Truck Alpha', type: 'truck', status: 'active', location: 'Manila Construction Site', lat: 14.5995, lng: 120.9842, engine_hours: 2847, idle_time: 45, fuel_level: 68, battery_voltage: 12.8, speed: 42, in_geofence: true, last_update: '2 min ago', driver: 'Juan Santos', efficiency_score: 87 },
-  { id: 'BCK-002', name: 'Backhoe Beta', type: 'backhoe', status: 'idle', location: 'Quezon City Warehouse', lat: 14.6760, lng: 121.0437, engine_hours: 1523, idle_time: 120, fuel_level: 34, battery_voltage: 11.9, speed: 0, in_geofence: true, last_update: '5 min ago', driver: 'Maria Cruz', efficiency_score: 62 },
-  { id: 'EXC-003', name: 'Excavator Gamma', type: 'excavator', status: 'active', location: 'BGC Tower Project', lat: 14.5547, lng: 121.0244, engine_hours: 3921, idle_time: 28, fuel_level: 89, battery_voltage: 13.2, speed: 15, in_geofence: true, last_update: '1 min ago', driver: 'Pedro Reyes', efficiency_score: 94 },
-  { id: 'TRK-004', name: 'Delivery Truck Delta', type: 'truck', status: 'offline', location: 'Main Depot', lat: 14.5832, lng: 120.9668, engine_hours: 4156, idle_time: 0, fuel_level: 12, battery_voltage: 10.8, speed: 0, in_geofence: false, last_update: '2 hours ago', driver: null, efficiency_score: 71 },
-  { id: 'BCK-005', name: 'Backhoe Epsilon', type: 'backhoe', status: 'active', location: 'Makati Office Complex', lat: 14.5547, lng: 121.0244, engine_hours: 892, idle_time: 15, fuel_level: 91, battery_voltage: 12.6, speed: 8, in_geofence: true, last_update: '1 min ago', driver: 'Rosa Martinez', efficiency_score: 91 },
-];
-
-const seedPOs = [
-  { id: 'PO-001', po_number: 'PO-2026-0234', client: 'ABC Construction Corp.', description: 'Site excavation and foundation work', amount: 850000, status: 'in-progress', created_date: '2026-02-01', delivery_date: '2026-02-28', assigned_assets: ['EXC-003', 'BCK-002'] },
-  { id: 'PO-002', po_number: 'PO-2026-0235', client: 'Metro Development Inc.', description: 'Heavy equipment rental for 3 months', amount: 1250000, status: 'approved', created_date: '2026-02-05', delivery_date: '2026-05-05', assigned_assets: ['TRK-001', 'BCK-005'] },
-  { id: 'PO-003', po_number: 'PO-2026-0236', client: 'BuildRight Solutions', description: 'Material delivery and excavation support', amount: 425000, status: 'pending', created_date: '2026-02-10', delivery_date: '2026-03-15', assigned_assets: ['TRK-004'] },
-  { id: 'PO-004', po_number: 'PO-2026-0237', client: 'Skyline Realty Group', description: 'Tower foundation excavation', amount: 2100000, status: 'completed', created_date: '2026-01-15', delivery_date: '2026-02-10', assigned_assets: ['EXC-003', 'BCK-002', 'TRK-001'] },
-];
-
-const seedTransactions = [
-  { id: 'TXN-001', po_number: 'PO-2026-0234', type: 'fuel', description: 'Diesel refill - 150L', amount: 9750, asset_id: 'EXC-003', date: '2026-02-11' },
-  { id: 'TXN-002', po_number: 'PO-2026-0235', type: 'maintenance', description: 'Oil change and filter replacement', amount: 4500, asset_id: 'TRK-001', date: '2026-02-10' },
-  { id: 'TXN-003', po_number: 'PO-2026-0234', type: 'parts', description: 'Hydraulic hose replacement', amount: 12800, asset_id: 'BCK-002', date: '2026-02-09' },
-  { id: 'TXN-004', po_number: 'PO-2026-0237', type: 'fuel', description: 'Diesel refill - 200L', amount: 13000, asset_id: 'TRK-001', date: '2026-02-08' },
-  { id: 'TXN-005', po_number: 'PO-2026-0235', type: 'maintenance', description: 'Tire replacement (set of 4)', amount: 28000, asset_id: 'BCK-005', date: '2026-02-07' },
-  { id: 'TXN-006', po_number: 'PO-2026-0234', type: 'fuel', description: 'Diesel refill - 120L', amount: 7800, asset_id: 'BCK-002', date: '2026-02-12' },
-];
+const seedAssets = []; // Empty - ready for your real data
+const seedPOs = []; // Empty - ready for your real data  
+const seedTransactions = []; // Empty - ready for your real data
 
 async function seed() {
   console.log('Seeding database...');
