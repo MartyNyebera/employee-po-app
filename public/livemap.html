@@ -52,7 +52,7 @@
     function getStatus(pos, prev) {
       if (!pos) return 'Waiting';
       const ageSec = (Date.now() - pos.timestamp) / 1000;
-      if (ageSec > 10) return 'Offline';          // 10s threshold - faster disconnection detection
+      if (ageSec > 3) return 'Offline';           // 3s threshold - near-instant detection
       if (pos.speed != null && pos.speed > 2) return 'Moving';
       if (prev && haversine(prev.lat, prev.lng, pos.lat, pos.lng) > 10) return 'Moving';
       return 'Idle';
