@@ -876,25 +876,57 @@ if (process.env.NODE_ENV === 'production') {
   console.log('Current working directory:', process.cwd());
   console.log('Server directory:', __dirname);
   
-  const distPath = path.resolve(__dirname, '..', 'dist');
-  console.log('Serving static files from:', distPath);
-  console.log('Dist folder exists:', fs.existsSync(distPath));
-
-  // List files in dist folder for debugging
-  if (fs.existsSync(distPath)) {
-    const files = fs.readdirSync(distPath);
-    console.log('Files in dist:', files.slice(0, 10)); // Show first 10 files
+  // Try multiple possible paths for dist folder
+  const possiblePaths = [
+    path.resolve(__dirname, '..', 'dist'),
+    path.resolve(process.cwd(), 'dist'),
+    path.join(__dirname, '..', 'dist')
+  ];
+  
+  let distPath = null;
+  for (const testPath of possiblePaths) {
+    console.log(`Testing path: ${testPath}`);
+    if (fs.existsSync(testPath)) {
+      distPath = testPath;
+      console.log(`Found dist folder at: ${distPath}`);
+      break;
+    }
   }
+  
+  if (!distPath) {
+    console.error('ERROR: Could not find dist folder!');
+    console.error('Searched paths:', possiblePaths);
+  } else {
+    console.log('Serving static files from:', distPath);
+    
+    // List files in dist folder for debugging
+    try {
+      const files = fs.readdirSync(distPath);
+      console.log('Files in dist:', files.slice(0, 10)); // Show first 10 files
+      
+      // Check if index.html exists
+      const indexPath = path.join(distPath, 'index.html');
+      console.log('Index.html exists:', fs.existsSync(indexPath));
+    } catch (err) {
+      console.error('Error reading dist folder:', err.message);
+    }
 
-  // Serve static files
-  app.use(express.static(distPath));
+    // Serve static files
+    app.use(express.static(distPath));
 
-  // SPA fallback - must come after all API routes
-  app.get(/^(?!\/api).*$/, (req, res) => {
-    const indexPath = path.resolve(__dirname, '..', 'dist', 'index.html');
-    console.log(`SPA fallback: ${req.path} -> ${indexPath}`);
-    res.sendFile(indexPath);
-  });
+    // SPA fallback - must come after all API routes
+    app.get(/^(?!\/api).*$/, (req, res) => {
+      const indexPath = path.join(distPath, 'index.html');
+      console.log(`SPA fallback: ${req.path} -> ${indexPath}`);
+      
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        console.error(`Index.html not found at: ${indexPath}`);
+        res.status(404).json({ error: 'Frontend not built' });
+      }
+    });
+  }
 }
 
 const httpServer = app.listen(PORT, '0.0.0.0', () => {

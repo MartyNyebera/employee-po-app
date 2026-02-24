@@ -1,8 +1,15 @@
 # Render Deployment Configuration
 
 ## Build Settings
-- **Build Command**: `npm install`
-- **Start Command**: `npm run build && npm run init && npm run server`
+- **Build Command**: `npm ci && npm run build`
+- **Start Command**: `npm run init && npm run server`
+
+## Build Process
+1. `npm ci` - Install dependencies
+2. `npm run build` - Build Vite frontend to /dist
+3. `npm run postbuild` - Verify frontend build
+4. `npm run init` - Initialize database
+5. `npm run server` - Start server
 
 ## Environment Variables
 ```
