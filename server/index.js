@@ -19,18 +19,10 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-// Serve static frontend files
-const distPath = path.resolve(__dirname, '..', 'dist');
-console.log('Serving static files from:', distPath);
-console.log('Dist folder exists:', fs.existsSync(distPath));
-
-// List files in dist folder for debugging
-if (fs.existsSync(distPath)) {
-  const files = fs.readdirSync(distPath);
-  console.log('Files in dist:', files);
-}
-
-app.use(express.static(distPath));
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
 // Test DB connection on startup
 testConnection().catch(() => {
@@ -877,22 +869,33 @@ app.post('/api/init', async (req, res) => {
   }
 });
 
-// Root route - serve index.html
-app.get('/', (req, res) => {
-  const indexPath = path.resolve(__dirname, '..', 'dist', 'index.html');
-  console.log('Serving index.html from:', indexPath);
-  res.sendFile(indexPath);
-});
 
-// Catch-all route for SPA (except API routes)
-app.use((req, res, next) => {
-  if (req.path.startsWith('/api')) {
-    return next();
+// ----- Static Frontend Serving (Production Only) -----
+if (process.env.NODE_ENV === 'production') {
+  // Log current directory and paths for debugging
+  console.log('Current working directory:', process.cwd());
+  console.log('Server directory:', __dirname);
+  
+  const distPath = path.resolve(__dirname, '..', 'dist');
+  console.log('Serving static files from:', distPath);
+  console.log('Dist folder exists:', fs.existsSync(distPath));
+
+  // List files in dist folder for debugging
+  if (fs.existsSync(distPath)) {
+    const files = fs.readdirSync(distPath);
+    console.log('Files in dist:', files.slice(0, 10)); // Show first 10 files
   }
-  const indexPath = path.resolve(__dirname, '..', 'dist', 'index.html');
-  console.log('SPA fallback serving:', indexPath);
-  res.sendFile(indexPath);
-});
+
+  // Serve static files
+  app.use(express.static(distPath));
+
+  // SPA fallback - must come after all API routes
+  app.get(/^(?!\/api).*$/, (req, res) => {
+    const indexPath = path.resolve(__dirname, '..', 'dist', 'index.html');
+    console.log(`SPA fallback: ${req.path} -> ${indexPath}`);
+    res.sendFile(indexPath);
+  });
+}
 
 const httpServer = app.listen(PORT, '0.0.0.0', () => {
   console.log(`API server running at http://0.0.0.0:${PORT}`);
