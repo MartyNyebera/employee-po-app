@@ -868,8 +868,10 @@ app.post('/api/init', async (req, res) => {
 });
 
 // SPA fallback - serve index.html for all non-API routes
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
+app.get(/.*/, (req, res) => {
+  if (!req.path.startsWith('/api')) {
+    res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  }
 });
 
 const httpServer = app.listen(PORT, '0.0.0.0', () => {
