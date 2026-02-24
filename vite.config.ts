@@ -8,7 +8,11 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 3000,
     proxy: {
-      '/api': 'http://192.168.254.107:3001',
+      '/api': 'http://localhost:3001',
     },
+  },
+  build: {
+    outDir: 'dist',
+    assetsDir: 'assets',
   },
 })
