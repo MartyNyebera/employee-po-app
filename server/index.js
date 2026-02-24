@@ -876,6 +876,17 @@ if (process.env.NODE_ENV === 'production') {
   console.log('Current working directory:', process.cwd());
   console.log('Server directory:', __dirname);
   
+  // Check if build was run during deployment
+  console.log('=== CHECKING IF FRONTEND WAS BUILT DURING DEPLOYMENT ===');
+  const buildMarker = path.join(process.cwd(), 'dist', 'index.html');
+  if (fs.existsSync(buildMarker)) {
+    console.log('✅ Frontend build found - build command was executed');
+  } else {
+    console.error('❌ Frontend build NOT found - build command was NOT executed');
+    console.error('🔧 FIX: Update Render dashboard Build Command to:');
+    console.error('   Build Command: npm install && npm run build');
+  }
+  
   // Search all possible frontend directories
   const rootDir = process.cwd();
   const possiblePaths = [
