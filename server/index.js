@@ -879,12 +879,28 @@ if (process.env.NODE_ENV === 'production') {
   // Check if build was run during deployment
   console.log('=== CHECKING IF FRONTEND WAS BUILT DURING DEPLOYMENT ===');
   const buildMarker = path.join(process.cwd(), 'dist', 'index.html');
+  console.log('Looking for build marker at:', buildMarker);
+  
   if (fs.existsSync(buildMarker)) {
     console.log('✅ Frontend build found - build command was executed');
+    // Show when it was built
+    const stats = fs.statSync(buildMarker);
+    console.log('Build timestamp:', stats.mtime);
   } else {
     console.error('❌ Frontend build NOT found - build command was NOT executed');
-    console.error('🔧 FIX: Update Render dashboard Build Command to:');
-    console.error('   Build Command: npm install && npm run build');
+    console.error('🔧 POSSIBLE FIXES:');
+    console.error('1. Update Render dashboard Build Command to: npm install && npm run build');
+    console.error('2. Check if vite command is available during build');
+    console.error('3. Check for build errors in Render logs');
+    
+    // List what's in the current directory
+    console.log('Current directory contents:');
+    try {
+      const files = fs.readdirSync(process.cwd());
+      console.log(files.slice(0, 20)); // Show first 20 files
+    } catch (err) {
+      console.error('Cannot list directory:', err.message);
+    }
   }
   
   // Search all possible frontend directories
