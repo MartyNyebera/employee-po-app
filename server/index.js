@@ -21,7 +21,7 @@ app.use(express.json());
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.status(200).send('ok');
 });
 
 // Test DB connection on startup
@@ -872,57 +872,71 @@ app.post('/api/init', async (req, res) => {
 
 // ----- Static Frontend Serving (Production Only) -----
 if (process.env.NODE_ENV === 'production') {
-  // Log current directory and paths for debugging
+  console.log('=== FRONTEND STATIC SERVING SETUP ===');
   console.log('Current working directory:', process.cwd());
   console.log('Server directory:', __dirname);
   
-  // Try multiple possible paths for dist folder
+  // Search all possible frontend directories
+  const rootDir = process.cwd();
   const possiblePaths = [
-    path.resolve(__dirname, '..', 'dist'),
-    path.resolve(process.cwd(), 'dist'),
-    path.join(__dirname, '..', 'dist')
+    path.join(rootDir, 'client', 'dist'),
+    path.join(rootDir, 'frontend', 'dist'),
+    path.join(rootDir, 'dist'),
+    path.join(rootDir, 'client', 'build'),
+    path.join(rootDir, 'frontend', 'build'),
+    path.join(rootDir, 'build')
   ];
   
-  let distPath = null;
+  let frontendDir = null;
+  console.log('Searching for frontend build directory...');
+  
   for (const testPath of possiblePaths) {
-    console.log(`Testing path: ${testPath}`);
+    console.log(`Testing: ${testPath}`);
     if (fs.existsSync(testPath)) {
-      distPath = testPath;
-      console.log(`Found dist folder at: ${distPath}`);
-      break;
+      const indexPath = path.join(testPath, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        frontendDir = testPath;
+        console.log(`✅ Found frontend directory: ${frontendDir}`);
+        break;
+      } else {
+        console.log(`  Directory exists but no index.html`);
+      }
     }
   }
   
-  if (!distPath) {
-    console.error('ERROR: Could not find dist folder!');
+  if (!frontendDir) {
+    console.error('❌ ERROR: Could not find frontend build directory with index.html!');
     console.error('Searched paths:', possiblePaths);
   } else {
-    console.log('Serving static files from:', distPath);
+    console.log(`📁 Chosen frontend directory: ${frontendDir}`);
     
-    // List files in dist folder for debugging
+    // Verify index.html and list files
+    const indexPath = path.join(frontendDir, 'index.html');
+    console.log(`📄 Index.html exists: ${fs.existsSync(indexPath)}`);
+    
     try {
-      const files = fs.readdirSync(distPath);
-      console.log('Files in dist:', files.slice(0, 10)); // Show first 10 files
-      
-      // Check if index.html exists
-      const indexPath = path.join(distPath, 'index.html');
-      console.log('Index.html exists:', fs.existsSync(indexPath));
+      const files = fs.readdirSync(frontendDir);
+      console.log(`📋 Files in frontend directory:`, files.slice(0, 10));
     } catch (err) {
-      console.error('Error reading dist folder:', err.message);
+      console.error('Error reading frontend directory:', err.message);
     }
 
     // Serve static files
-    app.use(express.static(distPath));
+    app.use(express.static(frontendDir));
 
     // SPA fallback - must come after all API routes
-    app.get(/^(?!\/api).*$/, (req, res) => {
-      const indexPath = path.join(distPath, 'index.html');
-      console.log(`SPA fallback: ${req.path} -> ${indexPath}`);
+    app.get(/.*/, (req, res, next) => {
+      // Skip API routes
+      if (req.path.startsWith('/api')) {
+        return next();
+      }
+      
+      console.log(`🔄 SPA fallback: ${req.path} -> ${indexPath}`);
       
       if (fs.existsSync(indexPath)) {
         res.sendFile(indexPath);
       } else {
-        console.error(`Index.html not found at: ${indexPath}`);
+        console.error(`❌ Index.html not found at: ${indexPath}`);
         res.status(404).json({ error: 'Frontend not built' });
       }
     });
@@ -931,6 +945,7 @@ if (process.env.NODE_ENV === 'production') {
 
 const httpServer = app.listen(PORT, '0.0.0.0', () => {
   console.log(`API server running at http://0.0.0.0:${PORT}`);
+  console.log(`Using PORT from environment: ${PORT}`);
 });
 
 // ----- HTTPS server for phone GPS tracker (geolocation requires HTTPS) -----
