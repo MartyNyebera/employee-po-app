@@ -1,8 +1,16 @@
 # Render Deployment Configuration
 
 ## Build Settings
-- **Build Command**: `npm ci && npm run build`
+- **Build Command**: `npm install && npm run build`
 - **Start Command**: `npm run init && npm run server`
+
+## IMPORTANT: Render Dashboard Configuration
+In your Render Web Service dashboard, ensure:
+- **Build Command**: `npm install && npm run build`
+- **Start Command**: `npm run init && npm run server`
+- **Runtime**: Node
+
+If Build Command shows only `npm install`, update it to include `&& npm run build`
 
 ## Build Process
 1. `npm ci` - Install dependencies

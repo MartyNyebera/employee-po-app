@@ -907,6 +907,15 @@ if (process.env.NODE_ENV === 'production') {
   if (!frontendDir) {
     console.error('❌ ERROR: Could not find frontend build directory with index.html!');
     console.error('Searched paths:', possiblePaths);
+    
+    // Add a simple fallback route for development/debugging
+    app.get('/', (req, res) => {
+      res.status(404).json({ 
+        error: 'Frontend not built',
+        message: 'Run "npm run build" to create the frontend',
+        searchedPaths: possiblePaths
+      });
+    });
   } else {
     console.log(`📁 Chosen frontend directory: ${frontendDir}`);
     
