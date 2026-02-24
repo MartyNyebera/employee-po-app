@@ -876,15 +876,6 @@ app.get('/', (req, res) => {
   res.sendFile(indexPath);
 });
 
-// SPA fallback - serve index.html for all non-API routes
-app.get('*', (req, res) => {
-  if (!req.path.startsWith('/api')) {
-    const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
-    console.log('Serving index.html from:', indexPath);
-    res.sendFile(indexPath);
-  }
-});
-
 const httpServer = app.listen(PORT, '0.0.0.0', () => {
   console.log(`API server running at http://0.0.0.0:${PORT}`);
 });
