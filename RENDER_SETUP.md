@@ -38,7 +38,9 @@ ENABLE_HTTPS=false
 
 ### After Fix:
 - Build: `npm install && npm run build`
-- Result: Frontend built to `/dist` → React app loads
+- Result: Vite builds frontend to `/dist` → React app loads
+- Verification: postbuild checks all possible paths for index.html
+- Failure: Build fails if no frontend found (prevents broken deployment)
 
 ## 🎯 Expected Results
 
