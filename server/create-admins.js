@@ -11,6 +11,18 @@ async function createAdmins() {
   console.log('- SUPER_ADMIN_OWNER_EMAIL:', !!process.env.SUPER_ADMIN_OWNER_EMAIL);
   console.log('- SUPER_ADMIN_DEVELOPER_EMAIL:', !!process.env.SUPER_ADMIN_DEVELOPER_EMAIL);
   console.log('- SUPER_ADMIN_EMAILS:', !!process.env.SUPER_ADMIN_EMAILS);
+  console.log('- SUPER_ADMIN_OWNER_PASSWORD:', !!process.env.SUPER_ADMIN_OWNER_PASSWORD);
+  console.log('- SUPER_ADMIN_DEVELOPER_PASSWORD:', !!process.env.SUPER_ADMIN_DEVELOPER_PASSWORD);
+
+  // Critical validation for production
+  if (process.env.NODE_ENV === 'production') {
+    const hasAdminEmail = !!(process.env.SUPER_ADMIN_OWNER_EMAIL || process.env.SUPER_ADMIN_DEVELOPER_EMAIL);
+    if (!hasAdminEmail) {
+      console.error('❌ CRITICAL: No super admin email configured in production!');
+      console.error('Please set SUPER_ADMIN_OWNER_EMAIL or SUPER_ADMIN_DEVELOPER_EMAIL in Render environment variables');
+      // Don't exit - let the service start but log the error clearly
+    }
+  }
 
   try {
     // Get admin emails from environment

@@ -5,6 +5,9 @@ import { query } from './db.js';
 const JWT_SECRET = process.env.JWT_SECRET || 'fleet-manager-secret-change-in-production';
 const SALT_ROUNDS = 10;
 
+// Log JWT_SECRET presence on startup (safe - no value logged)
+console.log(`🔐 JWT_SECRET present: ${!!process.env.JWT_SECRET}`);
+
 export async function hashPassword(password) {
   return bcrypt.hash(password, SALT_ROUNDS);
 }

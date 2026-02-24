@@ -18,6 +18,7 @@ const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -32,11 +33,24 @@ app.get('/health/env', (req, res) => {
     SUPER_ADMIN_OWNER_EMAIL: !!process.env.SUPER_ADMIN_OWNER_EMAIL,
     SUPER_ADMIN_DEVELOPER_EMAIL: !!process.env.SUPER_ADMIN_DEVELOPER_EMAIL,
     SUPER_ADMIN_EMAILS: !!process.env.SUPER_ADMIN_EMAILS,
+    SUPER_ADMIN_OWNER_PASSWORD: !!process.env.SUPER_ADMIN_OWNER_PASSWORD,
+    SUPER_ADMIN_DEVELOPER_PASSWORD: !!process.env.SUPER_ADMIN_DEVELOPER_PASSWORD,
+    JWT_SECRET: !!process.env.JWT_SECRET,
+    SESSION_SECRET: !!process.env.SESSION_SECRET,
     SMTP_HOST: !!process.env.SMTP_HOST,
     SMTP_PORT: !!process.env.SMTP_PORT,
     SMTP_USER: !!process.env.SMTP_USER,
     SMTP_PASS: !!process.env.SMTP_PASS
   };
+  
+  // Check for critical missing vars
+  const criticalMissing = [];
+  if (!envStatus.DATABASE_URL) criticalMissing.push('DATABASE_URL');
+  if (!envStatus.SUPER_ADMIN_OWNER_EMAIL && !envStatus.SUPER_ADMIN_DEVELOPER_EMAIL) criticalMissing.push('SUPER_ADMIN_EMAIL');
+  
+  if (criticalMissing.length > 0) {
+    console.error('❌ CRITICAL: Missing environment variables:', criticalMissing);
+  }
   
   res.json(envStatus);
 });
@@ -77,6 +91,45 @@ app.post('/health/test-email', async (req, res) => {
       error: error.message,
       message: 'Failed to send test email'
     });
+  }
+});
+
+// Protected auth debug endpoint (admin only)
+app.get('/health/auth-debug', async (req, res) => {
+  try {
+    const { query } = await import('./db.js');
+    const email = req.query.email;
+    
+    if (!email) {
+      return res.status(400).json({ error: 'Email parameter required' });
+    }
+    
+    const result = await query(
+      'SELECT email, name, role, is_super_admin, created_at FROM users WHERE email = $1',
+      [email.toLowerCase()]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.json({
+        email: email.toLowerCase(),
+        exists: false,
+        message: 'User not found in database'
+      });
+    }
+    
+    const user = result.rows[0];
+    res.json({
+      email: user.email,
+      exists: true,
+      name: user.name,
+      role: user.role,
+      is_super_admin: user.is_super_admin,
+      created_at: user.created_at,
+      can_login: true // Super admins can always login
+    });
+  } catch (error) {
+    console.error('Auth debug endpoint failed:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -213,17 +266,29 @@ app.post('/api/auth/register', async (req, res) => {
 // POST /api/auth/login
 app.post('/api/auth/login', async (req, res) => {
   try {
+    // Safe request logging
+    console.log(`🔑 Login attempt: ${req.method} ${req.path}`);
+    console.log(`� Content-Type: ${req.headers['content-type'] || 'missing'}`);
+    console.log(`📧 Email present: ${!!req.body?.email}`);
+    
     const { email, password } = req.body;
-    console.log(`🔑 Login attempt for email: ${email}`);
     
     if (!email || !password) {
-      console.log('❌ Missing email or password');
-      return res.status(400).json({ error: 'Email and password are required' });
+      console.log('❌ MISSING_FIELDS');
+      return res.status(400).json({ 
+        error: 'Email and password are required',
+        reason: 'MISSING_FIELDS'
+      });
     }
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(String(email).trim())) {
-      return res.status(401).json({ error: 'Invalid email format', code: 'INVALID_EMAIL' });
+      console.log('❌ INVALID_EMAIL_FORMAT');
+      return res.status(401).json({ 
+        error: 'Invalid email format',
+        reason: 'INVALID_EMAIL_FORMAT'
+      });
     }
+    
     const result = await query(
       'SELECT id, email, password_hash, name, role, is_super_admin FROM users WHERE email = $1',
       [email.toLowerCase()]
@@ -233,8 +298,11 @@ app.post('/api/auth/login', async (req, res) => {
     
     const row = result.rows[0];
     if (!row) {
-      console.log(`❌ Account not found for email: ${email.toLowerCase()}`);
-      return res.status(401).json({ error: 'Account not found', code: 'ACCOUNT_NOT_FOUND' });
+      console.log(`❌ USER_NOT_FOUND: ${email.toLowerCase()}`);
+      return res.status(401).json({ 
+        error: 'Account not found',
+        reason: 'USER_NOT_FOUND'
+      });
     }
     
     console.log(`✅ User found: ${row.email}, role: ${row.role}, is_super_admin: ${row.is_super_admin}`);
@@ -243,8 +311,11 @@ app.post('/api/auth/login', async (req, res) => {
     console.log(`🔐 Password comparison result: ${passwordMatch}`);
     
     if (!passwordMatch) {
-      console.log(`❌ Password incorrect for email: ${email.toLowerCase()}`);
-      return res.status(401).json({ error: 'Password incorrect', code: 'PASSWORD_INCORRECT' });
+      console.log(`❌ WRONG_PASSWORD: ${email.toLowerCase()}`);
+      return res.status(401).json({ 
+        error: 'Password incorrect',
+        reason: 'WRONG_PASSWORD'
+      });
     }
     
     console.log(`✅ Login successful for: ${email.toLowerCase()}`);
