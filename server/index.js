@@ -20,8 +20,16 @@ app.use(cors());
 app.use(express.json());
 
 // Serve static frontend files
-const distPath = path.join(__dirname, '..', 'dist');
+const distPath = path.resolve(__dirname, '..', 'dist');
 console.log('Serving static files from:', distPath);
+console.log('Dist folder exists:', fs.existsSync(distPath));
+
+// List files in dist folder for debugging
+if (fs.existsSync(distPath)) {
+  const files = fs.readdirSync(distPath);
+  console.log('Files in dist:', files);
+}
+
 app.use(express.static(distPath));
 
 // Test DB connection on startup
@@ -871,8 +879,18 @@ app.post('/api/init', async (req, res) => {
 
 // Root route - serve index.html
 app.get('/', (req, res) => {
-  const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
+  const indexPath = path.resolve(__dirname, '..', 'dist', 'index.html');
   console.log('Serving index.html from:', indexPath);
+  res.sendFile(indexPath);
+});
+
+// Catch-all route for SPA (except API routes)
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    return next();
+  }
+  const indexPath = path.resolve(__dirname, '..', 'dist', 'index.html');
+  console.log('SPA fallback serving:', indexPath);
   res.sendFile(indexPath);
 });
 
