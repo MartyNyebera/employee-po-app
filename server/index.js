@@ -966,38 +966,26 @@ if (process.env.NODE_ENV === 'production') {
       console.error('Error reading frontend directory:', err.message);
     }
 
-    // Serve static files with logging
-    app.use(express.static(frontendDir, {
-      setHeaders: (res, path) => {
-        if (path.endsWith('.js')) {
-          res.setHeader('Content-Type', 'application/javascript');
-        }
-      }
-    }));
+    // Serve static files - FIXED VERSION
+    const distDir = path.join(process.cwd(), "dist");
+    console.log(`📁 Serving static files from: ${distDir}`);
     
-    // Log static file requests
-    app.use((req, res, next) => {
-      if (req.path.startsWith('/assets/') || req.path.endsWith('.js') || req.path.endsWith('.css')) {
-        console.log(`📦 Static request: ${req.method} ${req.path}`);
-      }
+    // Main static serving
+    app.use(express.static(distDir));
+    
+    // Explicit assets serving (extra safety)
+    app.use("/assets", express.static(path.join(distDir, "assets")));
+    
+    // Debug log for asset requests
+    app.use("/assets", (req, res, next) => {
+      console.log(`📦 Asset request: ${req.method} ${req.path}`);
       next();
     });
 
-    // SPA fallback - must come after all API routes
-    app.get(/.*/, (req, res, next) => {
-      // Skip API routes
-      if (req.path.startsWith('/api')) {
-        return next();
-      }
-      
-      console.log(`🔄 SPA fallback: ${req.path} -> ${indexPath}`);
-      
-      if (fs.existsSync(indexPath)) {
-        res.sendFile(indexPath);
-      } else {
-        console.error(`❌ Index.html not found at: ${indexPath}`);
-        res.status(404).json({ error: 'Frontend not built' });
-      }
+    // SPA fallback - must be LAST
+    app.get(/.*/, (req, res) => {
+      console.log(`🔄 SPA fallback: ${req.path} -> index.html`);
+      res.sendFile(path.join(distDir, "index.html"));
     });
   }
 }
