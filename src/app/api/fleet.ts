@@ -89,6 +89,8 @@ export const createVehicle = (data: Partial<Vehicle>) =>
   fleetFetch<Vehicle>('/vehicles', { method: 'POST', body: JSON.stringify(data) });
 export const updateVehicle = (id: string, data: Partial<Vehicle>) =>
   fleetFetch<Vehicle>(`/vehicles/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+export const deleteVehicle = (id: string) =>
+  fleetFetch(`/vehicles/${id}`, { method: 'DELETE' });
 
 // Odometer
 export const fetchOdometerLogs = (vehicleId: string) =>

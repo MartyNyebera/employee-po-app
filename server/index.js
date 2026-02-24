@@ -10,7 +10,7 @@ import { seed } from './seed.js';
 import { hashPassword, comparePassword, signToken, requireAuth, requireAdmin, requireSuperAdmin } from './auth.js';
 import { sendEmailToAdminsNewRequest, sendEmailToApplicant } from './email.js';
 import { getDevices, getDevice, createDevice, updateDevice, deleteDevice, getPositions, getPositionHistory, getGeofences, checkConnection, getTraccarWsUrl, authHeader, TRACCAR_URL } from './traccar.js';
-import { getVehicles, getVehicle, createVehicle, updateVehicle, getOdometerLogs, logOdometer, getMaintenance, createMaintenance, getVehiclePOs, createVehiclePO, getPmsReminders } from './fleet.js';
+import { getVehicles, getVehicle, createVehicle, updateVehicle, deleteVehicle, getOdometerLogs, logOdometer, getMaintenance, createMaintenance, getVehiclePOs, createVehiclePO, getPmsReminders } from './fleet.js';
 import { seedFleet } from './seed-fleet.js';
 
 const app = express();
@@ -195,6 +195,7 @@ app.get('/api/fleet/vehicles', getVehicles);
 app.get('/api/fleet/vehicles/:id', getVehicle);
 app.post('/api/fleet/vehicles', createVehicle);
 app.put('/api/fleet/vehicles/:id', updateVehicle);
+app.delete('/api/fleet/vehicles/:id', deleteVehicle);
 app.get('/api/fleet/vehicles/:id/odometer-logs', getOdometerLogs);
 app.post('/api/fleet/vehicles/:id/odometer', logOdometer);
 app.get('/api/fleet/vehicles/:id/maintenance', getMaintenance);
@@ -234,9 +235,30 @@ app.delete('/api/odometer-logs', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/fleet/seed', async (req, res) => {
+  if (process.env.NODE_ENV !== 'development' || process.env.ALLOW_SEED !== 'true') {
+    return res.status(403).json({ error: 'Seeding disabled' });
+  }
   try { await seedFleet(); res.json({ message: 'Fleet seeded' }); }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+// Admin-only fleet clear
+app.post('/api/fleet/admin/clear', requireAdmin, async (req, res) => {
+  try {
+    await query('TRUNCATE TABLE transactions RESTART IDENTITY CASCADE');
+    await query('TRUNCATE TABLE purchase_orders RESTART IDENTITY CASCADE');
+    await query('TRUNCATE TABLE maintenance_records RESTART IDENTITY CASCADE');
+    await query('TRUNCATE TABLE odometer_logs RESTART IDENTITY CASCADE');
+    await query('TRUNCATE TABLE purchase_order_items RESTART IDENTITY CASCADE');
+    await query('TRUNCATE TABLE fleet_purchase_orders RESTART IDENTITY CASCADE');
+    await query('TRUNCATE TABLE vehicles RESTART IDENTITY CASCADE');
+    res.json({ message: 'All fleet data cleared' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+console.log('Fleet admin clear route registered: POST /api/fleet/admin/clear');
 
 // ----- Super admin only: admin approval requests -----
 // GET /api/admin-requests
@@ -660,6 +682,40 @@ app.delete('/api/transactions', requireAdmin, async (req, res) => {
   }
 });
 
+// Admin-only orders clear
+app.post('/api/orders/admin/clear', requireAdmin, async (req, res) => {
+  try {
+    await query('TRUNCATE TABLE purchase_orders RESTART IDENTITY CASCADE');
+    res.json({ message: 'All orders cleared' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin-only purchase-orders clear
+app.post('/api/purchase-orders/admin/clear', requireAdmin, async (req, res) => {
+  try {
+    await query('TRUNCATE TABLE purchase_orders RESTART IDENTITY CASCADE');
+    res.json({ message: 'All purchase orders cleared' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin-only transactions clear
+app.post('/api/transactions/admin/clear', requireAdmin, async (req, res) => {
+  try {
+    await query('TRUNCATE TABLE transactions RESTART IDENTITY CASCADE');
+    res.json({ message: 'All transactions cleared' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+console.log('Orders admin clear route registered: POST /api/orders/admin/clear');
+console.log('Purchase Orders admin clear route registered: POST /api/purchase-orders/admin/clear');
+console.log('Transactions admin clear route registered: POST /api/transactions/admin/clear');
+
 // POST /api/transactions (admin only)
 app.post('/api/transactions', requireAdmin, async (req, res) => {
   try {
@@ -808,20 +864,21 @@ app.post('/api/init', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+const httpServer = app.listen(PORT, () => {
   console.log(`API server running at http://localhost:${PORT}`);
 });
 
 // ----- HTTPS server for phone GPS tracker (geolocation requires HTTPS) -----
 // Skip HTTPS server on Render (only run locally)
-if (!process.env.RENDER) {
+let httpsSrv = null;
+if (!process.env.RENDER && process.env.ENABLE_HTTPS === "true") {
   const HTTPS_PORT = process.env.HTTPS_PORT || 3443;
   const certPath = path.join(__dirname, 'cert.pem');
   const keyPath = path.join(__dirname, 'cert.key');
   const publicDir = path.join(__dirname, '..', 'public');
 
   if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
-    const httpsServer = https.createServer(
+    httpsSrv = https.createServer(
       { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) },
       (req, res) => {
         // Serve static files from public/
@@ -839,11 +896,32 @@ if (!process.env.RENDER) {
         }
       }
     );
-    httpsServer.listen(HTTPS_PORT, '0.0.0.0', () => {
+    httpsSrv.listen(HTTPS_PORT, '0.0.0.0', () => {
       console.log(`HTTPS server running at https://localhost:${HTTPS_PORT}`);
       console.log(`Phone tracker: https://192.168.254.108:${HTTPS_PORT}/tracker.html`);
     });
   } else {
     console.log('No cert found. Run: node server/gen-cert.cjs');
   }
+} else {
+  console.log('HTTPS server disabled (set ENABLE_HTTPS=true to enable)');
 }
+
+// Graceful shutdown
+function shutdown() {
+  console.log('Shutting down...');
+  httpServer.close(() => {
+    if (httpsSrv) {
+      httpsSrv.close(() => {
+        console.log('Servers closed. Exiting.');
+        process.exit(0);
+      });
+    } else {
+      console.log('HTTP server closed. Exiting.');
+      process.exit(0);
+    }
+  });
+}
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);

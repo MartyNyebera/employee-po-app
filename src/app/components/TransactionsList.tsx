@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { mockTransactions, mockAssets } from '../data/mockData';
-import { fetchTransactions, fetchAssets, createTransaction } from '../api/client';
+import { fetchTransactions, createTransaction } from '../api/client';
+import { fetchVehicles, type Vehicle } from '../api/fleet';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -12,19 +12,49 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Receipt, Plus, DollarSign, Calendar, Fuel, Wrench, Package, Truck as TruckIcon, Filter } from 'lucide-react';
 import { toast } from 'sonner';
 
+interface Transaction {
+  id: string;
+  poNumber: string;
+  type: 'fuel' | 'maintenance' | 'parts' | 'rental';
+  description: string;
+  amount: number;
+  assetId: string;
+  date: string;
+  receipt?: string;
+}
+
 interface TransactionsListProps {
   isAdmin: boolean;
 }
 
 export function TransactionsList({ isAdmin }: TransactionsListProps) {
-  const [transactions, setTransactions] = useState(mockTransactions);
-  const [assets, setAssets] = useState(mockAssets);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([
-      fetchTransactions().then(setTransactions).catch(() => {}),
-      fetchAssets().then(setAssets).catch(() => {}),
+      fetchTransactions()
+        .then(data => {
+          if (!Array.isArray(data)) {
+            throw new Error('API returned non-array data');
+          }
+          setTransactions(data);
+          setError(null);
+        })
+        .catch(err => {
+          setError(err.message || 'Failed to load transactions');
+          setTransactions([]);
+        }),
+      fetchVehicles()
+        .then(data => {
+          if (!Array.isArray(data)) {
+            throw new Error('API returned non-array data');
+          }
+          setVehicles(data);
+        })
+        .catch(() => setVehicles([])),
     ]).finally(() => setLoading(false));
   }, []);
 
@@ -101,6 +131,26 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
     );
   }
 
+  if (error) {
+    return (
+      <div className="p-4 flex items-center justify-center min-h-[200px]">
+        <div className="text-center">
+          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-4">
+            <Receipt className="size-8 text-red-500" />
+          </div>
+          <h3 className="text-lg font-semibold text-red-900 mb-2">Error Loading Transactions</h3>
+          <p className="text-sm text-red-600 mb-4">{error}</p>
+          <button 
+            onClick={() => window.location.reload()} 
+            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 space-y-6">
       {/* Enhanced Header */}
@@ -152,9 +202,9 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
                       <SelectValue placeholder="Select asset" />
                     </SelectTrigger>
                     <SelectContent>
-                      {assets.map(asset => (
-                        <SelectItem key={asset.id} value={asset.id}>
-                          {asset.name} ({asset.id})
+                      {vehicles.map(vehicle => (
+                        <SelectItem key={vehicle.id} value={vehicle.id}>
+                          {vehicle.unit_name} ({vehicle.id})
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -252,9 +302,9 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
                 <SelectValue placeholder="Asset" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Assets</SelectItem>
-                {assets.map(asset => (
-                  <SelectItem key={asset.id} value={asset.id}>{asset.name}</SelectItem>
+                <SelectItem value="all">All Vehicles</SelectItem>
+                {vehicles.map(vehicle => (
+                  <SelectItem key={vehicle.id} value={vehicle.id}>{vehicle.unit_name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -275,8 +325,10 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
 
       {/* Transactions List */}
       <div className="space-y-3">
-        {transactions.map((txn) => {
-          const asset = assets.find(a => a.id === txn.assetId);
+        {Array.isArray(transactions) && transactions.length > 0 ? (
+          transactions.map((txn) => {
+          const vehicle = vehicles.find(v => v.id === txn.assetId);
+          const vehicleName = vehicle ? vehicle.unit_name : `Asset ${txn.assetId}`;
 
           return (
             <Card key={txn.id} className="bg-white border border-slate-200/60 shadow-lg shadow-slate-900/5 hover:shadow-xl hover:shadow-slate-900/10 hover:-translate-y-1 transition-all duration-300 dark:bg-slate-800/50 dark:border dark:border-white/10 dark:shadow-xl dark:shadow-black/20 dark:hover:shadow-2xl dark:hover:shadow-black/30">
@@ -317,15 +369,15 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
                   </div>
                 </div>
 
-                {asset && (
+                {vehicleName && (
                   <div className="pt-4 border-t border-slate-200/60 dark:border-white/10">
                     <div className="flex items-center gap-3 text-sm text-slate-600 dark:text-slate-400">
                       <div className="p-1.5 bg-slate-100 dark:bg-slate-700/50 rounded-lg">
                         <TruckIcon className="size-4 text-slate-600 dark:text-slate-400" />
                       </div>
                       <div className="flex-1">
-                        <div className="font-medium text-slate-700 dark:text-slate-300">{asset.name}</div>
-                        <div className="text-xs text-slate-500 dark:text-slate-500">{asset.id}</div>
+                        <div className="font-medium text-slate-700 dark:text-slate-300">{vehicleName}</div>
+                        <div className="text-xs text-slate-500 dark:text-slate-500">{txn.assetId}</div>
                       </div>
                     </div>
                   </div>
@@ -333,7 +385,20 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
               </CardContent>
             </Card>
           );
-        })}
+        })
+        ) : (
+          <div className="p-12 text-center">
+            <div className="flex flex-col items-center gap-4">
+              <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center dark:bg-slate-700/50">
+                <Receipt className="size-8 text-slate-400 dark:text-slate-500" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">No transactions yet</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400">Create your first transaction to get started.</p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

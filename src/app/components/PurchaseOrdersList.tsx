@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { mockPurchaseOrders, mockAssets } from '../data/mockData';
-import { fetchPurchaseOrders, createPurchaseOrder, updatePurchaseOrder, fetchAssets } from '../api/client';
+import { fetchPurchaseOrders, createPurchaseOrder, updatePurchaseOrder } from '../api/client';
+import { fetchVehicles, type Vehicle } from '../api/fleet';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -12,20 +12,36 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { FileText, Plus, DollarSign, Calendar, Building2, Truck, Edit, Filter } from 'lucide-react';
 import { toast } from 'sonner';
 
+interface PurchaseOrder {
+  id: string;
+  poNumber: string;
+  client: string;
+  description: string;
+  amount: number;
+  status: 'pending' | 'approved' | 'in-progress' | 'completed';
+  createdDate: string;
+  deliveryDate: string;
+  assignedAssets: string[];
+}
+
 interface PurchaseOrdersListProps {
   isAdmin: boolean;
 }
 
 export function PurchaseOrdersList({ isAdmin }: PurchaseOrdersListProps) {
-  const [orders, setOrders] = useState(mockPurchaseOrders);
-  const [assets, setAssets] = useState(mockAssets);
-  const [selectedPO, setSelectedPO] = useState<typeof mockPurchaseOrders[0] | null>(null);
+  const [orders, setOrders] = useState<PurchaseOrder[]>([]);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     Promise.all([
-      fetchPurchaseOrders().then(setOrders).catch(() => {}),
-      fetchAssets().then(setAssets).catch(() => {}),
+      fetchPurchaseOrders()
+        .then(setOrders)
+        .catch(() => setOrders([])),
+      fetchVehicles()
+        .then(setVehicles)
+        .catch(() => setVehicles([])),
     ]).finally(() => setLoading(false));
   }, []);
   const [isEditing, setIsEditing] = useState(false);
@@ -65,7 +81,7 @@ export function PurchaseOrdersList({ isAdmin }: PurchaseOrdersListProps) {
     });
   };
 
-  const handleEditClick = (po: typeof mockPurchaseOrders[0]) => {
+  const handleEditClick = (po: PurchaseOrder) => {
     setSelectedPO(po);
     setEditForm({
       status: po.status,
@@ -218,9 +234,10 @@ export function PurchaseOrdersList({ isAdmin }: PurchaseOrdersListProps) {
       </div>
 
       <div className="space-y-3">
-        {filteredOrders.map((po) => {
+        {filteredOrders.length > 0 ? (
+          filteredOrders.map((po) => {
           const assignedAssetNames = po.assignedAssets
-            .map(id => assets.find(a => a.id === id)?.name)
+            .map(id => vehicles.find(v => v.id === id)?.unit_name)
             .filter(Boolean);
 
           return (
@@ -332,8 +349,21 @@ export function PurchaseOrdersList({ isAdmin }: PurchaseOrdersListProps) {
                 )}
               </CardContent>
             </Card>
-          );
-        })}
+          )
+          })
+        ) : (
+          <div className="p-12 text-center">
+            <div className="flex flex-col items-center gap-4">
+              <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center dark:bg-slate-700/50">
+                <FileText className="size-8 text-slate-400 dark:text-slate-500" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">No purchase orders yet</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400">Create your first purchase order to get started.</p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

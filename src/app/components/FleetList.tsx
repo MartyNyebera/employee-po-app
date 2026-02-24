@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { fetchVehicles, seedFleet, type Vehicle, type PmsStatus } from '../api/fleet';
+import { fetchVehicles, deleteVehicle, type Vehicle, type PmsStatus } from '../api/fleet';
 import { Button } from './ui/button';
-import { Plus, Truck, AlertTriangle, CheckCircle, Clock, Wrench } from 'lucide-react';
+import { Plus, Trash, Truck, AlertTriangle, CheckCircle, Clock, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
 import { AddVehicleModal } from './AddVehicleModal';
 
@@ -39,35 +39,45 @@ export function FleetList({ onSelectVehicle }: FleetListProps) {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [seeding, setSeeding] = useState(false);
-
+  
   const load = async () => {
     try {
       setLoading(true);
-      const data = await fetchVehicles();
-      setVehicles(data);
+      fetchVehicles()
+        .then(data => {
+          if (!Array.isArray(data)) {
+            throw new Error('API returned non-array data');
+          }
+          setVehicles(data);
+        })
+        .catch(err => {
+          toast.error('Failed to load vehicles: ' + err.message);
+          setVehicles([]);
+        })
+        .finally(() => setLoading(false));
     } catch (err: any) {
       toast.error('Failed to load vehicles: ' + err.message);
-    } finally {
-      setLoading(false);
+      setVehicles([]);
+    }
+  };
+
+  const handleDeleteVehicle = async (vehicleId: string, vehicleName: string) => {
+    if (!confirm(`Are you sure you want to delete "${vehicleName}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await deleteVehicle(vehicleId);
+      toast.success(`Vehicle "${vehicleName}" deleted successfully`);
+      load(); // Refresh the list
+    } catch (error: any) {
+      toast.error('Failed to delete vehicle: ' + error.message);
     }
   };
 
   useEffect(() => { load(); }, []);
 
-  const handleSeed = async () => {
-    try {
-      setSeeding(true);
-      await seedFleet();
-      toast.success('Fleet data seeded!');
-      load();
-    } catch (err: any) {
-      toast.error('Seed failed: ' + err.message);
-    } finally {
-      setSeeding(false);
-    }
-  };
-
+  
   const overdue = vehicles.filter(v => v.pms_status === 'OVERDUE').length;
   const dueSoon = vehicles.filter(v => v.pms_status === 'DUE_SOON').length;
 
@@ -80,11 +90,6 @@ export function FleetList({ onSelectVehicle }: FleetListProps) {
           <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">{vehicles.length} vehicles registered</p>
         </div>
         <div className="flex gap-2">
-          {vehicles.length === 0 && (
-            <Button variant="outline" size="sm" onClick={handleSeed} disabled={seeding}>
-              {seeding ? 'Seeding...' : '📦 Load Initial Data'}
-            </Button>
-          )}
           <Button size="sm" onClick={() => setShowAddModal(true)} className="bg-blue-600 hover:bg-blue-700 text-white">
             <Plus className="size-4 mr-1" /> Add Vehicle
           </Button>
@@ -116,7 +121,7 @@ export function FleetList({ onSelectVehicle }: FleetListProps) {
         <div className="text-center py-16 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
           <Truck className="size-12 mx-auto text-slate-300 mb-4" />
           <h3 className="text-lg font-semibold text-slate-700 dark:text-slate-300 mb-2">No Vehicles Yet</h3>
-          <p className="text-slate-500 mb-4">Click "Load Initial Data" to add your fleet, or add vehicles manually.</p>
+          <p className="text-slate-500 mb-4">Add your first vehicle to get started.</p>
         </div>
       ) : (
         <div className="grid gap-3">
@@ -144,9 +149,22 @@ export function FleetList({ onSelectVehicle }: FleetListProps) {
                   <div className="text-xs text-slate-500">Current Odometer</div>
                 </div>
                 <PmsBadge status={vehicle.pms_status} />
-                <Button variant="outline" size="sm" onClick={e => { e.stopPropagation(); onSelectVehicle(vehicle.id); }}>
-                  View Details
-                </Button>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={e => { e.stopPropagation(); onSelectVehicle(vehicle.id); }}>
+                    View Details
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
+                    onClick={e => { 
+                      e.stopPropagation(); 
+                      handleDeleteVehicle(vehicle.id, vehicle.unit_name); 
+                    }}
+                  >
+                    <Trash className="size-4" />
+                  </Button>
+                </div>
               </div>
             </div>
           ))}

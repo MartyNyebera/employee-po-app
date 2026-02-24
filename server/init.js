@@ -54,8 +54,14 @@ async function init() {
     if (err.code !== '42701') throw err; // column already exists
   }
 
-  await seed();
-  console.log('Database initialized successfully.');
+  // Only seed if explicitly allowed (for development/demo purposes)
+  if (process.env.NODE_ENV === 'development' && process.env.ALLOW_SEED === 'true') {
+    await seed();
+    console.log('Database seeded (development mode).');
+  } else {
+    console.log('Database initialized without seeding (production mode).');
+  }
+  console.log('Database initialization complete.');
 }
 
 init().catch((err) => {

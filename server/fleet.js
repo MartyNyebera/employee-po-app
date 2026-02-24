@@ -251,6 +251,31 @@ export async function createVehiclePO(req, res) {
   }
 }
 
+// DELETE /api/fleet/vehicles/:id
+export async function deleteVehicle(req, res) {
+  try {
+    const { id } = req.params;
+    
+    // Check if vehicle exists
+    const vehicle = await query('SELECT * FROM vehicles WHERE id = $1', [id]);
+    if (!vehicle.rows[0]) {
+      return res.status(404).json({ error: 'Vehicle not found' });
+    }
+    
+    // Delete related records first (due to foreign key constraints)
+    await query('DELETE FROM odometer_logs WHERE vehicle_id = $1', [id]);
+    await query('DELETE FROM maintenance_records WHERE vehicle_id = $1', [id]);
+    await query('DELETE FROM fleet_purchase_orders WHERE vehicle_id = $1', [id]);
+    
+    // Delete the vehicle
+    await query('DELETE FROM vehicles WHERE id = $1', [id]);
+    
+    res.json({ message: 'Vehicle deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
 // GET /api/fleet/pms-reminders
 export async function getPmsReminders(req, res) {
   try {

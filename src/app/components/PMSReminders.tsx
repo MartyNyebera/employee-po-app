@@ -18,8 +18,16 @@ export function PMSReminders({ onSelectVehicle }: PMSRemindersProps) {
 
   useEffect(() => {
     fetchPmsReminders()
-      .then(setVehicles)
-      .catch(err => toast.error('Failed to load reminders: ' + err.message))
+      .then(data => {
+        if (!Array.isArray(data)) {
+          throw new Error('API returned non-array data');
+        }
+        setVehicles(data);
+      })
+      .catch(err => {
+        toast.error('Failed to load reminders: ' + err.message);
+        setVehicles([]);
+      })
       .finally(() => setLoading(false));
   }, []);
 
