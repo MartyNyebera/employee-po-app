@@ -19,6 +19,9 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
+// Serve static frontend files
+app.use(express.static(path.join(__dirname, '..', 'dist')));
+
 // Test DB connection on startup
 testConnection().catch(() => {
   console.log('Database not ready. Start TimescaleDB/PostgreSQL and run: node server/init.js');
@@ -864,8 +867,13 @@ app.post('/api/init', async (req, res) => {
   }
 });
 
-const httpServer = app.listen(PORT, () => {
-  console.log(`API server running at http://localhost:${PORT}`);
+// SPA fallback - serve index.html for all non-API routes
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
+});
+
+const httpServer = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`API server running at http://0.0.0.0:${PORT}`);
 });
 
 // ----- HTTPS server for phone GPS tracker (geolocation requires HTTPS) -----
