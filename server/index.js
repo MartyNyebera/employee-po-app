@@ -953,12 +953,35 @@ if (process.env.NODE_ENV === 'production') {
     try {
       const files = fs.readdirSync(frontendDir);
       console.log(`📋 Files in frontend directory:`, files.slice(0, 10));
+      
+      // Check if assets folder exists
+      const assetsPath = path.join(frontendDir, 'assets');
+      if (fs.existsSync(assetsPath)) {
+        const assetFiles = fs.readdirSync(assetsPath);
+        console.log(`📦 Assets folder exists with files:`, assetFiles);
+      } else {
+        console.error('❌ Assets folder NOT found at:', assetsPath);
+      }
     } catch (err) {
       console.error('Error reading frontend directory:', err.message);
     }
 
-    // Serve static files
-    app.use(express.static(frontendDir));
+    // Serve static files with logging
+    app.use(express.static(frontendDir, {
+      setHeaders: (res, path) => {
+        if (path.endsWith('.js')) {
+          res.setHeader('Content-Type', 'application/javascript');
+        }
+      }
+    }));
+    
+    // Log static file requests
+    app.use((req, res, next) => {
+      if (req.path.startsWith('/assets/') || req.path.endsWith('.js') || req.path.endsWith('.css')) {
+        console.log(`📦 Static request: ${req.method} ${req.path}`);
+      }
+      next();
+    });
 
     // SPA fallback - must come after all API routes
     app.get(/.*/, (req, res, next) => {
