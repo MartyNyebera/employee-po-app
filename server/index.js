@@ -20,7 +20,9 @@ app.use(cors());
 app.use(express.json());
 
 // Serve static frontend files
-app.use(express.static(path.join(__dirname, '..', 'dist')));
+const distPath = path.join(__dirname, '..', 'dist');
+console.log('Serving static files from:', distPath);
+app.use(express.static(distPath));
 
 // Test DB connection on startup
 testConnection().catch(() => {
@@ -867,10 +869,19 @@ app.post('/api/init', async (req, res) => {
   }
 });
 
+// Root route - serve index.html
+app.get('/', (req, res) => {
+  const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
+  console.log('Serving index.html from:', indexPath);
+  res.sendFile(indexPath);
+});
+
 // SPA fallback - serve index.html for all non-API routes
-app.get(/.*/, (req, res) => {
+app.get('*', (req, res) => {
   if (!req.path.startsWith('/api')) {
-    res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
+    const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
+    console.log('Serving index.html from:', indexPath);
+    res.sendFile(indexPath);
   }
 });
 
