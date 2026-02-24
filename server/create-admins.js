@@ -5,7 +5,12 @@ import { hashPassword } from './auth.js';
 dotenv.config();
 
 async function createAdmins() {
-  console.log('Creating super admin accounts...');
+  console.log('=== CREATING SUPER ADMIN ACCOUNTS ===');
+  console.log('NODE_ENV:', process.env.NODE_ENV);
+  console.log('Environment variables check:');
+  console.log('- SUPER_ADMIN_OWNER_EMAIL:', !!process.env.SUPER_ADMIN_OWNER_EMAIL);
+  console.log('- SUPER_ADMIN_DEVELOPER_EMAIL:', !!process.env.SUPER_ADMIN_DEVELOPER_EMAIL);
+  console.log('- SUPER_ADMIN_EMAILS:', !!process.env.SUPER_ADMIN_EMAILS);
 
   try {
     // Get admin emails from environment

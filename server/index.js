@@ -80,6 +80,29 @@ app.post('/health/test-email', async (req, res) => {
   }
 });
 
+// Debug endpoint to check all users (temporary - remove after use)
+app.get('/debug/users', async (req, res) => {
+  try {
+    const { query } = await import('./db.js');
+    const result = await query('SELECT id, email, name, role, is_super_admin, created_at FROM users ORDER BY created_at DESC');
+    
+    res.json({
+      count: result.rows.length,
+      users: result.rows.map(row => ({
+        id: row.id,
+        email: row.email,
+        name: row.name,
+        role: row.role,
+        is_super_admin: row.is_super_admin,
+        created_at: row.created_at
+      }))
+    });
+  } catch (error) {
+    console.error('Debug users endpoint failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Emergency admin creation (temporary - remove after use)
 app.post('/emergency-create-admin', async (req, res) => {
   try {
