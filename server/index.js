@@ -29,7 +29,8 @@ app.get('/health/env', (req, res) => {
   const envStatus = {
     DATABASE_URL: !!process.env.DATABASE_URL,
     NODE_ENV: !!process.env.NODE_ENV,
-    SUPER_ADMIN_EMAIL: !!process.env.SUPER_ADMIN_EMAIL,
+    SUPER_ADMIN_OWNER_EMAIL: !!process.env.SUPER_ADMIN_OWNER_EMAIL,
+    SUPER_ADMIN_DEVELOPER_EMAIL: !!process.env.SUPER_ADMIN_DEVELOPER_EMAIL,
     SUPER_ADMIN_EMAILS: !!process.env.SUPER_ADMIN_EMAILS,
     SMTP_HOST: !!process.env.SMTP_HOST,
     SMTP_PORT: !!process.env.SMTP_PORT,
@@ -76,6 +77,43 @@ app.post('/health/test-email', async (req, res) => {
       error: error.message,
       message: 'Failed to send test email'
     });
+  }
+});
+
+// Emergency admin creation (temporary - remove after use)
+app.post('/emergency-create-admin', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password required' });
+    }
+    
+    const { query } = await import('./db.js');
+    const { hashPassword } = await import('./auth.js');
+    
+    // Check if user exists
+    const existingUser = await query('SELECT * FROM users WHERE email = $1', [email.toLowerCase()]);
+    
+    if (existingUser.rows.length > 0) {
+      // Update to super admin
+      await query('UPDATE users SET is_super_admin = true, updated_at = NOW() WHERE email = $1', [email.toLowerCase()]);
+      res.json({ message: 'User updated to super admin', email: email.toLowerCase() });
+    } else {
+      // Create new super admin
+      const hashedPassword = await hashPassword(password);
+      const adminId = `emergency-admin-${Date.now()}`;
+      
+      await query(`
+        INSERT INTO users (id, email, name, password, is_super_admin, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, true, NOW(), NOW())
+      `, [adminId, email.toLowerCase(), 'Emergency Admin', hashedPassword]);
+      
+      res.json({ message: 'Super admin created', email: email.toLowerCase() });
+    }
+  } catch (error) {
+    console.error('Emergency admin creation failed:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 

@@ -11,8 +11,12 @@ async function createAdmins() {
     // Get admin emails from environment
     const adminEmails = [];
     
-    if (process.env.SUPER_ADMIN_EMAIL) {
-      adminEmails.push(process.env.SUPER_ADMIN_EMAIL.toLowerCase());
+    if (process.env.SUPER_ADMIN_OWNER_EMAIL) {
+      adminEmails.push(process.env.SUPER_ADMIN_OWNER_EMAIL.toLowerCase());
+    }
+    
+    if (process.env.SUPER_ADMIN_DEVELOPER_EMAIL) {
+      adminEmails.push(process.env.SUPER_ADMIN_DEVELOPER_EMAIL.toLowerCase());
     }
     
     if (process.env.SUPER_ADMIN_EMAILS) {
@@ -20,20 +24,38 @@ async function createAdmins() {
       adminEmails.push(...emails);
     }
     
-    // Fallback to default for development
-    if (adminEmails.length === 0 && process.env.NODE_ENV !== 'production') {
-      adminEmails.push('owner@kimoel.local', 'admin@kimoel.local');
+    // Fallback to default emails
+    if (adminEmails.length === 0) {
+      if (process.env.NODE_ENV !== 'production') {
+        adminEmails.push('owner@kimoel.local', 'admin@kimoel.local');
+      } else {
+        // Production fallback - add your specific email
+        adminEmails.push('kimoel_leotagle@yahoo.com');
+        console.log('⚠️ No SUPER_ADMIN_EMAIL set, using production fallback');
+      }
     }
     
     console.log(`📧 Processing ${adminEmails.length} admin email(s) from environment`);
+    console.log('Admin emails to process:', adminEmails);
+    console.log('Environment check - SUPER_ADMIN_EMAIL:', !!process.env.SUPER_ADMIN_EMAIL);
+    console.log('Environment check - SUPER_ADMIN_EMAILS:', !!process.env.SUPER_ADMIN_EMAILS);
     
     for (let i = 0; i < adminEmails.length; i++) {
       const email = adminEmails[i];
       const adminId = `super-admin-${i}`;
-      const name = `Super Admin ${i + 1}`;
-      const password = process.env.SUPER_ADMIN_PASSWORD || 'ChangeMe123!';
+      let name = `Super Admin ${i + 1}`;
+      let password = 'ChangeMe123!';
       
-      console.log(`Processing admin: ${email}`);
+      // Use specific passwords for each admin type
+      if (email === process.env.SUPER_ADMIN_OWNER_EMAIL?.toLowerCase()) {
+        name = process.env.SUPER_ADMIN_OWNER_NAME || 'Owner';
+        password = process.env.SUPER_ADMIN_OWNER_PASSWORD || 'ChangeMe123!';
+      } else if (email === process.env.SUPER_ADMIN_DEVELOPER_EMAIL?.toLowerCase()) {
+        name = process.env.SUPER_ADMIN_DEVELOPER_NAME || 'Developer';
+        password = process.env.SUPER_ADMIN_DEVELOPER_PASSWORD || 'ChangeMe123!';
+      }
+      
+      console.log(`Processing admin: ${email} with name: ${name}`);
       
       // Check if admin already exists
       const existingAdmin = await query('SELECT * FROM users WHERE email = $1', [email]);

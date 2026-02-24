@@ -18,7 +18,8 @@ function validateEnvironment() {
   ];
   
   const adminVars = [
-    'SUPER_ADMIN_EMAIL',
+    'SUPER_ADMIN_OWNER_EMAIL',
+    'SUPER_ADMIN_DEVELOPER_EMAIL',
     'SUPER_ADMIN_EMAILS'
   ];
   
