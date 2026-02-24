@@ -105,8 +105,8 @@ app.post('/emergency-create-admin', async (req, res) => {
       const adminId = `emergency-admin-${Date.now()}`;
       
       await query(`
-        INSERT INTO users (id, email, name, password, is_super_admin, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, true, NOW(), NOW())
+        INSERT INTO users (id, email, name, password_hash, role, is_super_admin, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, 'admin', true, NOW(), NOW())
       `, [adminId, email.toLowerCase(), 'Emergency Admin', hashedPassword]);
       
       res.json({ message: 'Super admin created', email: email.toLowerCase() });
@@ -191,7 +191,10 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
+    console.log(`🔑 Login attempt for email: ${email}`);
+    
     if (!email || !password) {
+      console.log('❌ Missing email or password');
       return res.status(400).json({ error: 'Email and password are required' });
     }
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -202,13 +205,26 @@ app.post('/api/auth/login', async (req, res) => {
       'SELECT id, email, password_hash, name, role, is_super_admin FROM users WHERE email = $1',
       [email.toLowerCase()]
     );
+    
+    console.log(`🔍 Found ${result.rows.length} user(s) for email: ${email.toLowerCase()}`);
+    
     const row = result.rows[0];
     if (!row) {
+      console.log(`❌ Account not found for email: ${email.toLowerCase()}`);
       return res.status(401).json({ error: 'Account not found', code: 'ACCOUNT_NOT_FOUND' });
     }
-    if (!(await comparePassword(password, row.password_hash))) {
+    
+    console.log(`✅ User found: ${row.email}, role: ${row.role}, is_super_admin: ${row.is_super_admin}`);
+    
+    const passwordMatch = await comparePassword(password, row.password_hash);
+    console.log(`🔐 Password comparison result: ${passwordMatch}`);
+    
+    if (!passwordMatch) {
+      console.log(`❌ Password incorrect for email: ${email.toLowerCase()}`);
       return res.status(401).json({ error: 'Password incorrect', code: 'PASSWORD_INCORRECT' });
     }
+    
+    console.log(`✅ Login successful for: ${email.toLowerCase()}`);
     const isSuperAdmin = !!row.is_super_admin;
     const token = signToken({
       userId: row.id,

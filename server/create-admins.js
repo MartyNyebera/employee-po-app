@@ -63,8 +63,8 @@ async function createAdmins() {
       if (existingAdmin.rows.length === 0) {
         const hashedPassword = await hashPassword(password);
         await query(`
-          INSERT INTO users (id, email, name, password, is_super_admin, created_at, updated_at)
-          VALUES ($1, $2, $3, $4, true, NOW(), NOW())
+          INSERT INTO users (id, email, name, password_hash, role, is_super_admin, created_at, updated_at)
+          VALUES ($1, $2, $3, $4, 'admin', true, NOW(), NOW())
           ON CONFLICT (id) DO NOTHING
         `, [adminId, email, name, hashedPassword]);
         
