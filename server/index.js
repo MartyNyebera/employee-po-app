@@ -24,6 +24,61 @@ app.get('/health', (req, res) => {
   res.status(200).send('ok');
 });
 
+// Environment health check
+app.get('/health/env', (req, res) => {
+  const envStatus = {
+    DATABASE_URL: !!process.env.DATABASE_URL,
+    NODE_ENV: !!process.env.NODE_ENV,
+    SUPER_ADMIN_EMAIL: !!process.env.SUPER_ADMIN_EMAIL,
+    SUPER_ADMIN_EMAILS: !!process.env.SUPER_ADMIN_EMAILS,
+    SMTP_HOST: !!process.env.SMTP_HOST,
+    SMTP_PORT: !!process.env.SMTP_PORT,
+    SMTP_USER: !!process.env.SMTP_USER,
+    SMTP_PASS: !!process.env.SMTP_PASS
+  };
+  
+  res.json(envStatus);
+});
+
+// Super admin status check (protected)
+app.get('/health/super-admin-status', async (req, res) => {
+  try {
+    const result = await query('SELECT email, is_super_admin FROM users WHERE is_super_admin = true');
+    const superAdmins = result.rows.map(row => ({
+      email: row.email,
+      is_super_admin: row.is_super_admin
+    }));
+    
+    res.json({
+      count: superAdmins.length,
+      admins: superAdmins
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to check admin status' });
+  }
+});
+
+// Email test endpoint (protected)
+app.post('/health/test-email', async (req, res) => {
+  try {
+    const { sendEmailToAdminsNewRequest } = await import('./email.js');
+    
+    await sendEmailToAdminsNewRequest('test@example.com', 'Test Applicant');
+    
+    res.json({
+      success: true,
+      message: 'Test email sent successfully'
+    });
+  } catch (error) {
+    console.error('Test email failed:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      message: 'Failed to send test email'
+    });
+  }
+});
+
 // Test DB connection on startup
 testConnection().catch(() => {
   console.log('Database not ready. Start TimescaleDB/PostgreSQL and run: node server/init.js');

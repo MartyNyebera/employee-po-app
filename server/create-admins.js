@@ -8,55 +8,57 @@ async function createAdmins() {
   console.log('Creating super admin accounts...');
 
   try {
-    // Create super admin owner
-    const ownerEmail = (process.env.SUPER_ADMIN_OWNER_EMAIL || 'owner@kimoel.local').toLowerCase();
-    const ownerName = process.env.SUPER_ADMIN_OWNER_NAME || 'Owner';
-    const ownerPassword = process.env.SUPER_ADMIN_OWNER_PASSWORD || 'ChangeMe123!';
-
-    console.log(`Creating admin: ${ownerEmail}`);
+    // Get admin emails from environment
+    const adminEmails = [];
     
-    // Check if admin already exists
-    const existingOwner = await query('SELECT * FROM users WHERE email = $1', [ownerEmail]);
-    
-    if (existingOwner.rows.length === 0) {
-      const hashedPassword = await hashPassword(ownerPassword);
-      await query(`
-        INSERT INTO users (id, email, name, password, is_super_admin, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, true, NOW(), NOW())
-        ON CONFLICT (id) DO NOTHING
-      `, ['super-admin-owner', ownerEmail, ownerName, hashedPassword]);
-      
-      console.log('✅ Super admin owner created successfully');
-    } else {
-      console.log('ℹ️ Super admin owner already exists');
+    if (process.env.SUPER_ADMIN_EMAIL) {
+      adminEmails.push(process.env.SUPER_ADMIN_EMAIL.toLowerCase());
     }
-
-    // Create second admin
-    const adminEmail = 'admin@kimoel.local';
-    const adminName = 'Admin';
-    const adminPassword = 'ChangeMe123!';
-
-    console.log(`Creating admin: ${adminEmail}`);
     
-    const existingAdmin = await query('SELECT * FROM users WHERE email = $1', [adminEmail]);
+    if (process.env.SUPER_ADMIN_EMAILS) {
+      const emails = process.env.SUPER_ADMIN_EMAILS.split(',').map(e => e.trim().toLowerCase());
+      adminEmails.push(...emails);
+    }
     
-    if (existingAdmin.rows.length === 0) {
-      const hashedPassword = await hashPassword(adminPassword);
-      await query(`
-        INSERT INTO users (id, email, name, password, is_super_admin, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, true, NOW(), NOW())
-        ON CONFLICT (id) DO NOTHING
-      `, ['admin-local', adminEmail, adminName, hashedPassword]);
+    // Fallback to default for development
+    if (adminEmails.length === 0 && process.env.NODE_ENV !== 'production') {
+      adminEmails.push('owner@kimoel.local', 'admin@kimoel.local');
+    }
+    
+    console.log(`📧 Processing ${adminEmails.length} admin email(s) from environment`);
+    
+    for (let i = 0; i < adminEmails.length; i++) {
+      const email = adminEmails[i];
+      const adminId = `super-admin-${i}`;
+      const name = `Super Admin ${i + 1}`;
+      const password = process.env.SUPER_ADMIN_PASSWORD || 'ChangeMe123!';
       
-      console.log('✅ Super admin created successfully');
-    } else {
-      console.log('ℹ️ Super admin already exists');
+      console.log(`Processing admin: ${email}`);
+      
+      // Check if admin already exists
+      const existingAdmin = await query('SELECT * FROM users WHERE email = $1', [email]);
+      
+      if (existingAdmin.rows.length === 0) {
+        const hashedPassword = await hashPassword(password);
+        await query(`
+          INSERT INTO users (id, email, name, password, is_super_admin, created_at, updated_at)
+          VALUES ($1, $2, $3, $4, true, NOW(), NOW())
+          ON CONFLICT (id) DO NOTHING
+        `, [adminId, email, name, hashedPassword]);
+        
+        console.log(`✅ Created admin: ${email}`);
+      } else {
+        // Ensure existing admin has super admin privileges
+        await query(`
+          UPDATE users SET is_super_admin = true, updated_at = NOW()
+          WHERE email = $1
+        `, [email]);
+        console.log(`✅ Updated admin privileges: ${email}`);
+      }
     }
 
     console.log('\n🎉 Admin account setup complete!');
-    console.log('\n📋 Login Credentials:');
-    console.log('1. Email:', ownerEmail, '| Password:', ownerPassword);
-    console.log('2. Email:', adminEmail, '| Password:', adminPassword);
+    console.log(`\n📋 ${adminEmails.length} admin account(s) configured`);
     
   } catch (error) {
     console.error('❌ Error creating admin accounts:', error);

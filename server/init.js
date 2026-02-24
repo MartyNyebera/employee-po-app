@@ -5,6 +5,7 @@ import pg from 'pg';
 import dotenv from 'dotenv';
 import { query, testConnection } from './db.js';
 import { seed } from './seed.js';
+import { validateEnvironment } from './validate-env.js';
 
 dotenv.config();
 
@@ -12,6 +13,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function init() {
   console.log('Initializing database...');
+
+  // Validate environment first
+  const envValid = validateEnvironment();
+  if (!envValid) {
+    console.error('Environment validation failed. Please check required environment variables.');
+    process.exit(1);
+  }
 
   const connected = await testConnection();
   if (!connected) {

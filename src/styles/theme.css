@@ -1,5 +1,15 @@
 /* KIMOEL Fleet Management - Beautiful Theme */
 
+/* Mobile First Responsive Design */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  overflow-x: hidden; /* Prevent horizontal scroll */
+  min-height: 100vh;
+}
+
 :root {
   /* Navy Base with Gold Accents */
   --background: #f8fafc;
@@ -195,7 +205,101 @@
   animation: pulse-gold 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
-/* Responsive Design */
+/* Comprehensive Mobile Responsiveness */
+
+/* Small phones (320px and up) */
+@media (max-width: 380px) {
+  .container {
+    padding: 0 12px;
+  }
+  
+  .btn {
+    min-height: 44px; /* Touch-friendly */
+    padding: 12px 16px;
+    font-size: 14px;
+  }
+  
+  .card {
+    margin: 8px;
+    padding: 16px;
+  }
+  
+  .table-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  
+  .sidebar {
+    width: 100%;
+    height: auto;
+  }
+  
+  .modal {
+    width: 95%;
+    margin: 10px auto;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+}
+
+/* Standard phones (375px - 430px) */
+@media (min-width: 381px) and (max-width: 430px) {
+  .container {
+    padding: 0 16px;
+  }
+  
+  .btn {
+    min-height: 44px;
+    padding: 12px 20px;
+  }
+  
+  .card {
+    margin: 12px;
+    padding: 20px;
+  }
+}
+
+/* Tablets (768px and up) */
+@media (min-width: 768px) {
+  .container {
+    padding: 0 24px;
+  }
+  
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+  }
+  
+  .sidebar {
+    width: 280px;
+  }
+}
+
+/* Large screens (desktop) */
+@media (min-width: 1024px) {
+  .grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+}
+
+/* Touch-friendly interactions */
+@media (hover: none) and (pointer: coarse) {
+  .btn:hover {
+    transform: none;
+  }
+  
+  .card:hover {
+    transform: none;
+  }
+}
+
+/* Prevent horizontal scroll on all devices */
 @media (max-width: 768px) {
   .hero-section {
     padding: 40px 20px;
@@ -204,5 +308,23 @@
   .btn-navy, .btn-gold {
     padding: 10px 20px;
     font-size: 14px;
+  }
+  
+  /* Ensure no overflow */
+  .row {
+    flex-direction: column;
+  }
+  
+  .col {
+    width: 100%;
+  }
+  
+  /* Mobile navigation */
+  .nav-desktop {
+    display: none;
+  }
+  
+  .nav-mobile {
+    display: flex;
   }
 }
