@@ -7,17 +7,17 @@ dotenv.config();
 async function ensureSuperAdmin() {
   console.log('=== ENSURING SUPER ADMIN EXISTS ===');
   
-  const adminEmail = process.env.SUPER_ADMIN_EMAIL;
-  const adminPassword = process.env.SUPER_ADMIN_PASSWORD;
-  const adminName = process.env.SUPER_ADMIN_NAME || 'Super Admin';
+  const adminEmail = process.env.SUPER_ADMIN_OWNER_EMAIL;
+  const adminPassword = process.env.SUPER_ADMIN_OWNER_PASSWORD;
+  const adminName = process.env.SUPER_ADMIN_OWNER_NAME || 'Super Admin';
   
   if (!adminEmail) {
-    console.log('ℹ️ No SUPER_ADMIN_EMAIL configured - skipping auto-creation');
+    console.log('ℹ️ No SUPER_ADMIN_OWNER_EMAIL configured - skipping auto-creation');
     return;
   }
   
   if (!adminPassword) {
-    console.log('❌ SUPER_ADMIN_PASSWORD missing - cannot create admin');
+    console.log('❌ SUPER_ADMIN_OWNER_PASSWORD missing - cannot create admin');
     return;
   }
   
