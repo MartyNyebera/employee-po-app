@@ -37,7 +37,7 @@ async function ensureSuperAdmin() {
       if (!user.is_super_admin) {
         // Update to super admin
         await query(
-          'UPDATE users SET is_super_admin = true, updated_at = NOW() WHERE id = $1',
+          'UPDATE users SET is_super_admin = true WHERE id = $1',
           [user.id]
         );
         console.log(`✅ Updated existing user to super admin: ${adminEmail}`);
@@ -53,8 +53,8 @@ async function ensureSuperAdmin() {
     const adminId = `super-admin-${Date.now()}`;
     
     await query(`
-      INSERT INTO users (id, email, name, password_hash, role, is_super_admin, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, 'admin', true, NOW(), NOW())
+      INSERT INTO users (id, email, name, password_hash, role, is_super_admin, created_at)
+      VALUES ($1, $2, $3, $4, 'admin', true, NOW())
     `, [adminId, adminEmail.toLowerCase(), adminName, hashedPassword]);
     
     console.log(`✅ Super admin created successfully: ${adminEmail}`);
