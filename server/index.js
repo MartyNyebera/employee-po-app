@@ -195,6 +195,18 @@ app.post('/emergency-create-admin', async (req, res) => {
 
 // Test DB connection on startup
 testConnection().then(async () => {
+  // STEP 4: VERIFY RENDER DATABASE CONNECTION
+  const dbUrl = process.env.DATABASE_URL;
+  if (dbUrl) {
+    const maskedUrl = dbUrl.replace(/\/\/([^:]+):([^@]+)@/, '//***:***@');
+    console.log('🔗 DATABASE CONNECTION VERIFIED:');
+    console.log(`  - URL: ${maskedUrl}`);
+    console.log(`  - Host: ${dbUrl.includes('@') ? dbUrl.split('@')[1].split('/')[0] : 'unknown'}`);
+    console.log(`  - Database: ${dbUrl.split('/').pop() || 'unknown'}`);
+  } else {
+    console.log('❌ DATABASE_URL NOT SET');
+  }
+  
   // Ensure super admin exists after DB connection
   const { ensureSuperAdmin } = await import('./ensure-super-admin.js');
   await ensureSuperAdmin();
@@ -271,10 +283,23 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     // Safe request logging
     console.log(`🔑 Login attempt: ${req.method} ${req.path}`);
-    console.log(`� Content-Type: ${req.headers['content-type'] || 'missing'}`);
+    console.log(`📋 Content-Type: ${req.headers['content-type'] || 'missing'}`);
     console.log(`📧 Email present: ${!!req.body?.email}`);
     
     const { email, password } = req.body;
+    
+    // PROVE DATABASE CONTENTS - STEP 1
+    console.log(`🔍 SEARCHING FOR EMAIL: ${email}`);
+    const allUsers = await query('SELECT id, email, role, is_super_admin FROM users');
+    console.log(`📊 TOTAL USERS IN DATABASE: ${allUsers.rows.length}`);
+    if (allUsers.rows.length === 0) {
+      console.log("🚨 PRODUCTION DATABASE HAS NO USERS");
+    } else {
+      console.log("📋 ALL USERS:");
+      allUsers.rows.forEach(user => {
+        console.log(`  - ${user.email} | role: ${user.role} | super_admin: ${user.is_super_admin}`);
+      });
+    }
     
     if (!email || !password) {
       console.log('❌ MISSING_FIELDS');
@@ -292,26 +317,26 @@ app.post('/api/auth/login', async (req, res) => {
       });
     }
     
+    // STEP 2: FINAL LOGIN SQL WITH CASE-INSENSITIVE LOOKUP
     const result = await query(
-      'SELECT id, email, password_hash, name, role, is_super_admin FROM users WHERE LOWER(email) = LOWER($1)',
+      'SELECT * FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
       [email]
     );
     
-    console.log(`🔍 Found ${result.rows.length} user(s) for email: ${email.toLowerCase()}`);
-    console.log(`🗄️ Database reality check - user found: ${result.rows[0] || null}`);
+    const user = result.rows[0];
+    console.log("LOGIN QUERY RESULT:", user || "NO USER FOUND");
     
-    const row = result.rows[0];
-    if (!row) {
+    if (!user) {
       console.log(`❌ USER_NOT_FOUND: ${email.toLowerCase()}`);
-      return res.status(401).json({ 
-        error: 'Account not found',
-        reason: 'USER_NOT_FOUND'
-      });
+      console.log(`🚨 AUTHENTICATION FAILED - USER DOES NOT EXIST IN DATABASE`);
+      console.log(`🔍 CHECKING IF SUPER ADMIN AUTO-CREATION RAN ON STARTUP`);
+      // Fail loudly - this should not happen after auto-creation
+      throw new Error(`CRITICAL: User ${email} not found in database after startup bootstrap`);
     }
     
-    console.log(`✅ User found: ${row.email}, role: ${row.role}, is_super_admin: ${row.is_super_admin}`);
+    console.log(`✅ User found: ${user.email}, role: ${user.role}, is_super_admin: ${user.is_super_admin}`);
     
-    const passwordMatch = await comparePassword(password, row.password_hash);
+    const passwordMatch = await comparePassword(password, user.password_hash);
     console.log(`🔐 Password comparison result: ${passwordMatch}`);
     
     if (!passwordMatch) {
@@ -323,16 +348,16 @@ app.post('/api/auth/login', async (req, res) => {
     }
     
     console.log(`✅ Login successful for: ${email.toLowerCase()}`);
-    const isSuperAdmin = !!row.is_super_admin;
+    const isSuperAdmin = !!user.is_super_admin;
     const token = signToken({
-      userId: row.id,
-      role: row.role,
-      email: row.email,
-      name: row.name,
+      userId: user.id,
+      role: user.role,
+      email: user.email,
+      name: user.name,
       isSuperAdmin,
     });
     res.json({
-      user: { id: row.id, email: row.email, name: row.name, role: row.role, isSuperAdmin },
+      user: { id: user.id, email: user.email, name: user.name, role: user.role, isSuperAdmin },
       token,
     });
   } catch (err) {
