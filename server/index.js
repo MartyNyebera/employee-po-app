@@ -105,8 +105,8 @@ app.get('/health/auth-debug', async (req, res) => {
     }
     
     const result = await query(
-      'SELECT email, name, role, is_super_admin, created_at FROM users WHERE email = $1',
-      [email.toLowerCase()]
+      'SELECT email, name, role, is_super_admin, created_at FROM users WHERE LOWER(email) = LOWER($1)',
+      [email]
     );
     
     if (result.rows.length === 0) {
@@ -169,11 +169,11 @@ app.post('/emergency-create-admin', async (req, res) => {
     const { hashPassword } = await import('./auth.js');
     
     // Check if user exists
-    const existingUser = await query('SELECT * FROM users WHERE email = $1', [email.toLowerCase()]);
+    const existingUser = await query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
     
     if (existingUser.rows.length > 0) {
       // Update to super admin
-      await query('UPDATE users SET is_super_admin = true, updated_at = NOW() WHERE email = $1', [email.toLowerCase()]);
+      await query('UPDATE users SET is_super_admin = true, updated_at = NOW() WHERE LOWER(email) = LOWER($1)', [email]);
       res.json({ message: 'User updated to super admin', email: email.toLowerCase() });
     } else {
       // Create new super admin
@@ -194,7 +194,11 @@ app.post('/emergency-create-admin', async (req, res) => {
 });
 
 // Test DB connection on startup
-testConnection().catch(() => {
+testConnection().then(async () => {
+  // Ensure super admin exists after DB connection
+  const { ensureSuperAdmin } = await import('./ensure-super-admin.js');
+  await ensureSuperAdmin();
+}).catch(() => {
   console.log('Database not ready. Start TimescaleDB/PostgreSQL and run: node server/init.js');
 });
 
@@ -208,21 +212,20 @@ app.post('/api/auth/register', async (req, res) => {
     }
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(String(email).trim())) {
-      return res.status(400).json({ error: 'Invalid email format', code: 'INVALID_EMAIL' });
+      return res.status(400).json({ error: 'Invalid email format' });
     }
-    if (!['employee', 'admin'].includes(role)) {
-      return res.status(400).json({ error: 'Role must be employee or admin' });
+    
+    // Check if user already exists
+    const existing = await query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ error: 'Email already registered' });
     }
-    const existingUser = await query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
-    if (existingUser.rows.length > 0) {
-      return res.status(400).json({ error: 'Account with this email already exists', code: 'ACCOUNT_ALREADY_EXISTS' });
-    }
-
-    // Admin role: require approval from super admin (developer/owner). Don't create account yet.
+    
     if (role === 'admin') {
+      // Admin: create approval request
       const pendingReq = await query(
-        'SELECT id FROM admin_approval_requests WHERE email = $1 AND status = $2',
-        [email.toLowerCase(), 'pending']
+        'SELECT id FROM admin_approval_requests WHERE LOWER(email) = LOWER($1) AND status = $2',
+        [email, 'pending']
       );
       if (pendingReq.rows.length > 0) {
         return res.status(400).json({
@@ -231,10 +234,10 @@ app.post('/api/auth/register', async (req, res) => {
         });
       }
       const reqId = 'req-' + Date.now();
-      const password_hash = await hashPassword(password);
+      const hashedPassword = await hashPassword(password);
       await query(
         'INSERT INTO admin_approval_requests (id, email, name, password_hash, status) VALUES ($1, $2, $3, $4, $5)',
-        [reqId, email.toLowerCase(), name, password_hash, 'pending']
+        [reqId, email.toLowerCase(), name, hashedPassword, 'pending']
       );
       sendEmailToAdminsNewRequest(email.toLowerCase(), name).catch((err) => {
         console.error('[Email] Failed to notify admins of new request:', err.message);
@@ -248,10 +251,10 @@ app.post('/api/auth/register', async (req, res) => {
 
     // Employee: create account immediately
     const id = 'u-' + Date.now();
-    const password_hash = await hashPassword(password);
+    const hashedPassword = await hashPassword(password);
     await query(
       'INSERT INTO users (id, email, password_hash, name, role, is_super_admin) VALUES ($1, $2, $3, $4, $5, false)',
-      [id, email.toLowerCase(), password_hash, name, role]
+      [id, email.toLowerCase(), hashedPassword, name, role]
     );
     const token = signToken({ userId: id, role, email: email.toLowerCase(), name, isSuperAdmin: false });
     res.status(201).json({
@@ -290,11 +293,12 @@ app.post('/api/auth/login', async (req, res) => {
     }
     
     const result = await query(
-      'SELECT id, email, password_hash, name, role, is_super_admin FROM users WHERE email = $1',
-      [email.toLowerCase()]
+      'SELECT id, email, password_hash, name, role, is_super_admin FROM users WHERE LOWER(email) = LOWER($1)',
+      [email]
     );
     
     console.log(`🔍 Found ${result.rows.length} user(s) for email: ${email.toLowerCase()}`);
+    console.log(`🗄️ Database reality check - user found: ${result.rows[0] || null}`);
     
     const row = result.rows[0];
     if (!row) {
