@@ -6,6 +6,10 @@ dotenv.config();
 
 async function ensureSuperAdmin() {
   console.log('=== ENSURING SUPER ADMIN EXISTS ===');
+  console.log('🔍 ENV DEBUG:');
+  console.log('- SUPER_ADMIN_OWNER_EMAIL:', !!process.env.SUPER_ADMIN_OWNER_EMAIL);
+  console.log('- SUPER_ADMIN_OWNER_PASSWORD:', !!process.env.SUPER_ADMIN_OWNER_PASSWORD);
+  console.log('- SUPER_ADMIN_OWNER_NAME:', !!process.env.SUPER_ADMIN_OWNER_NAME);
   
   const adminEmail = process.env.SUPER_ADMIN_OWNER_EMAIL;
   const adminPassword = process.env.SUPER_ADMIN_OWNER_PASSWORD;
