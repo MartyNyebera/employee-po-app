@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchVehicle, fetchMaintenance, fetchVehiclePOs, fetchOdometerLogs, createMaintenance, createVehiclePO, logOdometer, type Vehicle, type MaintenanceRecord, type FleetPO, type OdometerLog } from '../api/fleet';
+import { CreatePOModal } from './CreatePOModal';
 import { Button } from './ui/button';
 import { ArrowLeft, Wrench, FileText, Gauge, Info, Plus, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
 import { toast } from 'sonner';
@@ -43,6 +44,7 @@ export function VehicleDetails({ vehicleId, onBack }: VehicleDetailsProps) {
   const [showMaintenanceForm, setShowMaintenanceForm] = useState(false);
   const [showOdometerForm, setShowOdometerForm] = useState(false);
   const [showPOForm, setShowPOForm] = useState(false);
+const [showCreatePOModal, setShowCreatePOModal] = useState(false);
 
   const load = async () => {
     try {
@@ -77,7 +79,8 @@ export function VehicleDetails({ vehicleId, onBack }: VehicleDetailsProps) {
   ];
 
   return (
-    <div className="p-6 space-y-6">
+    <>
+      <div className="p-6 space-y-6">
       {/* Back + Header */}
       <div>
         <button onClick={onBack} className="flex items-center gap-2 text-slate-500 hover:text-slate-900 dark:hover:text-white text-sm mb-4">
@@ -130,7 +133,7 @@ export function VehicleDetails({ vehicleId, onBack }: VehicleDetailsProps) {
       {activeTab === 'purchase-orders' && (
         <POTab
           pos={pos}
-          onAdd={() => setShowPOForm(true)}
+          onAdd={() => setShowCreatePOModal(true)}
           showForm={showPOForm}
           onCloseForm={() => setShowPOForm(false)}
           vehicleId={vehicleId}
@@ -147,7 +150,19 @@ export function VehicleDetails({ vehicleId, onBack }: VehicleDetailsProps) {
           onCreated={load}
         />
       )}
-    </div>
+      </div>
+      
+      {/* Create PO Modal */}
+      {showCreatePOModal && (
+        <CreatePOModal 
+          onClose={() => setShowCreatePOModal(false)}
+          onCreated={() => {
+            setShowCreatePOModal(false);
+            load(); // Refresh data
+          }}
+        />
+      )}
+    </>
   );
 }
 
