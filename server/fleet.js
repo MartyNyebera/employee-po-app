@@ -57,6 +57,8 @@ export async function getVehicles(req, res) {
 
     res.json(vehicles);
   } catch (err) {
+    console.error('Error in getVehicles:', err);
+    console.error('Stack trace:', err.stack);
     res.status(500).json({ error: err.message });
   }
 }
@@ -296,7 +298,7 @@ export async function getPmsReminders(req, res) {
     const reminders = result.rows
       .map(v => ({
         ...v,
-        pms_status: getPmsStatus(v, v.next_due_date || v.next_due_odometer ? v : null)
+        pms_status: getPmsStatus(v, v)
       }))
       .filter(v => v.pms_status === 'OVERDUE' || v.pms_status === 'DUE_SOON');
 
