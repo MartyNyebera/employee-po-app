@@ -803,8 +803,23 @@ app.get('/api/purchase-orders', async (req, res) => {
 // POST /api/purchase-orders (admin only)
 app.post('/api/purchase-orders', requireAdmin, async (req, res) => {
   try {
-    const { poNumber, client, description, amount, deliveryDate, assignedAssets = [], createdDate } = req.body;
+    const { client, description, amount, deliveryDate, assignedAssets = [], createdDate } = req.body;
     const id = `PO-${Date.now()}`;
+    
+    // Generate automatic PO number: KTCI-YYYY-NNNN
+    const currentYear = new Date().getFullYear();
+    const lastPO = await query(
+      `SELECT po_number FROM purchase_orders WHERE po_number LIKE 'KTCI-${currentYear}-%' ORDER BY po_number DESC LIMIT 1`
+    );
+    
+    let counter = 1;
+    if (lastPO.rows.length > 0) {
+      const lastNumber = lastPO.rows[0].po_number.split('-')[2];
+      counter = parseInt(lastNumber) + 1;
+    }
+    
+    const poNumber = `KTCI-${currentYear}-${counter.toString().padStart(4, '0')}`;
+    
     // Use provided createdDate or current date if not provided
     const finalCreatedDate = createdDate || new Date().toISOString().split('T')[0];
     await query(

@@ -169,7 +169,7 @@
 
       try {
         // Send to new Mobile GPS API (primary)
-        const res = await fetch('https://employee-po-app.onrender.com/api/mobile/gps', {
+        const res = await fetch('/api/mobile/gps', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(data)
