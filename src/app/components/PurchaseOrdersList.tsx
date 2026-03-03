@@ -118,6 +118,168 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
     }
   };
 
+  const handlePrintPO = (po: PurchaseOrder) => {
+    // Create a clean print window with PO document
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      toast.error('Please allow popups to print PO documents');
+      return;
+    }
+
+    const assignedAssetNames = po.assignedAssets.map(id => {
+      const vehicle = vehicles.find(v => v.id === id);
+      return vehicle ? vehicle.unit_name : id;
+    });
+
+    const printContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Purchase Order - ${po.poNumber}</title>
+        <style>
+          @page {
+            margin: 0.5in;
+            size: A4;
+          }
+          body {
+            font-family: 'Times New Roman', serif;
+            font-size: 12pt;
+            line-height: 1.4;
+            color: black;
+            margin: 0;
+            padding: 20px;
+          }
+          .header {
+            text-align: center;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #000;
+            padding-bottom: 20px;
+          }
+          .company-name {
+            font-size: 18pt;
+            font-weight: bold;
+            margin-bottom: 5px;
+          }
+          .document-title {
+            font-size: 16pt;
+            font-weight: bold;
+            margin-bottom: 20px;
+          }
+          .po-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+          }
+          .info-box {
+            border: 1px solid #000;
+            padding: 10px;
+          }
+          .info-label {
+            font-weight: bold;
+            margin-bottom: 5px;
+          }
+          .status {
+            display: inline-block;
+            padding: 5px 10px;
+            border: 1px solid #000;
+            font-weight: bold;
+            text-transform: uppercase;
+          }
+          .description {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ccc;
+            min-height: 60px;
+          }
+          .amount-delivery {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+          }
+          .amount-box, .delivery-box {
+            border: 1px solid #000;
+            padding: 10px;
+          }
+          .assets {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ccc;
+          }
+          .footer {
+            margin-top: 40px;
+            text-align: center;
+            font-size: 10pt;
+            color: #666;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div class="company-name">KIMOEL TRADING & CONSTRUCTION INCORPORATED</div>
+          <div class="document-title">PURCHASE ORDER</div>
+        </div>
+        
+        <div class="po-info">
+          <div class="info-box">
+            <div class="info-label">PO Number:</div>
+            <div>${po.poNumber}</div>
+          </div>
+          <div class="info-box">
+            <div class="info-label">Date:</div>
+            <div>${formatDate(po.createdDate)}</div>
+          </div>
+          <div class="info-box">
+            <div class="info-label">Client:</div>
+            <div>${po.client}</div>
+          </div>
+          <div class="info-box">
+            <div class="info-label">Status:</div>
+            <div class="status">${po.status.replace('-', ' ').toUpperCase()}</div>
+          </div>
+        </div>
+        
+        <div class="description">
+          <div class="info-label">Description:</div>
+          <div>${po.description}</div>
+        </div>
+        
+        <div class="amount-delivery">
+          <div class="amount-box">
+            <div class="info-label">Amount:</div>
+            <div style="font-size: 14pt; font-weight: bold;">${formatCurrency(po.amount)}</div>
+          </div>
+          <div class="delivery-box">
+            <div class="info-label">Delivery Date:</div>
+            <div>${formatDate(po.deliveryDate)}</div>
+          </div>
+        </div>
+        
+        ${assignedAssetNames.length > 0 ? `
+        <div class="assets">
+          <div class="info-label">Assigned Assets:</div>
+          <div>${assignedAssetNames.join(', ')}</div>
+        </div>
+        ` : ''}
+        
+        <div class="footer">
+          Generated on ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+        </div>
+      </body>
+      </html>
+    `;
+
+    printWindow.document.write(printContent);
+    printWindow.document.close();
+    
+    // Wait for content to load, then print
+    printWindow.onload = () => {
+      printWindow.print();
+      printWindow.close();
+    };
+  };
+
   // Filter orders based on selected status
   const filteredOrders = statusFilter === 'all' 
     ? orders 
@@ -235,7 +397,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
                     <Button 
                       variant="ghost" 
                       size="icon"
-                      onClick={() => window.print()}
+                      onClick={() => handlePrintPO(po)}
                       className="print-button"
                       title="Print P.O."
                     >
@@ -411,27 +573,135 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
   );
 }
 
-/* Print Styles - Hide print button when printing */
+/* Print Styles - Professional PO Layout */
 const printStyles = `
 @media print {
-  .print-button {
+  /* Hide all non-print elements */
+  .print-button,
+  button,
+  .bg-black\\/50,
+  .fixed.inset-0,
+  .p-4.text-center,
+  .flex.items-center.justify-between.p-6,
+  .border-b,
+  .text-slate-400,
+  .hover\\:text-slate-600,
+  .text-red-600,
+  .hover\\:text-red-700,
+  .hover\\:bg-red-50,
+  .text-blue-600,
+  .hover\\:text-blue-700,
+  .hover\\:bg-blue-50,
+  .gap-3,
+  .grid.grid-cols-2,
+  .pt-4.border-t,
+  .flex.flex-wrap.gap-2,
+  .mb-4,
+  .line-clamp-2,
+  .shadow-2xl,
+  .rounded-2xl,
+  .bg-white,
+  .dark\\:bg-slate-800,
+  .dark\\:text-slate-100,
+  .dark\\:text-slate-300,
+  .dark\\:text-slate-400,
+  .dark\\:text-slate-500,
+  .dark\\:bg-slate-700\\/50,
+  .dark\\:border-slate-600,
+  .dark\\:border-white\\/10,
+  .dark\\:bg-amber-500\\/20,
+  .dark\\:text-amber-300,
+  .dark\\:border-amber-500\\/30,
+  .dark\\:bg-blue-500\\/20,
+  .dark\\:text-blue-300,
+  .dark\\:border-blue-500\\/30,
+  .dark\\:bg-slate-700\\/50,
+  .dark\\:text-slate-300,
+  .dark\\:border-slate-600 {
     display: none !important;
   }
-}
-
-/* Print-specific styles for PO cards */
-@media print {
-  body * {
-    visibility: hidden;
+  
+  /* Print-friendly layout */
+  body {
+    font-family: 'Times New Roman', serif;
+    font-size: 12pt;
+    line-height: 1.4;
+    color: black;
+    background: white;
+    margin: 0;
+    padding: 20px;
   }
-  .card, .card * {
-    visibility: visible;
-  }
+  
+  /* PO Card styling for print */
   .card {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
+    border: 2px solid #000 !important;
+    page-break-inside: avoid;
+    margin: 0 !important;
+    padding: 20px !important;
+    background: white !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+  }
+  
+  /* PO Header */
+  .text-xl.font-bold {
+    font-size: 18pt !important;
+    font-weight: bold !important;
+    margin-bottom: 10px !important;
+  }
+  
+  /* Company info */
+  .text-sm.text-slate-600 {
+    font-size: 10pt !important;
+    margin-bottom: 15px !important;
+  }
+  
+  /* Status badge */
+  .bg-emerald-50,
+  .bg-amber-50,
+  .bg-blue-50,
+  .bg-slate-100 {
+    border: 1px solid #000 !important;
+    padding: 5px 10px !important;
+    margin: 5px 0 !important;
+    background: white !important;
+  }
+  
+  /* Amount and delivery sections */
+  .grid.grid-cols-2 > div {
+    border: 1px solid #ccc !important;
+    padding: 10px !important;
+    margin: 5px 0 !important;
+    background: white !important;
+  }
+  
+  /* Description */
+  p.text-sm {
+    font-size: 11pt !important;
+    margin: 10px 0 !important;
+    page-break-inside: avoid;
+  }
+  
+  /* Company branding */
+  .text-lg.font-bold {
+    font-size: 16pt !important;
+    font-weight: bold !important;
+    text-align: center !important;
+    margin-bottom: 20px !important;
+  }
+  
+  /* Ensure text is visible */
+  * {
+    color: black !important;
+    background: white !important;
+  }
+  
+  /* Page setup */
+  @page {
+    margin: 0.5in;
+    size: A4;
   }
 }
 `;
