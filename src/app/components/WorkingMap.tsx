@@ -32,27 +32,83 @@ export function WorkingMap() {
   // Fetch devices and positions on mount
   useEffect(() => {
     const loadData = async () => {
-      try {
-        setLoading(true);
-        setError(null);
+      setLoading(true);
+      setError(null);
+      
+      // Use LocalStorage GPS system instead of Traccar
+      const phoneData = localStorage.getItem('phoneGPSData');
+      const laptopData = localStorage.getItem('laptopGPSData');
+      
+      if (phoneData || laptopData) {
+        const devices = [];
+        if (phoneData) {
+          try {
+            const gpsData = JSON.parse(phoneData);
+            devices.push({
+              id: 1,
+              name: 'Phone GPS',
+              uniqueId: 'phone',
+              status: 'online',
+              lastUpdate: new Date().toISOString(),
+              positionId: 1,
+              category: 'phone',
+              position: {
+                id: 1,
+                deviceId: 1,
+                latitude: gpsData.position.latitude,
+                longitude: gpsData.position.longitude,
+                speed: 0,
+                course: 0,
+                altitude: 0,
+                accuracy: 10,
+                fixTime: new Date().toISOString(),
+                deviceTime: new Date().toISOString(),
+                serverTime: new Date().toISOString(),
+                attributes: {}
+              }
+            });
+          } catch (e) {
+            console.warn('Invalid phone GPS data:', e);
+          }
+        }
         
-        const [devicesData, positionsData] = await Promise.all([
-          fetchTraccarDevices(),
-          fetchTraccarPositions(),
-        ]);
+        if (laptopData) {
+          try {
+            const gpsData = JSON.parse(laptopData);
+            devices.push({
+              id: 2,
+              name: 'Laptop GPS',
+              uniqueId: 'laptop',
+              status: 'online',
+              lastUpdate: new Date().toISOString(),
+              positionId: 2,
+              category: 'laptop',
+              position: {
+                id: 2,
+                deviceId: 2,
+                latitude: gpsData.position.latitude,
+                longitude: gpsData.position.longitude,
+                speed: 0,
+                course: 0,
+                altitude: 0,
+                accuracy: 10,
+                fixTime: new Date().toISOString(),
+                deviceTime: new Date().toISOString(),
+                serverTime: new Date().toISOString(),
+                attributes: {}
+              }
+            });
+          } catch (e) {
+            console.warn('Invalid laptop GPS data:', e);
+          }
+        }
         
-        // Merge devices with their latest positions
-        const merged = devicesData.map(device => {
-          const position = positionsData.find(p => p.deviceId === device.id);
-          return { ...device, position };
-        });
-        
-        setDevices(merged);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load GPS data');
-      } finally {
-        setLoading(false);
+        setDevices(devices);
+      } else {
+        setError('No GPS data available. Use the GPS tracking page to add location data.');
       }
+      
+      setLoading(false);
     };
     
     loadData();
@@ -203,10 +259,10 @@ export function WorkingMap() {
           <div className="flex items-start gap-3 text-red-600">
             <AlertCircle className="size-5 mt-0.5" />
             <div>
-              <div className="font-semibold">GPS Connection Error</div>
+              <div className="font-semibold">GPS Data Not Available</div>
               <div className="text-sm text-red-500 mt-1">{error}</div>
               <div className="text-xs text-slate-500 mt-2">
-                Make sure Traccar server is running on http://localhost:8082
+                Go to the GPS tracking page to add your location data
               </div>
             </div>
           </div>
