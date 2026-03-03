@@ -267,17 +267,41 @@ export interface TraccarPosition {
   attributes: Record<string, unknown>;
 }
 
+export interface TraccarGeofence {
+  id: number;
+  name: string;
+  description: string;
+  area: string; // polygon coordinates
+  calendarId: number;
+  attributes: Record<string, unknown>;
+}
+
 export async function fetchTraccarStatus(): Promise<{ connected: boolean; error?: string }> {
-  return fetchApi('/traccar/status');
+  try {
+    return await fetchApi('/traccar/status');
+  } catch (error: any) {
+    console.warn('[Traccar] Status check failed:', error.message);
+    return { connected: false, error: 'Traccar server not available' };
+  }
 }
 
 export async function fetchTraccarDevices(): Promise<TraccarDevice[]> {
-  return fetchApi('/traccar/devices');
+  try {
+    return await fetchApi('/traccar/devices');
+  } catch (error: any) {
+    console.warn('[Traccar] Devices fetch failed:', error.message);
+    return [];
+  }
 }
 
 export async function fetchTraccarPositions(deviceId?: number): Promise<TraccarPosition[]> {
-  const path = deviceId ? `/traccar/positions?deviceId=${deviceId}` : '/traccar/positions';
-  return fetchApi(path);
+  try {
+    const path = deviceId ? `/traccar/positions?deviceId=${deviceId}` : '/traccar/positions';
+    return await fetchApi(path);
+  } catch (error: any) {
+    console.warn('[Traccar] Positions fetch failed:', error.message);
+    return [];
+  }
 }
 
 export async function fetchTraccarPositionHistory(
@@ -285,9 +309,23 @@ export async function fetchTraccarPositionHistory(
   from: string,
   to: string
 ): Promise<TraccarPosition[]> {
-  return fetchApi(
-    `/traccar/positions/history?deviceId=${deviceId}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
-  );
+  try {
+    return await fetchApi(
+      `/traccar/positions/history?deviceId=${deviceId}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+    );
+  } catch (error: any) {
+    console.warn('[Traccar] Position history fetch failed:', error.message);
+    return [];
+  }
+}
+
+export async function fetchTraccarGeofences(): Promise<TraccarGeofence[]> {
+  try {
+    return await fetchApi('/traccar/geofences');
+  } catch (error: any) {
+    console.warn('[Traccar] Geofences fetch failed:', error.message);
+    return [];
+  }
 }
 
 export async function createTraccarDevice(device: {
@@ -295,16 +333,46 @@ export async function createTraccarDevice(device: {
   uniqueId: string;
   category?: string;
 }): Promise<TraccarDevice> {
-  return fetchApi('/traccar/devices', {
-    method: 'POST',
-    body: JSON.stringify(device),
-  });
+  try {
+    return await fetchApi('/traccar/devices', {
+      method: 'POST',
+      body: JSON.stringify(device),
+    });
+  } catch (error: any) {
+    console.warn('[Traccar] Device creation failed:', error.message);
+    throw new Error('Traccar server not available');
+  }
 }
 
-export async function deleteTraccarDevice(deviceId: number): Promise<{ message: string }> {
-  return fetchApi(`/traccar/devices/${deviceId}`, { method: 'DELETE' });
+export async function updateTraccarDevice(
+  deviceId: number,
+  updates: Partial<TraccarDevice>
+): Promise<TraccarDevice> {
+  try {
+    return await fetchApi(`/traccar/devices/${deviceId}`, {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    });
+  } catch (error: any) {
+    console.warn('[Traccar] Device update failed:', error.message);
+    throw new Error('Traccar server not available');
+  }
+}
+
+export async function deleteTraccarDevice(deviceId: number): Promise<void> {
+  try {
+    return await fetchApi(`/traccar/devices/${deviceId}`, { method: 'DELETE' });
+  } catch (error: any) {
+    console.warn('[Traccar] Device deletion failed:', error.message);
+    throw new Error('Traccar server not available');
+  }
 }
 
 export async function fetchTraccarWsInfo(): Promise<{ wsUrl: string; authHeader: string }> {
-  return fetchApi('/traccar/ws-info');
+  try {
+    return await fetchApi('/traccar/ws-info');
+  } catch (error: any) {
+    console.warn('[Traccar] WebSocket info fetch failed:', error.message);
+    return { wsUrl: '', authHeader: '' };
+  }
 }
