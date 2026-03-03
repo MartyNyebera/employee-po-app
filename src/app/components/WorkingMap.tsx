@@ -35,9 +35,22 @@ export function WorkingMap() {
       setLoading(true);
       setError(null);
       
-      // Use LocalStorage GPS system instead of Traccar
-      const phoneData = localStorage.getItem('phoneGPSData');
-      const laptopData = localStorage.getItem('laptopGPSData');
+      // Use LocalStorage GPS system from tracker.html
+      let phoneData = null;
+      let laptopData = null;
+      
+      // Look for gpsData_* keys from tracker.html
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('gpsData_')) {
+          const deviceId = key.replace('gpsData_', '');
+          if (deviceId.includes('phone')) {
+            phoneData = localStorage.getItem(key);
+          } else if (deviceId.includes('laptop')) {
+            laptopData = localStorage.getItem(key);
+          }
+        }
+      }
       
       if (phoneData || laptopData) {
         const devices = [];
@@ -55,14 +68,14 @@ export function WorkingMap() {
               position: {
                 id: 1,
                 deviceId: 1,
-                latitude: gpsData.position.latitude,
-                longitude: gpsData.position.longitude,
-                speed: 0,
-                course: 0,
+                latitude: gpsData.lat,
+                longitude: gpsData.lng,
+                speed: gpsData.speed || 0,
+                course: gpsData.heading || 0,
                 altitude: 0,
-                accuracy: 10,
-                fixTime: new Date().toISOString(),
-                deviceTime: new Date().toISOString(),
+                accuracy: gpsData.accuracy || 10,
+                fixTime: new Date(gpsData.timestamp).toISOString(),
+                deviceTime: new Date(gpsData.timestamp).toISOString(),
                 serverTime: new Date().toISOString(),
                 attributes: {}
               }
@@ -86,14 +99,14 @@ export function WorkingMap() {
               position: {
                 id: 2,
                 deviceId: 2,
-                latitude: gpsData.position.latitude,
-                longitude: gpsData.position.longitude,
-                speed: 0,
-                course: 0,
+                latitude: gpsData.lat,
+                longitude: gpsData.lng,
+                speed: gpsData.speed || 0,
+                course: gpsData.heading || 0,
                 altitude: 0,
-                accuracy: 10,
-                fixTime: new Date().toISOString(),
-                deviceTime: new Date().toISOString(),
+                accuracy: gpsData.accuracy || 10,
+                fixTime: new Date(gpsData.timestamp).toISOString(),
+                deviceTime: new Date(gpsData.timestamp).toISOString(),
                 serverTime: new Date().toISOString(),
                 attributes: {}
               }
