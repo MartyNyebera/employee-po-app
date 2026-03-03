@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { fetchPurchaseOrders, createPurchaseOrder, updatePurchaseOrder } from '../api/client';
+import { fetchPurchaseOrders, createPurchaseOrder, updatePurchaseOrder, deletePurchaseOrder } from '../api/client';
 import { fetchVehicles, type Vehicle } from '../api/fleet';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
@@ -9,7 +9,7 @@ import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { CreatePOModal } from './CreatePOModal';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { FileText, Plus, DollarSign, Calendar, Building2, Truck, Edit, Filter, Printer } from 'lucide-react';
+import { FileText, Plus, DollarSign, Calendar, Building2, Truck, Edit, Filter, Printer, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface PurchaseOrder {
@@ -99,12 +99,25 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
       setOrders(orders.map(po => po.id === selectedPO.id ? updated : po));
       setIsEditing(false);
       toast.success('Purchase order updated successfully');
-    } catch (e) {
-      toast.error('Failed to update');
+    } catch (err: any) {
+      toast.error('Failed to update purchase order: ' + err.message);
     }
   };
 
-  
+  const handleDeletePO = async (po: PurchaseOrder) => {
+    if (!confirm(`Are you sure you want to delete PO ${po.poNumber}? This action cannot be undone.`)) {
+      return;
+    }
+    
+    try {
+      await deletePurchaseOrder(po.id);
+      setOrders(orders.filter(order => order.id !== po.id));
+      toast.success('Purchase order deleted successfully');
+    } catch (err: any) {
+      toast.error('Failed to delete purchase order: ' + err.message);
+    }
+  };
+
   // Filter orders based on selected status
   const filteredOrders = statusFilter === 'all' 
     ? orders 
@@ -229,17 +242,29 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
                       <Printer className="size-4" />
                     </Button>
                     {isAdmin && (
-                      <Button 
-                        variant="ghost" 
-                        size="icon"
-                        onClick={() => {
-                          setSelectedPO(po);
-                          setEditForm({ status: po.status, description: po.description });
-                          setIsEditing(true);
-                        }}
-                      >
-                        <Edit className="size-4" />
-                      </Button>
+                      <>
+                        <Button 
+                          variant="ghost" 
+                          size="icon"
+                          onClick={() => {
+                            setSelectedPO(po);
+                            setEditForm({ status: po.status, description: po.description });
+                            setIsEditing(true);
+                          }}
+                          title="Edit PO"
+                        >
+                          <Edit className="size-4" />
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="icon"
+                          onClick={() => handleDeletePO(po)}
+                          className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                          title="Delete PO"
+                        >
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -302,6 +327,73 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
       </div>
     </div>
     
+    {/* Edit PO Modal */}
+    {isEditing && selectedPO && (
+      <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+          {/* Header */}
+          <div className="flex items-center justify-between p-6 border-b border-slate-200">
+            <h2 className="text-lg font-bold text-slate-900">Edit Purchase Order</h2>
+            <button onClick={() => setIsEditing(false)} className="text-slate-400 hover:text-slate-600">
+              <X className="size-5" />
+            </button>
+          </div>
+
+          {/* Form */}
+          <form onSubmit={handleSaveEdit} className="p-6 space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                PO Number
+              </label>
+              <div className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-slate-50 text-slate-900 text-sm">
+                {selectedPO.poNumber}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Status <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={editForm.status}
+                onChange={e => setEditForm(f => ({ ...f, status: e.target.value }))}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                required
+              >
+                <option value="pending">Pending</option>
+                <option value="approved">Approved</option>
+                <option value="in-progress">In Progress</option>
+                <option value="completed">Completed / Done</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Description <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                value={editForm.description}
+                onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))}
+                placeholder="Project details..."
+                rows={3}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                required
+              />
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <Button type="button" variant="outline" className="flex-1" onClick={() => setIsEditing(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white">
+                Update PO
+              </Button>
+            </div>
+          </form>
+        </div>
+      </div>
+    )}
+
     {/* Create PO Modal */}
     {showCreateModal && (
       <CreatePOModal 

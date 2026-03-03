@@ -859,6 +859,16 @@ app.delete('/api/purchase-orders', requireAdmin, async (req, res) => {
   }
 });
 
+// DELETE /api/purchase-orders/:id (admin only)
+app.delete('/api/purchase-orders/:id', requireAdmin, async (req, res) => {
+  try {
+    await query('DELETE FROM purchase_orders WHERE id = $1', [req.params.id]);
+    res.json({ message: 'Purchase order deleted' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // PATCH /api/purchase-orders/:id (admin only)
 app.patch('/api/purchase-orders/:id', requireAdmin, async (req, res) => {
   try {

@@ -203,6 +203,12 @@ export async function updatePurchaseOrder(id: string, updates: { status?: string
   };
 }
 
+export async function deletePurchaseOrder(id: string): Promise<void> {
+  await fetchApi(`/purchase-orders/${id}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function fetchTransactions(): Promise<Transaction[]> {
   const data = await fetchApi<{ id: string; poNumber: string; type: string; description: string; amount: number; assetId: string; date: string; receipt?: string }[]>('/transactions');
   return data.map((t) => ({
