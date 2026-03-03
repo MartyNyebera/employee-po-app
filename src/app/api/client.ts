@@ -161,16 +161,42 @@ export async function fetchPurchaseOrders(): Promise<PurchaseOrder[]> {
 
 export async function createPurchaseOrder(po: {
   poNumber: string;
-  client: string;
-  description: string;
-  amount: number;
+  poDate: string;
   deliveryDate: string;
-  assignedAssets?: string[];
+  poType: 'domestic' | 'foreign';
+  paymentTerms: string;
+  termsAndConditions: string;
+  preparedBy: string;
+  reviewedBy: string;
+  customerName: string;
+  customerAddress: string;
+  customerContact: string;
+  lineItems: Array<{
+    id: string;
+    no: number;
+    account: string;
+    vendor: string;
+    quantity: number;
+    unit: string;
+    description: string;
+    unitPrice: number;
+    amount: number;
+  }>;
+  subTotal: number;
+  otherCharges: number;
+  vatAmount: number;
+  totalAmount: number;
   createdDate?: string;
 }): Promise<PurchaseOrder> {
   const data = await fetchApi<{ id: string; poNumber: string; client: string; description: string; amount: number; status: string; createdDate: string; deliveryDate: string; assignedAssets: string[] }>('/purchase-orders', {
     method: 'POST',
-    body: JSON.stringify(po),
+    body: JSON.stringify({
+      ...po,
+      client: po.customerName,
+      description: po.lineItems.map(item => item.description).join('; '),
+      amount: po.totalAmount,
+      assignedAssets: [],
+    }),
   });
   return {
     id: data.id,

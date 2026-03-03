@@ -119,7 +119,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
   };
 
   const handlePrintPO = (po: PurchaseOrder) => {
-    // Create a professional print window with formal PO template
+    // Create a professional print window with corrected PO template
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
       toast.error('Please allow popups to print PO documents');
@@ -147,6 +147,11 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
           }
           
           /* Header Section */
+          .header-date {
+            text-align: right;
+            font-size: 9pt;
+            margin-bottom: 5px;
+          }
           .system-title {
             text-align: center;
             font-size: 10pt;
@@ -287,19 +292,18 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
             line-height: 1.2;
           }
           
-          /* Signature Section */
+          /* Signature Section - NO DIAGONAL STAMP */
           .signature-section {
             margin-bottom: 15px;
           }
-          .approved-stamp {
+          .approved-header {
             text-align: center;
-            font-size: 14pt;
+            font-size: 12pt;
             font-weight: bold;
-            color: red;
             margin-bottom: 15px;
-            border: 2px solid red;
-            padding: 10px;
-            transform: rotate(-5deg);
+            border: 1px solid black;
+            padding: 8px;
+            background-color: #f9f9f9;
           }
           .signature-boxes {
             display: flex;
@@ -342,6 +346,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
       </head>
       <body>
         <!-- HEADER SECTION -->
+        <div class="header-date">${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}     Purchase Order</div>
         <div class="system-title">Kimoel Tracking System</div>
         <div class="company-name">KIMOEL TRADING & CONSTRUCTION INCORPORATED</div>
         <div class="company-address">PUROK 1, LODLOD, LIPA CITY, BATANGAS</div>
@@ -354,17 +359,18 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
           <div class="info-box">
             <div class="info-box-title">SUPPLIER NAME AND ADDRESS</div>
             <div class="info-content">
-              ${po.client}<br>
-              [Supplier Address]<br>
-              [Supplier Contact]
+              KIMOEL TRADING & CONSTRUCTION INCORPORATED<br>
+              PUROK 1, LODLOD, LIPA CITY, BATANGAS<br>
+              Tel: (043) - 741 - 2023<br>
+              Email: kimoel_leotagle@yahoo.com
             </div>
           </div>
           <div class="info-box">
             <div class="info-box-title">SHIP/DELIVER TO</div>
             <div class="info-content">
-              KIMOEL TRADING & CONSTRUCTION INCORPORATED<br>
-              PUROK 1, LODLOD, LIPA CITY, BATANGAS<br>
-              Attn: LEO TAGLE
+              ${po.client}<br>
+              [Customer Address]<br>
+              [Customer Contact]
             </div>
           </div>
           <div class="info-box">
@@ -442,9 +448,9 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
           5. This PO is governed by the laws of the Republic of the Philippines.
         </div>
         
-        <!-- SIGNATURE SECTION -->
+        <!-- SIGNATURE SECTION - NO DIAGONAL STAMP -->
         <div class="signature-section">
-          <div class="approved-stamp">APPROVED</div>
+          <div class="approved-header">APPROVED</div>
           <div class="signature-boxes">
             <div class="signature-box">
               <div class="signature-title">Prepared By:</div>
