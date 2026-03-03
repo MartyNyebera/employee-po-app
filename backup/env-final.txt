@@ -1,0 +1,25 @@
+# Database connection (TimescaleDB / PostgreSQL)
+DATABASE_URL=postgresql://postgres:Kimoel123@localhost:5432/fleet_manager
+
+SUPER_ADMIN_DEVELOPER_EMAIL=leisuarez2@gmail.com
+SUPER_ADMIN_DEVELOPER_NAME=Lei Suarez
+SUPER_ADMIN_DEVELOPER_PASSWORD=developer123456
+
+SUPER_ADMIN_OWNER_EMAIL=kimoel_leotagle@yahoo.com
+SUPER_ADMIN_OWNER_NAME=Leo Tagle
+SUPER_ADMIN_OWNER_PASSWORD=Kimoeltrading&construction.inc
+
+# Email (SMTP) – for admin request notifications. Optional; if not set, emails are skipped.
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=leisuarez2@gmail.com
+SMTP_PASS=npcduyvlmoeyqjby
+SMTP_FROM=leisuarez2@gmail.com
+ADMIN_NOTIFICATION_EMAILS=leisuarez2@gmail.com,kimoel_leotagle@yahoo.com
+
+# Traccar GPS Server – for live vehicle tracking (SinoTrack ST-906)
+# Download Traccar: https://www.traccar.org/download/
+# Default Traccar runs on port 8082, H02 protocol (ST-906) on port 5013
+TRACCAR_URL=http://localhost:8082
+TRACCAR_USER=admin
+TRACCAR_PASS=admin

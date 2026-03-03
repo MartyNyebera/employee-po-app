@@ -166,6 +166,7 @@ export async function createPurchaseOrder(po: {
   amount: number;
   deliveryDate: string;
   assignedAssets?: string[];
+  createdDate?: string;
 }): Promise<PurchaseOrder> {
   const data = await fetchApi<{ id: string; poNumber: string; client: string; description: string; amount: number; status: string; createdDate: string; deliveryDate: string; assignedAssets: string[] }>('/purchase-orders', {
     method: 'POST',

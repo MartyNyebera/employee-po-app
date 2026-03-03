@@ -106,6 +106,9 @@ export function PurchaseOrdersList({ isAdmin }: PurchaseOrdersListProps) {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
     try {
+      // Add automatic current date for createdDate
+      const currentDate = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
+      
       const newPO = await createPurchaseOrder({
         poNumber: formData.get('poNumber') as string,
         client: formData.get('client') as string,
@@ -113,6 +116,7 @@ export function PurchaseOrdersList({ isAdmin }: PurchaseOrdersListProps) {
         amount: Number(formData.get('amount')),
         deliveryDate: formData.get('deliveryDate') as string,
         assignedAssets: [],
+        createdDate: currentDate, // Add automatic date created
       });
       setOrders([newPO, ...orders]);
       toast.success('Purchase order created successfully');
