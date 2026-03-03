@@ -9,7 +9,7 @@ import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { CreatePOModal } from './CreatePOModal';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { FileText, Plus, DollarSign, Calendar, Building2, Truck, Edit, Filter } from 'lucide-react';
+import { FileText, Plus, DollarSign, Calendar, Building2, Truck, Edit, Filter, Printer } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface PurchaseOrder {
@@ -219,6 +219,15 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
                   </div>
                   <div className="flex items-center gap-3">
                     {getStatusBadge(po.status)}
+                    <Button 
+                      variant="ghost" 
+                      size="icon"
+                      onClick={() => window.print()}
+                      className="print-button"
+                      title="Print P.O."
+                    >
+                      <Printer className="size-4" />
+                    </Button>
                     {isAdmin && (
                       <Button 
                         variant="ghost" 
@@ -308,4 +317,36 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
     )}
     </>
   );
+}
+
+/* Print Styles - Hide print button when printing */
+const printStyles = `
+@media print {
+  .print-button {
+    display: none !important;
+  }
+}
+
+/* Print-specific styles for PO cards */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .card, .card * {
+    visibility: visible;
+  }
+  .card {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+}
+`;
+
+// Inject print styles into document
+if (typeof document !== 'undefined') {
+  const styleSheet = document.createElement('style');
+  styleSheet.textContent = printStyles;
+  document.head.appendChild(styleSheet);
 }
