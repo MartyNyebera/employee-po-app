@@ -26,6 +26,53 @@ CREATE TABLE IF NOT EXISTS admin_approval_requests (
   decided_at TIMESTAMPTZ
 );
 
+-- Vehicles table (fleet vehicles)
+CREATE TABLE IF NOT EXISTS vehicles (
+  id TEXT PRIMARY KEY,
+  unit_name TEXT NOT NULL,
+  vehicle_type TEXT NOT NULL,
+  plate_number TEXT,
+  current_odometer NUMERIC(10,2) DEFAULT 0,
+  tracker_id TEXT,
+  pms_status TEXT DEFAULT 'OK',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Maintenance records for vehicles
+CREATE TABLE IF NOT EXISTS maintenance_records (
+  id TEXT PRIMARY KEY,
+  vehicle_id TEXT NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+  description TEXT NOT NULL,
+  service_date DATE NOT NULL,
+  odometer_at_service NUMERIC(10,2),
+  total_cost NUMERIC(12,2) DEFAULT 0,
+  next_due_date DATE,
+  next_due_odometer NUMERIC(10,2),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Fleet purchase orders (linked to vehicles)
+CREATE TABLE IF NOT EXISTS fleet_purchase_orders (
+  id TEXT PRIMARY KEY,
+  vehicle_id TEXT NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+  po_number TEXT NOT NULL,
+  supplier TEXT,
+  date DATE NOT NULL,
+  total_cost NUMERIC(12,2) DEFAULT 0,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Odometer logs for vehicles
+CREATE TABLE IF NOT EXISTS odometer_logs (
+  id TEXT PRIMARY KEY,
+  vehicle_id TEXT NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+  odometer NUMERIC(10,2) NOT NULL,
+  recorded_at TIMESTAMPTZ DEFAULT NOW(),
+  source TEXT DEFAULT 'manual'
+);
+
 -- Assets table (fleet vehicles)
 CREATE TABLE IF NOT EXISTS assets (
   id TEXT PRIMARY KEY,
