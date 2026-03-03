@@ -371,14 +371,8 @@ export async function fetchTraccarPositionHistory(
   from: string,
   to: string
 ): Promise<TraccarPosition[]> {
-  try {
-    return await fetchApi(
-      `/traccar/positions/history?deviceId=${deviceId}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
-    );
-  } catch (error: any) {
-    console.warn('[Traccar] Position history fetch failed:', error.message);
-    return [];
-  }
+  // Return empty array since we're using LocalStorage
+  return [];
 }
 
 export async function fetchTraccarGeofences(): Promise<TraccarGeofence[]> {

@@ -991,14 +991,17 @@ app.post('/api/transactions', requireAdmin, async (req, res) => {
 });
 
 // ─── Traccar GPS Tracking ──────────────────────────────────
+// DISABLED: Using LocalStorage GPS system instead of Traccar server
+// All Traccar API routes are commented out to prevent 502 errors
 
+/*
 // GET /api/traccar/status - check if Traccar server is reachable
 app.get('/api/traccar/status', async (req, res) => {
   try {
     const status = await checkConnection();
     res.json(status);
   } catch (err) {
-    res.json({ connected: false, error: err.message });
+    res.status(502).json({ error: 'Traccar: ' + err.message });
   }
 });
 
@@ -1028,7 +1031,7 @@ app.post('/api/traccar/devices', requireAdmin, async (req, res) => {
   try {
     const { name, uniqueId, category } = req.body;
     if (!name || !uniqueId) {
-      return res.status(400).json({ error: 'name and uniqueId (IMEI) are required' });
+      return res.status(400).json({ error: 'Name and uniqueId are required' });
     }
     const device = await createDevice({ name, uniqueId, category });
     res.status(201).json(device);
@@ -1095,6 +1098,7 @@ app.get('/api/traccar/geofences', async (req, res) => {
 app.get('/api/traccar/ws-info', async (req, res) => {
   res.json({ wsUrl: getTraccarWsUrl(), authHeader });
 });
+*/
 
 // POST /api/init - create tables and seed (convenience endpoint)
 app.post('/api/init', async (req, res) => {
