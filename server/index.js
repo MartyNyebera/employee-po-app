@@ -803,7 +803,29 @@ app.get('/api/purchase-orders', async (req, res) => {
 // POST /api/purchase-orders (admin only)
 app.post('/api/purchase-orders', requireAdmin, async (req, res) => {
   try {
-    const { client, description, amount, deliveryDate, assignedAssets = [], createdDate } = req.body;
+    const { 
+      client, 
+      description, 
+      amount, 
+      deliveryDate, 
+      assignedAssets = [], 
+      createdDate,
+      // New fields from restructured form
+      poDate,
+      poType,
+      paymentTerms,
+      termsAndConditions,
+      preparedBy,
+      reviewedBy,
+      customerName,
+      customerAddress,
+      customerContact,
+      lineItems,
+      subTotal,
+      otherCharges,
+      vatAmount,
+      totalAmount
+    } = req.body;
     const id = `PO-${Date.now()}`;
     
     // Generate automatic PO number: KTCI-YYYY-NNNN
@@ -822,10 +844,27 @@ app.post('/api/purchase-orders', requireAdmin, async (req, res) => {
     
     // Use provided createdDate or current date if not provided
     const finalCreatedDate = createdDate || new Date().toISOString().split('T')[0];
+    
+    // Create extended description with all the new data
+    const extendedDescription = `${description || ''}
+
+Address: ${customerAddress || '[Customer Address]'}
+Contact: ${customerContact || '[Customer Contact]'}
+Prepared By: ${preparedBy || '[Prepared By]'}
+Reviewed By: ${reviewedBy || '[Reviewed By]'}
+PO Type: ${poType || 'domestic'}
+Payment Terms: ${paymentTerms || '30 days from receipt/acceptance'}
+Line Items: ${JSON.stringify(lineItems || [])}
+Sub Total: ${subTotal || amount}
+Other Charges: ${otherCharges || 0}
+VAT Amount: ${vatAmount || 0}
+Total Amount: ${totalAmount || amount}
+Terms & Conditions: ${termsAndConditions || 'Standard terms apply'}`;
+    
     await query(
       `INSERT INTO purchase_orders (id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets)
        VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8)`,
-      [id, poNumber, client, description, amount, finalCreatedDate, deliveryDate, assignedAssets]
+      [id, poNumber, client || customerName, extendedDescription, amount || totalAmount, finalCreatedDate, deliveryDate, assignedAssets]
     );
     const result = await query(
       `SELECT id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets

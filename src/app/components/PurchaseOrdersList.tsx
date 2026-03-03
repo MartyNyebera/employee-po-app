@@ -119,12 +119,22 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
   };
 
   const handlePrintPO = (po: PurchaseOrder) => {
-    // Create a professional print window with corrected PO template
+    // Create a professional print window with corrected PO template including missing fields
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
       toast.error('Please allow popups to print PO documents');
       return;
     }
+
+    // Extract additional data from PO (assuming it's stored in the description or as extended fields)
+    // For now, we'll use placeholder data that would come from the new form structure
+    const customerData = {
+      name: po.client,
+      address: po.description.includes('Address:') ? po.description.split('Address:')[1].split('\n')[0].trim() : '[Customer Address]',
+      contact: po.description.includes('Contact:') ? po.description.split('Contact:')[1].split('\n')[0].trim() : '[Customer Contact]',
+      preparedBy: po.description.includes('Prepared By:') ? po.description.split('Prepared By:')[1].split('\n')[0].trim() : '[Prepared By]',
+      reviewedBy: po.description.includes('Reviewed By:') ? po.description.split('Reviewed By:')[1].split('\n')[0].trim() : '[Reviewed By]',
+    };
 
     const printContent = `
       <!DOCTYPE html>
@@ -368,9 +378,9 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
           <div class="info-box">
             <div class="info-box-title">SHIP/DELIVER TO</div>
             <div class="info-content">
-              ${po.client}<br>
-              [Customer Address]<br>
-              [Customer Contact]
+              ${customerData.name}<br>
+              ${customerData.address}<br>
+              ${customerData.contact}
             </div>
           </div>
           <div class="info-box">
@@ -455,12 +465,12 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
             <div class="signature-box">
               <div class="signature-title">Prepared By:</div>
               <div class="signature-line"></div>
-              <div class="signature-name">Name: _________________</div>
+              <div class="signature-name">Name: ${customerData.preparedBy}</div>
             </div>
             <div class="signature-box">
               <div class="signature-title">Reviewed By:</div>
               <div class="signature-line"></div>
-              <div class="signature-name">Name: _________________</div>
+              <div class="signature-name">Name: ${customerData.reviewedBy}</div>
             </div>
             <div class="signature-box">
               <div class="signature-title">Approved By:</div>
