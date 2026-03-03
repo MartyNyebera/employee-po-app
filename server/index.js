@@ -11,6 +11,7 @@ import { hashPassword, comparePassword, signToken, requireAuth, requireAdmin, re
 import { sendEmailToAdminsNewRequest, sendEmailToApplicant } from './email.js';
 import { getDevices, getDevice, createDevice, updateDevice, deleteDevice, getPositions, getPositionHistory, getGeofences, checkConnection, getTraccarWsUrl, authHeader, TRACCAR_URL } from './traccar.js';
 import { getVehicles, getVehicle, createVehicle, updateVehicle, deleteVehicle, getOdometerLogs, logOdometer, getMaintenance, createMaintenance, getVehiclePOs, createVehiclePO, getPmsReminders } from './fleet.js';
+import mobileGPSRouter from './mobile-gps.js';
 import { seedFleet } from './seed-fleet.js';
 
 const app = express();
@@ -423,6 +424,9 @@ app.get('/api/phone-location/:deviceId/latest', (req, res) => {
   if (!pos) return res.status(404).json({ error: 'No location found for this device' });
   res.json(pos);
 });
+
+// ----- Mobile GPS API (No auth required for mobile app) -----
+app.use('/api/mobile', mobileGPSRouter);
 
 // ----- All routes below require auth -----
 app.use('/api', requireAuth);
