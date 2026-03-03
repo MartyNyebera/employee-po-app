@@ -46,11 +46,11 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" style={{ backdropFilter: 'none', WebkitBackdropFilter: 'none' }}>
-      <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-md">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-slate-200 dark:border-slate-700">
-          <h2 className="text-lg font-bold text-slate-900 dark:text-white">Create Purchase Order</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+        <div className="flex items-center justify-between p-6 border-b border-slate-200">
+          <h2 className="text-lg font-bold text-slate-900">Create Purchase Order</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
             <X className="size-5" />
           </button>
         </div>
@@ -58,7 +58,7 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+            <label className="block text-sm font-medium text-slate-700 mb-1">
               PO Number <span className="text-red-500">*</span>
             </label>
             <input
@@ -66,7 +66,7 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
               value={form.poNumber}
               onChange={e => setForm(f => ({ ...f, poNumber: e.target.value }))}
               placeholder="PO-2026-XXXX"
-              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               required
               readOnly
               style={{ backgroundColor: '#f8fafc', cursor: 'not-allowed' }}
@@ -74,7 +74,7 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+            <label className="block text-sm font-medium text-slate-700 mb-1">
               Client <span className="text-red-500">*</span>
             </label>
             <input
@@ -82,13 +82,13 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
               value={form.client}
               onChange={e => setForm(f => ({ ...f, client: e.target.value }))}
               placeholder="Company Name"
-              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               required
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+            <label className="block text-sm font-medium text-slate-700 mb-1">
               Description <span className="text-red-500">*</span>
             </label>
             <textarea
@@ -96,13 +96,13 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
               onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
               placeholder="Project details..."
               rows={3}
-              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
               required
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+            <label className="block text-sm font-medium text-slate-700 mb-1">
               Amount (PHP) <span className="text-red-500">*</span>
             </label>
             <input
@@ -112,20 +112,20 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
               placeholder="0"
               min="0"
               step="0.01"
-              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               required
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+            <label className="block text-sm font-medium text-slate-700 mb-1">
               Delivery Date <span className="text-red-500">*</span>
             </label>
             <input
               type="date"
               value={form.deliveryDate}
               onChange={e => setForm(f => ({ ...f, deliveryDate: e.target.value }))}
-              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               required
             />
           </div>
