@@ -119,17 +119,12 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
   };
 
   const handlePrintPO = (po: PurchaseOrder) => {
-    // Create a clean print window with PO document
+    // Create a professional print window with formal PO template
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
       toast.error('Please allow popups to print PO documents');
       return;
     }
-
-    const assignedAssetNames = po.assignedAssets.map(id => {
-      const vehicle = vehicles.find(v => v.id === id);
-      return vehicle ? vehicle.unit_name : id;
-    });
 
     const printContent = `
       <!DOCTYPE html>
@@ -143,128 +138,339 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
           }
           body {
             font-family: 'Times New Roman', serif;
-            font-size: 12pt;
-            line-height: 1.4;
+            font-size: 11pt;
+            line-height: 1.3;
             color: black;
             margin: 0;
-            padding: 20px;
-          }
-          .header {
-            text-align: center;
-            margin-bottom: 30px;
-            border-bottom: 2px solid #000;
-            padding-bottom: 20px;
-          }
-          .company-name {
-            font-size: 18pt;
-            font-weight: bold;
-            margin-bottom: 5px;
-          }
-          .document-title {
-            font-size: 16pt;
-            font-weight: bold;
-            margin-bottom: 20px;
-          }
-          .po-info {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            margin-bottom: 20px;
-          }
-          .info-box {
-            border: 1px solid #000;
-            padding: 10px;
-          }
-          .info-label {
-            font-weight: bold;
-            margin-bottom: 5px;
-          }
-          .status {
-            display: inline-block;
-            padding: 5px 10px;
-            border: 1px solid #000;
-            font-weight: bold;
-            text-transform: uppercase;
-          }
-          .description {
-            margin: 20px 0;
             padding: 15px;
-            border: 1px solid #ccc;
-            min-height: 60px;
+            background: white;
           }
-          .amount-delivery {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            margin-bottom: 20px;
-          }
-          .amount-box, .delivery-box {
-            border: 1px solid #000;
-            padding: 10px;
-          }
-          .assets {
-            margin-top: 20px;
-            padding: 10px;
-            border: 1px solid #ccc;
-          }
-          .footer {
-            margin-top: 40px;
+          
+          /* Header Section */
+          .system-title {
             text-align: center;
             font-size: 10pt;
-            color: #666;
+            font-weight: bold;
+            margin-bottom: 5px;
+          }
+          .company-name {
+            text-align: center;
+            font-size: 16pt;
+            font-weight: bold;
+            margin-bottom: 3px;
+          }
+          .company-address {
+            text-align: center;
+            font-size: 10pt;
+            margin-bottom: 2px;
+          }
+          .contact-details {
+            text-align: center;
+            font-size: 9pt;
+            margin-bottom: 2px;
+          }
+          .proprietor {
+            text-align: center;
+            font-size: 9pt;
+            font-weight: bold;
+            margin-bottom: 10px;
+          }
+          .document-title {
+            text-align: center;
+            font-size: 20pt;
+            font-weight: bold;
+            margin: 15px 0;
+            border-top: 2px solid black;
+            border-bottom: 2px solid black;
+            padding: 10px 0;
+          }
+          
+          /* Info Boxes */
+          .info-section {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+          }
+          .info-box {
+            flex: 1;
+            border: 1px solid black;
+            padding: 8px;
+            min-height: 60px;
+          }
+          .info-box-title {
+            font-weight: bold;
+            font-size: 9pt;
+            margin-bottom: 5px;
+            text-align: center;
+            border-bottom: 1px solid black;
+            padding-bottom: 3px;
+          }
+          .info-content {
+            font-size: 9pt;
+            line-height: 1.2;
+          }
+          
+          /* Payment Terms */
+          .payment-terms {
+            border: 1px solid black;
+            padding: 8px;
+            margin-bottom: 15px;
+            text-align: center;
+            font-weight: bold;
+          }
+          
+          /* Line Items Table */
+          .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 15px;
+          }
+          .items-table th,
+          .items-table td {
+            border: 1px solid black;
+            padding: 5px;
+            font-size: 9pt;
+            text-align: left;
+          }
+          .items-table th {
+            font-weight: bold;
+            background-color: #f0f0f0;
+          }
+          .items-table .number-col,
+          .items-table .quantity-col,
+          .items-table .unit-price-col,
+          .items-table .amount-col {
+            text-align: center;
+            width: 60px;
+          }
+          .items-table .description-col {
+            min-width: 200px;
+          }
+          
+          /* Summary Section */
+          .summary-section {
+            display: flex;
+            justify-content: flex-end;
+            margin-bottom: 15px;
+          }
+          .summary-box {
+            width: 300px;
+            border: 1px solid black;
+          }
+          .summary-row {
+            display: flex;
+            border-bottom: 1px solid black;
+          }
+          .summary-row:last-child {
+            border-bottom: none;
+          }
+          .summary-label {
+            flex: 1;
+            padding: 5px;
+            font-size: 9pt;
+            border-right: 1px solid black;
+          }
+          .summary-value {
+            width: 100px;
+            padding: 5px;
+            font-size: 9pt;
+            text-align: right;
+            font-weight: bold;
+          }
+          
+          /* Terms & Conditions */
+          .terms-section {
+            border: 1px solid black;
+            padding: 8px;
+            margin-bottom: 15px;
+            font-size: 8pt;
+            line-height: 1.2;
+          }
+          
+          /* Signature Section */
+          .signature-section {
+            margin-bottom: 15px;
+          }
+          .approved-stamp {
+            text-align: center;
+            font-size: 14pt;
+            font-weight: bold;
+            color: red;
+            margin-bottom: 15px;
+            border: 2px solid red;
+            padding: 10px;
+            transform: rotate(-5deg);
+          }
+          .signature-boxes {
+            display: flex;
+            gap: 20px;
+          }
+          .signature-box {
+            flex: 1;
+            border: 1px solid black;
+            padding: 10px;
+            text-align: center;
+          }
+          .signature-title {
+            font-weight: bold;
+            font-size: 9pt;
+            margin-bottom: 20px;
+          }
+          .signature-line {
+            border-bottom: 1px solid black;
+            margin: 30px 0 5px 0;
+          }
+          .signature-name {
+            font-size: 8pt;
+          }
+          
+          /* Footer */
+          .footer {
+            text-align: center;
+            font-size: 8pt;
+            margin-top: 20px;
+            border-top: 1px solid black;
+            padding-top: 10px;
+          }
+          .computer-generated {
+            text-align: center;
+            font-size: 8pt;
+            font-style: italic;
+            margin-top: 10px;
           }
         </style>
       </head>
       <body>
-        <div class="header">
-          <div class="company-name">KIMOEL TRADING & CONSTRUCTION INCORPORATED</div>
-          <div class="document-title">PURCHASE ORDER</div>
-        </div>
+        <!-- HEADER SECTION -->
+        <div class="system-title">Kimoel Tracking System</div>
+        <div class="company-name">KIMOEL TRADING & CONSTRUCTION INCORPORATED</div>
+        <div class="company-address">PUROK 1, LODLOD, LIPA CITY, BATANGAS</div>
+        <div class="contact-details">Tel: (043) - 741 - 2023 | Email: kimoel_leotagle@yahoo.com</div>
+        <div class="proprietor">LEO TAGLE (Mobile: 0917 - 628 - 3217)</div>
+        <div class="document-title">PURCHASE ORDER</div>
         
-        <div class="po-info">
+        <!-- TOP INFO BOXES -->
+        <div class="info-section">
           <div class="info-box">
-            <div class="info-label">PO Number:</div>
-            <div>${po.poNumber}</div>
+            <div class="info-box-title">SUPPLIER NAME AND ADDRESS</div>
+            <div class="info-content">
+              ${po.client}<br>
+              [Supplier Address]<br>
+              [Supplier Contact]
+            </div>
           </div>
           <div class="info-box">
-            <div class="info-label">Date:</div>
-            <div>${formatDate(po.createdDate)}</div>
+            <div class="info-box-title">SHIP/DELIVER TO</div>
+            <div class="info-content">
+              KIMOEL TRADING & CONSTRUCTION INCORPORATED<br>
+              PUROK 1, LODLOD, LIPA CITY, BATANGAS<br>
+              Attn: LEO TAGLE
+            </div>
           </div>
           <div class="info-box">
-            <div class="info-label">Client:</div>
-            <div>${po.client}</div>
-          </div>
-          <div class="info-box">
-            <div class="info-label">Status:</div>
-            <div class="status">${po.status.replace('-', ' ').toUpperCase()}</div>
-          </div>
-        </div>
-        
-        <div class="description">
-          <div class="info-label">Description:</div>
-          <div>${po.description}</div>
-        </div>
-        
-        <div class="amount-delivery">
-          <div class="amount-box">
-            <div class="info-label">Amount:</div>
-            <div style="font-size: 14pt; font-weight: bold;">${formatCurrency(po.amount)}</div>
-          </div>
-          <div class="delivery-box">
-            <div class="info-label">Delivery Date:</div>
-            <div>${formatDate(po.deliveryDate)}</div>
+            <div class="info-content">
+              <strong>PO Date:</strong> ${formatDate(po.createdDate)}<br>
+              <strong>PO Number:</strong> ${po.poNumber}<br>
+              <strong>Page:</strong> 1 of 1<br>
+              <strong>PO TYPE:</strong> ☑ Domestic ☐ Foreign
+            </div>
           </div>
         </div>
         
-        ${assignedAssetNames.length > 0 ? `
-        <div class="assets">
-          <div class="info-label">Assigned Assets:</div>
-          <div>${assignedAssetNames.join(', ')}</div>
+        <!-- PAYMENT TERMS -->
+        <div class="payment-terms">
+          PAYMENT TERMS: 30 days from receipt/acceptance
         </div>
-        ` : ''}
         
+        <!-- LINE ITEMS TABLE -->
+        <table class="items-table">
+          <thead>
+            <tr>
+              <th class="number-col">No.</th>
+              <th class="account-col">Account</th>
+              <th class="vendor-col">Vendor</th>
+              <th class="quantity-col">Quantity</th>
+              <th class="unit-col">Unit</th>
+              <th class="description-col">DESCRIPTION</th>
+              <th class="unit-price-col">Unit Price</th>
+              <th class="amount-col">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="number-col">1</td>
+              <td class="account-col">Materials</td>
+              <td class="vendor-col">${po.client}</td>
+              <td class="quantity-col">1</td>
+              <td class="unit-col">Lot</td>
+              <td class="description-col">${po.description}</td>
+              <td class="unit-price-col">${formatCurrency(po.amount)}</td>
+              <td class="amount-col">${formatCurrency(po.amount)}</td>
+            </tr>
+          </tbody>
+        </table>
+        
+        <!-- SUMMARY SECTION -->
+        <div class="summary-section">
+          <div class="summary-box">
+            <div class="summary-row">
+              <div class="summary-label">Sub Total:</div>
+              <div class="summary-value">${formatCurrency(po.amount)}</div>
+            </div>
+            <div class="summary-row">
+              <div class="summary-label">Other Charges:</div>
+              <div class="summary-value">0.00</div>
+            </div>
+            <div class="summary-row">
+              <div class="summary-label">VAT Amount:</div>
+              <div class="summary-value">0.00</div>
+            </div>
+            <div class="summary-row">
+              <div class="summary-label">Total Amount:</div>
+              <div class="summary-value">${formatCurrency(po.amount)}</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- TERMS & CONDITIONS -->
+        <div class="terms-section">
+          <strong>TERMS & CONDITIONS:</strong><br>
+          1. Prices quoted are firm and valid for 30 days from PO date.<br>
+          2. Delivery shall be made to the specified address within the agreed timeframe.<br>
+          3. Materials shall conform to specifications and quality standards.<br>
+          4. Payment shall be made within 30 days from receipt and acceptance of materials.<br>
+          5. This PO is governed by the laws of the Republic of the Philippines.
+        </div>
+        
+        <!-- SIGNATURE SECTION -->
+        <div class="signature-section">
+          <div class="approved-stamp">APPROVED</div>
+          <div class="signature-boxes">
+            <div class="signature-box">
+              <div class="signature-title">Prepared By:</div>
+              <div class="signature-line"></div>
+              <div class="signature-name">Name: _________________</div>
+            </div>
+            <div class="signature-box">
+              <div class="signature-title">Reviewed By:</div>
+              <div class="signature-line"></div>
+              <div class="signature-name">Name: _________________</div>
+            </div>
+            <div class="signature-box">
+              <div class="signature-title">Approved By:</div>
+              <div class="signature-line"></div>
+              <div class="signature-name">Name: LEO TAGLE</div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="computer-generated">
+          This is a computer generated document, no signature is required
+        </div>
+        
+        <!-- FOOTER -->
         <div class="footer">
-          Generated on ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+          Purchase Order ${po.poNumber} | Page 1 of 1 | KIMOEL TRADING & CONSTRUCTION INCORPORATED
         </div>
       </body>
       </html>
