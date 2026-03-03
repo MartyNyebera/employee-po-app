@@ -8,7 +8,7 @@ import { AssetDetails } from './AssetDetails';
 import { PurchaseOrdersList } from './PurchaseOrdersList';
 import { TransactionsList } from './TransactionsList';
 import { LiveVehicleMap } from './LiveVehicleMap';
-import { GPSMonitoring } from './GPSMonitoring';
+import { WorkingMap } from './WorkingMap';
 import { FleetList } from './FleetList';
 import { VehicleDetails } from './VehicleDetails';
 import { PMSReminders } from './PMSReminders';
@@ -94,7 +94,7 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
     }
 
     if (currentView === 'gps') {
-      return <GPSMonitoring />;
+      return <WorkingMap />;
     }
 
     if (currentView === 'fleet') {

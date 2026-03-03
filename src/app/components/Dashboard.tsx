@@ -7,7 +7,7 @@ import { FleetOverview } from './FleetOverview';
 import { AssetDetails } from './AssetDetails';
 import { PurchaseOrdersList } from './PurchaseOrdersList';
 import { TransactionsList } from './TransactionsList';
-import { LegacyLiveMap } from './LegacyLiveMap';
+import { WorkingMap } from './WorkingMap';
 import { FleetList } from './FleetList';
 import { VehicleDetails } from './VehicleDetails';
 import { PMSReminders } from './PMSReminders';
@@ -78,7 +78,7 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
             </a>
           </div>
           <div style={{ flex: 1 }}>
-            <LegacyLiveMap />
+            <WorkingMap />
           </div>
         </div>
       );
