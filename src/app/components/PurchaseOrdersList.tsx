@@ -7,7 +7,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
+import { CreatePOModal } from './CreatePOModal';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { FileText, Plus, DollarSign, Calendar, Building2, Truck, Edit, Filter } from 'lucide-react';
 import { toast } from 'sonner';
@@ -28,11 +28,19 @@ interface PurchaseOrdersListProps {
   isAdmin: boolean;
 }
 
-export function PurchaseOrdersList({ isAdmin }: PurchaseOrdersListProps) {
+export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps) {
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-  const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null);
   const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
+  const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [editForm, setEditForm] = useState({
+    status: '',
+    description: '',
+  });
 
   useEffect(() => {
     Promise.all([
@@ -44,12 +52,6 @@ export function PurchaseOrdersList({ isAdmin }: PurchaseOrdersListProps) {
         .catch(() => setVehicles([])),
     ]).finally(() => setLoading(false));
   }, []);
-  const [isEditing, setIsEditing] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [editForm, setEditForm] = useState({
-    status: '',
-    description: '',
-  });
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -102,29 +104,7 @@ export function PurchaseOrdersList({ isAdmin }: PurchaseOrdersListProps) {
     }
   };
 
-  const handleCreatePO = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    try {
-      // Add automatic current date for createdDate
-      const currentDate = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
-      
-      const newPO = await createPurchaseOrder({
-        poNumber: formData.get('poNumber') as string,
-        client: formData.get('client') as string,
-        description: formData.get('description') as string,
-        amount: Number(formData.get('amount')),
-        deliveryDate: formData.get('deliveryDate') as string,
-        assignedAssets: [],
-        createdDate: currentDate, // Add automatic date created
-      });
-      setOrders([newPO, ...orders]);
-      toast.success('Purchase order created successfully');
-    } catch {
-      toast.error('Failed to create purchase order');
-    }
-  };
-
+  
   // Filter orders based on selected status
   const filteredOrders = statusFilter === 'all' 
     ? orders 
@@ -154,40 +134,13 @@ export function PurchaseOrdersList({ isAdmin }: PurchaseOrdersListProps) {
           </div>
         </div>
         {isAdmin && (
-          <Dialog>
-            <DialogTrigger className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white shadow-lg shadow-blue-500/25 hover:shadow-xl hover:shadow-blue-500/30 border border-blue-500/20 inline-flex items-center justify-center rounded-lg text-sm font-semibold transition-all duration-300 hover:-translate-y-1 px-4 py-2">
-              <Plus className="size-4 mr-2" />
-              New PO
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Create Purchase Order</DialogTitle>
-              </DialogHeader>
-              <form onSubmit={handleCreatePO} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="poNumber">PO Number</Label>
-                  <Input id="poNumber" name="poNumber" placeholder="PO-2026-XXXX" required />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="client">Client</Label>
-                  <Input id="client" name="client" placeholder="Company Name" required />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="description">Description</Label>
-                  <Textarea id="description" name="description" placeholder="Project details..." required />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="amount">Amount (PHP)</Label>
-                  <Input id="amount" name="amount" type="number" placeholder="0" required />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="deliveryDate">Delivery Date</Label>
-                  <Input id="deliveryDate" name="deliveryDate" type="date" required />
-                </div>
-                <Button type="submit" className="w-full">Create Purchase Order</Button>
-              </form>
-            </DialogContent>
-          </Dialog>
+          <button 
+            onClick={() => setShowCreateModal(true)}
+            className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white shadow-lg shadow-blue-500/25 hover:shadow-xl hover:shadow-blue-500/30 border border-blue-500/20 inline-flex items-center justify-center rounded-lg text-sm font-semibold transition-all duration-300 hover:-translate-y-1 px-4 py-2"
+          >
+            <Plus className="size-4 mr-2" />
+            New PO
+          </button>
         )}
       </div>
 
@@ -266,49 +219,17 @@ export function PurchaseOrdersList({ isAdmin }: PurchaseOrdersListProps) {
                   <div className="flex items-center gap-3">
                     {getStatusBadge(po.status)}
                     {isAdmin && (
-                      <Dialog open={isEditing && selectedPO?.id === po.id} onOpenChange={setIsEditing}>
-                        <DialogTrigger asChild>
-                          <Button 
-                            variant="ghost" 
-                            size="icon"
-                            onClick={() => handleEditClick(po)}
-                            className="text-slate-400 hover:text-slate-600 dark:text-slate-400 dark:hover:text-slate-200 transition-colors duration-200"
-                          >
-                            <Edit className="size-4" />
-                          </Button>
-                        </DialogTrigger>
-                        <DialogContent>
-                          <DialogHeader>
-                            <DialogTitle>Edit Purchase Order</DialogTitle>
-                          </DialogHeader>
-                          <div className="space-y-4">
-                            <div className="space-y-2">
-                              <Label>Status</Label>
-                              <Select value={editForm.status} onValueChange={(value) => setEditForm({...editForm, status: value})}>
-                                <SelectTrigger>
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="pending">Pending</SelectItem>
-                                  <SelectItem value="approved">Approved</SelectItem>
-                                  <SelectItem value="in-progress">In Progress</SelectItem>
-                                  <SelectItem value="completed">Completed</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            <div className="space-y-2">
-                              <Label>Description</Label>
-                              <Textarea 
-                                value={editForm.description}
-                                onChange={(e) => setEditForm({...editForm, description: e.target.value})}
-                              />
-                            </div>
-                            <Button onClick={handleSaveEdit} className="w-full">
-                              Save Changes
-                            </Button>
-                          </div>
-                        </DialogContent>
-                      </Dialog>
+                      <Button 
+                        variant="ghost" 
+                        size="icon"
+                        onClick={() => {
+                          setSelectedPO(po);
+                          setEditForm({ status: po.status, description: po.description });
+                          setIsEditing(true);
+                        }}
+                      >
+                        <Edit className="size-4" />
+                      </Button>
                     )}
                   </div>
                 </div>
@@ -369,6 +290,20 @@ export function PurchaseOrdersList({ isAdmin }: PurchaseOrdersListProps) {
           </div>
         )}
       </div>
+      
+      {/* Create PO Modal */}
+      {showCreateModal && (
+        <CreatePOModal 
+          onClose={() => setShowCreateModal(false)}
+          onCreated={() => {
+            setShowCreateModal(false);
+            // Refresh orders
+            fetchPurchaseOrders()
+              .then(setOrders)
+              .catch(() => setOrders([]));
+          }}
+        />
+      )}
     </div>
   );
 }
