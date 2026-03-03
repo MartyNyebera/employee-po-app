@@ -119,13 +119,14 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
   }
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Enhanced Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-3 mb-1">
-            <div className="p-2 bg-amber-100 rounded-lg dark:bg-amber-500/20">
-              <FileText className="size-5 text-amber-600 dark:text-amber-400" />
+    <>
+      <div className="p-6 space-y-6">
+        {/* Enhanced Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="flex items-center gap-3 mb-1">
+              <div className="p-2 bg-amber-100 rounded-lg dark:bg-amber-500/20">
+                <FileText className="size-5 text-amber-600 dark:text-amber-400" />
             </div>
             <div>
               <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100">Purchase Orders</h2>
@@ -290,20 +291,21 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
           </div>
         )}
       </div>
-      
-      {/* Create PO Modal */}
-      {showCreateModal && (
-        <CreatePOModal 
-          onClose={() => setShowCreateModal(false)}
-          onCreated={() => {
-            setShowCreateModal(false);
-            // Refresh orders
-            fetchPurchaseOrders()
-              .then(setOrders)
-              .catch(() => setOrders([]));
-          }}
-        />
-      )}
     </div>
+    
+    {/* Create PO Modal */}
+    {showCreateModal && (
+      <CreatePOModal 
+        onClose={() => setShowCreateModal(false)}
+        onCreated={() => {
+          setShowCreateModal(false);
+          // Refresh orders
+          fetchPurchaseOrders()
+            .then(setOrders)
+            .catch(() => setOrders([]));
+        }}
+      />
+    )}
+    </>
   );
 }
