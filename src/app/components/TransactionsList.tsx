@@ -7,7 +7,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
+import { CreateTransactionModal } from './CreateTransactionModal';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Receipt, Plus, DollarSign, Calendar, Fuel, Wrench, Package, Truck as TruckIcon, Filter } from 'lucide-react';
 import { toast } from 'sonner';
@@ -32,6 +32,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -103,24 +104,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
     });
   };
 
-  const handleCreateTransaction = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    try {
-      const newTransaction = await createTransaction({
-        poNumber: formData.get('poNumber') as string,
-        type: formData.get('type') as string,
-        description: formData.get('description') as string,
-        amount: Number(formData.get('amount')),
-        assetId: formData.get('assetId') as string,
-      });
-      setTransactions([newTransaction, ...transactions]);
-      toast.success('Transaction recorded successfully');
-    } catch {
-      toast.error('Failed to record transaction');
-    }
-  };
-
+  
   const totalAmount = transactions.reduce((sum, txn) => sum + txn.amount, 0);
 
   if (loading) {
@@ -167,61 +151,13 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
           </div>
         </div>
         {isAdmin && (
-          <Dialog>
-            <DialogTrigger className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white shadow-lg shadow-blue-500/25 hover:shadow-xl hover:shadow-blue-500/30 border border-blue-500/20 inline-flex items-center justify-center rounded-lg text-sm font-semibold transition-all duration-300 hover:-translate-y-1 px-4 py-2">
-              <Plus className="size-4 mr-2" />
-              New Transaction
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Record Transaction</DialogTitle>
-              </DialogHeader>
-              <form onSubmit={handleCreateTransaction} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="poNumber">PO Number</Label>
-                  <Input id="poNumber" name="poNumber" placeholder="PO-2026-XXXX" required />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="type">Transaction Type</Label>
-                  <Select name="type" required>
-                    <SelectTrigger id="type">
-                      <SelectValue placeholder="Select type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="fuel">Fuel</SelectItem>
-                      <SelectItem value="maintenance">Maintenance</SelectItem>
-                      <SelectItem value="parts">Parts</SelectItem>
-                      <SelectItem value="rental">Rental</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="assetId">Asset</Label>
-                  <Select name="assetId" required>
-                    <SelectTrigger id="assetId">
-                      <SelectValue placeholder="Select asset" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {vehicles.map(vehicle => (
-                        <SelectItem key={vehicle.id} value={vehicle.id}>
-                          {vehicle.unit_name} ({vehicle.id})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="description">Description</Label>
-                  <Textarea id="description" name="description" placeholder="Transaction details..." required />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="amount">Amount (PHP)</Label>
-                  <Input id="amount" name="amount" type="number" placeholder="0" required />
-                </div>
-                <Button type="submit" className="w-full">Record Transaction</Button>
-              </form>
-            </DialogContent>
-          </Dialog>
+          <button 
+            onClick={() => setShowCreateModal(true)}
+            className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white shadow-lg shadow-blue-500/25 hover:shadow-xl hover:shadow-blue-500/30 border border-blue-500/20 inline-flex items-center justify-center rounded-lg text-sm font-semibold transition-all duration-300 hover:-translate-y-1 px-4 py-2"
+          >
+            <Plus className="size-4 mr-2" />
+            New Transaction
+          </button>
         )}
       </div>
 
@@ -400,6 +336,24 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
           </div>
         )}
       </div>
+      
+      {/* Create Transaction Modal */}
+      {showCreateModal && (
+        <CreateTransactionModal 
+          onClose={() => setShowCreateModal(false)}
+          onCreated={() => {
+            setShowCreateModal(false);
+            // Refresh transactions
+            fetchTransactions()
+              .then(data => {
+                if (Array.isArray(data)) {
+                  setTransactions(data);
+                }
+              })
+              .catch(() => setTransactions([]));
+          }}
+        />
+      )}
     </div>
   );
 }
