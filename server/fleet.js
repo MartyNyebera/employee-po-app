@@ -52,7 +52,7 @@ export async function getVehicles(req, res) {
 
     const vehicles = result.rows.map(v => ({
       ...v,
-      pms_status: getPmsStatus(v, v.next_due_date || v.next_due_odometer ? v : null)
+      pms_status: getPmsStatus(v, v)
     }));
 
     res.json(vehicles);
