@@ -1,7 +1,7 @@
 // Mobile GPS API - Decoupled from Vehicle Database
 // Handles GPS pings from mobile app directly
 
-const express = require('express');
+import express from 'express';
 const router = express.Router();
 
 // Store mobile GPS data in memory (can be replaced with Redis/DB later)
@@ -206,4 +206,4 @@ setInterval(() => {
   }
 }, 600000); // 10 minutes
 
-module.exports = router;
+export default router;
