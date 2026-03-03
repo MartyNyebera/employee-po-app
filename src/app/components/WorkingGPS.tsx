@@ -18,10 +18,74 @@ export function WorkingGPS() {
         setLoading(true);
         setError(null);
         
-        const [devicesData, positionsData] = await Promise.all([
-          fetchTraccarDevices(),
-          fetchTraccarPositions(),
-        ]);
+        // Use LocalStorage GPS system instead of Traccar
+        const phoneData = localStorage.getItem('phoneGPSData');
+        const laptopData = localStorage.getItem('laptopGPSData');
+        
+        let devicesData = [];
+        let positionsData = [];
+        
+        if (phoneData) {
+          try {
+            const gpsData = JSON.parse(phoneData);
+            devicesData.push({
+              id: 1,
+              name: 'Phone GPS',
+              uniqueId: 'phone',
+              status: 'online',
+              lastUpdate: new Date().toISOString(),
+              positionId: 1,
+              category: 'phone'
+            });
+            positionsData.push({
+              id: 1,
+              deviceId: 1,
+              latitude: gpsData.position.latitude,
+              longitude: gpsData.position.longitude,
+              speed: 0,
+              course: 0,
+              altitude: 0,
+              accuracy: 10,
+              fixTime: new Date().toISOString(),
+              deviceTime: new Date().toISOString(),
+              serverTime: new Date().toISOString(),
+              attributes: {}
+            });
+          } catch (e) {
+            console.warn('Invalid phone GPS data:', e);
+          }
+        }
+        
+        if (laptopData) {
+          try {
+            const gpsData = JSON.parse(laptopData);
+            devicesData.push({
+              id: 2,
+              name: 'Laptop GPS',
+              uniqueId: 'laptop',
+              status: 'online',
+              lastUpdate: new Date().toISOString(),
+              positionId: 2,
+              category: 'laptop'
+            });
+            positionsData.push({
+              id: 2,
+              deviceId: 2,
+              latitude: gpsData.position.latitude,
+              longitude: gpsData.position.longitude,
+              speed: 0,
+              course: 0,
+              altitude: 0,
+              accuracy: 10,
+              fixTime: new Date().toISOString(),
+              deviceTime: new Date().toISOString(),
+              serverTime: new Date().toISOString(),
+              attributes: {}
+            });
+          } catch (e) {
+            console.warn('Invalid laptop GPS data:', e);
+          }
+        }
         
         const merged = devicesData.map(device => {
           const position = positionsData.find(p => p.deviceId === device.id);

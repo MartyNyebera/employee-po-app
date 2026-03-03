@@ -286,22 +286,95 @@ export async function fetchTraccarStatus(): Promise<{ connected: boolean; error?
 }
 
 export async function fetchTraccarDevices(): Promise<TraccarDevice[]> {
-  try {
-    return await fetchApi('/traccar/devices');
-  } catch (error: any) {
-    console.warn('[Traccar] Devices fetch failed:', error.message);
-    return [];
+  // Check if we have LocalStorage GPS data instead
+  const phoneData = localStorage.getItem('phoneGPSData');
+  const laptopData = localStorage.getItem('laptopGPSData');
+  
+  if (phoneData || laptopData) {
+    const devices: TraccarDevice[] = [];
+    
+    if (phoneData) {
+      devices.push({
+        id: 1,
+        name: 'Phone GPS',
+        uniqueId: 'phone',
+        status: 'online',
+        lastUpdate: new Date().toISOString(),
+        positionId: 1,
+        category: 'phone'
+      });
+    }
+    
+    if (laptopData) {
+      devices.push({
+        id: 2,
+        name: 'Laptop GPS', 
+        uniqueId: 'laptop',
+        status: 'online',
+        lastUpdate: new Date().toISOString(),
+        positionId: 2,
+        category: 'laptop'
+      });
+    }
+    
+    return devices;
   }
+  
+  return [];
 }
 
 export async function fetchTraccarPositions(deviceId?: number): Promise<TraccarPosition[]> {
-  try {
-    const path = deviceId ? `/traccar/positions?deviceId=${deviceId}` : '/traccar/positions';
-    return await fetchApi(path);
-  } catch (error: any) {
-    console.warn('[Traccar] Positions fetch failed:', error.message);
-    return [];
+  // Check if we have LocalStorage GPS data instead
+  const phoneData = localStorage.getItem('phoneGPSData');
+  const laptopData = localStorage.getItem('laptopGPSData');
+  
+  const positions: TraccarPosition[] = [];
+  
+  if (phoneData && (!deviceId || deviceId === 1)) {
+    try {
+      const gpsData = JSON.parse(phoneData);
+      positions.push({
+        id: 1,
+        deviceId: 1,
+        latitude: gpsData.position.latitude,
+        longitude: gpsData.position.longitude,
+        speed: 0,
+        course: 0,
+        altitude: 0,
+        accuracy: 10,
+        fixTime: new Date().toISOString(),
+        deviceTime: new Date().toISOString(),
+        serverTime: new Date().toISOString(),
+        attributes: {}
+      });
+    } catch (e) {
+      console.warn('Invalid phone GPS data:', e);
+    }
   }
+  
+  if (laptopData && (!deviceId || deviceId === 2)) {
+    try {
+      const gpsData = JSON.parse(laptopData);
+      positions.push({
+        id: 2,
+        deviceId: 2,
+        latitude: gpsData.position.latitude,
+        longitude: gpsData.position.longitude,
+        speed: 0,
+        course: 0,
+        altitude: 0,
+        accuracy: 10,
+        fixTime: new Date().toISOString(),
+        deviceTime: new Date().toISOString(),
+        serverTime: new Date().toISOString(),
+        attributes: {}
+      });
+    } catch (e) {
+      console.warn('Invalid laptop GPS data:', e);
+    }
+  }
+  
+  return positions;
 }
 
 export async function fetchTraccarPositionHistory(
