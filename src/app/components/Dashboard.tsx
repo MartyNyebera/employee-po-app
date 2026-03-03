@@ -7,7 +7,6 @@ import { FleetOverview } from './FleetOverview';
 import { AssetDetails } from './AssetDetails';
 import { PurchaseOrdersList } from './PurchaseOrdersList';
 import { TransactionsList } from './TransactionsList';
-import { WorkingMap } from './WorkingMap';
 import { SuperSimpleMap } from './SuperSimpleMap';
 import { FleetList } from './FleetList';
 import { VehicleDetails } from './VehicleDetails';
@@ -79,7 +78,7 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
             </a>
           </div>
           <div style={{ flex: 1 }}>
-            <WorkingMap />
+            <SuperSimpleMap />
           </div>
         </div>
       );
