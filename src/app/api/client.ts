@@ -277,12 +277,15 @@ export interface TraccarGeofence {
 }
 
 export async function fetchTraccarStatus(): Promise<{ connected: boolean; error?: string }> {
-  try {
-    return await fetchApi('/traccar/status');
-  } catch (error: any) {
-    console.warn('[Traccar] Status check failed:', error.message);
-    return { connected: false, error: 'Traccar server not available' };
+  // Check if we have any GPS data in localStorage
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith('gpsData_')) {
+      return { connected: true };
+    }
   }
+  
+  return { connected: false, error: 'No GPS data available' };
 }
 
 export async function fetchTraccarDevices(): Promise<TraccarDevice[]> {
@@ -379,12 +382,8 @@ export async function fetchTraccarPositionHistory(
 }
 
 export async function fetchTraccarGeofences(): Promise<TraccarGeofence[]> {
-  try {
-    return await fetchApi('/traccar/geofences');
-  } catch (error: any) {
-    console.warn('[Traccar] Geofences fetch failed:', error.message);
-    return [];
-  }
+  // Return empty array since we're using LocalStorage
+  return [];
 }
 
 export async function createTraccarDevice(device: {
@@ -392,46 +391,43 @@ export async function createTraccarDevice(device: {
   uniqueId: string;
   category?: string;
 }): Promise<TraccarDevice> {
-  try {
-    return await fetchApi('/traccar/devices', {
-      method: 'POST',
-      body: JSON.stringify(device),
-    });
-  } catch (error: any) {
-    console.warn('[Traccar] Device creation failed:', error.message);
-    throw new Error('Traccar server not available');
-  }
+  // Return dummy device since we're using LocalStorage
+  return {
+    id: Date.now(),
+    name: device.name,
+    uniqueId: device.uniqueId,
+    status: 'online',
+    lastUpdate: new Date().toISOString(),
+    positionId: Date.now(),
+    category: device.category || 'default'
+  };
 }
 
 export async function updateTraccarDevice(
   deviceId: number,
   updates: Partial<TraccarDevice>
 ): Promise<TraccarDevice> {
-  try {
-    return await fetchApi(`/traccar/devices/${deviceId}`, {
-      method: 'PUT',
-      body: JSON.stringify(updates),
-    });
-  } catch (error: any) {
-    console.warn('[Traccar] Device update failed:', error.message);
-    throw new Error('Traccar server not available');
-  }
+  // Return dummy updated device since we're using LocalStorage
+  return {
+    id: deviceId,
+    name: updates.name || 'Updated Device',
+    uniqueId: updates.uniqueId || 'updated-device',
+    status: updates.status || 'online',
+    lastUpdate: new Date().toISOString(),
+    positionId: deviceId,
+    category: updates.category || 'default'
+  };
 }
 
 export async function deleteTraccarDevice(deviceId: number): Promise<void> {
-  try {
-    return await fetchApi(`/traccar/devices/${deviceId}`, { method: 'DELETE' });
-  } catch (error: any) {
-    console.warn('[Traccar] Device deletion failed:', error.message);
-    throw new Error('Traccar server not available');
-  }
+  // Do nothing since we're using LocalStorage
+  console.log(`[Traccar] Delete device ${deviceId} - no-op for LocalStorage`);
 }
 
 export async function fetchTraccarWsInfo(): Promise<{ wsUrl: string; authHeader: string }> {
-  try {
-    return await fetchApi('/traccar/ws-info');
-  } catch (error: any) {
-    console.warn('[Traccar] WebSocket info fetch failed:', error.message);
-    return { wsUrl: '', authHeader: '' };
-  }
+  // Return dummy WebSocket info since we're using LocalStorage
+  return { 
+    wsUrl: '', 
+    authHeader: '' 
+  };
 }
