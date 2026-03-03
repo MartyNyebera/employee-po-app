@@ -286,91 +286,77 @@ export async function fetchTraccarStatus(): Promise<{ connected: boolean; error?
 }
 
 export async function fetchTraccarDevices(): Promise<TraccarDevice[]> {
-  // Check if we have LocalStorage GPS data instead
-  const phoneData = localStorage.getItem('phoneGPSData');
-  const laptopData = localStorage.getItem('laptopGPSData');
+  // Check for actual GPS data from GPS sender
+  const devices: TraccarDevice[] = [];
+  let deviceId = 1;
   
-  if (phoneData || laptopData) {
-    const devices: TraccarDevice[] = [];
-    
-    if (phoneData) {
-      devices.push({
-        id: 1,
-        name: 'Phone GPS',
-        uniqueId: 'phone',
-        status: 'online',
-        lastUpdate: new Date().toISOString(),
-        positionId: 1,
-        category: 'phone'
-      });
+  // Look through localStorage for gpsData_* keys
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith('gpsData_')) {
+      try {
+        const gpsData = JSON.parse(localStorage.getItem(key) || '{}');
+        const vehicleId = key.replace('gpsData_', '');
+        
+        devices.push({
+          id: deviceId++,
+          name: `Vehicle ${vehicleId}`,
+          uniqueId: vehicleId,
+          status: 'online',
+          lastUpdate: new Date(gpsData.timestamp).toISOString(),
+          positionId: deviceId - 1,
+          category: 'vehicle'
+        });
+      } catch (e) {
+        console.warn('Invalid GPS data for key:', key, e);
+      }
     }
-    
-    if (laptopData) {
-      devices.push({
-        id: 2,
-        name: 'Laptop GPS', 
-        uniqueId: 'laptop',
-        status: 'online',
-        lastUpdate: new Date().toISOString(),
-        positionId: 2,
-        category: 'laptop'
-      });
-    }
-    
-    return devices;
   }
   
-  return [];
+  return devices;
 }
 
 export async function fetchTraccarPositions(deviceId?: number): Promise<TraccarPosition[]> {
-  // Check if we have LocalStorage GPS data instead
-  const phoneData = localStorage.getItem('phoneGPSData');
-  const laptopData = localStorage.getItem('laptopGPSData');
-  
+  // Check for actual GPS data from GPS sender
   const positions: TraccarPosition[] = [];
+  let positionId = 1;
   
-  if (phoneData && (!deviceId || deviceId === 1)) {
-    try {
-      const gpsData = JSON.parse(phoneData);
-      positions.push({
-        id: 1,
-        deviceId: 1,
-        latitude: gpsData.position.latitude,
-        longitude: gpsData.position.longitude,
-        speed: 0,
-        course: 0,
-        altitude: 0,
-        accuracy: 10,
-        fixTime: new Date().toISOString(),
-        deviceTime: new Date().toISOString(),
-        serverTime: new Date().toISOString(),
-        attributes: {}
-      });
-    } catch (e) {
-      console.warn('Invalid phone GPS data:', e);
-    }
-  }
-  
-  if (laptopData && (!deviceId || deviceId === 2)) {
-    try {
-      const gpsData = JSON.parse(laptopData);
-      positions.push({
-        id: 2,
-        deviceId: 2,
-        latitude: gpsData.position.latitude,
-        longitude: gpsData.position.longitude,
-        speed: 0,
-        course: 0,
-        altitude: 0,
-        accuracy: 10,
-        fixTime: new Date().toISOString(),
-        deviceTime: new Date().toISOString(),
-        serverTime: new Date().toISOString(),
-        attributes: {}
-      });
-    } catch (e) {
-      console.warn('Invalid laptop GPS data:', e);
+  // Look through localStorage for gpsData_* keys
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith('gpsData_')) {
+      try {
+        const gpsData = JSON.parse(localStorage.getItem(key) || '{}');
+        const vehicleId = key.replace('gpsData_', '');
+        
+        // If deviceId is specified, only return that device's position
+        if (deviceId && positionId !== deviceId) {
+          positionId++;
+          continue;
+        }
+        
+        positions.push({
+          id: positionId,
+          deviceId: positionId,
+          latitude: gpsData.lat,
+          longitude: gpsData.lng,
+          speed: gpsData.speed || 0,
+          course: gpsData.heading || 0,
+          altitude: 0,
+          accuracy: 10,
+          fixTime: new Date(gpsData.timestamp).toISOString(),
+          deviceTime: new Date(gpsData.timestamp).toISOString(),
+          serverTime: new Date().toISOString(),
+          attributes: {
+            vehicleId: vehicleId,
+            timestamp: gpsData.timestamp
+          }
+        });
+        
+        positionId++;
+      } catch (e) {
+        console.warn('Invalid GPS data for key:', key, e);
+      }
     }
   }
   
