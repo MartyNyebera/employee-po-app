@@ -79,7 +79,7 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
             </a>
           </div>
           <div style={{ flex: 1 }}>
-            <SuperSimpleMap />
+            <LiveVehicleMap />
           </div>
         </div>
       );
