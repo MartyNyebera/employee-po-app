@@ -180,6 +180,18 @@
         el('lastSent').style.display = 'block';
         clearError();
 
+        // Save to localStorage for local maps
+        localStorage.setItem(`gpsData_${deviceId}`, JSON.stringify(data));
+        
+        // Trigger storage event for immediate pickup by local maps
+        window.dispatchEvent(new StorageEvent('storage', {
+          key: `gpsData_${deviceId}`,
+          newValue: JSON.stringify(data),
+          oldValue: null,
+          storageArea: localStorage,
+          url: window.location.href
+        }));
+        
         // Update service worker with latest position
         if (navigator.serviceWorker && navigator.serviceWorker.controller) {
           navigator.serviceWorker.controller.postMessage({
