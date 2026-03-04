@@ -45,7 +45,13 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
   useEffect(() => {
     Promise.all([
       fetchPurchaseOrders()
-        .then(setOrders)
+        .then(data => {
+          // Filter out Purchase Order data - only show SO statuses
+          const soData = data.filter((item: any) => 
+            ['pending', 'approved', 'in-progress', 'PAID', 'completed'].includes(item.status)
+          );
+          setOrders(soData);
+        })
         .catch(() => setOrders([])),
       fetchVehicles()
         .then(setVehicles)
@@ -88,7 +94,11 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
   const loadOrders = async () => {
     try {
       const data = await fetchPurchaseOrders();
-      setOrders(data);
+      // Filter out Purchase Order data - only show SO statuses
+      const soData = data.filter((item: any) => 
+        ['pending', 'approved', 'in-progress', 'PAID', 'completed'].includes(item.status)
+      );
+      setOrders(soData);
     } catch (error) {
       console.error('Failed to load orders:', error);
       setOrders([]);
