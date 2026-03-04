@@ -250,11 +250,11 @@ async function runMigrations() {
     `);
     console.log('✅ miscellaneous table ready');
 
-    // Alter purchase_orders: drop old status constraint and add new one with RECEIVED
+    // Alter purchase_orders: drop old status constraint and add new one with RECEIVED and PAID
     try {
       await query(`ALTER TABLE purchase_orders DROP CONSTRAINT IF EXISTS purchase_orders_status_check`);
-      await query(`ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_status_check CHECK (status IN ('pending', 'approved', 'in-progress', 'RECEIVED', 'completed'))`);
-      console.log('✅ purchase_orders status constraint updated (added RECEIVED)');
+      await query(`ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_status_check CHECK (status IN ('pending', 'approved', 'in-progress', 'RECEIVED', 'PAID', 'completed'))`);
+      console.log('✅ purchase_orders status constraint updated (added RECEIVED and PAID)');
     } catch (err) {
       console.log('ℹ️ purchase_orders constraint update skipped:', err.message);
     }

@@ -33,7 +33,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'in-progress' | 'PAID' | 'completed'>('all');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -511,10 +511,10 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
     };
   };
 
-  // Filter orders based on selected status
+  // Filter orders based on selected status (case-insensitive)
   const filteredOrders = statusFilter === 'all' 
     ? orders 
-    : orders.filter(po => po.status === statusFilter);
+    : orders.filter(po => po.status.toLowerCase() === statusFilter.toLowerCase());
 
   if (loading) {
     return (
