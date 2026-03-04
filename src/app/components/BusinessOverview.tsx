@@ -16,7 +16,7 @@ import {
   ArrowDownRight,
   Calendar
 } from 'lucide-react';
-import { InteractiveChart } from './InteractiveChart';
+import { ProperLineChart } from './ProperLineChart';
 import { 
   fetchOverviewMetrics, 
   fetchOrderSummary, 
@@ -269,7 +269,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
         </CardHeader>
         <CardContent>
           {chartData && chartData.length > 0 ? (
-            <InteractiveChart data={chartData} height={300} />
+            <ProperLineChart data={chartData} height={300} />
           ) : (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <div className="text-slate-400 mb-4">

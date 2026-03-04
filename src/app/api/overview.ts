@@ -300,12 +300,14 @@ export async function fetchChartData(period: TimePeriod, customRange?: DateRange
         const dateString = currentDate.toISOString().split('T')[0];
 
         // Calculate revenue and expenses for this specific day
+        // Revenue: PAID Sales Orders only
         const dayRevenue = soArray
-          .filter((so: any) => so.createdDate === dateString && so.status === 'PAID')
+          .filter((so: any) => so.createdDate === dateString && so.orderType === 'sales' && so.status === 'PAID')
           .reduce((sum: number, so: any) => sum + (so.amount || 0), 0);
 
+        // Expenses: RECEIVED Purchase Orders only
         const dayExpenses = poArray
-          .filter((po: any) => po.createdDate === dateString && po.status === 'RECEIVED')
+          .filter((po: any) => po.createdDate === dateString && po.orderType !== 'sales' && po.status === 'RECEIVED')
           .reduce((sum: number, po: any) => sum + (po.amount || 0), 0);
 
         data.push({
@@ -323,11 +325,11 @@ export async function fetchChartData(period: TimePeriod, customRange?: DateRange
         const monthEnd = new Date(2026, i + 1, 0).toISOString().split('T')[0];
 
         const monthRevenue = soArray
-          .filter((so: any) => so.createdDate >= monthStart && so.createdDate <= monthEnd && so.status === 'PAID')
+          .filter((so: any) => so.createdDate >= monthStart && so.createdDate <= monthEnd && so.orderType === 'sales' && so.status === 'PAID')
           .reduce((sum: number, so: any) => sum + (so.amount || 0), 0);
 
         const monthExpenses = poArray
-          .filter((po: any) => po.createdDate >= monthStart && po.createdDate <= monthEnd && po.status === 'RECEIVED')
+          .filter((po: any) => po.createdDate >= monthStart && po.createdDate <= monthEnd && po.orderType !== 'sales' && po.status === 'RECEIVED')
           .reduce((sum: number, po: any) => sum + (po.amount || 0), 0);
 
         data.push({
