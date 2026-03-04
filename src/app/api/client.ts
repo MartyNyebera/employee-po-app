@@ -187,6 +187,7 @@ export async function createPurchaseOrder(po: {
   vatAmount: number;
   totalAmount: number;
   createdDate?: string;
+  orderType?: string;
 }): Promise<PurchaseOrder> {
   const data = await fetchApi<{ id: string; poNumber: string; client: string; description: string; amount: number; status: string; createdDate: string; deliveryDate: string; assignedAssets: string[] }>('/purchase-orders', {
     method: 'POST',
@@ -196,6 +197,7 @@ export async function createPurchaseOrder(po: {
       description: po.lineItems.map(item => item.description).join('; '),
       amount: po.totalAmount,
       assignedAssets: [],
+      orderType: po.orderType || 'sales', // Ensure orderType is sent
     }),
   });
   return {

@@ -259,6 +259,14 @@ async function runMigrations() {
       console.log('ℹ️ purchase_orders constraint update skipped:', err.message);
     }
 
+    // Add order_type column to distinguish Sales Orders from Purchase Orders
+    try {
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS order_type VARCHAR(10) DEFAULT NULL`);
+      console.log('✅ purchase_orders order_type column added');
+    } catch (err) {
+      console.log('ℹ️ purchase_orders order_type column already exists:', err.message);
+    }
+
     // Alter sales_orders: ensure PAID status is allowed
     try {
       await query(`ALTER TABLE sales_orders DROP CONSTRAINT IF EXISTS sales_orders_status_check`);
@@ -1007,7 +1015,7 @@ app.get('/api/purchase-orders', async (req, res) => {
     }
 
     const result = await query(
-      `SELECT id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets
+      `SELECT id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets, order_type
        FROM purchase_orders ${whereClause} ORDER BY created_date DESC`,
       params
     );
@@ -1021,6 +1029,7 @@ app.get('/api/purchase-orders', async (req, res) => {
       createdDate: row.created_date,
       deliveryDate: row.delivery_date,
       assignedAssets: row.assigned_assets || [],
+      orderType: row.order_type,
     }));
     res.json(orders);
   } catch (err) {
@@ -1053,7 +1062,8 @@ app.post('/api/purchase-orders', requireAdmin, async (req, res) => {
       subTotal,
       otherCharges,
       vatAmount,
-      totalAmount
+      totalAmount,
+      orderType
     } = req.body;
     const id = `PO-${Date.now()}`;
     
@@ -1091,12 +1101,12 @@ Total Amount: ${totalAmount || amount}
 Terms & Conditions: ${termsAndConditions || 'Standard terms apply'}`;
     
     await query(
-      `INSERT INTO purchase_orders (id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets)
-       VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8)`,
-      [id, poNumber, client || customerName, extendedDescription, amount || totalAmount, finalCreatedDate, deliveryDate, assignedAssets]
+      `INSERT INTO purchase_orders (id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets, order_type)
+       VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9)`,
+      [id, poNumber, client || customerName, extendedDescription, amount || totalAmount, finalCreatedDate, deliveryDate, assignedAssets, orderType || null]
     );
     const result = await query(
-      `SELECT id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets
+      `SELECT id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets, order_type
        FROM purchase_orders WHERE id = $1`,
       [id]
     );
@@ -1111,6 +1121,7 @@ Terms & Conditions: ${termsAndConditions || 'Standard terms apply'}`;
       createdDate: row.created_date,
       deliveryDate: row.delivery_date,
       assignedAssets: row.assigned_assets || [],
+      orderType: row.order_type,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
