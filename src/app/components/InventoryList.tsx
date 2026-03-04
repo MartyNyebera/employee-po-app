@@ -5,6 +5,7 @@ import { Badge } from './ui/badge';
 import { Input } from './ui/input';
 import { Package, Plus, Search, Filter, ArrowUpDown, Eye } from 'lucide-react';
 import { toast } from 'sonner';
+import { CreateInventoryItemModal } from './CreateInventoryItemModal';
 
 interface InventoryItem {
   id: string;
@@ -344,22 +345,15 @@ useEffect(() => {
         </div>
       )}
 
-      {/* Create Item Modal - Placeholder */}
+      {/* Create Item Modal */}
       {showCreateModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg p-6 max-w-2xl w-full">
-            <h3 className="text-lg font-semibold mb-4">Add Inventory Item</h3>
-            <p className="text-slate-600 mb-4">Inventory item creation form will be implemented here.</p>
-            <div className="flex gap-3">
-              <Button variant="outline" onClick={() => setShowCreateModal(false)}>
-                Cancel
-              </Button>
-              <Button onClick={() => setShowCreateModal(false)}>
-                Add Item
-              </Button>
-            </div>
-          </div>
-        </div>
+        <CreateInventoryItemModal
+          onClose={() => setShowCreateModal(false)}
+          onCreated={() => {
+            setShowCreateModal(false);
+            fetchInventory();
+          }}
+        />
       )}
     </div>
   );

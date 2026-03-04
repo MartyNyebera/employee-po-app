@@ -6,6 +6,7 @@ import { Input } from './ui/input';
 import { FileText, Plus, ShoppingCart, Package, Edit, Trash2, Filter, Printer, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { updatePurchaseOrder, deletePurchaseOrder } from '../api/client';
+import { CreatePurchaseOrderModal } from './CreatePurchaseOrderModal';
 
 interface PurchaseOrder {
   id: string;
@@ -324,22 +325,15 @@ useEffect(() => {
         )}
       </div>
 
-      {/* Create PO Modal - Placeholder */}
+      {/* Create PO Modal */}
       {showCreateModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg p-6 max-w-2xl w-full">
-            <h3 className="text-lg font-semibold mb-4">Create Purchase Order</h3>
-            <p className="text-slate-600 mb-4">Purchase Order creation form will be implemented here.</p>
-            <div className="flex gap-3">
-              <Button variant="outline" onClick={() => setShowCreateModal(false)}>
-                Cancel
-              </Button>
-              <Button onClick={() => setShowCreateModal(false)}>
-                Create PO
-              </Button>
-            </div>
-          </div>
-        </div>
+        <CreatePurchaseOrderModal
+          onClose={() => setShowCreateModal(false)}
+          onCreated={() => {
+            setShowCreateModal(false);
+            fetchPurchaseOrders();
+          }}
+        />
       )}
     </div>
     
