@@ -7,34 +7,33 @@ import { toast } from 'sonner';
 interface LineItem {
   id: string;
   no: number;
-  account: string;
-  vendor: string;
+  description: string;
   quantity: number;
   unit: string;
-  description: string;
-  unitPrice: number;
+  unitCost: number;
   amount: number;
 }
 
-interface CreatePOModalProps {
+interface CreateSOModalProps {
   onClose: () => void;
   onCreated: () => void;
 }
 
-export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
+export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
   const [form, setForm] = useState({
-    poNumber: 'KTCI-2026-0001',
-    poDate: '',
+    soNumber: 'KTCI-2026-0001',
+    soDate: '',
     deliveryDate: '',
-    poType: 'domestic' as 'domestic' | 'foreign',
+    soType: 'domestic' as 'domestic' | 'foreign',
     paymentTerms: '30 days from receipt/acceptance',
-    termsAndConditions: `1. Prices quoted are firm and valid for 30 days from PO date.\n2. Delivery shall be made to the specified address within the agreed timeframe.\n3. Materials shall conform to specifications and quality standards.\n4. Payment shall be made within 30 days from receipt and acceptance of materials.\n5. This PO is governed by the laws of the Republic of the Philippines.`,
+    termsAndConditions: `1. Prices quoted are firm and valid for 30 days from SO date.\n2. Delivery shall be made to the specified address within the agreed timeframe.\n3. Materials shall conform to specifications and quality standards.\n4. Payment shall be made within 30 days from receipt and acceptance of materials.\n5. This SO is governed by the laws of the Republic of the Philippines.`,
     preparedBy: '',
     reviewedBy: '',
     customerName: '',
     customerAddress: '',
     customerContact: '',
-    otherCharges: 0,
+    ewt: 0,
+    vatType: 'vatable' as 'vatable' | 'non-vatable',
     vatAmount: 0,
   });
 
@@ -42,12 +41,10 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
     {
       id: '1',
       no: 1,
-      account: 'Materials',
-      vendor: '',
+      description: '',
       quantity: 1,
       unit: 'Lot',
-      description: '',
-      unitPrice: 0,
+      unitCost: 0,
       amount: 0,
     }
   ]);
@@ -64,60 +61,69 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
     ownerMobile: '0917 - 628 - 3217',
   };
 
-  // Auto-generate PO number on component mount
+  // Auto-generate SO number on component mount
   useEffect(() => {
-    const generatePONumber = async () => {
+    const generateSONumber = async () => {
       try {
         const currentYear = new Date().getFullYear();
         const response = await fetch('/api/purchase-orders');
         const orders = await response.json();
-        const lastPO = orders
+        const lastSO = orders
           .filter((order: any) => order.poNumber.startsWith(`KTCI-${currentYear}-`))
           .sort((a: any, b: any) => b.poNumber.localeCompare(a.poNumber))[0];
         
         let counter = 1;
-        if (lastPO) {
-          const lastNumber = lastPO.poNumber.split('-')[2];
+        if (lastSO) {
+          const lastNumber = lastSO.poNumber.split('-')[2];
           counter = parseInt(lastNumber) + 1;
         }
         
-        const poNumber = `KTCI-${currentYear}-${counter.toString().padStart(4, '0')}`;
-        setForm(prev => ({ ...prev, poNumber }));
+        const soNumber = `KTCI-${currentYear}-${counter.toString().padStart(4, '0')}`;
+        setForm(prev => ({ ...prev, soNumber }));
       } catch (error) {
-        console.error('Failed to generate PO number:', error);
+        console.error('Failed to generate SO number:', error);
       }
     };
     
-    generatePONumber();
+    generateSONumber();
   }, []);
 
   // Auto-fill current date
   useEffect(() => {
     const today = new Date().toISOString().split('T')[0];
-    setForm(prev => ({ ...prev, poDate: today }));
+    setForm(prev => ({ ...prev, soDate: today }));
   }, []);
 
-  // Calculate totals
+  // Calculate totals with VAT logic
   const calculateSubTotal = () => {
     return lineItems.reduce((sum, item) => sum + item.amount, 0);
   };
 
-  const calculateTotal = () => {
-    return calculateSubTotal() + form.otherCharges + form.vatAmount;
+  const calculateVATAmount = () => {
+    if (form.vatType === 'vatable') {
+      return (calculateSubTotal() + form.ewt) * 0.12;
+    }
+    return 0;
   };
 
-  // Update line item amount when quantity or unit price changes
+  const calculateTotal = () => {
+    return calculateSubTotal() + form.ewt + calculateVATAmount();
+  };
+
+  // Update VAT amount when relevant fields change
+  useEffect(() => {
+    const vatAmount = calculateVATAmount();
+    setForm(prev => ({ ...prev, vatAmount }));
+  }, [lineItems, form.ewt, form.vatType]);
+
+  // Update line item amount when quantity or unit cost changes
   const updateLineItem = (id: string, field: keyof LineItem, value: string | number) => {
     setLineItems(prev => prev.map(item => {
       if (item.id === id) {
         const updated = { ...item, [field]: value };
-        // Recalculate amount if quantity or unit price changed
-        if (field === 'quantity' || field === 'unitPrice') {
-          updated.amount = Number(updated.quantity) * Number(updated.unitPrice);
-        }
-        // Update vendor if not set
-        if (field === 'description' && !updated.vendor && form.customerName) {
-          updated.vendor = form.customerName;
+        // Recalculate amount if quantity or unit cost changed
+        if (field === 'quantity' || field === 'unitCost') {
+          updated.amount = Number(updated.quantity) * Number(updated.unitCost);
         }
         return updated;
       }
@@ -130,12 +136,10 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
     const newItem: LineItem = {
       id: Date.now().toString(),
       no: lineItems.length + 1,
-      account: 'Materials',
-      vendor: form.customerName,
+      description: '',
       quantity: 1,
       unit: 'Lot',
-      description: '',
-      unitPrice: 0,
+      unitCost: 0,
       amount: 0,
     };
     setLineItems(prev => [...prev, newItem]);
@@ -158,19 +162,32 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
       return;
     }
 
-    if (lineItems.some(item => !item.description || item.unitPrice <= 0)) {
-      toast.error('Please fill in description and unit price for all line items');
+    if (lineItems.some(item => !item.description || item.unitCost <= 0)) {
+      toast.error('Please fill in description and unit cost for all line items');
       return;
     }
 
     try {
       setLoading(true);
       
-      const poData = {
-        poNumber: form.poNumber,
-        poDate: form.poDate,
+      // Convert line items to old format for API compatibility
+      const legacyLineItems = lineItems.map(item => ({
+        id: item.id,
+        no: item.no,
+        account: 'Materials',
+        vendor: form.customerName,
+        quantity: item.quantity,
+        unit: item.unit,
+        description: item.description,
+        unitPrice: item.unitCost,
+        amount: item.amount,
+      }));
+      
+      const soData = {
+        poNumber: form.soNumber,
+        poDate: form.soDate,
         deliveryDate: form.deliveryDate,
-        poType: form.poType,
+        poType: form.soType,
         paymentTerms: form.paymentTerms,
         termsAndConditions: form.termsAndConditions,
         preparedBy: form.preparedBy,
@@ -178,19 +195,19 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
         customerName: form.customerName,
         customerAddress: form.customerAddress,
         customerContact: form.customerContact,
-        lineItems: lineItems,
+        lineItems: legacyLineItems,
         subTotal: calculateSubTotal(),
-        otherCharges: form.otherCharges,
+        otherCharges: form.ewt,
         vatAmount: form.vatAmount,
         totalAmount: calculateTotal(),
         createdDate: new Date().toISOString().split('T')[0],
       };
 
-      await createPurchaseOrder(poData);
-      toast.success('Purchase Order created successfully!');
+      await createPurchaseOrder(soData);
+      toast.success('Sales Order created successfully!');
       onCreated();
     } catch (err: any) {
-      toast.error('Failed to create Purchase Order: ' + err.message);
+      toast.error('Failed to create Sales Order: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -201,7 +218,7 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-slate-200">
-          <h2 className="text-lg font-bold text-slate-900">Create Purchase Order</h2>
+          <h2 className="text-lg font-bold text-slate-900">Create Sales Order</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
             <X className="size-5" />
           </button>
@@ -283,27 +300,27 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
             </div>
           </div>
 
-          {/* C. PO DETAILS SECTION */}
+          {/* C. SO DETAILS SECTION */}
           <div className="border border-slate-200 rounded-lg p-4">
-            <h3 className="font-bold text-slate-900 mb-3">PO DETAILS</h3>
+            <h3 className="font-bold text-slate-900 mb-3">SALES ORDER DETAILS</h3>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
-                  PO Number <span className="text-red-500">*</span>
+                  SO Number <span className="text-red-500">*</span>
                 </label>
                 <div className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-slate-50 text-slate-900 text-sm">
-                  {form.poNumber || 'Generating...'}
+                  {form.soNumber || 'Generating...'}
                 </div>
                 <p className="text-xs text-slate-500 mt-1">Automatically generated</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
-                  PO Date <span className="text-red-500">*</span>
+                  SO Date <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="date"
-                  value={form.poDate}
-                  onChange={e => setForm(f => ({ ...f, poDate: e.target.value }))}
+                  value={form.soDate}
+                  onChange={e => setForm(f => ({ ...f, soDate: e.target.value }))}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   required
                 />
@@ -322,15 +339,15 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
-                  PO Type <span className="text-red-500">*</span>
+                  SO Type <span className="text-red-500">*</span>
                 </label>
                 <div className="flex gap-4">
                   <label className="flex items-center">
                     <input
                       type="radio"
                       value="domestic"
-                      checked={form.poType === 'domestic'}
-                      onChange={e => setForm(f => ({ ...f, poType: e.target.value as 'domestic' | 'foreign' }))}
+                      checked={form.soType === 'domestic'}
+                      onChange={e => setForm(f => ({ ...f, soType: e.target.value as 'domestic' | 'foreign' }))}
                       className="mr-2"
                     />
                     Domestic
@@ -339,8 +356,8 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
                     <input
                       type="radio"
                       value="foreign"
-                      checked={form.poType === 'foreign'}
-                      onChange={e => setForm(f => ({ ...f, poType: e.target.value as 'domestic' | 'foreign' }))}
+                      checked={form.soType === 'foreign'}
+                      onChange={e => setForm(f => ({ ...f, soType: e.target.value as 'domestic' | 'foreign' }))}
                       className="mr-2"
                     />
                     Foreign
@@ -360,6 +377,33 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
                   required
                 />
               </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  VAT Type <span className="text-red-500">*</span>
+                </label>
+                <div className="flex gap-4">
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      value="vatable"
+                      checked={form.vatType === 'vatable'}
+                      onChange={e => setForm(f => ({ ...f, vatType: e.target.value as 'vatable' | 'non-vatable' }))}
+                      className="mr-2"
+                    />
+                    Vatable
+                  </label>
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      value="non-vatable"
+                      checked={form.vatType === 'non-vatable'}
+                      onChange={e => setForm(f => ({ ...f, vatType: e.target.value as 'vatable' | 'non-vatable' }))}
+                      className="mr-2"
+                    />
+                    Non-Vatable
+                  </label>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -377,14 +421,11 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
                 <thead>
                   <tr className="bg-slate-50">
                     <th className="border border-slate-300 px-2 py-1 text-xs font-medium">No.</th>
-                    <th className="border border-slate-300 px-2 py-1 text-xs font-medium">Account</th>
-                    <th className="border border-slate-300 px-2 py-1 text-xs font-medium">Vendor</th>
+                    <th className="border border-slate-300 px-2 py-1 text-xs font-medium">Description</th>
                     <th className="border border-slate-300 px-2 py-1 text-xs font-medium">Quantity</th>
                     <th className="border border-slate-300 px-2 py-1 text-xs font-medium">Unit</th>
-                    <th className="border border-slate-300 px-2 py-1 text-xs font-medium">Description</th>
-                    <th className="border border-slate-300 px-2 py-1 text-xs font-medium">Unit Price</th>
+                    <th className="border border-slate-300 px-2 py-1 text-xs font-medium">Unit Cost</th>
                     <th className="border border-slate-300 px-2 py-1 text-xs font-medium">Amount</th>
-                    <th className="border border-slate-300 px-2 py-1 text-xs font-medium">Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -394,17 +435,10 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
                       <td className="border border-slate-300 px-2 py-1">
                         <input
                           type="text"
-                          value={item.account}
-                          onChange={e => updateLineItem(item.id, 'account', e.target.value)}
+                          value={item.description}
+                          onChange={e => updateLineItem(item.id, 'description', e.target.value)}
                           className="w-full px-1 py-0.5 text-xs border-0 bg-transparent"
-                        />
-                      </td>
-                      <td className="border border-slate-300 px-2 py-1">
-                        <input
-                          type="text"
-                          value={item.vendor}
-                          onChange={e => updateLineItem(item.id, 'vendor', e.target.value)}
-                          className="w-full px-1 py-0.5 text-xs border-0 bg-transparent"
+                          placeholder="Description"
                         />
                       </td>
                       <td className="border border-slate-300 px-2 py-1">
@@ -426,18 +460,9 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
                       </td>
                       <td className="border border-slate-300 px-2 py-1">
                         <input
-                          type="text"
-                          value={item.description}
-                          onChange={e => updateLineItem(item.id, 'description', e.target.value)}
-                          className="w-full px-1 py-0.5 text-xs border-0 bg-transparent"
-                          placeholder="Description"
-                        />
-                      </td>
-                      <td className="border border-slate-300 px-2 py-1">
-                        <input
                           type="number"
-                          value={item.unitPrice}
-                          onChange={e => updateLineItem(item.id, 'unitPrice', Number(e.target.value))}
+                          value={item.unitCost}
+                          onChange={e => updateLineItem(item.id, 'unitCost', Number(e.target.value))}
                           className="w-full px-1 py-0.5 text-xs border-0 bg-transparent text-right"
                           min="0"
                           step="0.01"
@@ -445,19 +470,6 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
                       </td>
                       <td className="border border-slate-300 px-2 py-1 text-xs text-right">
                         ₱{item.amount.toFixed(2)}
-                      </td>
-                      <td className="border border-slate-300 px-2 py-1 text-center">
-                        {lineItems.length > 1 && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => deleteLineItem(item.id)}
-                            className="text-red-600 hover:text-red-700"
-                          >
-                            <Trash2 className="size-3" />
-                          </Button>
-                        )}
                       </td>
                     </tr>
                   ))}
@@ -477,27 +489,24 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Other Charges</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">EWT</label>
                 <input
                   type="number"
-                  value={form.otherCharges}
-                  onChange={e => setForm(f => ({ ...f, otherCharges: Number(e.target.value) }))}
+                  value={form.ewt}
+                  onChange={e => setForm(f => ({ ...f, ewt: Number(e.target.value) }))}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   min="0"
                   step="0.01"
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">VAT Amount</label>
-                <input
-                  type="number"
-                  value={form.vatAmount}
-                  onChange={e => setForm(f => ({ ...f, vatAmount: Number(e.target.value) }))}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  min="0"
-                  step="0.01"
-                />
-              </div>
+              {form.vatType === 'vatable' && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">VAT Amount</label>
+                  <div className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-slate-50 text-slate-900 text-sm">
+                    ₱{calculateVATAmount().toFixed(2)}
+                  </div>
+                </div>
+              )}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Total Amount</label>
                 <div className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-slate-50 text-slate-900 text-sm font-bold">
@@ -561,7 +570,7 @@ export function CreatePOModal({ onClose, onCreated }: CreatePOModalProps) {
               Cancel
             </Button>
             <Button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white" disabled={loading}>
-              {loading ? 'Creating...' : 'Create Purchase Order'}
+              {loading ? 'Creating...' : 'Create Sales Order'}
             </Button>
           </div>
         </form>

@@ -7,7 +7,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
-import { CreatePOModal } from './CreatePOModal';
+import { CreateSOModal } from './CreatePOModal';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { FileText, Plus, DollarSign, Calendar, Building2, Truck, Edit, Filter, Printer, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -77,10 +77,20 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
 
   const formatDate = (dateStr: string) => {
     return new Date(dateStr).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
       year: 'numeric',
+      month: 'long',
+      day: 'numeric'
     });
+  };
+
+  const loadOrders = async () => {
+    try {
+      const data = await fetchPurchaseOrders();
+      setOrders(data);
+    } catch (error) {
+      console.error('Failed to load orders:', error);
+      setOrders([]);
+    }
   };
 
   const handleEditClick = (po: PurchaseOrder) => {
@@ -356,13 +366,13 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
       </head>
       <body>
         <!-- HEADER SECTION -->
-        <div class="header-date">${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}     Purchase Order</div>
+        <div class="header-date">${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}     Sales Order</div>
         <div class="system-title">Kimoel Tracking System</div>
         <div class="company-name">KIMOEL TRADING & CONSTRUCTION INCORPORATED</div>
         <div class="company-address">PUROK 1, LODLOD, LIPA CITY, BATANGAS</div>
         <div class="contact-details">Tel: (043) - 741 - 2023 | Email: kimoel_leotagle@yahoo.com</div>
         <div class="proprietor">LEO TAGLE (Mobile: 0917 - 628 - 3217)</div>
-        <div class="document-title">PURCHASE ORDER</div>
+        <div class="document-title">SALES ORDER</div>
         
         <!-- TOP INFO BOXES -->
         <div class="info-section">
@@ -385,10 +395,11 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
           </div>
           <div class="info-box">
             <div class="info-content">
-              <strong>PO Date:</strong> ${formatDate(po.createdDate)}<br>
-              <strong>PO Number:</strong> ${po.poNumber}<br>
+              <strong>SO Date:</strong> ${formatDate(po.createdDate)}<br>
+              <strong>SO Number:</strong> ${po.poNumber}<br>
               <strong>Page:</strong> 1 of 1<br>
-              <strong>PO TYPE:</strong> ☑ Domestic ☐ Foreign
+              <strong>SO TYPE:</strong> ☑ Domestic ☐ Foreign<br>
+              <strong>VAT Type:</strong> ☑ Vatable ☐ Non-Vatable
             </div>
           </div>
         </div>
@@ -403,24 +414,20 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
           <thead>
             <tr>
               <th class="number-col">No.</th>
-              <th class="account-col">Account</th>
-              <th class="vendor-col">Vendor</th>
+              <th class="description-col">Description</th>
               <th class="quantity-col">Quantity</th>
               <th class="unit-col">Unit</th>
-              <th class="description-col">DESCRIPTION</th>
-              <th class="unit-price-col">Unit Price</th>
+              <th class="unit-cost-col">Unit Cost</th>
               <th class="amount-col">Amount</th>
             </tr>
           </thead>
           <tbody>
             <tr>
               <td class="number-col">1</td>
-              <td class="account-col">Materials</td>
-              <td class="vendor-col">${po.client}</td>
+              <td class="description-col">${po.description}</td>
               <td class="quantity-col">1</td>
               <td class="unit-col">Lot</td>
-              <td class="description-col">${po.description}</td>
-              <td class="unit-price-col">${formatCurrency(po.amount)}</td>
+              <td class="unit-cost-col">${formatCurrency(po.amount)}</td>
               <td class="amount-col">${formatCurrency(po.amount)}</td>
             </tr>
           </tbody>
@@ -434,7 +441,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
               <div class="summary-value">${formatCurrency(po.amount)}</div>
             </div>
             <div class="summary-row">
-              <div class="summary-label">Other Charges:</div>
+              <div class="summary-label">EWT:</div>
               <div class="summary-value">0.00</div>
             </div>
             <div class="summary-row">
@@ -780,14 +787,11 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
 
     {/* Create PO Modal */}
     {showCreateModal && (
-      <CreatePOModal 
+      <CreateSOModal
         onClose={() => setShowCreateModal(false)}
         onCreated={() => {
           setShowCreateModal(false);
-          // Refresh orders
-          fetchPurchaseOrders()
-            .then(setOrders)
-            .catch(() => setOrders([]));
+          loadOrders();
         }}
       />
     )}
