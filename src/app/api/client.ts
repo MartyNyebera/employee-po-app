@@ -198,7 +198,7 @@ export async function createPurchaseOrder(po: {
       description: po.lineItems.map(item => item.description).join('; '),
       amount: po.totalAmount,
       assignedAssets: [],
-      orderType: po.orderType || 'sales', // Ensure orderType is sent
+      orderType: po.orderType, // Send orderType as-is (undefined for PO, 'sales' for SO)
     }),
   });
   return {
