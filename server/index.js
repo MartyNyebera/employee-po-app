@@ -511,6 +511,135 @@ app.get('/api/phone-location/:deviceId/latest', (req, res) => {
 // ----- Mobile GPS API (No auth required for mobile app) -----
 app.use('/api/mobile', mobileGPSRouter);
 
+// ----- Public read-only data endpoints (no auth required for Overview dashboard) -----
+
+app.get('/api/purchase-orders', async (req, res) => {
+  try {
+    const { startDate, endDate, status } = req.query;
+    let whereClause = 'WHERE 1=1';
+    const params = [];
+    let paramIndex = 1;
+    if (startDate && endDate) {
+      whereClause += ` AND created_date >= $${paramIndex++} AND created_date <= $${paramIndex++}`;
+      params.push(startDate, endDate);
+    }
+    if (status) {
+      whereClause += ` AND status = $${paramIndex++}`;
+      params.push(status);
+    }
+    const result = await query(
+      `SELECT id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets
+       FROM purchase_orders ${whereClause} ORDER BY created_date DESC`,
+      params
+    );
+    res.json(result.rows.map(row => ({
+      id: row.id,
+      poNumber: row.po_number,
+      client: row.client,
+      description: row.description,
+      amount: parseFloat(row.amount),
+      status: row.status,
+      createdDate: row.created_date,
+      deliveryDate: row.delivery_date,
+      assignedAssets: row.assigned_assets || [],
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/sales-orders', async (req, res) => {
+  try {
+    const { startDate, endDate, status } = req.query;
+    let whereClause = 'WHERE 1=1';
+    const params = [];
+    let paramIndex = 1;
+    if (startDate && endDate) {
+      whereClause += ` AND created_date >= $${paramIndex++} AND created_date <= $${paramIndex++}`;
+      params.push(startDate, endDate);
+    }
+    if (status) {
+      whereClause += ` AND status = $${paramIndex++}`;
+      params.push(status);
+    }
+    const result = await query(
+      `SELECT id, so_number, client, description, amount, status, created_date, delivery_date, assigned_assets
+       FROM sales_orders ${whereClause} ORDER BY created_date DESC`,
+      params
+    );
+    res.json(result.rows.map(row => ({
+      id: row.id,
+      soNumber: row.so_number,
+      client: row.client,
+      description: row.description,
+      amount: parseFloat(row.amount),
+      status: row.status,
+      createdDate: row.created_date,
+      deliveryDate: row.delivery_date,
+      assignedAssets: row.assigned_assets || [],
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/inventory', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT id, item_code, item_name, description, quantity, unit, reorder_level, unit_cost, location, supplier
+       FROM inventory ORDER BY item_name ASC`
+    );
+    res.json(result.rows.map(row => ({
+      id: row.id,
+      itemCode: row.item_code,
+      itemName: row.item_name,
+      description: row.description,
+      quantity: parseFloat(row.quantity),
+      unit: row.unit,
+      reorderLevel: parseFloat(row.reorder_level),
+      unitCost: parseFloat(row.unit_cost),
+      totalCost: parseFloat(row.quantity) * parseFloat(row.unit_cost),
+      location: row.location,
+      supplier: row.supplier,
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/miscellaneous', async (req, res) => {
+  try {
+    const { startDate, endDate, status } = req.query;
+    let whereClause = 'WHERE 1=1';
+    const params = [];
+    let paramIndex = 1;
+    if (startDate && endDate) {
+      whereClause += ` AND transaction_date >= $${paramIndex++} AND transaction_date <= $${paramIndex++}`;
+      params.push(startDate, endDate);
+    }
+    if (status) {
+      whereClause += ` AND status = $${paramIndex++}`;
+      params.push(status);
+    }
+    const result = await query(
+      `SELECT id, description, amount, status, transaction_date, category, notes
+       FROM miscellaneous ${whereClause} ORDER BY transaction_date DESC`,
+      params
+    );
+    res.json(result.rows.map(row => ({
+      id: row.id,
+      description: row.description,
+      amount: parseFloat(row.amount),
+      status: row.status,
+      transactionDate: row.transaction_date,
+      category: row.category,
+      notes: row.notes,
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ----- All routes below require auth -----
 app.use('/api', requireAuth);
 
