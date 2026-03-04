@@ -533,8 +533,8 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
                 <FileText className="size-5 text-amber-600 dark:text-amber-400" />
             </div>
             <div>
-              <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100">Purchase Orders</h2>
-              <p className="text-slate-600 text-sm dark:text-slate-400">Manage and track procurement requests</p>
+              <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100">Sales Orders</h2>
+              <p className="text-slate-600 text-sm dark:text-slate-400">Manage and track Sales Orders</p>
             </div>
           </div>
         </div>
@@ -544,7 +544,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
             className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white shadow-lg shadow-blue-500/25 hover:shadow-xl hover:shadow-blue-500/30 border border-blue-500/20 inline-flex items-center justify-center rounded-lg text-sm font-semibold transition-all duration-300 hover:-translate-y-1 px-4 py-2"
           >
             <Plus className="size-4 mr-2" />
-            New PO
+            New SO
           </button>
         )}
       </div>
@@ -709,8 +709,8 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
                 <FileText className="size-8 text-slate-400 dark:text-slate-500" />
               </div>
               <div>
-                <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">No purchase orders yet</h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400">Create your first purchase order to get started.</p>
+                <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">No sales orders yet</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400">Create your first sales order to get started.</p>
               </div>
             </div>
           </div>
@@ -724,7 +724,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
         <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
           {/* Header */}
           <div className="flex items-center justify-between p-6 border-b border-slate-200">
-            <h2 className="text-lg font-bold text-slate-900">Edit Purchase Order</h2>
+            <h2 className="text-lg font-bold text-slate-900">Edit Sales Order</h2>
             <button onClick={() => setIsEditing(false)} className="text-slate-400 hover:text-slate-600">
               <X className="size-5" />
             </button>
@@ -734,7 +734,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
           <form onSubmit={handleSaveEdit} className="p-6 space-y-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">
-                PO Number
+                SO Number
               </label>
               <div className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-slate-50 text-slate-900 text-sm">
                 {selectedPO.poNumber}
@@ -776,8 +776,8 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
               <Button type="button" variant="outline" className="flex-1" onClick={() => setIsEditing(false)}>
                 Cancel
               </Button>
-              <Button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white">
-                Update PO
+              <Button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white" disabled={loading}>
+                {loading ? 'Updating...' : 'Update SO'}
               </Button>
             </div>
           </form>

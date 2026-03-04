@@ -74,7 +74,7 @@ const [showCreatePOModal, setShowCreatePOModal] = useState(false);
   const tabs = [
     { id: 'overview', label: 'Overview', icon: Info },
     { id: 'maintenance', label: 'Maintenance', icon: Wrench },
-    { id: 'purchase-orders', label: 'Purchase Orders', icon: FileText },
+    { id: 'purchase-orders', label: 'Sales Orders', icon: FileText },
     { id: 'odometer', label: 'Odometer Logs', icon: Gauge },
   ];
 
@@ -310,15 +310,15 @@ function POTab({ pos, onAdd, showForm, onCloseForm, vehicleId, onCreated }: any)
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <h3 className="font-semibold text-slate-900 dark:text-white">Purchase Orders</h3>
-        <Button size="sm" onClick={onAdd} className="bg-blue-600 hover:bg-blue-700 text-white"><Plus className="size-4 mr-1" />New PO</Button>
+        <h3 className="font-semibold text-slate-900 dark:text-white">Sales Orders</h3>
+        <Button size="sm" onClick={onAdd} className="bg-blue-600 hover:bg-blue-700 text-white"><Plus className="size-4 mr-1" />New SO</Button>
       </div>
 
       {showForm && (
         <form onSubmit={handleSubmit} className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5 space-y-3">
-          <h4 className="font-semibold text-slate-900 dark:text-white">New Purchase Order</h4>
+          <h4 className="font-semibold text-slate-900 dark:text-white">New Sales Order</h4>
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="text-xs text-slate-500 mb-1 block">PO Number *</label><input type="text" required value={form.po_number} onChange={e => setForm(f => ({ ...f, po_number: e.target.value }))} placeholder="PO-2026-001" className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" /></div>
+            <div><label className="text-xs text-slate-500 mb-1 block">SO Number *</label><input type="text" required value={form.po_number} onChange={e => setForm(f => ({ ...f, po_number: e.target.value }))} placeholder="SO-2026-001" className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" /></div>
             <div><label className="text-xs text-slate-500 mb-1 block">Supplier</label><input type="text" value={form.supplier} onChange={e => setForm(f => ({ ...f, supplier: e.target.value }))} placeholder="Supplier name" className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" /></div>
             <div><label className="text-xs text-slate-500 mb-1 block">Date *</label><input type="date" required value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" /></div>
             <div><label className="text-xs text-slate-500 mb-1 block">Total Cost (₱)</label><input type="number" value={form.total_cost} onChange={e => setForm(f => ({ ...f, total_cost: e.target.value }))} placeholder="0" className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" /></div>
@@ -326,13 +326,13 @@ function POTab({ pos, onAdd, showForm, onCloseForm, vehicleId, onCreated }: any)
           </div>
           <div className="flex gap-2 pt-1">
             <Button type="button" variant="outline" size="sm" onClick={onCloseForm}>Cancel</Button>
-            <Button type="submit" size="sm" className="bg-blue-600 hover:bg-blue-700 text-white" disabled={saving}>{saving ? 'Saving...' : 'Create PO'}</Button>
+            <Button type="submit" size="sm" className="bg-blue-600 hover:bg-blue-700 text-white" disabled={saving}>{saving ? 'Saving...' : 'Create SO'}</Button>
           </div>
         </form>
       )}
 
       {pos.length === 0 ? (
-        <div className="text-center py-10 text-slate-500">No purchase orders yet.</div>
+        <div className="text-center py-10 text-slate-500">No sales orders yet.</div>
       ) : (
         <div className="space-y-3">
           {pos.map((po: FleetPO) => (
