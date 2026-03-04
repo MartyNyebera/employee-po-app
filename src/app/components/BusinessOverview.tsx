@@ -58,7 +58,13 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
       console.log('🔍 CHART DATA DEBUG:');
       console.log('Chart Data:', chartDataResult);
       console.log('Data sample:', chartDataResult[0]);
+      console.log('Data sample keys:', Object.keys(chartDataResult[0] || {}));
       console.log('Total data points:', chartDataResult.length);
+      
+      // Check for non-zero revenue data
+      const revenueData = chartDataResult.filter(d => d.revenue > 0);
+      console.log('Non-zero revenue points:', revenueData.length);
+      console.log('Revenue data sample:', revenueData[0]);
       
       // DEBUG: Log metrics
       console.log('🔍 METRICS DEBUG:');

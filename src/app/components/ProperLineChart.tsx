@@ -12,6 +12,17 @@ interface ProperLineChartProps {
 }
 
 export function ProperLineChart({ data, height = 400 }: ProperLineChartProps) {
+  // DEBUG: Log what data the chart receives
+  console.log('🔍 CHART COMPONENT DEBUG:');
+  console.log('Chart received data:', data);
+  console.log('Data length:', data.length);
+  if (data.length > 0) {
+    console.log('First point:', data[0]);
+    console.log('Last point:', data[data.length - 1]);
+    console.log('Max revenue:', Math.max(...data.map(d => d.revenue)));
+    console.log('Max expenses:', Math.max(...data.map(d => d.expenses)));
+  }
+
   // Y-axis formatter for currency
   const yAxisTickFormatter = (value: number) => {
     if (value >= 1000000) {
