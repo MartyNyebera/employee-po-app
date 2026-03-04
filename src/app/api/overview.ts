@@ -166,7 +166,7 @@ export async function fetchOrderSummary(period: TimePeriod, customRange?: DateRa
     const purchaseOrderSummary = {
       total: poArray.length,
       received: poArray.filter((po: any) => po.status === 'RECEIVED').length,
-      pending: poArray.filter((po: any) => ['Pending', 'Approved'].includes(po.status)).length,
+      pending: poArray.filter((po: any) => ['pending', 'approved'].includes(po.status)).length,
       overdue: poArray.filter((po: any) => po.deliveryDate < today && po.status !== 'RECEIVED').length,
       totalAmount: poArray.filter((po: any) => po.status === 'RECEIVED').reduce((sum: number, po: any) => sum + (po.amount || 0), 0)
     };
@@ -177,10 +177,10 @@ export async function fetchOrderSummary(period: TimePeriod, customRange?: DateRa
 
     const salesOrderSummary = {
       total: soArray.length,
-      completed: soArray.filter((so: any) => so.status === 'PAID').length,
-      pending: soArray.filter((so: any) => ['Pending', 'Approved'].includes(so.status)).length,
-      overdue: soArray.filter((so: any) => so.deliveryDate < today && so.status !== 'PAID').length,
-      totalAmount: soArray.filter((so: any) => so.status === 'PAID').reduce((sum: number, so: any) => sum + (so.amount || 0), 0)
+      completed: soArray.length, // soArray already filtered to PAID
+      pending: 0,
+      overdue: 0,
+      totalAmount: soArray.reduce((sum: number, so: any) => sum + (so.amount || 0), 0)
     };
 
     // Fetch Miscellaneous (graceful fallback if table doesn't exist yet)
@@ -202,12 +202,11 @@ export async function fetchOrderSummary(period: TimePeriod, customRange?: DateRa
 
     // Calculate pending approval across all modules
     const pendingApproval = {
-      po: poArray.filter((po: any) => ['Pending', 'Approved'].includes(po.status)).length,
-      so: soArray.filter((so: any) => ['Pending', 'Approved'].includes(so.status)).length,
-      misc: miscArray.filter((item: any) => item.status === 'Pending').length,
-      total: poArray.filter((po: any) => ['Pending', 'Approved'].includes(po.status)).length + 
-            soArray.filter((so: any) => ['Pending', 'Approved'].includes(so.status)).length + 
-            miscArray.filter((item: any) => item.status === 'Pending').length
+      po: poArray.filter((po: any) => ['pending', 'approved'].includes(po.status)).length,
+      so: 0,
+      misc: miscArray.filter((item: any) => item.status === 'pending').length,
+      total: poArray.filter((po: any) => ['pending', 'approved'].includes(po.status)).length +
+            miscArray.filter((item: any) => item.status === 'pending').length
     };
 
     return {
