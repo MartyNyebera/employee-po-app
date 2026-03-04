@@ -32,43 +32,43 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<'itemCode' | 'itemName' | 'quantity'>('itemCode');
 
-  useEffect(() => {
-    const fetchInventory = async () => {
-      try {
-        const response = await fetch('/api/inventory');
-        const data = await response.json();
-        
-        // Transform API data to match component interface
-        const transformedData = data.map((item: any) => ({
-          id: item.id,
-          itemCode: item.item_code,
-          itemName: item.item_name,
-          description: item.description || '',
-          quantity: item.quantity || 0,
-          unit: item.unit || 'pcs',
-          reorderLevel: item.reorder_level || 0,
-          location: item.location || '',
-          lastUpdated: item.last_updated || item.created_date || new Date().toISOString().split('T')[0],
-          status: item.status || determineStockStatus(item.quantity, item.reorder_level)
-        }));
-        
-        setInventory(transformedData);
-      } catch (error) {
-        console.error('Error fetching inventory:', error);
-        toast.error('Failed to load inventory');
-      } finally {
-        setLoading(false);
-      }
-    };
-    
-    fetchInventory();
-  }, []);
-
   const determineStockStatus = (quantity: number, reorderLevel: number): 'in-stock' | 'low-stock' | 'out-of-stock' => {
     if (quantity === 0) return 'out-of-stock';
     if (quantity <= reorderLevel) return 'low-stock';
     return 'in-stock';
   };
+
+  const fetchInventory = async () => {
+    try {
+      const response = await fetch('/api/inventory');
+      const data = await response.json();
+      
+      // Transform API data to match component interface
+      const transformedData = data.map((item: any) => ({
+        id: item.id,
+        itemCode: item.item_code,
+        itemName: item.item_name,
+        description: item.description || '',
+        quantity: item.quantity || 0,
+        unit: item.unit || 'pcs',
+        reorderLevel: item.reorder_level || 0,
+        location: item.location || '',
+        lastUpdated: item.last_updated || item.created_date || new Date().toISOString().split('T')[0],
+        status: item.status || determineStockStatus(item.quantity, item.reorder_level)
+      }));
+      
+      setInventory(transformedData);
+    } catch (error) {
+      console.error('Error fetching inventory:', error);
+      toast.error('Failed to load inventory');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+useEffect(() => {
+  fetchInventory();
+}, []);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -124,32 +124,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
     return () => window.removeEventListener('inventoryUpdated', handleInventoryUpdated);
   }, []);
 
-  const fetchInventory = async () => {
-    try {
-      const response = await fetch('/api/inventory');
-      const data = await response.json();
-      
-      // Transform API data to match component interface
-      const transformedData = data.map((item: any) => ({
-        id: item.id,
-        itemCode: item.item_code,
-        itemName: item.item_name,
-        description: item.description || '',
-        quantity: item.quantity || 0,
-        unit: item.unit || 'pcs',
-        reorderLevel: item.reorder_level || 0,
-        location: item.location || '',
-        lastUpdated: item.last_updated || item.created_date || new Date().toISOString().split('T')[0],
-        status: item.status || determineStockStatus(item.quantity, item.reorder_level)
-      }));
-      
-      setInventory(transformedData);
-    } catch (error) {
-      console.error('Error fetching inventory:', error);
-      toast.error('Failed to load inventory');
-    }
-  };
-
+  
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
