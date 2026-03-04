@@ -194,6 +194,86 @@ app.post('/emergency-create-admin', async (req, res) => {
   }
 });
 
+// Auto-migration: create new tables if they don't exist
+async function runMigrations() {
+  try {
+    // Create sales_orders table
+    await query(`
+      CREATE TABLE IF NOT EXISTS sales_orders (
+        id TEXT PRIMARY KEY,
+        so_number TEXT NOT NULL UNIQUE,
+        client TEXT NOT NULL,
+        description TEXT NOT NULL,
+        amount NUMERIC(12,2) NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_date DATE NOT NULL,
+        delivery_date DATE NOT NULL,
+        assigned_assets TEXT[] DEFAULT '{}',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    console.log('✅ sales_orders table ready');
+
+    // Create inventory table
+    await query(`
+      CREATE TABLE IF NOT EXISTS inventory (
+        id TEXT PRIMARY KEY,
+        item_code TEXT NOT NULL UNIQUE,
+        item_name TEXT NOT NULL,
+        description TEXT,
+        quantity NUMERIC(10,2) NOT NULL DEFAULT 0,
+        unit TEXT NOT NULL DEFAULT 'pieces',
+        reorder_level NUMERIC(10,2) NOT NULL DEFAULT 10,
+        unit_cost NUMERIC(12,2) NOT NULL DEFAULT 0,
+        location TEXT,
+        supplier TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    console.log('✅ inventory table ready');
+
+    // Create miscellaneous table
+    await query(`
+      CREATE TABLE IF NOT EXISTS miscellaneous (
+        id TEXT PRIMARY KEY,
+        description TEXT NOT NULL,
+        amount NUMERIC(12,2) NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        transaction_date DATE NOT NULL,
+        category TEXT NOT NULL DEFAULT 'other',
+        notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    console.log('✅ miscellaneous table ready');
+
+    // Alter purchase_orders: drop old status constraint and add new one with RECEIVED
+    try {
+      await query(`ALTER TABLE purchase_orders DROP CONSTRAINT IF EXISTS purchase_orders_status_check`);
+      await query(`ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_status_check CHECK (status IN ('pending', 'approved', 'in-progress', 'RECEIVED', 'completed'))`);
+      console.log('✅ purchase_orders status constraint updated (added RECEIVED)');
+    } catch (err) {
+      console.log('ℹ️ purchase_orders constraint update skipped:', err.message);
+    }
+
+    // Alter sales_orders: ensure PAID status is allowed
+    try {
+      await query(`ALTER TABLE sales_orders DROP CONSTRAINT IF EXISTS sales_orders_status_check`);
+      await query(`ALTER TABLE sales_orders ADD CONSTRAINT sales_orders_status_check CHECK (status IN ('pending', 'approved', 'in-progress', 'PAID', 'completed'))`);
+      console.log('✅ sales_orders status constraint set (includes PAID)');
+    } catch (err) {
+      console.log('ℹ️ sales_orders constraint update skipped:', err.message);
+    }
+
+    console.log('✅ All migrations complete');
+  } catch (err) {
+    console.error('❌ Migration error:', err.message);
+  }
+}
+
 // Test DB connection on startup
 testConnection().then(async () => {
   // STEP 4: VERIFY RENDER DATABASE CONNECTION
@@ -207,6 +287,9 @@ testConnection().then(async () => {
   } else {
     console.log('❌ DATABASE_URL NOT SET');
   }
+
+  // Run migrations to ensure all tables exist
+  await runMigrations();
   
   // Ensure super admin exists after DB connection
   const { ensureSuperAdmin } = await import('./ensure-super-admin.js');
