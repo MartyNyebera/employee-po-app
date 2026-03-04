@@ -220,7 +220,7 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
     { id: 'fleet', label: 'Fleet', icon: Truck },
     { id: 'pms', label: 'PMS Reminders', icon: Wrench },
     { id: 'gps', label: 'GPS Tracking', icon: MapPin },
-    { id: 'orders', label: 'Orders', icon: FileText },
+    { id: 'orders', label: 'Sales Order', icon: FileText },
     { id: 'purchase-orders', label: 'Purchase Order', icon: ShoppingCart },
     { id: 'inventory', label: 'Inventory', icon: Package },
     { id: 'transactions', label: 'Miscellaneous', icon: Receipt },
