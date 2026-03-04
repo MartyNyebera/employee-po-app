@@ -46,9 +46,9 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
     Promise.all([
       fetchPurchaseOrders()
         .then(data => {
-          // Filter out Purchase Order data - only show SO statuses
+          // Filter out Purchase Order data - only show Sales Orders
           const soData = data.filter((item: any) => 
-            ['pending', 'approved', 'in-progress', 'PAID', 'completed'].includes(item.status)
+            item.orderType === 'sales' && ['pending', 'approved', 'in-progress', 'PAID', 'completed'].includes(item.status)
           );
           setOrders(soData);
         })
@@ -94,9 +94,9 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
   const loadOrders = async () => {
     try {
       const data = await fetchPurchaseOrders();
-      // Filter out Purchase Order data - only show SO statuses
+      // Filter out Purchase Order data - only show Sales Orders
       const soData = data.filter((item: any) => 
-        ['pending', 'approved', 'in-progress', 'PAID', 'completed'].includes(item.status)
+        item.orderType === 'sales' && ['pending', 'approved', 'in-progress', 'PAID', 'completed'].includes(item.status)
       );
       setOrders(soData);
     } catch (error) {

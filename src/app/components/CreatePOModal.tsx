@@ -201,6 +201,8 @@ export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
         vatAmount: form.vatAmount,
         totalAmount: calculateTotal(),
         createdDate: new Date().toISOString().split('T')[0],
+        status: 'pending', // Sales Order starts as pending
+        orderType: 'sales', // Distinguish from Purchase Orders
       };
 
       await createPurchaseOrder(soData);

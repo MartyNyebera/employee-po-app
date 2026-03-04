@@ -41,9 +41,9 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
     const response = await fetch('/api/purchase-orders');
     const data = await response.json();
     
-    // Filter out Sales Order data - only show PO statuses
+    // Filter out Sales Order data - only show Purchase Orders
     const poData = data.filter((item: any) => 
-      ['pending', 'approved', 'received', 'completed'].includes(item.status)
+      item.orderType !== 'sales' && ['pending', 'approved', 'received', 'completed'].includes(item.status)
     );
     
     // Transform API data to match component interface
