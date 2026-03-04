@@ -299,6 +299,19 @@ export async function fetchChartData(period: TimePeriod, customRange?: DateRange
     
     console.log('PAID SOs total:', paidSOs.reduce((sum: number, so: any) => sum + (so.amount || 0), 0));
     console.log('RECEIVED POs total:', receivedPOs.reduce((sum: number, po: any) => sum + (po.amount || 0), 0));
+    
+    // DEBUG: Log actual dates of PAID SOs
+    console.log('🔍 PAID SOs DETAILS:');
+    paidSOs.forEach((so: any, index: number) => {
+      console.log(`SO ${index}:`, {
+        id: so.id,
+        poNumber: so.poNumber,
+        createdDate: so.createdDate,
+        amount: so.amount,
+        status: so.status,
+        orderType: so.orderType
+      });
+    });
 
     if (period === 'this-month' || period === 'last-30-days') {
       // Generate daily data points
@@ -321,6 +334,15 @@ export async function fetchChartData(period: TimePeriod, customRange?: DateRange
         const dayExpenses = poArray
           .filter((po: any) => po.createdDate === dateString && po.orderType !== 'sales' && po.status === 'RECEIVED')
           .reduce((sum: number, po: any) => sum + (po.amount || 0), 0);
+
+        // DEBUG: Log date filtering for first few days
+        if (i < 5) {
+          console.log(`🔍 DATE FILTER DEBUG - Day ${i}:`);
+          console.log(`Date: ${dateString}`);
+          console.log(`PAID SOs on this date:`, soArray.filter((so: any) => so.createdDate === dateString && so.orderType === 'sales' && so.status === 'PAID'));
+          console.log(`Day Revenue: ${dayRevenue}`);
+          console.log(`Day Expenses: ${dayExpenses}`);
+        }
 
         data.push({
           date: currentDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
