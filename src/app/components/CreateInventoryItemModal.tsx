@@ -6,6 +6,7 @@ import { Textarea } from './ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { X } from 'lucide-react';
 import { toast } from 'sonner';
+import { fetchApi } from '../api/client';
 
 interface CreateInventoryItemModalProps {
   onClose: () => void;
@@ -19,7 +20,6 @@ export function CreateInventoryItemModal({ onClose, onCreated }: CreateInventory
     description: '',
     quantity: 0,
     unit: 'pcs',
-    reorderLevel: 0,
     location: '',
     supplier: '',
     unitCost: 0,
@@ -49,28 +49,19 @@ export function CreateInventoryItemModal({ onClose, onCreated }: CreateInventory
     try {
       setLoading(true);
       
-      const response = await fetch('/api/inventory', {
+      await fetchApi('/api/inventory', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
-          item_code: form.itemCode,
-          item_name: form.itemName,
+          itemCode: form.itemCode,
+          itemName: form.itemName,
           description: form.description,
           quantity: form.quantity,
           unit: form.unit,
-          reorder_level: form.reorderLevel,
           location: form.location,
           supplier: form.supplier,
-          unit_cost: form.unitCost,
+          unitCost: form.unitCost,
         }),
       });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to create inventory item');
-      }
 
       toast.success('Inventory item created successfully!');
       onCreated();
@@ -139,8 +130,8 @@ export function CreateInventoryItemModal({ onClose, onCreated }: CreateInventory
               />
             </div>
 
-            {/* Quantity, Unit, and Reorder Level */}
-            <div className="grid grid-cols-3 gap-4">
+            {/* Quantity and Unit */}
+            <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label className="block text-sm font-medium text-slate-700 mb-1">Quantity *</Label>
                 <Input
@@ -168,17 +159,6 @@ export function CreateInventoryItemModal({ onClose, onCreated }: CreateInventory
                     <SelectItem value="units">Units</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
-              <div>
-                <Label className="block text-sm font-medium text-slate-700 mb-1">Reorder Level</Label>
-                <Input
-                  type="number"
-                  value={form.reorderLevel}
-                  onChange={(e) => setForm({ ...form, reorderLevel: parseFloat(e.target.value) || 0 })}
-                  placeholder="0"
-                  min="0"
-                  className="w-full"
-                />
               </div>
             </div>
 

@@ -1493,22 +1493,22 @@ app.post('/api/inventory', requireAdmin, async (req, res) => {
       description, 
       quantity, 
       unit = 'pieces', 
-      reorderLevel = 10, 
       unitCost, 
       location, 
       supplier 
     } = req.body;
     
     const id = `INV-${Date.now()}`;
+    const defaultReorderLevel = 10; // Set default reorder level internally
     
     await query(
       `INSERT INTO inventory (id, item_code, item_name, description, quantity, unit, reorder_level, unit_cost, location, supplier)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-      [id, itemCode, itemName, description, quantity, unit, reorderLevel, unitCost, location, supplier]
+      [id, itemCode, itemName, description, quantity, unit, defaultReorderLevel, unitCost, location, supplier]
     );
     
     const result = await query(
-      `SELECT id, item_code, item_name, description, quantity, unit, reorder_level, unit_cost, location, supplier
+      `SELECT id, item_code, item_name, description, quantity, unit, unit_cost, location, supplier
        FROM inventory WHERE id = $1`,
       [id]
     );
@@ -1521,7 +1521,6 @@ app.post('/api/inventory', requireAdmin, async (req, res) => {
       description: row.description,
       quantity: parseFloat(row.quantity),
       unit: row.unit,
-      reorderLevel: parseFloat(row.reorder_level),
       unitCost: parseFloat(row.unit_cost),
       totalCost: parseFloat(row.quantity) * parseFloat(row.unit_cost),
       location: row.location,
