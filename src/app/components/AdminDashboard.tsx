@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAutoLogout } from '../hooks/useAutoLogout';
 import { Button } from './ui/button';
-import { LogOut, Home, FileText, Receipt, Menu, X, UserPlus, Check, XCircle, MapPin, Calendar, Clock, Truck, Wrench } from 'lucide-react';
+import { LogOut, Home, FileText, Receipt, Menu, X, UserPlus, Check, XCircle, MapPin, Calendar, Clock, Truck, Wrench, ShoppingCart, Package, User } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
 import { FleetOverview } from './FleetOverview';
 import { AssetDetails } from './AssetDetails';
@@ -12,6 +12,8 @@ import { WorkingMap } from './WorkingMap';
 import { FleetList } from './FleetList';
 import { VehicleDetails } from './VehicleDetails';
 import { PMSReminders } from './PMSReminders';
+import { PurchaseOrderList } from './PurchaseOrderList';
+import { InventoryList } from './InventoryList';
 import { fetchAdminRequests, approveAdminRequest, rejectAdminRequest, type AdminApprovalRequest } from '../api/client';
 import { toast } from 'sonner';
 
@@ -21,7 +23,7 @@ interface AdminDashboardProps {
   onLogout: () => void;
 }
 
-type View = 'home' | 'orders' | 'transactions' | 'requests' | 'gps' | 'fleet' | 'pms';
+type View = 'home' | 'orders' | 'transactions' | 'requests' | 'gps' | 'fleet' | 'pms' | 'purchase-orders' | 'inventory';
 
 export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashboardProps) {
   // Enable auto-logout when app is closed
@@ -106,6 +108,14 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
 
     if (currentView === 'pms') {
       return <PMSReminders onSelectVehicle={(id) => { setSelectedVehicleId(id); setCurrentView('fleet'); }} />;
+    }
+
+    if (currentView === 'purchase-orders') {
+      return <PurchaseOrderList isAdmin={true} />;
+    }
+
+    if (currentView === 'inventory') {
+      return <InventoryList isAdmin={true} />;
     }
 
     if (currentView === 'requests' && isSuperAdmin) {
@@ -214,7 +224,9 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
     { id: 'pms', label: 'PMS Reminders', icon: Wrench },
     { id: 'gps', label: 'GPS Tracking', icon: MapPin },
     { id: 'orders', label: 'Orders', icon: FileText },
-    { id: 'transactions', label: 'Transactions', icon: Receipt },
+    { id: 'purchase-orders', label: 'Purchase Order', icon: ShoppingCart },
+    { id: 'inventory', label: 'Inventory', icon: Package },
+    { id: 'transactions', label: 'Miscellaneous', icon: Receipt },
     ...(isSuperAdmin ? [{ id: 'requests', label: 'Admin Requests', icon: UserPlus }] : []),
   ];
 

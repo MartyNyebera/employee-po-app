@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useAutoLogout } from '../hooks/useAutoLogout';
 import { Button } from './ui/button';
-import { LogOut, Home, FileText, Receipt, Menu, X, MapPin, Truck, Wrench } from 'lucide-react';
+import { Home, Truck, Wrench, MapPin, FileText, Receipt, User, LogOut, Menu, X, ShoppingCart, Package } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
 import { FleetOverview } from './FleetOverview';
 import { AssetDetails } from './AssetDetails';
@@ -11,13 +11,15 @@ import { WorkingMap } from './WorkingMap';
 import { FleetList } from './FleetList';
 import { VehicleDetails } from './VehicleDetails';
 import { PMSReminders } from './PMSReminders';
+import { PurchaseOrderList } from './PurchaseOrderList';
+import { InventoryList } from './InventoryList';
 
 interface DashboardProps {
   userName: string;
   onLogout: () => void;
 }
 
-type View = 'home' | 'assets' | 'orders' | 'transactions' | 'gps' | 'fleet' | 'pms';
+type View = 'home' | 'assets' | 'orders' | 'transactions' | 'gps' | 'fleet' | 'pms' | 'purchase-orders' | 'inventory';
 
 export function Dashboard({ userName, onLogout }: DashboardProps) {
   // Enable auto-logout when app is closed
@@ -95,6 +97,14 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
       return <PMSReminders onSelectVehicle={(id) => { setSelectedVehicleId(id); setCurrentView('fleet'); }} />;
     }
 
+    if (currentView === 'purchase-orders') {
+      return <PurchaseOrderList isAdmin={false} />;
+    }
+
+    if (currentView === 'inventory') {
+      return <InventoryList isAdmin={false} />;
+    }
+
     console.log('[Dashboard] No matching view, returning null');
     return null;
   };
@@ -105,7 +115,9 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
     { id: 'pms', label: 'PMS Reminders', icon: Wrench },
     { id: 'gps', label: 'GPS Tracking', icon: MapPin },
     { id: 'orders', label: 'Orders', icon: FileText },
-    { id: 'transactions', label: 'Transactions', icon: Receipt },
+    { id: 'purchase-orders', label: 'Purchase Order', icon: ShoppingCart },
+    { id: 'inventory', label: 'Inventory', icon: Package },
+    { id: 'transactions', label: 'Miscellaneous', icon: Receipt },
   ];
 
   return (

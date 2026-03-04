@@ -145,8 +145,8 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
               <Receipt className="size-5 text-amber-600 dark:text-amber-400" />
             </div>
             <div>
-              <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100">Transactions</h2>
-              <p className="text-slate-600 text-sm dark:text-slate-400">Track and analyze financial transactions</p>
+              <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100">Miscellaneous</h2>
+              <p className="text-slate-600 text-sm dark:text-slate-400">Track miscellaneous transactions and entries</p>
             </div>
           </div>
         </div>
