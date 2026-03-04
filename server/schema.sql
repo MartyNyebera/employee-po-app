@@ -102,10 +102,55 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   client TEXT NOT NULL,
   description TEXT NOT NULL,
   amount NUMERIC(12,2) NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'in-progress', 'completed')),
+  status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'in-progress', 'RECEIVED', 'completed')),
   created_date DATE NOT NULL,
   delivery_date DATE NOT NULL,
   assigned_assets TEXT[] DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Sales orders (for revenue tracking)
+CREATE TABLE IF NOT EXISTS sales_orders (
+  id TEXT PRIMARY KEY,
+  so_number TEXT NOT NULL UNIQUE,
+  client TEXT NOT NULL,
+  description TEXT NOT NULL,
+  amount NUMERIC(12,2) NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'in-progress', 'PAID', 'completed')),
+  created_date DATE NOT NULL,
+  delivery_date DATE NOT NULL,
+  assigned_assets TEXT[] DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Inventory items
+CREATE TABLE IF NOT EXISTS inventory (
+  id TEXT PRIMARY KEY,
+  item_code TEXT NOT NULL UNIQUE,
+  item_name TEXT NOT NULL,
+  description TEXT,
+  quantity NUMERIC(10,2) NOT NULL DEFAULT 0,
+  unit TEXT NOT NULL DEFAULT 'pieces',
+  reorder_level NUMERIC(10,2) NOT NULL DEFAULT 10,
+  unit_cost NUMERIC(12,2) NOT NULL DEFAULT 0,
+  total_cost NUMERIC(12,2) GENERATED ALWAYS AS (quantity * unit_cost) STORED,
+  location TEXT,
+  supplier TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Miscellaneous transactions
+CREATE TABLE IF NOT EXISTS miscellaneous (
+  id TEXT PRIMARY KEY,
+  description TEXT NOT NULL,
+  amount NUMERIC(12,2) NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'completed', 'cancelled')),
+  transaction_date DATE NOT NULL,
+  category TEXT NOT NULL DEFAULT 'other',
+  notes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );

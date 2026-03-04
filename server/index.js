@@ -779,9 +779,25 @@ app.patch('/api/assets/:id', requireAdmin, async (req, res) => {
 // GET /api/purchase-orders
 app.get('/api/purchase-orders', async (req, res) => {
   try {
+    const { startDate, endDate, status } = req.query;
+    let whereClause = 'WHERE 1=1';
+    const params = [];
+    let paramIndex = 1;
+
+    if (startDate && endDate) {
+      whereClause += ` AND created_date >= $${paramIndex++} AND created_date <= $${paramIndex++}`;
+      params.push(startDate, endDate);
+    }
+
+    if (status) {
+      whereClause += ` AND status = $${paramIndex++}`;
+      params.push(status);
+    }
+
     const result = await query(
       `SELECT id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets
-       FROM purchase_orders ORDER BY created_date DESC`
+       FROM purchase_orders ${whereClause} ORDER BY created_date DESC`,
+      params
     );
     const orders = result.rows.map((row) => ({
       id: row.id,
@@ -796,6 +812,7 @@ app.get('/api/purchase-orders', async (req, res) => {
     }));
     res.json(orders);
   } catch (err) {
+    console.error('Purchase orders fetch error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1050,6 +1067,506 @@ app.post('/api/transactions', requireAdmin, async (req, res) => {
       receipt: row.receipt,
     });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Sales Orders API ───────────────────────────────────────
+
+// GET /api/sales-orders
+app.get('/api/sales-orders', async (req, res) => {
+  try {
+    const { startDate, endDate, status } = req.query;
+    let whereClause = 'WHERE 1=1';
+    const params = [];
+    let paramIndex = 1;
+
+    if (startDate && endDate) {
+      whereClause += ` AND created_date >= $${paramIndex++} AND created_date <= $${paramIndex++}`;
+      params.push(startDate, endDate);
+    }
+
+    if (status) {
+      whereClause += ` AND status = $${paramIndex++}`;
+      params.push(status);
+    }
+
+    const result = await query(
+      `SELECT id, so_number, client, description, amount, status, created_date, delivery_date, assigned_assets
+       FROM sales_orders ${whereClause} ORDER BY created_date DESC`,
+      params
+    );
+    
+    const orders = result.rows.map((row) => ({
+      id: row.id,
+      soNumber: row.so_number,
+      client: row.client,
+      description: row.description,
+      amount: parseFloat(row.amount),
+      status: row.status,
+      createdDate: row.created_date,
+      deliveryDate: row.delivery_date,
+      assignedAssets: row.assigned_assets || [],
+    }));
+    
+    res.json(orders);
+  } catch (err) {
+    console.error('Sales orders fetch error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/sales-orders (admin only)
+app.post('/api/sales-orders', requireAdmin, async (req, res) => {
+  try {
+    const { 
+      soNumber, 
+      client, 
+      description, 
+      amount, 
+      deliveryDate, 
+      assignedAssets = [],
+      createdDate = new Date().toISOString().split('T')[0]
+    } = req.body;
+    
+    const id = `SO-${Date.now()}`;
+    
+    await query(
+      `INSERT INTO sales_orders (id, so_number, client, description, amount, status, created_date, delivery_date, assigned_assets)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [id, soNumber, client, description, amount, 'pending', createdDate, deliveryDate, assignedAssets]
+    );
+    
+    const result = await query(
+      `SELECT id, so_number, client, description, amount, status, created_date, delivery_date, assigned_assets
+       FROM sales_orders WHERE id = $1`,
+      [id]
+    );
+    
+    const row = result.rows[0];
+    res.status(201).json({
+      id: row.id,
+      soNumber: row.so_number,
+      client: row.client,
+      description: row.description,
+      amount: parseFloat(row.amount),
+      status: row.status,
+      createdDate: row.created_date,
+      deliveryDate: row.delivery_date,
+      assignedAssets: row.assigned_assets || [],
+    });
+  } catch (err) {
+    console.error('Sales order creation error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/sales-orders/:id (admin only)
+app.patch('/api/sales-orders/:id', requireAdmin, async (req, res) => {
+  try {
+    const { status, description } = req.body;
+    const updates = [];
+    const values = [];
+    let i = 1;
+    
+    if (status !== undefined) {
+      updates.push(`status = $${i++}`);
+      values.push(status);
+    }
+    if (description !== undefined) {
+      updates.push(`description = $${i++}`);
+      values.push(description);
+    }
+    
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+    
+    updates.push('updated_at = NOW()');
+    values.push(req.params.id);
+    
+    await query(
+      `UPDATE sales_orders SET ${updates.join(', ')} WHERE id = $${values.length}`,
+      values
+    );
+    
+    const result = await query(
+      `SELECT id, so_number, client, description, amount, status, created_date, delivery_date, assigned_assets
+       FROM sales_orders WHERE id = $1`,
+      [req.params.id]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Sales order not found' });
+    }
+    
+    const row = result.rows[0];
+    res.json({
+      id: row.id,
+      soNumber: row.so_number,
+      client: row.client,
+      description: row.description,
+      amount: parseFloat(row.amount),
+      status: row.status,
+      createdDate: row.created_date,
+      deliveryDate: row.delivery_date,
+      assignedAssets: row.assigned_assets || [],
+    });
+  } catch (err) {
+    console.error('Sales order update error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/sales-orders/:id (admin only)
+app.delete('/api/sales-orders/:id', requireAdmin, async (req, res) => {
+  try {
+    await query('DELETE FROM sales_orders WHERE id = $1', [req.params.id]);
+    res.json({ message: 'Sales order deleted' });
+  } catch (err) {
+    console.error('Sales order deletion error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Inventory API ─────────────────────────────────────────
+
+// GET /api/inventory
+app.get('/api/inventory', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT id, item_code, item_name, description, quantity, unit, reorder_level, unit_cost, location, supplier
+       FROM inventory ORDER BY item_name ASC`
+    );
+    
+    const items = result.rows.map((row) => ({
+      id: row.id,
+      itemCode: row.item_code,
+      itemName: row.item_name,
+      description: row.description,
+      quantity: parseFloat(row.quantity),
+      unit: row.unit,
+      reorderLevel: parseFloat(row.reorder_level),
+      unitCost: parseFloat(row.unit_cost),
+      totalCost: parseFloat(row.quantity) * parseFloat(row.unit_cost),
+      location: row.location,
+      supplier: row.supplier,
+    }));
+    
+    res.json(items);
+  } catch (err) {
+    console.error('Inventory fetch error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/inventory (admin only)
+app.post('/api/inventory', requireAdmin, async (req, res) => {
+  try {
+    const { 
+      itemCode, 
+      itemName, 
+      description, 
+      quantity, 
+      unit = 'pieces', 
+      reorderLevel = 10, 
+      unitCost, 
+      location, 
+      supplier 
+    } = req.body;
+    
+    const id = `INV-${Date.now()}`;
+    
+    await query(
+      `INSERT INTO inventory (id, item_code, item_name, description, quantity, unit, reorder_level, unit_cost, location, supplier)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [id, itemCode, itemName, description, quantity, unit, reorderLevel, unitCost, location, supplier]
+    );
+    
+    const result = await query(
+      `SELECT id, item_code, item_name, description, quantity, unit, reorder_level, unit_cost, location, supplier
+       FROM inventory WHERE id = $1`,
+      [id]
+    );
+    
+    const row = result.rows[0];
+    res.status(201).json({
+      id: row.id,
+      itemCode: row.item_code,
+      itemName: row.item_name,
+      description: row.description,
+      quantity: parseFloat(row.quantity),
+      unit: row.unit,
+      reorderLevel: parseFloat(row.reorder_level),
+      unitCost: parseFloat(row.unit_cost),
+      totalCost: parseFloat(row.quantity) * parseFloat(row.unit_cost),
+      location: row.location,
+      supplier: row.supplier,
+    });
+  } catch (err) {
+    console.error('Inventory creation error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/inventory/:id (admin only)
+app.patch('/api/inventory/:id', requireAdmin, async (req, res) => {
+  try {
+    const { itemName, description, quantity, unit, reorderLevel, unitCost, location, supplier } = req.body;
+    const updates = [];
+    const values = [];
+    let i = 1;
+    
+    if (itemName !== undefined) {
+      updates.push(`item_name = $${i++}`);
+      values.push(itemName);
+    }
+    if (description !== undefined) {
+      updates.push(`description = $${i++}`);
+      values.push(description);
+    }
+    if (quantity !== undefined) {
+      updates.push(`quantity = $${i++}`);
+      values.push(quantity);
+    }
+    if (unit !== undefined) {
+      updates.push(`unit = $${i++}`);
+      values.push(unit);
+    }
+    if (reorderLevel !== undefined) {
+      updates.push(`reorder_level = $${i++}`);
+      values.push(reorderLevel);
+    }
+    if (unitCost !== undefined) {
+      updates.push(`unit_cost = $${i++}`);
+      values.push(unitCost);
+    }
+    if (location !== undefined) {
+      updates.push(`location = $${i++}`);
+      values.push(location);
+    }
+    if (supplier !== undefined) {
+      updates.push(`supplier = $${i++}`);
+      values.push(supplier);
+    }
+    
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+    
+    updates.push('updated_at = NOW()');
+    values.push(req.params.id);
+    
+    await query(
+      `UPDATE inventory SET ${updates.join(', ')} WHERE id = $${values.length}`,
+      values
+    );
+    
+    const result = await query(
+      `SELECT id, item_code, item_name, description, quantity, unit, reorder_level, unit_cost, location, supplier
+       FROM inventory WHERE id = $1`,
+      [req.params.id]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Inventory item not found' });
+    }
+    
+    const row = result.rows[0];
+    res.json({
+      id: row.id,
+      itemCode: row.item_code,
+      itemName: row.item_name,
+      description: row.description,
+      quantity: parseFloat(row.quantity),
+      unit: row.unit,
+      reorderLevel: parseFloat(row.reorder_level),
+      unitCost: parseFloat(row.unit_cost),
+      totalCost: parseFloat(row.quantity) * parseFloat(row.unit_cost),
+      location: row.location,
+      supplier: row.supplier,
+    });
+  } catch (err) {
+    console.error('Inventory update error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/inventory/:id (admin only)
+app.delete('/api/inventory/:id', requireAdmin, async (req, res) => {
+  try {
+    await query('DELETE FROM inventory WHERE id = $1', [req.params.id]);
+    res.json({ message: 'Inventory item deleted' });
+  } catch (err) {
+    console.error('Inventory deletion error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Miscellaneous API ───────────────────────────────────────
+
+// GET /api/miscellaneous
+app.get('/api/miscellaneous', async (req, res) => {
+  try {
+    const { startDate, endDate, status } = req.query;
+    let whereClause = 'WHERE 1=1';
+    const params = [];
+    let paramIndex = 1;
+
+    if (startDate && endDate) {
+      whereClause += ` AND transaction_date >= $${paramIndex++} AND transaction_date <= $${paramIndex++}`;
+      params.push(startDate, endDate);
+    }
+
+    if (status) {
+      whereClause += ` AND status = $${paramIndex++}`;
+      params.push(status);
+    }
+
+    const result = await query(
+      `SELECT id, description, amount, status, transaction_date, category, notes
+       FROM miscellaneous ${whereClause} ORDER BY transaction_date DESC`,
+      params
+    );
+    
+    const entries = result.rows.map((row) => ({
+      id: row.id,
+      description: row.description,
+      amount: parseFloat(row.amount),
+      status: row.status,
+      transactionDate: row.transaction_date,
+      category: row.category,
+      notes: row.notes,
+    }));
+    
+    res.json(entries);
+  } catch (err) {
+    console.error('Miscellaneous fetch error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/miscellaneous (admin only)
+app.post('/api/miscellaneous', requireAdmin, async (req, res) => {
+  try {
+    const { 
+      description, 
+      amount, 
+      transactionDate, 
+      category = 'other', 
+      notes,
+      status = 'pending'
+    } = req.body;
+    
+    const id = `MISC-${Date.now()}`;
+    const txnDate = transactionDate || new Date().toISOString().split('T')[0];
+    
+    await query(
+      `INSERT INTO miscellaneous (id, description, amount, status, transaction_date, category, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [id, description, amount, status, txnDate, category, notes]
+    );
+    
+    const result = await query(
+      `SELECT id, description, amount, status, transaction_date, category, notes
+       FROM miscellaneous WHERE id = $1`,
+      [id]
+    );
+    
+    const row = result.rows[0];
+    res.status(201).json({
+      id: row.id,
+      description: row.description,
+      amount: parseFloat(row.amount),
+      status: row.status,
+      transactionDate: row.transaction_date,
+      category: row.category,
+      notes: row.notes,
+    });
+  } catch (err) {
+    console.error('Miscellaneous creation error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/miscellaneous/:id (admin only)
+app.patch('/api/miscellaneous/:id', requireAdmin, async (req, res) => {
+  try {
+    const { description, amount, status, transactionDate, category, notes } = req.body;
+    const updates = [];
+    const values = [];
+    let i = 1;
+    
+    if (description !== undefined) {
+      updates.push(`description = $${i++}`);
+      values.push(description);
+    }
+    if (amount !== undefined) {
+      updates.push(`amount = $${i++}`);
+      values.push(amount);
+    }
+    if (status !== undefined) {
+      updates.push(`status = $${i++}`);
+      values.push(status);
+    }
+    if (transactionDate !== undefined) {
+      updates.push(`transaction_date = $${i++}`);
+      values.push(transactionDate);
+    }
+    if (category !== undefined) {
+      updates.push(`category = $${i++}`);
+      values.push(category);
+    }
+    if (notes !== undefined) {
+      updates.push(`notes = $${i++}`);
+      values.push(notes);
+    }
+    
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+    
+    updates.push('updated_at = NOW()');
+    values.push(req.params.id);
+    
+    await query(
+      `UPDATE miscellaneous SET ${updates.join(', ')} WHERE id = $${values.length}`,
+      values
+    );
+    
+    const result = await query(
+      `SELECT id, description, amount, status, transaction_date, category, notes
+       FROM miscellaneous WHERE id = $1`,
+      [req.params.id]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Miscellaneous entry not found' });
+    }
+    
+    const row = result.rows[0];
+    res.json({
+      id: row.id,
+      description: row.description,
+      amount: parseFloat(row.amount),
+      status: row.status,
+      transactionDate: row.transaction_date,
+      category: row.category,
+      notes: row.notes,
+    });
+  } catch (err) {
+    console.error('Miscellaneous update error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/miscellaneous/:id (admin only)
+app.delete('/api/miscellaneous/:id', requireAdmin, async (req, res) => {
+  try {
+    await query('DELETE FROM miscellaneous WHERE id = $1', [req.params.id]);
+    res.json({ message: 'Miscellaneous entry deleted' });
+  } catch (err) {
+    console.error('Miscellaneous deletion error:', err);
     res.status(500).json({ error: err.message });
   }
 });
