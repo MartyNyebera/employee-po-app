@@ -536,7 +536,7 @@ app.get('/api/purchase-orders', async (req, res) => {
       params.push(status);
     }
     const result = await query(
-      `SELECT id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets
+      `SELECT id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets, order_type
        FROM purchase_orders ${whereClause} ORDER BY created_date DESC`,
       params
     );
@@ -550,6 +550,7 @@ app.get('/api/purchase-orders', async (req, res) => {
       createdDate: row.created_date,
       deliveryDate: row.delivery_date,
       assignedAssets: row.assigned_assets || [],
+      orderType: row.order_type,
     })));
   } catch (err) {
     res.status(500).json({ error: err.message });
