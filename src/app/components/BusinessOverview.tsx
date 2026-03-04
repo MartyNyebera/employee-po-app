@@ -54,6 +54,18 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
         fetchChartData(timePeriod, customRange)
       ]);
 
+      // DEBUG: Log chart data
+      console.log('🔍 CHART DATA DEBUG:');
+      console.log('Chart Data:', chartDataResult);
+      console.log('Data sample:', chartDataResult[0]);
+      console.log('Total data points:', chartDataResult.length);
+      
+      // DEBUG: Log metrics
+      console.log('🔍 METRICS DEBUG:');
+      console.log('Revenue from metrics:', metricsData.revenue);
+      console.log('Expenses from metrics:', metricsData.expenses);
+      console.log('Net Profit:', metricsData.netProfit);
+
       setMetrics(metricsData);
       setOrderSummary(ordersData);
       setInventorySummary(inventoryData);

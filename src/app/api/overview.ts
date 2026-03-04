@@ -288,6 +288,18 @@ export async function fetchChartData(period: TimePeriod, customRange?: DateRange
     const poArray = Array.isArray(allOrders) ? allOrders : [];
     const soArray = poArray; // same table: PAID = revenue, RECEIVED = expenses
 
+    // DEBUG: Log API responses
+    console.log('🔍 CHART API DEBUG:');
+    console.log('All orders count:', poArray.length);
+    console.log('PAID Sales Orders:', soArray.filter((so: any) => so.orderType === 'sales' && so.status === 'PAID').length);
+    console.log('RECEIVED Purchase Orders:', poArray.filter((po: any) => po.orderType !== 'sales' && po.status === 'RECEIVED').length);
+    
+    const paidSOs = soArray.filter((so: any) => so.orderType === 'sales' && so.status === 'PAID');
+    const receivedPOs = poArray.filter((po: any) => po.orderType !== 'sales' && po.status === 'RECEIVED');
+    
+    console.log('PAID SOs total:', paidSOs.reduce((sum: number, so: any) => sum + (so.amount || 0), 0));
+    console.log('RECEIVED POs total:', receivedPOs.reduce((sum: number, po: any) => sum + (po.amount || 0), 0));
+
     if (period === 'this-month' || period === 'last-30-days') {
       // Generate daily data points
       const startDate = new Date(range.startDate);

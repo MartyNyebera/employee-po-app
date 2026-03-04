@@ -14,7 +14,9 @@ interface ProperLineChartProps {
 export function ProperLineChart({ data, height = 400 }: ProperLineChartProps) {
   // Y-axis formatter for currency
   const yAxisTickFormatter = (value: number) => {
-    if (value >= 1000) {
+    if (value >= 1000000) {
+      return '₱' + (value / 1000000).toFixed(1) + 'M';
+    } else if (value >= 1000) {
       return '₱' + (value / 1000).toFixed(0) + 'K';
     }
     return '₱' + value;
@@ -72,6 +74,8 @@ export function ProperLineChart({ data, height = 400 }: ProperLineChartProps) {
             tickFormatter={yAxisTickFormatter}
             tick={{ fill: '#6b7280', fontSize: 12 }}
             tickLine={{ stroke: '#e5e7eb' }}
+            domain={[0, 'dataMax + 100000']}
+            allowDataOverflow={false}
           />
           <Tooltip content={<CustomTooltip />} />
           <Legend 
