@@ -3,39 +3,20 @@ import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Input } from './ui/input';
-import { FileText, Plus, ShoppingCart, Package, Edit, Trash2, Filter, Printer } from 'lucide-react';
+import { FileText, Plus, ShoppingCart, Package, Edit, Trash2, Filter, Printer, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { updatePurchaseOrder, deletePurchaseOrder } from '../api/client';
 
 interface PurchaseOrder {
   id: string;
   poNumber: string;
-  vendorName: string;
-  vendorAddress: string;
-  vendorContact: string;
-  poDate: string;
-  deliveryDate: string;
-  poType: 'domestic' | 'foreign';
-  paymentTerms: string;
-  vatType: 'vatable' | 'non-vatable';
-  lineItems: Array<{
-    id: string;
-    no: number;
-    description: string;
-    quantity: number;
-    unit: string;
-    unitCost: number;
-    amount: number;
-  }>;
-  subTotal: number;
-  ewt: number;
-  vatAmount: number;
-  totalAmount: number;
-  termsAndConditions: string;
-  preparedBy: string;
-  reviewedBy: string;
-  approvedBy: string;
+  client: string;
+  description: string;
+  amount: number;
   status: 'pending' | 'approved' | 'received';
   createdDate: string;
+  deliveryDate: string;
+  assignedAssets: string[];
 }
 
 interface PurchaseOrderListProps {
@@ -48,6 +29,12 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'received'>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editForm, setEditForm] = useState({
+    status: '',
+    description: '',
+  });
 
   const fetchPurchaseOrders = async () => {
   try {
@@ -58,25 +45,13 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
     const transformedData = data.map((po: any) => ({
       id: po.id,
       poNumber: po.poNumber || po.po_number,
-      vendorName: po.client || po.vendorName,
-      vendorAddress: po.vendorAddress || '',
-      vendorContact: po.vendorContact || '',
-      poDate: po.poDate || po.created_date,
-      deliveryDate: po.deliveryDate || po.delivery_date,
-      poType: po.poType || 'domestic',
-      paymentTerms: po.paymentTerms || '30 days from delivery',
-      vatType: po.vatType || 'vatable',
-      lineItems: po.lineItems || [],
-      subTotal: po.subTotal || po.amount || 0,
-      ewt: po.ewt || 0,
-      vatAmount: po.vatAmount || 0,
-      totalAmount: po.totalAmount || po.amount || 0,
-      termsAndConditions: po.termsAndConditions || 'Standard terms apply',
-      preparedBy: po.preparedBy || '',
-      reviewedBy: po.reviewedBy || '',
-      approvedBy: po.approvedBy || '',
+      client: po.client,
+      description: po.description || '',
+      amount: parseFloat(po.amount) || 0,
       status: po.status || 'pending',
-      createdDate: po.createdDate || po.created_date
+      createdDate: po.createdDate || po.created_date,
+      deliveryDate: po.deliveryDate || po.delivery_date,
+      assignedAssets: po.assignedAssets || []
     }));
     
     setPurchaseOrders(transformedData);
@@ -108,11 +83,99 @@ const formatCurrency = (amount: number) => {
     }
   };
 
+  const handleEditClick = (po: PurchaseOrder) => {
+    setSelectedPO(po);
+    setEditForm({
+      status: po.status,
+      description: po.description,
+    });
+    setIsEditing(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!selectedPO) return;
+    
+    try {
+      const updated = await updatePurchaseOrder(selectedPO.id, { status: editForm.status, description: editForm.description });
+      setPurchaseOrders(purchaseOrders.map(po => po.id === selectedPO.id ? updated : po));
+      setIsEditing(false);
+      toast.success('Purchase order updated successfully');
+      
+      // Trigger Overview refresh
+      window.dispatchEvent(new CustomEvent('ordersUpdated'));
+    } catch (error) {
+      console.error('Error updating purchase order:', error);
+      toast.error('Failed to update purchase order');
+    }
+  };
+
+  const handleDeletePO = async (po: PurchaseOrder) => {
+    if (!confirm(`Are you sure you want to delete PO ${po.poNumber}? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await deletePurchaseOrder(po.id);
+      setPurchaseOrders(purchaseOrders.filter(p => p.id !== po.id));
+      toast.success('Purchase order deleted successfully');
+      
+      // Trigger Overview refresh
+      window.dispatchEvent(new CustomEvent('ordersUpdated'));
+    } catch (error) {
+      console.error('Error deleting purchase order:', error);
+      toast.error('Failed to delete purchase order');
+    }
+  };
+
+  const handlePrintPO = (po: PurchaseOrder) => {
+    // Create a professional print window with PO template
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      toast.error('Could not open print window');
+      return;
+    }
+
+    const printContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Purchase Order ${po.poNumber}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 20px; }
+          .header { text-align: center; margin-bottom: 30px; }
+          .po-info { margin-bottom: 20px; }
+          .field { margin-bottom: 10px; }
+          .label { font-weight: bold; }
+          @media print { body { margin: 0; } }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>PURCHASE ORDER</h1>
+          <h2>${po.poNumber}</h2>
+        </div>
+        <div class="po-info">
+          <div class="field"><span class="label">Client:</span> ${po.client}</div>
+          <div class="field"><span class="label">Status:</span> ${po.status}</div>
+          <div class="field"><span class="label">Date:</span> ${po.createdDate}</div>
+          <div class="field"><span class="label">Delivery Date:</span> ${po.deliveryDate}</div>
+          <div class="field"><span class="label">Total Amount:</span> ${formatCurrency(po.amount)}</div>
+          <div class="field"><span class="label">Description:</span> ${po.description}</div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    printWindow.document.write(printContent);
+    printWindow.document.close();
+    printWindow.print();
+  };
+
 const filteredPOs = purchaseOrders.filter(po => {
     const matchesFilter = filter === 'all' || po.status === filter;
     const matchesSearch = searchTerm === '' || 
       po.poNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      po.vendorName.toLowerCase().includes(searchTerm.toLowerCase());
+      po.client.toLowerCase().includes(searchTerm.toLowerCase());
     return matchesFilter && matchesSearch;
   });
 
@@ -141,7 +204,8 @@ useEffect(() => {
 
   
   return (
-    <div className="p-6 space-y-6">
+    <>
+      <div className="p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -206,29 +270,29 @@ useEffect(() => {
                     </div>
                     <div className="grid grid-cols-2 gap-4 text-sm text-slate-600">
                       <div>
-                        <span className="font-medium">Vendor:</span> {po.vendorName}
+                        <span className="font-medium">Customer:</span> {po.client}
                       </div>
                       <div>
-                        <span className="font-medium">Date:</span> {po.poDate}
+                        <span className="font-medium">Date:</span> {po.createdDate}
                       </div>
                       <div>
                         <span className="font-medium">Delivery:</span> {po.deliveryDate}
                       </div>
                       <div>
-                        <span className="font-medium">Total:</span> {formatCurrency(po.totalAmount)}
+                        <span className="font-medium">Total:</span> {formatCurrency(po.amount)}
                       </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     {isAdmin && (
                       <>
-                        <Button variant="outline" size="sm">
+                        <Button variant="outline" size="sm" onClick={() => handleEditClick(po)}>
                           <Edit className="size-4" />
                         </Button>
-                        <Button variant="outline" size="sm">
+                        <Button variant="outline" size="sm" onClick={() => handlePrintPO(po)}>
                           <Printer className="size-4" />
                         </Button>
-                        <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700">
+                        <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700" onClick={() => handleDeletePO(po)}>
                           <Trash2 className="size-4" />
                         </Button>
                       </>
@@ -267,5 +331,69 @@ useEffect(() => {
         </div>
       )}
     </div>
+    
+    {/* Edit PO Modal */}
+    {isEditing && selectedPO && (
+      <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+          {/* Header */}
+          <div className="flex items-center justify-between p-6 border-b border-slate-200">
+            <h2 className="text-lg font-bold text-slate-900">Edit Purchase Order</h2>
+            <button onClick={() => setIsEditing(false)} className="text-slate-400 hover:text-slate-600">
+              <X className="size-5" />
+            </button>
+          </div>
+
+          {/* Form */}
+          <form onSubmit={(e) => { e.preventDefault(); handleSaveEdit(); }} className="p-6">
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">PO Number</label>
+                <input
+                  type="text"
+                  value={selectedPO.poNumber}
+                  disabled
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-slate-50 text-slate-500"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
+                <select
+                  value={editForm.status}
+                  onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="pending">Pending</option>
+                  <option value="approved">Approved</option>
+                  <option value="received">Received</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
+                <textarea
+                  value={editForm.description}
+                  onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                  rows={3}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Enter description..."
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <Button type="button" variant="outline" className="flex-1" onClick={() => setIsEditing(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white" disabled={loading}>
+                {loading ? 'Updating...' : 'Update PO'}
+              </Button>
+            </div>
+          </form>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
