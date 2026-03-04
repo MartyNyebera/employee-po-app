@@ -38,7 +38,7 @@ function getAuthHeaders(): Record<string, string> {
   return { Authorization: `Bearer ${auth.token}` };
 }
 
-async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
+export async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const headers = { 'Content-Type': 'application/json', ...getAuthHeaders(), ...options?.headers } as Record<string, string>;
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
   if (!res.ok) {

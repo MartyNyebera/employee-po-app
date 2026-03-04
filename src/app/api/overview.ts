@@ -1,5 +1,7 @@
 // API functions for Overview dashboard data fetching
 
+import { fetchApi } from './client';
+
 export interface OverviewMetrics {
   expenses: number;
   revenue: number;
@@ -106,13 +108,11 @@ export async function fetchOverviewMetrics(period: TimePeriod, customRange?: Dat
   
   try {
     // Fetch real Purchase Orders for expenses - ONLY RECEIVED status
-    const expensesResponse = await fetch(`/api/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}&status=RECEIVED`);
-    const purchaseOrders = await expensesResponse.json();
+    const purchaseOrders = await fetchApi(`/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}&status=RECEIVED`);
     const expenses = Array.isArray(purchaseOrders) ? purchaseOrders.reduce((sum: number, po: any) => sum + (po.amount || 0), 0) : 0;
 
     // Fetch real Sales Orders for revenue - ONLY PAID status
-    const revenueResponse = await fetch(`/api/sales-orders?startDate=${range.startDate}&endDate=${range.endDate}&status=PAID`);
-    const salesOrders = await revenueResponse.json();
+    const salesOrders = await fetchApi(`/sales-orders?startDate=${range.startDate}&endDate=${range.endDate}&status=PAID`);
     const revenue = Array.isArray(salesOrders) ? salesOrders.reduce((sum: number, so: any) => sum + (so.amount || 0), 0) : 0;
 
     // Calculate previous period for trend
@@ -121,12 +121,10 @@ export async function fetchOverviewMetrics(period: TimePeriod, customRange?: Dat
     let previousRevenue = 0;
 
     try {
-      const prevExpensesResponse = await fetch(`/api/purchase-orders?startDate=${previousRange.startDate}&endDate=${previousRange.endDate}&status=RECEIVED`);
-      const prevPurchaseOrders = await prevExpensesResponse.json();
+      const prevPurchaseOrders = await fetchApi(`/purchase-orders?startDate=${previousRange.startDate}&endDate=${previousRange.endDate}&status=RECEIVED`);
       previousExpenses = Array.isArray(prevPurchaseOrders) ? prevPurchaseOrders.reduce((sum: number, po: any) => sum + (po.amount || 0), 0) : 0;
 
-      const prevRevenueResponse = await fetch(`/api/sales-orders?startDate=${previousRange.startDate}&endDate=${previousRange.endDate}&status=PAID`);
-      const prevSalesOrders = await prevRevenueResponse.json();
+      const prevSalesOrders = await fetchApi(`/sales-orders?startDate=${previousRange.startDate}&endDate=${previousRange.endDate}&status=PAID`);
       previousRevenue = Array.isArray(prevSalesOrders) ? prevSalesOrders.reduce((sum: number, so: any) => sum + (so.amount || 0), 0) : 0;
     } catch (error) {
       console.log('Could not fetch previous period data:', error);
@@ -162,8 +160,7 @@ export async function fetchOrderSummary(period: TimePeriod, customRange?: DateRa
 
   try {
     // Fetch Purchase Orders
-    const poResponse = await fetch(`/api/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}`);
-    const purchaseOrders = await poResponse.json();
+    const purchaseOrders = await fetchApi(`/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}`);
     const poArray = Array.isArray(purchaseOrders) ? purchaseOrders : [];
 
     const purchaseOrderSummary = {
@@ -175,8 +172,7 @@ export async function fetchOrderSummary(period: TimePeriod, customRange?: DateRa
     };
 
     // Fetch Sales Orders
-    const soResponse = await fetch(`/api/sales-orders?startDate=${range.startDate}&endDate=${range.endDate}`);
-    const salesOrders = await soResponse.json();
+    const salesOrders = await fetchApi(`/sales-orders?startDate=${range.startDate}&endDate=${range.endDate}`);
     const soArray = Array.isArray(salesOrders) ? salesOrders : [];
 
     const salesOrderSummary = {
@@ -188,8 +184,7 @@ export async function fetchOrderSummary(period: TimePeriod, customRange?: DateRa
     };
 
     // Fetch Miscellaneous
-    const miscResponse = await fetch(`/api/miscellaneous?startDate=${range.startDate}&endDate=${range.endDate}`);
-    const miscellaneous = await miscResponse.json();
+    const miscellaneous = await fetchApi(`/miscellaneous?startDate=${range.startDate}&endDate=${range.endDate}`);
     const miscArray = Array.isArray(miscellaneous) ? miscellaneous : [];
 
     const miscellaneousSummary = {
@@ -230,8 +225,7 @@ export async function fetchOrderSummary(period: TimePeriod, customRange?: DateRa
 
 export async function fetchInventorySummary(): Promise<InventorySummary> {
   try {
-    const response = await fetch('/api/inventory');
-    const inventory = await response.json();
+    const inventory = await fetchApi('/inventory');
     const inventoryArray = Array.isArray(inventory) ? inventory : [];
 
     const totalItems = inventoryArray.length;
@@ -286,13 +280,11 @@ export async function fetchChartData(period: TimePeriod, customRange?: DateRange
 
   try {
     // Fetch real data for the period
-    const [poResponse, soResponse] = await Promise.all([
-      fetch(`/api/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}`),
-      fetch(`/api/sales-orders?startDate=${range.startDate}&endDate=${range.endDate}`)
+    const [purchaseOrders, salesOrders] = await Promise.all([
+      fetchApi(`/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}`),
+      fetchApi(`/sales-orders?startDate=${range.startDate}&endDate=${range.endDate}`)
     ]);
 
-    const purchaseOrders = await poResponse.json();
-    const salesOrders = await soResponse.json();
     const poArray = Array.isArray(purchaseOrders) ? purchaseOrders : [];
     const soArray = Array.isArray(salesOrders) ? salesOrders : [];
 
