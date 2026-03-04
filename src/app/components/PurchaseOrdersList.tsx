@@ -56,17 +56,17 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'pending':
-        return <Badge className="bg-amber-50 text-amber-700 border-amber-200 px-3 py-1 rounded-full font-medium text-xs shadow-sm shadow-amber-500/10 hover:bg-amber-100 transition-all duration-200 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30 dark:shadow-lg dark:shadow-amber-500/20 dark:hover:bg-amber-500/30">Pending</Badge>;
+        return <Badge className="bg-yellow-50 text-yellow-700 border-yellow-200 px-3 py-1 rounded-full font-medium text-xs">Pending</Badge>;
       case 'approved':
-        return <Badge className="bg-blue-50 text-blue-700 border-blue-200 px-3 py-1 rounded-full font-medium text-xs shadow-sm shadow-blue-500/10 hover:bg-blue-100 transition-all duration-200 dark:bg-blue-500/20 dark:text-blue-300 dark:border-blue-500/30 dark:shadow-lg dark:shadow-blue-500/20 dark:hover:bg-blue-500/30">Approved</Badge>;
+        return <Badge className="bg-blue-50 text-blue-700 border-blue-200 px-3 py-1 rounded-full font-medium text-xs">Approved</Badge>;
       case 'in-progress':
-        return <Badge className="bg-yellow-50 text-yellow-700 border-yellow-200 px-3 py-1 rounded-full font-medium text-xs shadow-sm shadow-yellow-500/10 hover:bg-yellow-100 transition-all duration-200 dark:bg-yellow-500/20 dark:text-yellow-300 dark:border-yellow-500/30 dark:shadow-lg dark:shadow-yellow-500/20 dark:hover:bg-yellow-500/30">In Progress</Badge>;
+        return <Badge className="bg-orange-50 text-orange-700 border-orange-200 px-3 py-1 rounded-full font-medium text-xs">In Progress</Badge>;
       case 'PAID':
-        return <Badge className="bg-green-50 text-green-700 border-green-200 px-3 py-1 rounded-full font-medium text-xs shadow-sm shadow-green-500/10 hover:bg-green-100 transition-all duration-200 dark:bg-green-500/20 dark:text-green-300 dark:border-green-500/30 dark:shadow-lg dark:shadow-green-500/20 dark:hover:bg-green-500/30">PAID</Badge>;
+        return <Badge className="bg-green-50 text-green-700 border-green-200 px-3 py-1 rounded-full font-medium text-xs">PAID</Badge>;
       case 'completed':
-        return <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 px-3 py-1 rounded-full font-medium text-xs shadow-sm shadow-emerald-500/10 hover:bg-emerald-100 transition-all duration-200 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/30 dark:shadow-lg dark:shadow-emerald-500/20 dark:hover:bg-emerald-500/30">Completed</Badge>;
+        return <Badge className="bg-gray-50 text-gray-700 border-gray-200 px-3 py-1 rounded-full font-medium text-xs">Completed</Badge>;
       default:
-        return <Badge className="bg-slate-100 text-slate-700 border-slate-200 px-3 py-1 rounded-full font-medium text-xs shadow-sm shadow-slate-500/10 hover:bg-slate-200 transition-all duration-200 dark:bg-slate-500/20 dark:text-slate-300 dark:border-slate-500/30 dark:shadow-lg dark:shadow-slate-500/20 dark:hover:bg-slate-500/30">{status}</Badge>;
+        return <Badge className="bg-gray-50 text-gray-700 border-gray-200 px-3 py-1 rounded-full font-medium text-xs">{status}</Badge>;
     }
   };
 
@@ -545,65 +545,47 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
               <p className="text-slate-600 text-sm dark:text-slate-400">Manage and track Sales Orders</p>
             </div>
           </div>
+          {isAdmin && (
+            <Button onClick={() => setShowCreateModal(true)} className="bg-blue-600 hover:bg-blue-700">
+              <Plus className="size-4 mr-2" />
+              New SO
+            </Button>
+          )}
         </div>
-        {isAdmin && (
-          <button 
-            onClick={() => setShowCreateModal(true)}
-            className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white shadow-lg shadow-blue-500/25 hover:shadow-xl hover:shadow-blue-500/30 border border-blue-500/20 inline-flex items-center justify-center rounded-lg text-sm font-semibold transition-all duration-300 hover:-translate-y-1 px-4 py-2"
-          >
-            <Plus className="size-4 mr-2" />
-            New SO
-          </button>
-        )}
       </div>
 
-      {/* Enhanced Filter Bar */}
-      <Card className="bg-white border border-slate-200/60 shadow-lg shadow-slate-900/5 dark:bg-slate-800/50 dark:border dark:border-white/10 dark:shadow-xl dark:shadow-black/20">
+      {/* Filter Bar */}
+      <Card>
         <CardContent className="p-4">
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
-              <Filter className="size-5" />
-              <span className="font-medium">Filter</span>
+            <div className="flex items-center gap-2">
+              <Filter className="size-4 text-slate-500" />
+              <select 
+                value={statusFilter} 
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
+              >
+                <option value="all">All Status</option>
+                <option value="pending">Pending</option>
+                <option value="approved">Approved</option>
+                <option value="in-progress">In Progress</option>
+                <option value="PAID">PAID</option>
+                <option value="completed">Completed</option>
+              </select>
             </div>
             <div className="flex-1">
-              <Input 
-                placeholder="Search orders..." 
-                className="bg-slate-50 dark:bg-slate-700/50 border-slate-200 dark:border-slate-600 focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 dark:focus:ring-amber-500/40"
+              <Input
+                placeholder="Search SO number or customer..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="max-w-sm"
               />
             </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-48 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Orders</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="approved">Approved</SelectItem>
-                <SelectItem value="in-progress">In Progress</SelectItem>
-                <SelectItem value="PAID">PAID</SelectItem>
-                <SelectItem value="completed">Completed</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
         </CardContent>
       </Card>
 
-      {/* Order Count */}
-      <div className="flex items-center justify-between px-2 py-2">
-        <div className="text-sm text-slate-600 dark:text-slate-400">
-          <span className="font-medium">{filteredOrders.length}</span>
-          <span className="text-slate-400"> of {orders.length} orders</span>
-        </div>
-        {statusFilter !== 'all' && (
-          <button
-            onClick={() => setStatusFilter('all')}
-            className="text-xs text-amber-600 hover:text-amber-700 font-medium px-3 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 transition-colors duration-200 dark:bg-amber-500/20 dark:text-amber-300 dark:hover:bg-amber-500/30"
-          >
-            Clear filter
-          </button>
-        )}
-      </div>
-
+      {/* Sales Orders List */}
       <div className="space-y-3">
         {filteredOrders.length > 0 ? (
           filteredOrders.map((po) => {
@@ -612,118 +594,61 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
             .filter(Boolean);
 
           return (
-            <Card key={po.id} className="bg-white border border-slate-200/60 shadow-lg shadow-slate-900/5 hover:shadow-xl hover:shadow-slate-900/10 hover:-translate-y-1 transition-all duration-300 dark:bg-slate-800/50 dark:border dark:border-white/10 dark:shadow-xl dark:shadow-black/20 dark:hover:shadow-2xl dark:hover:shadow-black/30">
+            <Card key={po.id} className="hover:shadow-md transition-shadow">
               <CardContent className="p-6">
-                <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center justify-between">
                   <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
-                      <div className="text-xl font-bold text-slate-900 dark:text-slate-100">{po.poNumber}</div>
-                      <div className={`w-1 h-6 rounded-full ${
-                        po.status === 'pending' ? 'bg-amber-400' :
-                        po.status === 'approved' ? 'bg-blue-400' :
-                        po.status === 'in-progress' ? 'bg-yellow-400' :
-                        po.status === 'PAID' ? 'bg-green-400' :
-                        po.status === 'completed' ? 'bg-emerald-400' : 'bg-slate-400'
-                      }`} />
+                    <div className="flex items-center gap-4 mb-2">
+                      <h3 className="font-semibold text-lg">{po.poNumber}</h3>
+                      {getStatusBadge(po.status)}
                     </div>
-                    <div className="text-sm text-slate-600 dark:text-slate-400 mb-1">{po.client}</div>
-                    <div className="text-xs text-slate-500 dark:text-slate-500">
-                      Created {formatDate(po.createdDate)}
+                    <div className="grid grid-cols-2 gap-4 text-sm text-slate-600">
+                      <div>
+                        <span className="font-medium">Customer:</span> {po.client}
+                      </div>
+                      <div>
+                        <span className="font-medium">Date:</span> {po.createdDate}
+                      </div>
+                      <div>
+                        <span className="font-medium">Delivery:</span> {po.deliveryDate}
+                      </div>
+                      <div>
+                        <span className="font-medium">Total:</span> {formatCurrency(po.amount)}
+                      </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    {getStatusBadge(po.status)}
-                    <Button 
-                      variant="ghost" 
-                      size="icon"
-                      onClick={() => handlePrintPO(po)}
-                      className="print-button"
-                      title="Print P.O."
-                    >
-                      <Printer className="size-4" />
-                    </Button>
+                  <div className="flex items-center gap-2">
                     {isAdmin && (
                       <>
-                        <Button 
-                          variant="ghost" 
-                          size="icon"
-                          onClick={() => {
-                            setSelectedPO(po);
-                            setEditForm({ status: po.status, description: po.description });
-                            setIsEditing(true);
-                          }}
-                          title="Edit PO"
-                        >
+                        <Button variant="outline" size="sm" onClick={() => {
+                          setSelectedPO(po);
+                          setEditForm({ status: po.status, description: po.description });
+                          setIsEditing(true);
+                        }}>
                           <Edit className="size-4" />
                         </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="icon"
-                          onClick={() => handleDeletePO(po)}
-                          className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                          title="Delete PO"
-                        >
+                        <Button variant="outline" size="sm" onClick={() => handlePrintPO(po)}>
+                          <Printer className="size-4" />
+                        </Button>
+                        <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700" onClick={() => handleDeletePO(po)}>
                           <Trash2 className="size-4" />
                         </Button>
                       </>
                     )}
                   </div>
                 </div>
-
-                <p className="text-sm text-slate-600 dark:text-slate-300 mb-4 line-clamp-2">{po.description}</p>
-
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div className="flex items-center gap-3 p-3 bg-amber-50 dark:bg-amber-500/20 rounded-lg border border-amber-200 dark:border-amber-500/30">
-                    <div className="p-2 bg-amber-100 dark:bg-amber-500/30 rounded-lg">
-                      <DollarSign className="size-4 text-amber-600 dark:text-amber-400" />
-                    </div>
-                    <div>
-                      <div className="text-lg font-bold text-amber-700 dark:text-amber-300">{formatCurrency(po.amount)}</div>
-                      <div className="text-xs text-amber-600 dark:text-amber-400">Amount</div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3 p-3 bg-blue-50 dark:bg-blue-500/20 rounded-lg border border-blue-200 dark:border-blue-500/30">
-                    <div className="p-2 bg-blue-100 dark:bg-blue-500/30 rounded-lg">
-                      <Calendar className="size-4 text-blue-600 dark:text-blue-400" />
-                    </div>
-                    <div>
-                      <div className="text-lg font-bold text-blue-700 dark:text-blue-300">{formatDate(po.deliveryDate)}</div>
-                      <div className="text-xs text-blue-600 dark:text-blue-400">Delivery</div>
-                    </div>
-                  </div>
-                </div>
-
-                {assignedAssetNames.length > 0 && (
-                  <div className="pt-4 border-t border-slate-200/60 dark:border-white/10">
-                    <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mb-3">
-                      <Truck className="size-4" />
-                      <span className="font-medium">Assigned Assets</span>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {assignedAssetNames.map((name, idx) => (
-                        <Badge key={idx} className="bg-slate-100 text-slate-700 border-slate-200 px-3 py-1 rounded-full font-medium text-xs dark:bg-slate-700/50 dark:text-slate-300 dark:border-slate-600">
-                          {name}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </CardContent>
             </Card>
           )
           })
         ) : (
-          <div className="p-12 text-center">
-            <div className="flex flex-col items-center gap-4">
-              <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center dark:bg-slate-700/50">
-                <FileText className="size-8 text-slate-400 dark:text-slate-500" />
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">No sales orders yet</h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400">Create your first sales order to get started.</p>
-              </div>
-            </div>
-          </div>
+          <Card>
+            <CardContent className="p-12 text-center">
+              <FileText className="size-12 text-slate-400 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-slate-900 mb-2">No sales orders found</h3>
+              <p className="text-slate-500">Create your first sales order to get started.</p>
+            </CardContent>
+          </Card>
         )}
       </div>
     </div>
