@@ -2010,13 +2010,19 @@ if (process.env.NODE_ENV === 'production') {
       etag: true,
       lastModified: true,
       setHeaders: (res, path) => {
-        // Immutable cache for hashed files
-        if (path.includes('-') && (path.endsWith('.js') || path.endsWith('.css'))) {
+        // No cache for HTML files - always fresh
+        if (path.endsWith('.html')) {
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+        }
+        // Immutable cache for hashed JS/CSS files
+        else if (path.includes('.') && (path.endsWith('.js') || path.endsWith('.css'))) {
           res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
         }
-        // Shorter cache for HTML
-        else if (path.endsWith('.html')) {
-          res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+        // Moderate cache for other assets
+        else {
+          res.setHeader('Cache-Control', 'public, max-age=86400'); // 1 day
         }
       }
     }));
@@ -2032,6 +2038,14 @@ if (process.env.NODE_ENV === 'production') {
     app.use("/assets", (req, res, next) => {
       console.log(`📦 Asset request: ${req.method} ${req.path}`);
       next();
+    });
+
+    // Version endpoint for cache busting
+    app.get('/version.txt', (req, res) => {
+      res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.set('Pragma', 'no-cache');
+      res.set('Expires', '0');
+      res.sendFile(path.join(process.cwd(), 'public', 'version.txt'));
     });
 
     // SPA fallback - must be LAST
