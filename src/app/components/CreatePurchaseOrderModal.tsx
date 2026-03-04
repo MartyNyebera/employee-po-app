@@ -32,7 +32,7 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
   };
 
   const [form, setForm] = useState({
-    poNumber: `KTCI-${new Date().getFullYear()}-0001`,
+    poNumber: `KTCI-PO-${new Date().getFullYear()}-0001`,
     poDate: new Date().toISOString().split('T')[0],
     deliveryDate: '',
     poType: 'domestic' as 'domestic' | 'foreign',
@@ -63,14 +63,14 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
         const orders = await response.json();
         const poOrders = orders.filter((o: any) => o.orderType !== 'sales');
         const lastPO = poOrders
-          .filter((o: any) => o.poNumber && o.poNumber.startsWith(`KTCI-${currentYear}-`))
+          .filter((o: any) => o.poNumber && o.poNumber.startsWith(`KTCI-PO-${currentYear}-`))
           .sort((a: any, b: any) => b.poNumber.localeCompare(a.poNumber))[0];
         let counter = 1;
         if (lastPO) {
-          const lastNumber = lastPO.poNumber.split('-')[2];
+          const lastNumber = lastPO.poNumber.split('-')[3];
           counter = parseInt(lastNumber) + 1;
         }
-        const poNumber = `KTCI-${currentYear}-${counter.toString().padStart(4, '0')}`;
+        const poNumber = `KTCI-PO-${currentYear}-${counter.toString().padStart(4, '0')}`;
         setForm(prev => ({ ...prev, poNumber }));
       } catch (error) {
         console.error('Failed to generate PO number:', error);

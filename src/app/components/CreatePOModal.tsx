@@ -21,7 +21,7 @@ interface CreateSOModalProps {
 
 export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
   const [form, setForm] = useState({
-    soNumber: 'KTCI-2026-0001',
+    soNumber: 'KTCI-SO-2026-0001',
     soDate: '',
     deliveryDate: '',
     soType: 'domestic' as 'domestic' | 'foreign',
@@ -69,16 +69,16 @@ export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
         const response = await fetch('/api/purchase-orders');
         const orders = await response.json();
         const lastSO = orders
-          .filter((order: any) => order.poNumber.startsWith(`KTCI-${currentYear}-`))
+          .filter((order: any) => order.poNumber.startsWith(`KTCI-SO-${currentYear}-`))
           .sort((a: any, b: any) => b.poNumber.localeCompare(a.poNumber))[0];
         
         let counter = 1;
         if (lastSO) {
-          const lastNumber = lastSO.poNumber.split('-')[2];
+          const lastNumber = lastSO.poNumber.split('-')[3];
           counter = parseInt(lastNumber) + 1;
         }
         
-        const soNumber = `KTCI-${currentYear}-${counter.toString().padStart(4, '0')}`;
+        const soNumber = `KTCI-SO-${currentYear}-${counter.toString().padStart(4, '0')}`;
         setForm(prev => ({ ...prev, soNumber }));
       } catch (error) {
         console.error('Failed to generate SO number:', error);
