@@ -69,6 +69,17 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
     loadData();
   }, [timePeriod, customRange]);
 
+  // Listen for order updates and refresh data
+  useEffect(() => {
+    const handleOrdersUpdated = () => {
+      console.log('🔄 Orders updated - refreshing Overview data');
+      loadData();
+    };
+
+    window.addEventListener('ordersUpdated', handleOrdersUpdated);
+    return () => window.removeEventListener('ordersUpdated', handleOrdersUpdated);
+  }, [timePeriod, customRange]);
+
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-PH', {
       style: 'currency',

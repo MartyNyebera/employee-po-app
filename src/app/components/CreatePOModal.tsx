@@ -206,6 +206,9 @@ export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
       await createPurchaseOrder(soData);
       toast.success('Sales Order created successfully!');
       onCreated();
+      
+      // Trigger Overview refresh
+      window.dispatchEvent(new CustomEvent('ordersUpdated'));
     } catch (err: any) {
       toast.error('Failed to create Sales Order: ' + err.message);
     } finally {

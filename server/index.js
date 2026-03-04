@@ -2004,11 +2004,29 @@ if (process.env.NODE_ENV === 'production') {
     const distDir = path.join(process.cwd(), "dist");
     console.log(`📁 Serving static files from: ${distDir}`);
     
-    // Main static serving
-    app.use(express.static(distDir));
+    // Main static serving with cache headers
+    app.use(express.static(distDir, {
+      maxAge: '1h',
+      etag: true,
+      lastModified: true,
+      setHeaders: (res, path) => {
+        // Immutable cache for hashed files
+        if (path.includes('-') && (path.endsWith('.js') || path.endsWith('.css'))) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+        // Shorter cache for HTML
+        else if (path.endsWith('.html')) {
+          res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+        }
+      }
+    }));
     
     // Explicit assets serving (extra safety)
-    app.use("/assets", express.static(path.join(distDir, "assets")));
+    app.use("/assets", express.static(path.join(distDir, "assets"), {
+      maxAge: '1y',
+      etag: true,
+      lastModified: true
+    }));
     
     // Debug log for asset requests
     app.use("/assets", (req, res, next) => {

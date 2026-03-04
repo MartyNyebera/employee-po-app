@@ -111,6 +111,9 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
       setOrders(orders.map(po => po.id === selectedPO.id ? updated : po));
       setIsEditing(false);
       toast.success('Purchase order updated successfully');
+      
+      // Trigger Overview refresh
+      window.dispatchEvent(new CustomEvent('ordersUpdated'));
     } catch (err: any) {
       toast.error('Failed to update purchase order: ' + err.message);
     }
@@ -125,6 +128,9 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
       await deletePurchaseOrder(po.id);
       setOrders(orders.filter(order => order.id !== po.id));
       toast.success('Purchase order deleted successfully');
+      
+      // Trigger Overview refresh
+      window.dispatchEvent(new CustomEvent('ordersUpdated'));
     } catch (err: any) {
       toast.error('Failed to delete purchase order: ' + err.message);
     }
