@@ -46,8 +46,9 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
     console.log('PO tab raw data from API:', data.map((d: any) => ({ id: d.id, poNumber: d.poNumber, orderType: d.orderType, status: d.status })));
     const poData = data.filter((item: any) => {
       const isSalesOrder = item.orderType === 'sales';
-      console.log(`Item ${item.poNumber}: orderType="${item.orderType}" isSalesOrder=${isSalesOrder} → ${isSalesOrder ? 'EXCLUDED' : 'INCLUDED'}`);
-      return !isSalesOrder;
+      const isPurchaseOrder = item.orderType === null || item.orderType === undefined || item.orderType !== 'sales';
+      console.log(`Item ${item.poNumber}: orderType="${item.orderType}" isSalesOrder=${isSalesOrder} isPurchaseOrder=${isPurchaseOrder} → ${isSalesOrder ? 'EXCLUDED' : 'INCLUDED'}`);
+      return isPurchaseOrder;
     });
     
     // Transform API data to match component interface
