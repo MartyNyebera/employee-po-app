@@ -50,45 +50,46 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
   const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
-    // Simulate loading purchase orders
-    setTimeout(() => {
-      setPurchaseOrders([
-        {
-          id: '1',
-          poNumber: 'KTCI-2026-0001',
-          vendorName: 'ABC Supplies Corp',
-          vendorAddress: '123 Supplier St, Manila',
-          vendorContact: 'Tel: 555-1234',
-          poDate: '2026-03-04',
-          deliveryDate: '2026-03-15',
-          poType: 'domestic',
-          paymentTerms: '30 days from delivery',
-          vatType: 'vatable',
-          lineItems: [
-            {
-              id: '1',
-              no: 1,
-              description: 'Office Supplies',
-              quantity: 10,
-              unit: 'box',
-              unitCost: 500,
-              amount: 5000
-            }
-          ],
-          subTotal: 5000,
-          ewt: 0,
-          vatAmount: 600,
-          totalAmount: 5600,
-          termsAndConditions: 'Standard terms apply',
-          preparedBy: 'John Doe',
-          reviewedBy: 'Jane Smith',
-          approvedBy: 'LEO TAGLE',
-          status: 'pending',
-          createdDate: '2026-03-04'
-        }
-      ]);
-      setLoading(false);
-    }, 1000);
+    const fetchPurchaseOrders = async () => {
+      try {
+        const response = await fetch('/api/purchase-orders');
+        const data = await response.json();
+        
+        // Transform API data to match component interface
+        const transformedData = data.map((po: any) => ({
+          id: po.id,
+          poNumber: po.poNumber || po.po_number,
+          vendorName: po.client || po.vendorName,
+          vendorAddress: po.vendorAddress || '',
+          vendorContact: po.vendorContact || '',
+          poDate: po.poDate || po.created_date,
+          deliveryDate: po.deliveryDate || po.delivery_date,
+          poType: po.poType || 'domestic',
+          paymentTerms: po.paymentTerms || '30 days from delivery',
+          vatType: po.vatType || 'vatable',
+          lineItems: po.lineItems || [],
+          subTotal: po.subTotal || po.amount || 0,
+          ewt: po.ewt || 0,
+          vatAmount: po.vatAmount || 0,
+          totalAmount: po.totalAmount || po.amount || 0,
+          termsAndConditions: po.termsAndConditions || 'Standard terms apply',
+          preparedBy: po.preparedBy || '',
+          reviewedBy: po.reviewedBy || '',
+          approvedBy: po.approvedBy || '',
+          status: po.status || 'pending',
+          createdDate: po.createdDate || po.created_date
+        }));
+        
+        setPurchaseOrders(transformedData);
+      } catch (error) {
+        console.error('Error fetching purchase orders:', error);
+        toast.error('Failed to load purchase orders');
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchPurchaseOrders();
   }, []);
 
   const formatCurrency = (amount: number) => {
@@ -126,6 +127,54 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
       </div>
     );
   }
+
+  // Real-time refresh - listen for order updates
+  useEffect(() => {
+    const handleOrdersUpdated = () => {
+      console.log('🔄 Purchase Orders updated - refreshing list');
+      fetchPurchaseOrders();
+    };
+
+    window.addEventListener('ordersUpdated', handleOrdersUpdated);
+    return () => window.removeEventListener('ordersUpdated', handleOrdersUpdated);
+  }, []);
+
+  const fetchPurchaseOrders = async () => {
+    try {
+      const response = await fetch('/api/purchase-orders');
+      const data = await response.json();
+      
+      // Transform API data to match component interface
+      const transformedData = data.map((po: any) => ({
+        id: po.id,
+        poNumber: po.poNumber || po.po_number,
+        vendorName: po.client || po.vendorName,
+        vendorAddress: po.vendorAddress || '',
+        vendorContact: po.vendorContact || '',
+        poDate: po.poDate || po.created_date,
+        deliveryDate: po.deliveryDate || po.delivery_date,
+        poType: po.poType || 'domestic',
+        paymentTerms: po.paymentTerms || '30 days from delivery',
+        vatType: po.vatType || 'vatable',
+        lineItems: po.lineItems || [],
+        subTotal: po.subTotal || po.amount || 0,
+        ewt: po.ewt || 0,
+        vatAmount: po.vatAmount || 0,
+        totalAmount: po.totalAmount || po.amount || 0,
+        termsAndConditions: po.termsAndConditions || 'Standard terms apply',
+        preparedBy: po.preparedBy || '',
+        reviewedBy: po.reviewedBy || '',
+        approvedBy: po.approvedBy || '',
+        status: po.status || 'pending',
+        createdDate: po.createdDate || po.created_date
+      }));
+      
+      setPurchaseOrders(transformedData);
+    } catch (error) {
+      console.error('Error fetching purchase orders:', error);
+      toast.error('Failed to load purchase orders');
+    }
+  };
 
   return (
     <div className="p-6 space-y-6">

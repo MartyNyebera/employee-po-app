@@ -33,61 +33,42 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
   const [sortBy, setSortBy] = useState<'itemCode' | 'itemName' | 'quantity'>('itemCode');
 
   useEffect(() => {
-    // Simulate loading inventory data
-    setTimeout(() => {
-      setInventory([
-        {
-          id: '1',
-          itemCode: 'ITM-001',
-          itemName: 'Office Paper A4',
-          description: 'High quality white office paper, 80gsm',
-          quantity: 500,
-          unit: 'reams',
-          reorderLevel: 100,
-          location: 'Storage Room A',
-          lastUpdated: '2026-03-04',
-          status: 'in-stock'
-        },
-        {
-          id: '2',
-          itemCode: 'ITM-002',
-          itemName: 'Printer Ink',
-          description: 'Black ink cartridge for HP printers',
-          quantity: 15,
-          unit: 'pcs',
-          reorderLevel: 20,
-          location: 'Storage Room B',
-          lastUpdated: '2026-03-03',
-          status: 'low-stock'
-        },
-        {
-          id: '3',
-          itemCode: 'ITM-003',
-          itemName: 'Cleaning Supplies',
-          description: 'All-purpose cleaning solution',
-          quantity: 0,
-          unit: 'bottles',
-          reorderLevel: 10,
-          location: 'Storage Room C',
-          lastUpdated: '2026-03-01',
-          status: 'out-of-stock'
-        },
-        {
-          id: '4',
-          itemCode: 'ITM-004',
-          itemName: 'Safety Helmets',
-          description: 'Construction safety helmets, yellow',
-          quantity: 50,
-          unit: 'pcs',
-          reorderLevel: 25,
-          location: 'Warehouse 1',
-          lastUpdated: '2026-03-04',
-          status: 'in-stock'
-        }
-      ]);
-      setLoading(false);
-    }, 1000);
+    const fetchInventory = async () => {
+      try {
+        const response = await fetch('/api/inventory');
+        const data = await response.json();
+        
+        // Transform API data to match component interface
+        const transformedData = data.map((item: any) => ({
+          id: item.id,
+          itemCode: item.item_code,
+          itemName: item.item_name,
+          description: item.description || '',
+          quantity: item.quantity || 0,
+          unit: item.unit || 'pcs',
+          reorderLevel: item.reorder_level || 0,
+          location: item.location || '',
+          lastUpdated: item.last_updated || item.created_date || new Date().toISOString().split('T')[0],
+          status: item.status || determineStockStatus(item.quantity, item.reorder_level)
+        }));
+        
+        setInventory(transformedData);
+      } catch (error) {
+        console.error('Error fetching inventory:', error);
+        toast.error('Failed to load inventory');
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchInventory();
   }, []);
+
+  const determineStockStatus = (quantity: number, reorderLevel: number): 'in-stock' | 'low-stock' | 'out-of-stock' => {
+    if (quantity === 0) return 'out-of-stock';
+    if (quantity <= reorderLevel) return 'low-stock';
+    return 'in-stock';
+  };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -131,6 +112,43 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
       </div>
     );
   }
+
+  // Real-time refresh - listen for inventory updates
+  useEffect(() => {
+    const handleInventoryUpdated = () => {
+      console.log('🔄 Inventory updated - refreshing list');
+      fetchInventory();
+    };
+
+    window.addEventListener('inventoryUpdated', handleInventoryUpdated);
+    return () => window.removeEventListener('inventoryUpdated', handleInventoryUpdated);
+  }, []);
+
+  const fetchInventory = async () => {
+    try {
+      const response = await fetch('/api/inventory');
+      const data = await response.json();
+      
+      // Transform API data to match component interface
+      const transformedData = data.map((item: any) => ({
+        id: item.id,
+        itemCode: item.item_code,
+        itemName: item.item_name,
+        description: item.description || '',
+        quantity: item.quantity || 0,
+        unit: item.unit || 'pcs',
+        reorderLevel: item.reorder_level || 0,
+        location: item.location || '',
+        lastUpdated: item.last_updated || item.created_date || new Date().toISOString().split('T')[0],
+        status: item.status || determineStockStatus(item.quantity, item.reorder_level)
+      }));
+      
+      setInventory(transformedData);
+    } catch (error) {
+      console.error('Error fetching inventory:', error);
+      toast.error('Failed to load inventory');
+    }
+  };
 
   return (
     <div className="p-6 space-y-6">
@@ -258,7 +276,8 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                 </tr>
               </thead>
               <tbody>
-                {filteredInventory.map((item) => (
+                {filteredInventory.length > 0 ? (
+                  filteredInventory.map((item) => (
                   <tr key={item.id} className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="p-4 font-medium text-sm">{item.itemCode}</td>
                     <td className="p-4 text-sm">{item.itemName}</td>
@@ -281,7 +300,16 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                       </Button>
                     </td>
                   </tr>
-                ))}
+                ))
+                ) : (
+                  <tr>
+                    <td colSpan={8} className="p-12 text-center">
+                      <Package className="size-12 text-slate-400 mx-auto mb-4" />
+                      <h3 className="text-lg font-semibold text-slate-900 mb-2">No inventory items found</h3>
+                      <p className="text-slate-500">Add your first inventory item to get started.</p>
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
