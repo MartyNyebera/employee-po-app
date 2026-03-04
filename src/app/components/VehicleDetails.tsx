@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchVehicle, fetchMaintenance, fetchVehiclePOs, fetchOdometerLogs, createMaintenance, createVehiclePO, logOdometer, type Vehicle, type MaintenanceRecord, type FleetPO, type OdometerLog } from '../api/fleet';
-import { CreatePOModal } from './CreatePOModal';
+import { CreateSOModal } from './CreatePOModal';
 import { Button } from './ui/button';
 import { ArrowLeft, Wrench, FileText, Gauge, Info, Plus, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
 import { toast } from 'sonner';
@@ -152,9 +152,9 @@ const [showCreatePOModal, setShowCreatePOModal] = useState(false);
       )}
       </div>
       
-      {/* Create PO Modal */}
+      {/* Create SO Modal */}
       {showCreatePOModal && (
-        <CreatePOModal 
+        <CreateSOModal 
           onClose={() => setShowCreatePOModal(false)}
           onCreated={() => {
             setShowCreatePOModal(false);
