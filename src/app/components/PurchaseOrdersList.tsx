@@ -18,7 +18,7 @@ interface PurchaseOrder {
   client: string;
   description: string;
   amount: number;
-  status: 'pending' | 'approved' | 'in-progress' | 'completed';
+  status: 'pending' | 'approved' | 'in-progress' | 'PAID' | 'completed';
   createdDate: string;
   deliveryDate: string;
   assignedAssets: string[];
@@ -33,7 +33,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'in-progress' | 'PAID' | 'completed'>('all');
   const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -61,6 +61,8 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
         return <Badge className="bg-blue-50 text-blue-700 border-blue-200 px-3 py-1 rounded-full font-medium text-xs shadow-sm shadow-blue-500/10 hover:bg-blue-100 transition-all duration-200 dark:bg-blue-500/20 dark:text-blue-300 dark:border-blue-500/30 dark:shadow-lg dark:shadow-blue-500/20 dark:hover:bg-blue-500/30">Approved</Badge>;
       case 'in-progress':
         return <Badge className="bg-yellow-50 text-yellow-700 border-yellow-200 px-3 py-1 rounded-full font-medium text-xs shadow-sm shadow-yellow-500/10 hover:bg-yellow-100 transition-all duration-200 dark:bg-yellow-500/20 dark:text-yellow-300 dark:border-yellow-500/30 dark:shadow-lg dark:shadow-yellow-500/20 dark:hover:bg-yellow-500/30">In Progress</Badge>;
+      case 'PAID':
+        return <Badge className="bg-green-50 text-green-700 border-green-200 px-3 py-1 rounded-full font-medium text-xs shadow-sm shadow-green-500/10 hover:bg-green-100 transition-all duration-200 dark:bg-green-500/20 dark:text-green-300 dark:border-green-500/30 dark:shadow-lg dark:shadow-green-500/20 dark:hover:bg-green-500/30">PAID</Badge>;
       case 'completed':
         return <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 px-3 py-1 rounded-full font-medium text-xs shadow-sm shadow-emerald-500/10 hover:bg-emerald-100 transition-all duration-200 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/30 dark:shadow-lg dark:shadow-emerald-500/20 dark:hover:bg-emerald-500/30">Completed</Badge>;
       default:
@@ -572,6 +574,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
                 <SelectItem value="pending">Pending</SelectItem>
                 <SelectItem value="approved">Approved</SelectItem>
                 <SelectItem value="in-progress">In Progress</SelectItem>
+                <SelectItem value="PAID">PAID</SelectItem>
                 <SelectItem value="completed">Completed</SelectItem>
               </SelectContent>
             </Select>
@@ -613,6 +616,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
                         po.status === 'pending' ? 'bg-amber-400' :
                         po.status === 'approved' ? 'bg-blue-400' :
                         po.status === 'in-progress' ? 'bg-yellow-400' :
+                        po.status === 'PAID' ? 'bg-green-400' :
                         po.status === 'completed' ? 'bg-emerald-400' : 'bg-slate-400'
                       }`} />
                     </div>
@@ -754,6 +758,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
                 <option value="pending">Pending</option>
                 <option value="approved">Approved</option>
                 <option value="in-progress">In Progress</option>
+                <option value="PAID">PAID</option>
                 <option value="completed">Completed / Done</option>
               </select>
             </div>
