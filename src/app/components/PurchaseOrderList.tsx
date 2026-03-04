@@ -13,7 +13,7 @@ interface PurchaseOrder {
   client: string;
   description: string;
   amount: number;
-  status: 'pending' | 'approved' | 'received' | 'completed';
+  status: 'pending' | 'approved' | 'RECEIVED' | 'completed';
   createdDate: string;
   deliveryDate: string;
   assignedAssets: string[];
@@ -27,7 +27,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'received'>('all');
+  const [filter, setFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -43,7 +43,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
     
     // Filter out Sales Order data - only show Purchase Orders
     const poData = data.filter((item: any) => 
-      item.orderType !== 'sales' && ['pending', 'approved', 'received', 'completed'].includes(item.status)
+      item.orderType !== 'sales' && ['pending', 'approved', 'RECEIVED', 'completed'].includes(item.status)
     );
     
     // Transform API data to match component interface
@@ -81,8 +81,10 @@ const formatCurrency = (amount: number) => {
         return <Badge className="bg-yellow-50 text-yellow-700 border-yellow-200 px-3 py-1 rounded-full font-medium text-xs">Pending</Badge>;
       case 'approved':
         return <Badge className="bg-blue-50 text-blue-700 border-blue-200 px-3 py-1 rounded-full font-medium text-xs">Approved</Badge>;
-      case 'received':
+      case 'RECEIVED':
         return <Badge className="bg-green-50 text-green-700 border-green-200 px-3 py-1 rounded-full font-medium text-xs">Received</Badge>;
+      case 'completed':
+        return <Badge className="bg-gray-50 text-gray-700 border-gray-200 px-3 py-1 rounded-full font-medium text-xs">Completed</Badge>;
       default:
         return <Badge className="bg-gray-50 text-gray-700 border-gray-200 px-3 py-1 rounded-full font-medium text-xs">{status}</Badge>;
     }
@@ -102,7 +104,7 @@ const formatCurrency = (amount: number) => {
     
     try {
       const updated = await updatePurchaseOrder(selectedPO.id, { status: editForm.status, description: editForm.description });
-      setPurchaseOrders(purchaseOrders.map(po => po.id === selectedPO.id ? updated : po));
+      setPurchaseOrders(purchaseOrders.map(po => po.id === selectedPO.id ? (updated as unknown as PurchaseOrder) : po));
       setIsEditing(false);
       toast.success('Purchase order updated successfully');
       
@@ -246,7 +248,7 @@ useEffect(() => {
                 <option value="all">All Status</option>
                 <option value="pending">Pending</option>
                 <option value="approved">Approved</option>
-                <option value="received">Received</option>
+                <option value="RECEIVED">Received</option>
                 <option value="completed">Completed</option>
               </select>
             </div>
@@ -372,7 +374,7 @@ useEffect(() => {
                 >
                   <option value="pending">Pending</option>
                   <option value="approved">Approved</option>
-                  <option value="received">Received</option>
+                  <option value="RECEIVED">Received</option>
                   <option value="completed">Completed</option>
                 </select>
               </div>

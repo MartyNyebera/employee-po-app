@@ -144,8 +144,8 @@ export async function updateAsset(
   return data;
 }
 
-export async function fetchPurchaseOrders(): Promise<PurchaseOrder[]> {
-  const data = await fetchApi<{ id: string; poNumber: string; client: string; description: string; amount: number; status: string; createdDate: string; deliveryDate: string; assignedAssets: string[] }[]>('/purchase-orders');
+export async function fetchPurchaseOrders(): Promise<(PurchaseOrder & { orderType?: string })[]> {
+  const data = await fetchApi<{ id: string; poNumber: string; client: string; description: string; amount: number; status: string; createdDate: string; deliveryDate: string; assignedAssets: string[]; orderType?: string }[]>('/purchase-orders');
   return data.map((po) => ({
     id: po.id,
     poNumber: po.poNumber,
@@ -156,6 +156,7 @@ export async function fetchPurchaseOrders(): Promise<PurchaseOrder[]> {
     createdDate: po.createdDate,
     deliveryDate: po.deliveryDate,
     assignedAssets: po.assignedAssets,
+    orderType: po.orderType,
   }));
 }
 
