@@ -66,11 +66,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
     }
   };
 
-useEffect(() => {
-  fetchInventory();
-}, []);
-
-  const getStatusBadge = (status: string) => {
+const getStatusBadge = (status: string) => {
     switch (status) {
       case 'in-stock':
         return <Badge className="bg-green-50 text-green-700 border-green-200 px-3 py-1 rounded-full font-medium text-xs">In Stock</Badge>;
@@ -104,6 +100,10 @@ useEffect(() => {
           return 0;
       }
     });
+
+useEffect(() => {
+  fetchInventory();
+}, []);
 
   if (loading) {
     return (

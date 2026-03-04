@@ -88,11 +88,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
   }
 };
 
-useEffect(() => {
-  fetchPurchaseOrders();
-}, []);
-
-  const formatCurrency = (amount: number) => {
+const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-PH', {
       style: 'currency',
       currency: 'PHP',
@@ -112,13 +108,17 @@ useEffect(() => {
     }
   };
 
-  const filteredPOs = purchaseOrders.filter(po => {
+const filteredPOs = purchaseOrders.filter(po => {
     const matchesFilter = filter === 'all' || po.status === filter;
     const matchesSearch = searchTerm === '' || 
       po.poNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
       po.vendorName.toLowerCase().includes(searchTerm.toLowerCase());
     return matchesFilter && matchesSearch;
   });
+
+useEffect(() => {
+  fetchPurchaseOrders();
+}, []);
 
   if (loading) {
     return (
