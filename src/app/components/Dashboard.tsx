@@ -3,7 +3,7 @@ import { useAutoLogout } from '../hooks/useAutoLogout';
 import { Button } from './ui/button';
 import { Home, Truck, Wrench, MapPin, FileText, Receipt, User, LogOut, Menu, X, ShoppingCart, Package } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
-import { FleetOverview } from './FleetOverview';
+import { BusinessOverview } from './BusinessOverview';
 import { AssetDetails } from './AssetDetails';
 import { PurchaseOrdersList } from './PurchaseOrdersList';
 import { TransactionsList } from './TransactionsList';
@@ -51,10 +51,7 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
     console.log('[Dashboard] Current view:', currentView);
     
     if (currentView === 'home') {
-      if (selectedAssetId) {
-        return <AssetDetails assetId={selectedAssetId} onBack={handleBackToOverview} isAdmin={false} />;
-      }
-      return <FleetOverview onAssetClick={handleAssetClick} />;
+      return <BusinessOverview isAdmin={false} />;
     }
     
     if (currentView === 'orders') {

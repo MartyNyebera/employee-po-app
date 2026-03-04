@@ -3,7 +3,7 @@ import { useAutoLogout } from '../hooks/useAutoLogout';
 import { Button } from './ui/button';
 import { LogOut, Home, FileText, Receipt, Menu, X, UserPlus, Check, XCircle, MapPin, Calendar, Clock, Truck, Wrench, ShoppingCart, Package, User } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
-import { FleetOverview } from './FleetOverview';
+import { BusinessOverview } from './BusinessOverview';
 import { AssetDetails } from './AssetDetails';
 import { PurchaseOrdersList } from './PurchaseOrdersList';
 import { TransactionsList } from './TransactionsList';
@@ -81,10 +81,7 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
 
   const renderContent = () => {
     if (currentView === 'home') {
-      if (selectedAssetId) {
-        return <AssetDetails assetId={selectedAssetId} onBack={handleBackToOverview} isAdmin={true} />;
-      }
-      return <FleetOverview onAssetClick={handleAssetClick} />;
+      return <BusinessOverview isAdmin={true} />;
     }
     
     if (currentView === 'orders') {
