@@ -107,12 +107,12 @@ export async function fetchOverviewMetrics(period: TimePeriod, customRange?: Dat
   const range = getDateRange(period, customRange);
   
   try {
-    // Fetch real Purchase Orders for expenses - ONLY RECEIVED status
+    // Fetch orders with RECEIVED status as expenses
     const purchaseOrders = await fetchApi(`/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}&status=RECEIVED`);
     const expenses = Array.isArray(purchaseOrders) ? purchaseOrders.reduce((sum: number, po: any) => sum + (po.amount || 0), 0) : 0;
 
-    // Fetch real Sales Orders for revenue - ONLY PAID status
-    const salesOrders = await fetchApi(`/sales-orders?startDate=${range.startDate}&endDate=${range.endDate}&status=PAID`);
+    // Fetch orders with PAID status as revenue (same purchase_orders table)
+    const salesOrders = await fetchApi(`/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}&status=PAID`);
     const revenue = Array.isArray(salesOrders) ? salesOrders.reduce((sum: number, so: any) => sum + (so.amount || 0), 0) : 0;
 
     // Calculate previous period for trend
@@ -124,7 +124,7 @@ export async function fetchOverviewMetrics(period: TimePeriod, customRange?: Dat
       const prevPurchaseOrders = await fetchApi(`/purchase-orders?startDate=${previousRange.startDate}&endDate=${previousRange.endDate}&status=RECEIVED`);
       previousExpenses = Array.isArray(prevPurchaseOrders) ? prevPurchaseOrders.reduce((sum: number, po: any) => sum + (po.amount || 0), 0) : 0;
 
-      const prevSalesOrders = await fetchApi(`/sales-orders?startDate=${previousRange.startDate}&endDate=${previousRange.endDate}&status=PAID`);
+      const prevSalesOrders = await fetchApi(`/purchase-orders?startDate=${previousRange.startDate}&endDate=${previousRange.endDate}&status=PAID`);
       previousRevenue = Array.isArray(prevSalesOrders) ? prevSalesOrders.reduce((sum: number, so: any) => sum + (so.amount || 0), 0) : 0;
     } catch (error) {
       console.log('Could not fetch previous period data:', error);
@@ -171,8 +171,8 @@ export async function fetchOrderSummary(period: TimePeriod, customRange?: DateRa
       totalAmount: poArray.filter((po: any) => po.status === 'RECEIVED').reduce((sum: number, po: any) => sum + (po.amount || 0), 0)
     };
 
-    // Fetch Sales Orders
-    const salesOrders = await fetchApi(`/sales-orders?startDate=${range.startDate}&endDate=${range.endDate}`);
+    // Fetch Sales Orders (PAID status from purchase_orders table)
+    const salesOrders = await fetchApi(`/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}&status=PAID`);
     const soArray = Array.isArray(salesOrders) ? salesOrders : [];
 
     const salesOrderSummary = {
@@ -183,9 +183,14 @@ export async function fetchOrderSummary(period: TimePeriod, customRange?: DateRa
       totalAmount: soArray.filter((so: any) => so.status === 'PAID').reduce((sum: number, so: any) => sum + (so.amount || 0), 0)
     };
 
-    // Fetch Miscellaneous
-    const miscellaneous = await fetchApi(`/miscellaneous?startDate=${range.startDate}&endDate=${range.endDate}`);
-    const miscArray = Array.isArray(miscellaneous) ? miscellaneous : [];
+    // Fetch Miscellaneous (graceful fallback if table doesn't exist yet)
+    let miscArray: any[] = [];
+    try {
+      const miscellaneous = await fetchApi(`/miscellaneous?startDate=${range.startDate}&endDate=${range.endDate}`);
+      miscArray = Array.isArray(miscellaneous) ? miscellaneous : [];
+    } catch {
+      miscArray = [];
+    }
 
     const miscellaneousSummary = {
       total: miscArray.length,
@@ -279,14 +284,10 @@ export async function fetchChartData(period: TimePeriod, customRange?: DateRange
   const data: ChartDataPoint[] = [];
 
   try {
-    // Fetch real data for the period
-    const [purchaseOrders, salesOrders] = await Promise.all([
-      fetchApi(`/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}`),
-      fetchApi(`/sales-orders?startDate=${range.startDate}&endDate=${range.endDate}`)
-    ]);
-
-    const poArray = Array.isArray(purchaseOrders) ? purchaseOrders : [];
-    const soArray = Array.isArray(salesOrders) ? salesOrders : [];
+    // Fetch all orders from purchase_orders table (covers both PAID revenue and RECEIVED expenses)
+    const allOrders = await fetchApi(`/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}`);
+    const poArray = Array.isArray(allOrders) ? allOrders : [];
+    const soArray = poArray; // same table: PAID = revenue, RECEIVED = expenses
 
     if (period === 'this-month' || period === 'last-30-days') {
       // Generate daily data points
