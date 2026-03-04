@@ -533,16 +533,17 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
   return (
     <>
       <div className="p-6 space-y-6">
-        {/* Enhanced Header */}
+        {/* Header */}
         <div className="flex items-center justify-between">
           <div>
             <div className="flex items-center gap-3 mb-1">
-              <div className="p-2 bg-amber-100 rounded-lg dark:bg-amber-500/20">
-                <FileText className="size-5 text-amber-600 dark:text-amber-400" />
-            </div>
-            <div>
-              <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100">Sales Orders</h2>
-              <p className="text-slate-600 text-sm dark:text-slate-400">Manage and track Sales Orders</p>
+              <div className="p-2 bg-amber-100 rounded-lg">
+                <FileText className="size-5 text-amber-600" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900">Sales Orders</h2>
+                <p className="text-slate-600 text-sm">Manage and track Sales Orders</p>
+              </div>
             </div>
           </div>
           {isAdmin && (
@@ -651,7 +652,6 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
           </Card>
         )}
       </div>
-    </div>
     
     {/* Edit PO Modal */}
     {isEditing && selectedPO && (
