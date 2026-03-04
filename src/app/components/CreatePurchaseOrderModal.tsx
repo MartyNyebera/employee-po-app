@@ -1,10 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { createPurchaseOrder } from '../api/client';
 import { Button } from './ui/button';
-import { Input } from './ui/input';
-import { Label } from './ui/label';
-import { Textarea } from './ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { X, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -24,6 +20,17 @@ interface CreatePurchaseOrderModalProps {
 }
 
 export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseOrderModalProps) {
+
+  // Company info constants (same as SO form)
+  const COMPANY_INFO = {
+    name: 'KIMOEL TRADING & CONSTRUCTION INCORPORATED',
+    address: 'PUROK 1, LODLOD, LIPA CITY, BATANGAS',
+    tel: '(043) - 741 - 2023',
+    email: 'kimoel_leotagle@yahoo.com',
+    owner: 'LEO TAGLE',
+    ownerMobile: '0917 - 628 - 3217',
+  };
+
   const [form, setForm] = useState({
     poNumber: `KTCI-${new Date().getFullYear()}-0001`,
     poDate: new Date().toISOString().split('T')[0],
@@ -37,40 +44,70 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
     vendorAddress: '',
     vendorContact: '',
     ewt: 0,
+    vatType: 'vatable' as 'vatable' | 'non-vatable',
     vatAmount: 0,
   });
 
   const [lineItems, setLineItems] = useState<LineItem[]>([
-    {
-      id: '1',
-      no: 1,
-      description: '',
-      quantity: 1,
-      unit: 'pcs',
-      unitCost: 0,
-      amount: 0,
-    }
+    { id: '1', no: 1, description: '', quantity: 1, unit: 'Lot', unitCost: 0, amount: 0 }
   ]);
 
   const [loading, setLoading] = useState(false);
 
-  const calculateSubTotal = () => {
-    return lineItems.reduce((sum, item) => sum + item.amount, 0);
+  // Auto-generate PO number on mount
+  useEffect(() => {
+    const generatePONumber = async () => {
+      try {
+        const currentYear = new Date().getFullYear();
+        const response = await fetch('/api/purchase-orders');
+        const orders = await response.json();
+        const poOrders = orders.filter((o: any) => o.orderType !== 'sales');
+        const lastPO = poOrders
+          .filter((o: any) => o.poNumber && o.poNumber.startsWith(`KTCI-${currentYear}-`))
+          .sort((a: any, b: any) => b.poNumber.localeCompare(a.poNumber))[0];
+        let counter = 1;
+        if (lastPO) {
+          const lastNumber = lastPO.poNumber.split('-')[2];
+          counter = parseInt(lastNumber) + 1;
+        }
+        const poNumber = `KTCI-${currentYear}-${counter.toString().padStart(4, '0')}`;
+        setForm(prev => ({ ...prev, poNumber }));
+      } catch (error) {
+        console.error('Failed to generate PO number:', error);
+      }
+    };
+    generatePONumber();
+  }, []);
+
+  // Auto-fill today's date
+  useEffect(() => {
+    const today = new Date().toISOString().split('T')[0];
+    setForm(prev => ({ ...prev, poDate: today }));
+  }, []);
+
+  const calculateSubTotal = () => lineItems.reduce((sum, item) => sum + item.amount, 0);
+
+  const calculateVATAmount = () => {
+    if (form.vatType === 'vatable') {
+      return (calculateSubTotal() + form.ewt) * 0.12;
+    }
+    return 0;
   };
 
-  const calculateTotal = () => {
-    const subTotal = calculateSubTotal();
-    const vat = subTotal * 0.12; // 12% VAT
-    const ewt = subTotal * 0.02; // 2% EWT
-    return subTotal + vat - ewt;
-  };
+  const calculateTotal = () => calculateSubTotal() + form.ewt + calculateVATAmount();
 
-  const updateLineItem = (id: string, field: keyof LineItem, value: any) => {
-    setLineItems(items => items.map(item => {
+  // Keep vatAmount in sync
+  useEffect(() => {
+    const vatAmount = calculateVATAmount();
+    setForm(prev => ({ ...prev, vatAmount }));
+  }, [lineItems, form.ewt, form.vatType]);
+
+  const updateLineItem = (id: string, field: keyof LineItem, value: string | number) => {
+    setLineItems(prev => prev.map(item => {
       if (item.id === id) {
         const updated = { ...item, [field]: value };
         if (field === 'quantity' || field === 'unitCost') {
-          updated.amount = updated.quantity * updated.unitCost;
+          updated.amount = Number(updated.quantity) * Number(updated.unitCost);
         }
         return updated;
       }
@@ -79,32 +116,33 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
   };
 
   const addLineItem = () => {
-    const newNo = Math.max(...lineItems.map(item => item.no)) + 1;
-    setLineItems([...lineItems, {
+    setLineItems(prev => [...prev, {
       id: Date.now().toString(),
-      no: newNo,
+      no: prev.length + 1,
       description: '',
       quantity: 1,
-      unit: 'pcs',
+      unit: 'Lot',
       unitCost: 0,
       amount: 0,
     }]);
   };
 
-  const removeLineItem = (id: string) => {
+  const deleteLineItem = (id: string) => {
     if (lineItems.length > 1) {
-      setLineItems(lineItems.filter(item => item.id !== id));
+      setLineItems(prev => {
+        const filtered = prev.filter(item => item.id !== id);
+        return filtered.map((item, index) => ({ ...item, no: index + 1 }));
+      });
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!form.vendorName || !form.vendorAddress || !form.deliveryDate || !form.preparedBy) {
       toast.error('Please fill in all required fields');
       return;
     }
-
     if (lineItems.some(item => !item.description || item.unitCost <= 0)) {
       toast.error('Please fill in description and unit cost for all line items');
       return;
@@ -112,8 +150,6 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
 
     try {
       setLoading(true);
-      
-      // Convert line items to old format for API compatibility
       const legacyLineItems = lineItems.map(item => ({
         id: item.id,
         no: item.no,
@@ -125,7 +161,7 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
         unitPrice: item.unitCost,
         amount: item.amount,
       }));
-      
+
       const poData = {
         poNumber: form.poNumber,
         poDate: form.poDate,
@@ -135,7 +171,7 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
         termsAndConditions: form.termsAndConditions,
         preparedBy: form.preparedBy,
         reviewedBy: form.reviewedBy,
-        customerName: form.vendorName, // Use vendorName as customerName for API compatibility
+        customerName: form.vendorName,
         customerAddress: form.vendorAddress,
         customerContact: form.vendorContact,
         lineItems: legacyLineItems,
@@ -144,15 +180,13 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
         vatAmount: form.vatAmount,
         totalAmount: calculateTotal(),
         createdDate: new Date().toISOString().split('T')[0],
-        status: 'pending', // Purchase Order starts as pending
-        orderType: undefined, // Explicitly undefined for Purchase Orders
+        status: 'pending',
+        orderType: undefined,
       };
 
       await createPurchaseOrder(poData);
       toast.success('Purchase Order created successfully!');
       onCreated();
-      
-      // Trigger Overview refresh
       window.dispatchEvent(new CustomEvent('ordersUpdated'));
     } catch (err: any) {
       toast.error('Failed to create Purchase Order: ' + err.message);
@@ -163,198 +197,365 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
-        {/* Header */}
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[90vh] overflow-y-auto">
+
+        {/* ── HEADER ── */}
         <div className="flex items-center justify-between p-6 border-b border-slate-200">
           <h2 className="text-lg font-bold text-slate-900">Create Purchase Order</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors">
             <X className="size-5" />
           </button>
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="p-6">
-          <div className="space-y-6">
-            {/* PO Details */}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label className="block text-sm font-medium text-slate-700 mb-1">PO Number *</Label>
-                <Input
-                  value={form.poNumber}
-                  onChange={(e) => setForm({ ...form, poNumber: e.target.value })}
-                  className="w-full"
-                />
-              </div>
-              <div>
-                <Label className="block text-sm font-medium text-slate-700 mb-1">PO Date *</Label>
-                <Input
-                  type="date"
-                  value={form.poDate}
-                  onChange={(e) => setForm({ ...form, poDate: e.target.value })}
-                  className="w-full"
-                />
-              </div>
-              <div>
-                <Label className="block text-sm font-medium text-slate-700 mb-1">Delivery Date *</Label>
-                <Input
-                  type="date"
-                  value={form.deliveryDate}
-                  onChange={(e) => setForm({ ...form, deliveryDate: e.target.value })}
-                  className="w-full"
-                />
-              </div>
-              <div>
-                <Label className="block text-sm font-medium text-slate-700 mb-1">PO Type</Label>
-                <Select value={form.poType} onValueChange={(value: 'domestic' | 'foreign') => setForm({ ...form, poType: value })}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="domestic">Domestic</SelectItem>
-                    <SelectItem value="foreign">Foreign</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-6">
 
-            {/* Vendor Details */}
-            <div className="space-y-4">
-              <h3 className="text-md font-semibold text-slate-900">Vendor Details</h3>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="block text-sm font-medium text-slate-700 mb-1">Vendor Name *</Label>
-                  <Input
-                    value={form.vendorName}
-                    onChange={(e) => setForm({ ...form, vendorName: e.target.value })}
-                    placeholder="Enter vendor name"
-                    className="w-full"
-                  />
+          {/* ── A. OUR COMPANY INFORMATION (READ-ONLY) ── */}
+          <div className="border border-slate-200 rounded-lg p-4 bg-slate-50">
+            <h3 className="font-bold text-slate-900 mb-3 text-center">OUR COMPANY INFORMATION (BUYER)</h3>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <span className="font-semibold">Company Name:</span>
+                <div className="bg-white px-3 py-2 rounded border border-slate-300 mt-1">{COMPANY_INFO.name}</div>
+              </div>
+              <div>
+                <span className="font-semibold">Company Address:</span>
+                <div className="bg-white px-3 py-2 rounded border border-slate-300 mt-1">{COMPANY_INFO.address}</div>
+              </div>
+              <div>
+                <span className="font-semibold">Contact:</span>
+                <div className="bg-white px-3 py-2 rounded border border-slate-300 mt-1">
+                  Tel: {COMPANY_INFO.tel}<br />Email: {COMPANY_INFO.email}
                 </div>
-                <div>
-                  <Label className="block text-sm font-medium text-slate-700 mb-1">Contact</Label>
-                  <Input
-                    value={form.vendorContact}
-                    onChange={(e) => setForm({ ...form, vendorContact: e.target.value })}
-                    placeholder="Enter contact number"
-                    className="w-full"
-                  />
-                </div>
-                <div className="col-span-2">
-                  <Label className="block text-sm font-medium text-slate-700 mb-1">Vendor Address *</Label>
-                  <Textarea
-                    value={form.vendorAddress}
-                    onChange={(e) => setForm({ ...form, vendorAddress: e.target.value })}
-                    placeholder="Enter vendor address"
-                    rows={2}
-                    className="w-full"
-                  />
+              </div>
+              <div>
+                <span className="font-semibold">Company Owner / Approved By:</span>
+                <div className="bg-white px-3 py-2 rounded border border-slate-300 mt-1">
+                  {COMPANY_INFO.owner} (Mobile: {COMPANY_INFO.ownerMobile})
                 </div>
               </div>
             </div>
+          </div>
 
-            {/* Line Items */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-md font-semibold text-slate-900">Line Items</h3>
-                <Button type="button" variant="outline" size="sm" onClick={addLineItem}>
-                  <Plus className="size-4 mr-1" />
-                  Add Item
-                </Button>
-              </div>
-              
-              <div className="space-y-2">
-                {lineItems.map((item) => (
-                  <div key={item.id} className="grid grid-cols-12 gap-2 items-center">
-                    <div className="text-sm text-slate-600 font-medium">#{item.no}</div>
-                    <Input
-                      placeholder="Description"
-                      value={item.description}
-                      onChange={(e) => updateLineItem(item.id, 'description', e.target.value)}
-                      className="col-span-4"
-                    />
-                    <Input
-                      type="number"
-                      placeholder="Qty"
-                      value={item.quantity}
-                      onChange={(e) => updateLineItem(item.id, 'quantity', parseFloat(e.target.value) || 0)}
-                      className="col-span-1"
-                    />
-                    <Input
-                      placeholder="Unit"
-                      value={item.unit}
-                      onChange={(e) => updateLineItem(item.id, 'unit', e.target.value)}
-                      className="col-span-1"
-                    />
-                    <Input
-                      type="number"
-                      placeholder="Unit Cost"
-                      value={item.unitCost}
-                      onChange={(e) => updateLineItem(item.id, 'unitCost', parseFloat(e.target.value) || 0)}
-                      className="col-span-2"
-                    />
-                    <div className="text-sm text-slate-900 font-medium col-span-2">
-                      ₱{item.amount.toFixed(2)}
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => removeLineItem(item.id)}
-                      disabled={lineItems.length === 1}
-                      className="col-span-1"
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Summary */}
-            <div className="space-y-2 border-t pt-4">
-              <div className="flex justify-between text-sm">
-                <span>Sub Total:</span>
-                <span>₱{calculateSubTotal().toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span>VAT (12%):</span>
-                <span>₱{(calculateSubTotal() * 0.12).toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span>EWT (2%):</span>
-                <span>-₱{(calculateSubTotal() * 0.02).toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between font-semibold text-lg pt-2 border-t">
-                <span>Total:</span>
-                <span>₱{calculateTotal().toFixed(2)}</span>
-              </div>
-            </div>
-
-            {/* Signatories */}
-            <div className="grid grid-cols-2 gap-4">
+          {/* ── B. VENDOR INFORMATION ── */}
+          <div className="border border-slate-200 rounded-lg p-4">
+            <h3 className="font-bold text-slate-900 mb-3">VENDOR INFORMATION</h3>
+            <div className="grid grid-cols-1 gap-4">
               <div>
-                <Label className="block text-sm font-medium text-slate-700 mb-1">Prepared By *</Label>
-                <Input
-                  value={form.preparedBy}
-                  onChange={(e) => setForm({ ...form, preparedBy: e.target.value })}
-                  placeholder="Enter name"
-                  className="w-full"
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Vendor Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={form.vendorName}
+                  onChange={e => setForm(f => ({ ...f, vendorName: e.target.value }))}
+                  placeholder="Vendor / supplier company name"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
                 />
               </div>
               <div>
-                <Label className="block text-sm font-medium text-slate-700 mb-1">Reviewed By</Label>
-                <Input
-                  value={form.reviewedBy}
-                  onChange={(e) => setForm({ ...form, reviewedBy: e.target.value })}
-                  placeholder="Enter name"
-                  className="w-full"
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Vendor Address <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={form.vendorAddress}
+                  onChange={e => setForm(f => ({ ...f, vendorAddress: e.target.value }))}
+                  placeholder="Vendor complete address"
+                  rows={2}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Vendor Contact</label>
+                <input
+                  type="text"
+                  value={form.vendorContact}
+                  onChange={e => setForm(f => ({ ...f, vendorContact: e.target.value }))}
+                  placeholder="Vendor phone or email (optional)"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
             </div>
           </div>
 
-          {/* Actions */}
-          <div className="flex gap-3 pt-6 border-t">
+          {/* ── C. PURCHASE ORDER DETAILS ── */}
+          <div className="border border-slate-200 rounded-lg p-4">
+            <h3 className="font-bold text-slate-900 mb-3">PURCHASE ORDER DETAILS</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  PO Number <span className="text-red-500">*</span>
+                </label>
+                <div className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-slate-50 text-slate-900 text-sm">
+                  {form.poNumber || 'Generating...'}
+                </div>
+                <p className="text-xs text-slate-500 mt-1">Automatically generated</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  PO Date <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={form.poDate}
+                  onChange={e => setForm(f => ({ ...f, poDate: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Delivery Date <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={form.deliveryDate}
+                  onChange={e => setForm(f => ({ ...f, deliveryDate: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  PO Type <span className="text-red-500">*</span>
+                </label>
+                <div className="flex gap-4 mt-2">
+                  <label className="flex items-center cursor-pointer">
+                    <input
+                      type="radio"
+                      value="domestic"
+                      checked={form.poType === 'domestic'}
+                      onChange={e => setForm(f => ({ ...f, poType: e.target.value as 'domestic' | 'foreign' }))}
+                      className="mr-2"
+                    />
+                    Domestic
+                  </label>
+                  <label className="flex items-center cursor-pointer">
+                    <input
+                      type="radio"
+                      value="foreign"
+                      checked={form.poType === 'foreign'}
+                      onChange={e => setForm(f => ({ ...f, poType: e.target.value as 'domestic' | 'foreign' }))}
+                      className="mr-2"
+                    />
+                    Foreign
+                  </label>
+                </div>
+              </div>
+              <div className="col-span-2">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Payment Terms <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={form.paymentTerms}
+                  onChange={e => setForm(f => ({ ...f, paymentTerms: e.target.value }))}
+                  placeholder="e.g., 30 days from receipt/acceptance"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  VAT Type <span className="text-red-500">*</span>
+                </label>
+                <div className="flex gap-4 mt-2">
+                  <label className="flex items-center cursor-pointer">
+                    <input
+                      type="radio"
+                      value="vatable"
+                      checked={form.vatType === 'vatable'}
+                      onChange={e => setForm(f => ({ ...f, vatType: e.target.value as 'vatable' | 'non-vatable' }))}
+                      className="mr-2"
+                    />
+                    Vatable
+                  </label>
+                  <label className="flex items-center cursor-pointer">
+                    <input
+                      type="radio"
+                      value="non-vatable"
+                      checked={form.vatType === 'non-vatable'}
+                      onChange={e => setForm(f => ({ ...f, vatType: e.target.value as 'vatable' | 'non-vatable' }))}
+                      className="mr-2"
+                    />
+                    Non-Vatable
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ── D. LINE ITEMS TABLE ── */}
+          <div className="border border-slate-200 rounded-lg p-4">
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="font-bold text-slate-900">LINE ITEMS</h3>
+              <Button type="button" onClick={addLineItem} className="flex items-center gap-2">
+                <Plus className="size-4" />
+                Add Item
+              </Button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse border border-slate-300">
+                <thead>
+                  <tr className="bg-slate-50">
+                    <th className="border border-slate-300 px-2 py-2 text-xs font-semibold text-slate-700 w-10">No.</th>
+                    <th className="border border-slate-300 px-2 py-2 text-xs font-semibold text-slate-700 text-left">Description</th>
+                    <th className="border border-slate-300 px-2 py-2 text-xs font-semibold text-slate-700 w-20">Quantity</th>
+                    <th className="border border-slate-300 px-2 py-2 text-xs font-semibold text-slate-700 w-20">Unit</th>
+                    <th className="border border-slate-300 px-2 py-2 text-xs font-semibold text-slate-700 w-28">Unit Cost</th>
+                    <th className="border border-slate-300 px-2 py-2 text-xs font-semibold text-slate-700 w-28 text-right">Amount</th>
+                    <th className="border border-slate-300 px-2 py-2 text-xs font-semibold text-slate-700 w-12"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lineItems.map((item) => (
+                    <tr key={item.id} className="hover:bg-slate-50">
+                      <td className="border border-slate-300 px-2 py-1 text-xs text-center text-slate-600">{item.no}</td>
+                      <td className="border border-slate-300 px-2 py-1">
+                        <input
+                          type="text"
+                          value={item.description}
+                          onChange={e => updateLineItem(item.id, 'description', e.target.value)}
+                          className="w-full px-1 py-1 text-sm border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-blue-400 rounded"
+                          placeholder="Item description"
+                        />
+                      </td>
+                      <td className="border border-slate-300 px-2 py-1">
+                        <input
+                          type="number"
+                          value={item.quantity}
+                          onChange={e => updateLineItem(item.id, 'quantity', Number(e.target.value))}
+                          className="w-full px-1 py-1 text-sm border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-blue-400 rounded text-center"
+                          min="1"
+                        />
+                      </td>
+                      <td className="border border-slate-300 px-2 py-1">
+                        <input
+                          type="text"
+                          value={item.unit}
+                          onChange={e => updateLineItem(item.id, 'unit', e.target.value)}
+                          className="w-full px-1 py-1 text-sm border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-blue-400 rounded text-center"
+                        />
+                      </td>
+                      <td className="border border-slate-300 px-2 py-1">
+                        <input
+                          type="number"
+                          value={item.unitCost}
+                          onChange={e => updateLineItem(item.id, 'unitCost', Number(e.target.value))}
+                          className="w-full px-1 py-1 text-sm border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-blue-400 rounded text-right"
+                          min="0"
+                          step="0.01"
+                        />
+                      </td>
+                      <td className="border border-slate-300 px-2 py-1 text-sm text-right font-medium">
+                        ₱{item.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td className="border border-slate-300 px-2 py-1 text-center">
+                        <button
+                          type="button"
+                          onClick={() => deleteLineItem(item.id)}
+                          disabled={lineItems.length === 1}
+                          className="text-red-400 hover:text-red-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        >
+                          <Trash2 className="size-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* ── E. TOTALS SECTION ── */}
+          <div className="border border-slate-200 rounded-lg p-4">
+            <h3 className="font-bold text-slate-900 mb-3">TOTALS</h3>
+            <div className="grid grid-cols-4 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Sub Total</label>
+                <div className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-slate-50 text-slate-900 text-sm font-medium">
+                  ₱{calculateSubTotal().toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">EWT</label>
+                <input
+                  type="number"
+                  value={form.ewt}
+                  onChange={e => setForm(f => ({ ...f, ewt: Number(e.target.value) }))}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  min="0"
+                  step="0.01"
+                />
+              </div>
+              {form.vatType === 'vatable' && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">VAT Amount (12%)</label>
+                  <div className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-slate-50 text-slate-900 text-sm font-medium">
+                    ₱{calculateVATAmount().toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                  </div>
+                </div>
+              )}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Total Amount</label>
+                <div className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-blue-50 text-blue-900 text-sm font-bold border-blue-200">
+                  ₱{calculateTotal().toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ── F. TERMS & CONDITIONS ── */}
+          <div className="border border-slate-200 rounded-lg p-4">
+            <h3 className="font-bold text-slate-900 mb-3">TERMS &amp; CONDITIONS</h3>
+            <textarea
+              value={form.termsAndConditions}
+              onChange={e => setForm(f => ({ ...f, termsAndConditions: e.target.value }))}
+              rows={5}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+            />
+          </div>
+
+          {/* ── G. APPROVAL SECTION ── */}
+          <div className="border border-slate-200 rounded-lg p-4">
+            <h3 className="font-bold text-slate-900 mb-3">APPROVAL SECTION</h3>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Prepared By <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={form.preparedBy}
+                  onChange={e => setForm(f => ({ ...f, preparedBy: e.target.value }))}
+                  placeholder="Your name"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Reviewed By</label>
+                <input
+                  type="text"
+                  value={form.reviewedBy}
+                  onChange={e => setForm(f => ({ ...f, reviewedBy: e.target.value }))}
+                  placeholder="Reviewer name (optional)"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Approved By</label>
+                <div className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-slate-50 text-slate-900 text-sm">
+                  {COMPANY_INFO.owner}
+                </div>
+                <p className="text-xs text-slate-500 mt-1">Company Owner (Read-only)</p>
+              </div>
+            </div>
+          </div>
+
+          {/* ── FORM ACTIONS ── */}
+          <div className="flex gap-3 pt-2">
             <Button type="button" variant="outline" className="flex-1" onClick={onClose}>
               Cancel
             </Button>
@@ -362,6 +563,7 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
               {loading ? 'Creating...' : 'Create Purchase Order'}
             </Button>
           </div>
+
         </form>
       </div>
     </div>
