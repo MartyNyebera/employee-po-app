@@ -327,19 +327,28 @@ export async function fetchChartData(period: TimePeriod, customRange?: DateRange
         // Calculate revenue and expenses for this specific day
         // Revenue: PAID Sales Orders only
         const dayRevenue = soArray
-          .filter((so: any) => so.createdDate === dateString && so.orderType === 'sales' && so.status === 'PAID')
+          .filter((so: any) => {
+            const soDate = so.createdDate ? so.createdDate.split('T')[0] : '';
+            return soDate === dateString && so.orderType === 'sales' && so.status === 'PAID';
+          })
           .reduce((sum: number, so: any) => sum + (so.amount || 0), 0);
 
         // Expenses: RECEIVED Purchase Orders only
         const dayExpenses = poArray
-          .filter((po: any) => po.createdDate === dateString && po.orderType !== 'sales' && po.status === 'RECEIVED')
+          .filter((po: any) => {
+            const poDate = po.createdDate ? po.createdDate.split('T')[0] : '';
+            return poDate === dateString && po.orderType !== 'sales' && po.status === 'RECEIVED';
+          })
           .reduce((sum: number, po: any) => sum + (po.amount || 0), 0);
 
         // DEBUG: Log date filtering for first few days
         if (i < 5) {
           console.log(`🔍 DATE FILTER DEBUG - Day ${i}:`);
           console.log(`Date: ${dateString}`);
-          console.log(`PAID SOs on this date:`, soArray.filter((so: any) => so.createdDate === dateString && so.orderType === 'sales' && so.status === 'PAID'));
+          console.log(`PAID SOs on this date:`, soArray.filter((so: any) => {
+            const soDate = so.createdDate ? so.createdDate.split('T')[0] : '';
+            return soDate === dateString && so.orderType === 'sales' && so.status === 'PAID';
+          }));
           console.log(`Day Revenue: ${dayRevenue}`);
           console.log(`Day Expenses: ${dayExpenses}`);
         }
@@ -359,11 +368,17 @@ export async function fetchChartData(period: TimePeriod, customRange?: DateRange
         const monthEnd = new Date(2026, i + 1, 0).toISOString().split('T')[0];
 
         const monthRevenue = soArray
-          .filter((so: any) => so.createdDate >= monthStart && so.createdDate <= monthEnd && so.orderType === 'sales' && so.status === 'PAID')
+          .filter((so: any) => {
+            const soDate = so.createdDate ? so.createdDate.split('T')[0] : '';
+            return soDate >= monthStart && soDate <= monthEnd && so.orderType === 'sales' && so.status === 'PAID';
+          })
           .reduce((sum: number, so: any) => sum + (so.amount || 0), 0);
 
         const monthExpenses = poArray
-          .filter((po: any) => po.createdDate >= monthStart && po.createdDate <= monthEnd && po.orderType !== 'sales' && po.status === 'RECEIVED')
+          .filter((po: any) => {
+            const poDate = po.createdDate ? po.createdDate.split('T')[0] : '';
+            return poDate >= monthStart && poDate <= monthEnd && po.orderType !== 'sales' && po.status === 'RECEIVED';
+          })
           .reduce((sum: number, po: any) => sum + (po.amount || 0), 0);
 
         data.push({
