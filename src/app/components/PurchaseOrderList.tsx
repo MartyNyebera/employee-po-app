@@ -270,7 +270,7 @@ useEffect(() => {
                     </div>
                     <div className="grid grid-cols-2 gap-4 text-sm text-slate-600">
                       <div>
-                        <span className="font-medium">Customer:</span> {po.client}
+                        <span className="font-medium">Vendor:</span> {po.client}
                       </div>
                       <div>
                         <span className="font-medium">Date:</span> {po.createdDate}
