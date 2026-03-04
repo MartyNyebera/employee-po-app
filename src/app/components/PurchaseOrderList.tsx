@@ -120,14 +120,6 @@ useEffect(() => {
   fetchPurchaseOrders();
 }, []);
 
-  if (loading) {
-    return (
-      <div className="p-6 flex items-center justify-center min-h-[200px]">
-        <div className="text-gray-500">Loading purchase orders...</div>
-      </div>
-    );
-  }
-
   // Real-time refresh - listen for order updates
   useEffect(() => {
     const handleOrdersUpdated = () => {
@@ -138,6 +130,14 @@ useEffect(() => {
     window.addEventListener('ordersUpdated', handleOrdersUpdated);
     return () => window.removeEventListener('ordersUpdated', handleOrdersUpdated);
   }, []);
+
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center justify-center min-h-[200px]">
+        <div className="text-gray-500">Loading purchase orders...</div>
+      </div>
+    );
+  }
 
   
   return (

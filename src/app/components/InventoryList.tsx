@@ -105,14 +105,6 @@ useEffect(() => {
   fetchInventory();
 }, []);
 
-  if (loading) {
-    return (
-      <div className="p-6 flex items-center justify-center min-h-[200px]">
-        <div className="text-gray-500">Loading inventory...</div>
-      </div>
-    );
-  }
-
   // Real-time refresh - listen for inventory updates
   useEffect(() => {
     const handleInventoryUpdated = () => {
@@ -123,6 +115,14 @@ useEffect(() => {
     window.addEventListener('inventoryUpdated', handleInventoryUpdated);
     return () => window.removeEventListener('inventoryUpdated', handleInventoryUpdated);
   }, []);
+
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center justify-center min-h-[200px]">
+        <div className="text-gray-500">Loading inventory...</div>
+      </div>
+    );
+  }
 
   
   return (
