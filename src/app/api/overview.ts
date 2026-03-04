@@ -105,13 +105,13 @@ export async function fetchOverviewMetrics(period: TimePeriod, customRange?: Dat
   const range = getDateRange(period, customRange);
   
   try {
-    // Fetch real Purchase Orders for expenses
-    const expensesResponse = await fetch(`/api/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}&status=approved,received,completed`);
+    // Fetch real Purchase Orders for expenses - ONLY RECEIVED status
+    const expensesResponse = await fetch(`/api/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}&status=RECEIVED`);
     const purchaseOrders = await expensesResponse.json();
     const expenses = Array.isArray(purchaseOrders) ? purchaseOrders.reduce((sum: number, po: any) => sum + (po.amount || 0), 0) : 0;
 
-    // Fetch real Sales Orders for revenue
-    const revenueResponse = await fetch(`/api/sales-orders?startDate=${range.startDate}&endDate=${range.endDate}&status=approved,completed`);
+    // Fetch real Sales Orders for revenue - ONLY PAID status
+    const revenueResponse = await fetch(`/api/sales-orders?startDate=${range.startDate}&endDate=${range.endDate}&status=PAID`);
     const salesOrders = await revenueResponse.json();
     const revenue = Array.isArray(salesOrders) ? salesOrders.reduce((sum: number, so: any) => sum + (so.amount || 0), 0) : 0;
 
@@ -121,11 +121,11 @@ export async function fetchOverviewMetrics(period: TimePeriod, customRange?: Dat
     let previousRevenue = 0;
 
     try {
-      const prevExpensesResponse = await fetch(`/api/purchase-orders?startDate=${previousRange.startDate}&endDate=${previousRange.endDate}&status=approved,received,completed`);
+      const prevExpensesResponse = await fetch(`/api/purchase-orders?startDate=${previousRange.startDate}&endDate=${previousRange.endDate}&status=RECEIVED`);
       const prevPurchaseOrders = await prevExpensesResponse.json();
       previousExpenses = Array.isArray(prevPurchaseOrders) ? prevPurchaseOrders.reduce((sum: number, po: any) => sum + (po.amount || 0), 0) : 0;
 
-      const prevRevenueResponse = await fetch(`/api/sales-orders?startDate=${previousRange.startDate}&endDate=${previousRange.endDate}&status=approved,completed`);
+      const prevRevenueResponse = await fetch(`/api/sales-orders?startDate=${previousRange.startDate}&endDate=${previousRange.endDate}&status=PAID`);
       const prevSalesOrders = await prevRevenueResponse.json();
       previousRevenue = Array.isArray(prevSalesOrders) ? prevSalesOrders.reduce((sum: number, so: any) => sum + (so.amount || 0), 0) : 0;
     } catch (error) {
@@ -168,10 +168,10 @@ export async function fetchOrderSummary(period: TimePeriod, customRange?: DateRa
 
     const purchaseOrderSummary = {
       total: poArray.length,
-      received: poArray.filter((po: any) => po.status === 'received').length,
-      pending: poArray.filter((po: any) => ['pending', 'approved'].includes(po.status)).length,
-      overdue: poArray.filter((po: any) => po.deliveryDate < today && po.status !== 'received').length,
-      totalAmount: poArray.reduce((sum: number, po: any) => sum + (po.amount || 0), 0)
+      received: poArray.filter((po: any) => po.status === 'RECEIVED').length,
+      pending: poArray.filter((po: any) => ['Pending', 'Approved'].includes(po.status)).length,
+      overdue: poArray.filter((po: any) => po.deliveryDate < today && po.status !== 'RECEIVED').length,
+      totalAmount: poArray.filter((po: any) => po.status === 'RECEIVED').reduce((sum: number, po: any) => sum + (po.amount || 0), 0)
     };
 
     // Fetch Sales Orders
@@ -181,10 +181,10 @@ export async function fetchOrderSummary(period: TimePeriod, customRange?: DateRa
 
     const salesOrderSummary = {
       total: soArray.length,
-      completed: soArray.filter((so: any) => so.status === 'completed').length,
-      pending: soArray.filter((so: any) => ['pending', 'approved'].includes(so.status)).length,
-      overdue: soArray.filter((so: any) => so.deliveryDate < today && so.status !== 'completed').length,
-      totalAmount: soArray.reduce((sum: number, so: any) => sum + (so.amount || 0), 0)
+      completed: soArray.filter((so: any) => so.status === 'PAID').length,
+      pending: soArray.filter((so: any) => ['Pending', 'Approved'].includes(so.status)).length,
+      overdue: soArray.filter((so: any) => so.deliveryDate < today && so.status !== 'PAID').length,
+      totalAmount: soArray.filter((so: any) => so.status === 'PAID').reduce((sum: number, so: any) => sum + (so.amount || 0), 0)
     };
 
     // Fetch Miscellaneous
@@ -202,12 +202,12 @@ export async function fetchOrderSummary(period: TimePeriod, customRange?: DateRa
 
     // Calculate pending approval across all modules
     const pendingApproval = {
-      po: poArray.filter((po: any) => po.status === 'pending').length,
-      so: soArray.filter((so: any) => so.status === 'pending').length,
-      misc: miscArray.filter((item: any) => item.status === 'pending').length,
-      total: poArray.filter((po: any) => po.status === 'pending').length + 
-            soArray.filter((so: any) => so.status === 'pending').length + 
-            miscArray.filter((item: any) => item.status === 'pending').length
+      po: poArray.filter((po: any) => ['Pending', 'Approved'].includes(po.status)).length,
+      so: soArray.filter((so: any) => ['Pending', 'Approved'].includes(so.status)).length,
+      misc: miscArray.filter((item: any) => item.status === 'Pending').length,
+      total: poArray.filter((po: any) => ['Pending', 'Approved'].includes(po.status)).length + 
+            soArray.filter((so: any) => ['Pending', 'Approved'].includes(so.status)).length + 
+            miscArray.filter((item: any) => item.status === 'Pending').length
     };
 
     return {
@@ -309,11 +309,11 @@ export async function fetchChartData(period: TimePeriod, customRange?: DateRange
 
         // Calculate revenue and expenses for this specific day
         const dayRevenue = soArray
-          .filter((so: any) => so.createdDate === dateString)
+          .filter((so: any) => so.createdDate === dateString && so.status === 'PAID')
           .reduce((sum: number, so: any) => sum + (so.amount || 0), 0);
 
         const dayExpenses = poArray
-          .filter((po: any) => po.createdDate === dateString)
+          .filter((po: any) => po.createdDate === dateString && po.status === 'RECEIVED')
           .reduce((sum: number, po: any) => sum + (po.amount || 0), 0);
 
         data.push({
@@ -331,11 +331,11 @@ export async function fetchChartData(period: TimePeriod, customRange?: DateRange
         const monthEnd = new Date(2026, i + 1, 0).toISOString().split('T')[0];
 
         const monthRevenue = soArray
-          .filter((so: any) => so.createdDate >= monthStart && so.createdDate <= monthEnd)
+          .filter((so: any) => so.createdDate >= monthStart && so.createdDate <= monthEnd && so.status === 'PAID')
           .reduce((sum: number, so: any) => sum + (so.amount || 0), 0);
 
         const monthExpenses = poArray
-          .filter((po: any) => po.createdDate >= monthStart && po.createdDate <= monthEnd)
+          .filter((po: any) => po.createdDate >= monthStart && po.createdDate <= monthEnd && po.status === 'RECEIVED')
           .reduce((sum: number, po: any) => sum + (po.amount || 0), 0);
 
         data.push({

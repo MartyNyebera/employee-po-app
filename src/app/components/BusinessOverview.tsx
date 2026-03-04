@@ -158,12 +158,12 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                   <p className="text-2xl font-bold text-slate-900">
                     {formatCurrency(metrics.expenses)}
                   </p>
-                  <p className="text-xs text-slate-500">Purchase Orders</p>
+                  <p className="text-xs text-slate-500">Received Purchase Orders</p>
                 </>
               ) : (
                 <>
                   <p className="text-2xl font-bold text-slate-400">₱0</p>
-                  <p className="text-xs text-slate-500">No Purchase Orders yet</p>
+                  <p className="text-xs text-slate-500">No Received Purchase Orders</p>
                   {isAdmin && (
                     <Button variant="outline" size="sm" className="mt-2 text-xs">
                       Create PO →
@@ -191,12 +191,12 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                   <p className="text-2xl font-bold text-slate-900">
                     {formatCurrency(metrics.revenue)}
                   </p>
-                  <p className="text-xs text-slate-500">Sales Orders</p>
+                  <p className="text-xs text-slate-500">Paid Sales Orders</p>
                 </>
               ) : (
                 <>
                   <p className="text-2xl font-bold text-slate-400">₱0</p>
-                  <p className="text-xs text-slate-500">No Sales Orders yet</p>
+                  <p className="text-xs text-slate-500">No Paid Sales Orders</p>
                   {isAdmin && (
                     <Button variant="outline" size="sm" className="mt-2 text-xs">
                       Create SO →
@@ -303,7 +303,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 </div>
                 <div className="flex items-center gap-1">
                   <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>
-                  <span>Pending: {orderSummary?.purchaseOrders.pending || 0}</span>
+                  <span>Pending/Approved: {orderSummary?.purchaseOrders.pending || 0}</span>
                 </div>
                 <div className="flex items-center gap-1">
                   <div className="w-2 h-2 bg-red-500 rounded-full"></div>
@@ -331,11 +331,11 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
               <div className="space-y-1 text-xs">
                 <div className="flex items-center gap-1">
                   <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                  <span>Completed: {orderSummary?.salesOrders.completed || 0}</span>
+                  <span>Paid: {orderSummary?.salesOrders.completed || 0}</span>
                 </div>
                 <div className="flex items-center gap-1">
                   <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>
-                  <span>Pending: {orderSummary?.salesOrders.pending || 0}</span>
+                  <span>Pending/Approved: {orderSummary?.salesOrders.pending || 0}</span>
                 </div>
                 <div className="flex items-center gap-1">
                   <div className="w-2 h-2 bg-red-500 rounded-full"></div>
