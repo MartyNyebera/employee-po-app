@@ -13,7 +13,7 @@ interface PurchaseOrder {
   client: string;
   description: string;
   amount: number;
-  status: 'pending' | 'approved' | 'received';
+  status: 'pending' | 'approved' | 'received' | 'completed';
   createdDate: string;
   deliveryDate: string;
   assignedAssets: string[];
@@ -242,6 +242,7 @@ useEffect(() => {
                 <option value="pending">Pending</option>
                 <option value="approved">Approved</option>
                 <option value="received">Received</option>
+                <option value="completed">Completed</option>
               </select>
             </div>
             <div className="flex-1">
@@ -367,6 +368,7 @@ useEffect(() => {
                   <option value="pending">Pending</option>
                   <option value="approved">Approved</option>
                   <option value="received">Received</option>
+                  <option value="completed">Completed</option>
                 </select>
               </div>
 
