@@ -238,7 +238,25 @@ export default function TrackerPage() {
     const handleOnline = () => {
       setConnectionStatus('online');
       if (isTracking) {
-        syncOfflineData();
+        // Sync offline data when coming back online
+        const offlineData = localStorage.getItem(`gpsOffline_${deviceId}`);
+        if (offlineData) {
+          try {
+            const data = JSON.parse(offlineData);
+            fetch('/api/phone-location', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ deviceId, ...data }),
+            }).then(() => {
+              localStorage.removeItem(`gpsOffline_${deviceId}`);
+              setSendCount(c => c + 1);
+            }).catch(() => {
+              console.log('Offline sync failed, will retry later');
+            });
+          } catch (e) {
+            console.log('Offline sync failed, will retry later');
+          }
+        }
       }
     };
     
@@ -259,7 +277,7 @@ export default function TrackerPage() {
         clearInterval(sendIntervalRef.current);
       }
     };
-  }, [isTracking]);
+  }, [isTracking, deviceId]);
 
   return (
     <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%)', padding: '16px', fontFamily: 'system-ui, sans-serif' }}>

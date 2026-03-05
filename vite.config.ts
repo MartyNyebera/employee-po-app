@@ -10,6 +10,9 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:3001',
     },
+    hmr: {
+      port: 3000,
+    },
   },
   build: {
     outDir: 'dist',
