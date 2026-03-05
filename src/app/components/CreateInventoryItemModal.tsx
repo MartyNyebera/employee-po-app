@@ -49,7 +49,7 @@ export function CreateInventoryItemModal({ onClose, onCreated }: CreateInventory
     try {
       setLoading(true);
       
-      await fetchApi('/api/inventory', {
+      await fetchApi('/inventory', {
         method: 'POST',
         body: JSON.stringify({
           itemCode: form.itemCode,
