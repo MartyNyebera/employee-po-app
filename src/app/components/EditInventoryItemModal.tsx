@@ -28,11 +28,11 @@ export function EditInventoryItemModal({ item, onClose, onUpdated }: EditInvento
   const [form, setForm] = useState({
     itemName: item.itemName,
     description: item.description,
-    quantity: item.quantity,
+    quantity: item.quantity.toString(),
     unit: item.unit,
     location: item.location,
     supplier: item.supplier || '',
-    unitCost: item.unitCost || 0,
+    unitCost: item.unitCost ? item.unitCost.toString() : '',
   });
 
   const [loading, setLoading] = useState(false);
@@ -45,7 +45,10 @@ export function EditInventoryItemModal({ item, onClose, onUpdated }: EditInvento
       return;
     }
 
-    if (form.quantity < 0 || form.unitCost < 0) {
+    const quantity = parseFloat(form.quantity) || 0;
+    const unitCost = parseFloat(form.unitCost) || 0;
+    
+    if (quantity < 0 || unitCost < 0) {
       toast.error('Quantity and unit cost must be positive numbers');
       return;
     }
@@ -58,11 +61,11 @@ export function EditInventoryItemModal({ item, onClose, onUpdated }: EditInvento
         body: JSON.stringify({
           itemName: form.itemName,
           description: form.description,
-          quantity: form.quantity,
+          quantity: quantity,
           unit: form.unit,
           location: form.location,
           supplier: form.supplier,
-          unitCost: form.unitCost,
+          unitCost: unitCost,
         }),
       });
 
@@ -130,7 +133,7 @@ export function EditInventoryItemModal({ item, onClose, onUpdated }: EditInvento
                 <Input
                   type="number"
                   value={form.quantity}
-                  onChange={(e) => setForm({ ...form, quantity: parseFloat(e.target.value) || 0 })}
+                  onChange={(e) => setForm({ ...form, quantity: e.target.value })}
                   placeholder="0"
                   min="0"
                   className="w-full"
@@ -183,7 +186,7 @@ export function EditInventoryItemModal({ item, onClose, onUpdated }: EditInvento
               <Input
                 type="number"
                 value={form.unitCost}
-                onChange={(e) => setForm({ ...form, unitCost: parseFloat(e.target.value) || 0 })}
+                onChange={(e) => setForm({ ...form, unitCost: e.target.value })}
                 placeholder="0.00"
                 min="0"
                 step="0.01"
@@ -196,7 +199,7 @@ export function EditInventoryItemModal({ item, onClose, onUpdated }: EditInvento
               <div className="flex justify-between text-sm">
                 <span className="text-slate-600">Total Value:</span>
                 <span className="font-semibold text-slate-900">
-                  ₱{(form.quantity * form.unitCost).toFixed(2)}
+                  ₱{((parseFloat(form.quantity) || 0) * (parseFloat(form.unitCost) || 0)).toFixed(2)}
                 </span>
               </div>
             </div>
