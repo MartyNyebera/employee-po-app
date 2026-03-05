@@ -457,11 +457,11 @@ app.post('/api/auth/login', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-// In-memory store: deviceId -> latest position
+// In-memory cache: deviceId -> latest position (fast reads, backed by DB)
 const mobileLocations = new Map();
 
 // POST /api/phone-location
-app.post('/api/phone-location', (req, res) => {
+app.post('/api/phone-location', async (req, res) => {
   const { deviceId, lat, lng, accuracy, speed, heading, timestamp } = req.body;
   if (!deviceId || typeof lat !== 'number' || typeof lng !== 'number') {
     return res.status(400).json({ error: 'deviceId, lat, lng are required' });
@@ -469,7 +469,7 @@ app.post('/api/phone-location', (req, res) => {
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
     return res.status(400).json({ error: 'Invalid lat/lng range' });
   }
-  
+
   const now = Date.now();
   const locationData = {
     deviceId: String(deviceId),
@@ -481,17 +481,94 @@ app.post('/api/phone-location', (req, res) => {
     lastSeen: now,
     serverTime: now,
   };
-  
+
+  // Update in-memory cache
   mobileLocations.set(String(deviceId), locationData);
-  
-  // Log for debugging (optional)
+
+  // Persist to DB (upsert) so data survives server restarts
+  try {
+    await query(
+      `INSERT INTO gps_locations (device_id, lat, lng, accuracy, speed, heading, device_timestamp, last_seen)
+       VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0), to_timestamp($8 / 1000.0))
+       ON CONFLICT (device_id) DO UPDATE SET
+         lat = EXCLUDED.lat,
+         lng = EXCLUDED.lng,
+         accuracy = EXCLUDED.accuracy,
+         speed = EXCLUDED.speed,
+         heading = EXCLUDED.heading,
+         device_timestamp = EXCLUDED.device_timestamp,
+         last_seen = EXCLUDED.last_seen`,
+      [String(deviceId), lat, lng, accuracy ?? null, speed ?? null, heading ?? null, timestamp || now, now]
+    );
+  } catch (dbErr) {
+    // Table may not exist yet — create it then retry
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS gps_locations (
+          device_id TEXT PRIMARY KEY,
+          lat DOUBLE PRECISION NOT NULL,
+          lng DOUBLE PRECISION NOT NULL,
+          accuracy DOUBLE PRECISION,
+          speed DOUBLE PRECISION,
+          heading DOUBLE PRECISION,
+          device_timestamp TIMESTAMPTZ,
+          last_seen TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      await query(
+        `INSERT INTO gps_locations (device_id, lat, lng, accuracy, speed, heading, device_timestamp, last_seen)
+         VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0), to_timestamp($8 / 1000.0))
+         ON CONFLICT (device_id) DO UPDATE SET
+           lat = EXCLUDED.lat,
+           lng = EXCLUDED.lng,
+           accuracy = EXCLUDED.accuracy,
+           speed = EXCLUDED.speed,
+           heading = EXCLUDED.heading,
+           device_timestamp = EXCLUDED.device_timestamp,
+           last_seen = EXCLUDED.last_seen`,
+        [String(deviceId), lat, lng, accuracy ?? null, speed ?? null, heading ?? null, timestamp || now, now]
+      );
+    } catch (retryErr) {
+      console.error('[GPS] DB upsert failed:', retryErr.message);
+    }
+  }
+
   console.log(`[GPS] Device ${deviceId} at ${lat.toFixed(6)}, ${lng.toFixed(6)} - Speed: ${speed || 0} km/h`);
-  
-  res.json({ 
-    ok: true, 
-    timestamp: now,
-    devicesCount: mobileLocations.size
-  });
+
+  res.json({ ok: true, timestamp: now, devicesCount: mobileLocations.size });
+});
+
+// GET /api/phone-location/devices - Get all active devices (from DB)
+app.get('/api/phone-location/devices', async (req, res) => {
+  try {
+    // Try DB first (survives restarts), filter last 2 hours
+    const result = await query(`
+      SELECT device_id, lat, lng, accuracy, speed, heading,
+             EXTRACT(EPOCH FROM device_timestamp) * 1000 AS timestamp,
+             EXTRACT(EPOCH FROM last_seen) * 1000 AS last_seen
+      FROM gps_locations
+      WHERE last_seen > NOW() - INTERVAL '2 hours'
+      ORDER BY last_seen DESC
+    `);
+    const devices = result.rows.map(row => ({
+      deviceId: row.device_id,
+      lat: parseFloat(row.lat),
+      lng: parseFloat(row.lng),
+      accuracy: row.accuracy != null ? parseFloat(row.accuracy) : null,
+      speed: row.speed != null ? parseFloat(row.speed) : null,
+      heading: row.heading != null ? parseFloat(row.heading) : null,
+      timestamp: parseFloat(row.timestamp),
+      lastSeen: parseFloat(row.last_seen),
+      serverTime: parseFloat(row.last_seen),
+    }));
+    // Also update in-memory cache from DB
+    devices.forEach(d => mobileLocations.set(d.deviceId, d));
+    return res.json({ devices, count: devices.length });
+  } catch (dbErr) {
+    // DB not ready — fall back to in-memory cache
+    const devices = Array.from(mobileLocations.values());
+    return res.json({ devices, count: devices.length });
+  }
 });
 
 // GET /api/mobile/:deviceId/latest
@@ -499,22 +576,6 @@ app.get('/api/mobile/:deviceId/latest', (req, res) => {
   const pos = mobileLocations.get(req.params.deviceId);
   if (!pos) return res.status(404).json({ error: 'No location found for this device' });
   res.json(pos);
-});
-
-// GET /api/phone-location/devices - Get all active devices
-app.get('/api/phone-location/devices', (req, res) => {
-  const devices = Array.from(mobileLocations.values()).map(device => ({
-    deviceId: device.deviceId,
-    lat: device.lat,
-    lng: device.lng,
-    speed: device.speed,
-    heading: device.heading,
-    accuracy: device.accuracy,
-    timestamp: device.timestamp,
-    lastSeen: device.lastSeen,
-    serverTime: device.serverTime
-  }));
-  res.json({ devices, count: devices.length });
 });
 
 app.get('/api/phone-location/:deviceId/latest', (req, res) => {
