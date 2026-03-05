@@ -154,15 +154,64 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
       return;
     }
 
-    // Extract additional data from PO (assuming it's stored in the description or as extended fields)
-    // For now, we'll use placeholder data that would come from the new form structure
-    const customerData = {
+    // Try to parse line items from description field
+    let lineItems = [];
+    let customerData = {
       name: po.client,
-      address: po.description.includes('Address:') ? po.description.split('Address:')[1].split('\n')[0].trim() : '[Customer Address]',
-      contact: po.description.includes('Contact:') ? po.description.split('Contact:')[1].split('\n')[0].trim() : '[Customer Contact]',
-      preparedBy: po.description.includes('Prepared By:') ? po.description.split('Prepared By:')[1].split('\n')[0].trim() : '[Prepared By]',
-      reviewedBy: po.description.includes('Reviewed By:') ? po.description.split('Reviewed By:')[1].split('\n')[0].trim() : '[Reviewed By]',
+      address: '[Customer Address]',
+      contact: '[Customer Contact]',
+      preparedBy: '[Prepared By]',
+      reviewedBy: '[Reviewed By]',
     };
+
+    try {
+      // Check if description contains JSON line items
+      if (po.description.includes('Line Items:')) {
+        const lineItemsMatch = po.description.match(/Line Items:\s*(\[.*?\])/);
+        if (lineItemsMatch) {
+          lineItems = JSON.parse(lineItemsMatch[1]);
+        }
+      }
+
+      // Extract customer data from description
+      if (po.description.includes('Address:')) {
+        customerData.address = po.description.split('Address:')[1].split('\n')[0].trim();
+      }
+      if (po.description.includes('Contact:')) {
+        customerData.contact = po.description.split('Contact:')[1].split('\n')[0].trim();
+      }
+      if (po.description.includes('Prepared By:')) {
+        customerData.preparedBy = po.description.split('Prepared By:')[1].split('\n')[0].trim();
+      }
+      if (po.description.includes('Reviewed By:')) {
+        customerData.reviewedBy = po.description.split('Reviewed By:')[1].split('\n')[0].trim();
+      }
+    } catch (error) {
+      console.error('Error parsing PO description:', error);
+      // Fallback to single item if parsing fails
+      lineItems = [{
+        id: "1",
+        no: 1,
+        description: po.description.split('Line Items:')[0] || po.description,
+        quantity: 1,
+        unit: "Lot",
+        unitPrice: po.amount,
+        amount: po.amount
+      }];
+    }
+
+    // If no line items found, create a default one
+    if (lineItems.length === 0) {
+      lineItems = [{
+        id: "1",
+        no: 1,
+        description: po.description.split('Line Items:')[0] || po.description,
+        quantity: 1,
+        unit: "Lot",
+        unitPrice: po.amount,
+        amount: po.amount
+      }];
+    }
 
     const printContent = `
       <!DOCTYPE html>
@@ -440,14 +489,16 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
             </tr>
           </thead>
           <tbody>
-            <tr>
-              <td class="number-col">1</td>
-              <td class="description-col">${po.description}</td>
-              <td class="quantity-col">1</td>
-              <td class="unit-col">Lot</td>
-              <td class="unit-cost-col">${formatCurrency(po.amount)}</td>
-              <td class="amount-col">${formatCurrency(po.amount)}</td>
-            </tr>
+            ${lineItems.map((item: any) => `
+              <tr>
+                <td class="number-col">${item.no || item.id}</td>
+                <td class="description-col">${item.description || ''}</td>
+                <td class="quantity-col">${item.quantity || 1}</td>
+                <td class="unit-col">${item.unit || 'Lot'}</td>
+                <td class="unit-cost-col">${formatCurrency(item.unitPrice || item.amount || 0)}</td>
+                <td class="amount-col">${formatCurrency(item.amount || 0)}</td>
+              </tr>
+            `).join('')}
           </tbody>
         </table>
         
