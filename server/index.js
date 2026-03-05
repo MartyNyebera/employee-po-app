@@ -619,31 +619,38 @@ app.get('/api/phone-location/devices', async (req, res) => {
   try {
     // Try DB first (survives restarts), filter last 2 hours
     const result = await query(`
-      SELECT device_id, lat, lng, accuracy, speed, heading,
-             EXTRACT(EPOCH FROM device_timestamp) * 1000 AS timestamp,
-             EXTRACT(EPOCH FROM last_seen) * 1000 AS last_seen
-      FROM gps_locations
-      WHERE last_seen > NOW() - INTERVAL '2 hours'
-      ORDER BY last_seen DESC
+      SELECT gl.device_id, gl.lat, gl.lng, gl.accuracy, gl.speed, gl.heading, gl.device_timestamp, gl.last_seen,
+             v.id as vehicle_id, v.unit_name as vehicle_name, v.plate_number,
+             d.driver_name, d.contact as driver_contact,
+             del.id as delivery_id, del.so_number, del.customer_name, del.customer_address, del.status as delivery_status
+      FROM gps_locations gl
+      LEFT JOIN vehicles v ON gl.device_id = v.tracker_id
+      LEFT JOIN drivers d ON v.id = d.assigned_vehicle_id
+      LEFT JOIN deliveries del ON v.id = del.vehicle_id AND del.status IN ('Assigned', 'Picked Up', 'In Transit', 'Arrived')
+      WHERE gl.last_seen >= NOW() - INTERVAL '2 hours'
+      ORDER BY gl.last_seen DESC
     `);
-    const devices = result.rows.map(row => ({
-      deviceId: row.device_id,
-      lat: parseFloat(row.lat),
-      lng: parseFloat(row.lng),
-      accuracy: row.accuracy != null ? parseFloat(row.accuracy) : null,
-      speed: row.speed != null ? parseFloat(row.speed) : null,
-      heading: row.heading != null ? parseFloat(row.heading) : null,
-      timestamp: parseFloat(row.timestamp),
-      lastSeen: parseFloat(row.last_seen),
-      serverTime: parseFloat(row.last_seen),
-    }));
-    // Also update in-memory cache from DB
-    devices.forEach(d => mobileLocations.set(d.deviceId, d));
-    return res.json({ devices, count: devices.length });
-  } catch (dbErr) {
-    // DB not ready — fall back to in-memory cache
-    const devices = Array.from(mobileLocations.values());
-    return res.json({ devices, count: devices.length });
+
+    // If DB empty, fall back to in-memory cache
+    if (result.rows.length === 0) {
+      const devices = Array.from(mobileLocations.entries()).map(([deviceId, pos]) => ({
+        deviceId,
+        lat: pos.lat,
+        lng: pos.lng,
+        accuracy: pos.accuracy,
+        speed: pos.speed,
+        heading: pos.heading,
+        timestamp: pos.timestamp,
+        lastSeen: pos.timestamp
+      }));
+      res.json({ devices });
+      return;
+    }
+
+    res.json({ devices: result.rows });
+  } catch (err) {
+    console.error('Error fetching GPS devices:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 

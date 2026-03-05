@@ -22,6 +22,16 @@ interface GPSDevice {
   accuracy: number | null;
   timestamp: number;
   lastSeen: number;
+  vehicle_id?: string;
+  vehicle_name?: string;
+  plate_number?: string;
+  driver_name?: string;
+  driver_contact?: string;
+  delivery_id?: string;
+  so_number?: string;
+  customer_name?: string;
+  customer_address?: string;
+  delivery_status?: string;
 }
 
 export function WorkingMap() {
@@ -83,11 +93,11 @@ export function WorkingMap() {
       const icon = L.divIcon({
         className: '',
         html: `<div style="
-          background:#2563eb;width:36px;height:36px;border-radius:50% 50% 50% 0;
+          background:${device.vehicle_name ? '#dc2626' : '#2563eb'};width:36px;height:36px;border-radius:50% 50% 50% 0;
           transform:rotate(-45deg);border:3px solid white;
           box-shadow:0 2px 8px rgba(0,0,0,0.35);
           display:flex;align-items:center;justify-content:center;">
-          <span style="transform:rotate(45deg);font-size:18px;">📱</span>
+          <span style="transform:rotate(45deg);font-size:18px;">${device.vehicle_name ? '🚗' : '📱'}</span>
         </div>`,
         iconSize: [36, 36],
         iconAnchor: [18, 36],
@@ -95,8 +105,27 @@ export function WorkingMap() {
       });
 
       const popupHtml = `
-        <div style="min-width:180px;font-family:sans-serif;">
-          <div style="font-weight:700;font-size:13px;margin-bottom:6px;color:#1e293b;">📱 ${device.name}</div>
+        <div style="min-width:220px;font-family:sans-serif;">
+          <div style="font-weight:700;font-size:13px;margin-bottom:6px;color:#1e293b;">
+            ${device.vehicle_name ? '� ' + device.vehicle_name : '� ' + device.name}
+            ${device.plate_number ? '<span style="font-size:11px;color:#64748b;"> (' + device.plate_number + ')</span>' : ''}
+          </div>
+          ${device.driver_name ? `
+            <div style="font-size:11px;color:#475569;margin-bottom:4px;">
+              <div>👤 <b>Driver:</b> ${device.driver_name}</div>
+              ${device.driver_contact ? '<div>📞 <b>Contact:</b> ' + device.driver_contact + '</div>' : ''}
+            </div>
+          ` : ''}
+          ${device.delivery_id ? `
+            <div style="background:#f8fafc;border-left:3px solid #3b82f6;padding:6px;margin:6px 0;border-radius:4px;">
+              <div style="font-weight:600;font-size:11px;color:#1e40af;margin-bottom:3px;">📦 Active Delivery</div>
+              <div style="font-size:10px;color:#475569;line-height:1.4;">
+                <div><b>SO:</b> ${device.so_number || '—'}</div>
+                <div><b>Customer:</b> ${device.customer_name || '—'}</div>
+                <div><b>Status:</b> <span style="color:#3b82f6;font-weight:500;">${device.delivery_status || '—'}</span></div>
+              </div>
+            </div>
+          ` : ''}
           <div style="font-size:11px;color:#475569;line-height:1.7;">
             <div>🟢 <b>Status:</b> Online</div>
             <div>📍 <b>Lat:</b> ${device.lat.toFixed(6)}</div>
@@ -152,6 +181,16 @@ export function WorkingMap() {
             accuracy: d.accuracy ?? null,
             timestamp: d.timestamp,
             lastSeen: d.lastSeen || d.timestamp,
+            vehicle_id: d.vehicle_id,
+            vehicle_name: d.vehicle_name,
+            plate_number: d.plate_number,
+            driver_name: d.driver_name,
+            driver_contact: d.driver_contact,
+            delivery_id: d.delivery_id,
+            so_number: d.so_number,
+            customer_name: d.customer_name,
+            customer_address: d.customer_address,
+            delivery_status: d.delivery_status,
           }));
           setDevices(mapped);
         } else {
