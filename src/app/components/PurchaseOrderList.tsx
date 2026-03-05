@@ -80,6 +80,14 @@ const formatCurrency = (amount: number) => {
     }).format(amount);
   };
 
+  const formatDate = (dateStr: string) => {
+    return new Date(dateStr).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+  };
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'pending':
@@ -140,39 +148,406 @@ const formatCurrency = (amount: number) => {
   };
 
   const handlePrintPO = (po: PurchaseOrder) => {
-    // Create a professional print window with PO template
+    // Create a professional print window with the same template as Sales Order
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
-      toast.error('Could not open print window');
+      toast.error('Please allow popups to print PO documents');
       return;
+    }
+
+    // Try to parse line items from description field (same as Sales Order)
+    let lineItems = [];
+    let supplierData = {
+      name: po.client,
+      address: '[Supplier Address]',
+      contact: '[Supplier Contact]',
+      preparedBy: '[Prepared By]',
+      reviewedBy: '[Reviewed By]',
+    };
+
+    try {
+      // Check if description contains JSON line items
+      if (po.description.includes('Line Items:')) {
+        const lineItemsMatch = po.description.match(/Line Items:\s*(\[.*?\])/);
+        if (lineItemsMatch) {
+          lineItems = JSON.parse(lineItemsMatch[1]);
+        }
+      }
+
+      // Extract supplier data from description
+      if (po.description.includes('Address:')) {
+        supplierData.address = po.description.split('Address:')[1].split('\n')[0].trim();
+      }
+      if (po.description.includes('Contact:')) {
+        supplierData.contact = po.description.split('Contact:')[1].split('\n')[0].trim();
+      }
+      if (po.description.includes('Prepared By:')) {
+        supplierData.preparedBy = po.description.split('Prepared By:')[1].split('\n')[0].trim();
+      }
+      if (po.description.includes('Reviewed By:')) {
+        supplierData.reviewedBy = po.description.split('Reviewed By:')[1].split('\n')[0].trim();
+      }
+    } catch (error) {
+      console.error('Error parsing PO description:', error);
+      // Fallback to single item if parsing fails
+      lineItems = [{
+        id: "1",
+        no: 1,
+        description: po.description.split('Line Items:')[0] || po.description,
+        quantity: 1,
+        unit: "Lot",
+        unitPrice: po.amount,
+        amount: po.amount
+      }];
+    }
+
+    // If no line items found, create a default one
+    if (lineItems.length === 0) {
+      lineItems = [{
+        id: "1",
+        no: 1,
+        description: po.description.split('Line Items:')[0] || po.description,
+        quantity: 1,
+        unit: "Lot",
+        unitPrice: po.amount,
+        amount: po.amount
+      }];
     }
 
     const printContent = `
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Purchase Order ${po.poNumber}</title>
+        <title>Purchase Order - ${po.poNumber}</title>
         <style>
-          body { font-family: Arial, sans-serif; padding: 20px; }
-          .header { text-align: center; margin-bottom: 30px; }
-          .po-info { margin-bottom: 20px; }
-          .field { margin-bottom: 10px; }
-          .label { font-weight: bold; }
-          @media print { body { margin: 0; } }
+          @page {
+            margin: 0.5in;
+            size: A4;
+          }
+          body {
+            font-family: 'Times New Roman', serif;
+            font-size: 11pt;
+            line-height: 1.3;
+            color: black;
+            margin: 0;
+            padding: 15px;
+            background: white;
+          }
+          
+          /* Header Section */
+          .header-date {
+            text-align: right;
+            font-size: 9pt;
+            margin-bottom: 5px;
+          }
+          .system-title {
+            text-align: center;
+            font-size: 10pt;
+            font-weight: bold;
+            margin-bottom: 5px;
+          }
+          .company-name {
+            text-align: center;
+            font-size: 14pt;
+            font-weight: bold;
+            margin-bottom: 3px;
+          }
+          .company-address {
+            text-align: center;
+            font-size: 9pt;
+            margin-bottom: 2px;
+          }
+          .contact-details {
+            text-align: center;
+            font-size: 8pt;
+            margin-bottom: 2px;
+          }
+          .proprietor {
+            text-align: center;
+            font-size: 8pt;
+            font-weight: bold;
+            margin-bottom: 8px;
+          }
+          .document-title {
+            text-align: center;
+            font-size: 16pt;
+            font-weight: bold;
+            border: 2px solid black;
+            padding: 8px;
+            margin-bottom: 15px;
+            background: white;
+          }
+          
+          /* Info Boxes */
+          .info-section {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+          }
+          .info-box {
+            flex: 1;
+            border: 1px solid black;
+            padding: 8px;
+            min-height: 60px;
+          }
+          .info-box-title {
+            font-weight: bold;
+            font-size: 9pt;
+            margin-bottom: 5px;
+            text-align: center;
+          }
+          .info-content {
+            font-size: 8pt;
+            line-height: 1.2;
+          }
+          
+          /* Payment Terms */
+          .payment-terms {
+            text-align: center;
+            font-weight: bold;
+            font-size: 9pt;
+            margin-bottom: 15px;
+            padding: 5px;
+            border: 1px solid black;
+          }
+          
+          /* Items Table */
+          .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 15px;
+            font-size: 8pt;
+          }
+          .items-table th {
+            border: 1px solid black;
+            padding: 5px;
+            text-align: center;
+            font-weight: bold;
+            background: #f5f5f5;
+          }
+          .items-table td {
+            border: 1px solid black;
+            padding: 4px;
+            text-align: center;
+          }
+          .description-col {
+            text-align: left !important;
+          }
+          .number-col { width: 8%; }
+          .description-col { width: 40%; }
+          .quantity-col { width: 12%; }
+          .unit-col { width: 12%; }
+          .unit-cost-col { width: 14%; }
+          .amount-col { width: 14%; }
+          
+          /* Summary Section */
+          .summary-section {
+            margin-bottom: 15px;
+          }
+          .summary-box {
+            border: 1px solid black;
+            padding: 10px;
+            width: 300px;
+            margin-left: auto;
+          }
+          .summary-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+            font-size: 9pt;
+          }
+          .summary-label {
+            font-weight: bold;
+          }
+          .summary-value {
+            text-align: right;
+          }
+          
+          /* Terms Section */
+          .terms-section {
+            font-size: 8pt;
+            margin-bottom: 20px;
+            line-height: 1.3;
+          }
+          
+          /* Signature Section */
+          .signature-section {
+            margin-top: 30px;
+          }
+          .approved-header {
+            text-align: center;
+            font-weight: bold;
+            font-size: 10pt;
+            margin-bottom: 15px;
+          }
+          .signature-boxes {
+            display: flex;
+            gap: 20px;
+          }
+          .signature-box {
+            flex: 1;
+            border: 1px solid black;
+            padding: 10px;
+            text-align: center;
+          }
+          .signature-title {
+            font-weight: bold;
+            font-size: 9pt;
+            margin-bottom: 20px;
+          }
+          .signature-line {
+            border-bottom: 1px solid black;
+            margin: 30px 0 5px 0;
+          }
+          .signature-name {
+            font-size: 8pt;
+          }
+          
+          /* Footer */
+          .footer {
+            text-align: center;
+            font-size: 8pt;
+            margin-top: 20px;
+            border-top: 1px solid black;
+            padding-top: 10px;
+          }
+          .computer-generated {
+            text-align: center;
+            font-size: 8pt;
+            font-style: italic;
+            margin-top: 10px;
+          }
         </style>
       </head>
       <body>
-        <div class="header">
-          <h1>PURCHASE ORDER</h1>
-          <h2>${po.poNumber}</h2>
+        <!-- HEADER SECTION -->
+        <div class="header-date">${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}     Purchase Order</div>
+        <div class="system-title">Kimoel Tracking System</div>
+        <div class="company-name">KIMOEL TRADING & CONSTRUCTION INCORPORATED</div>
+        <div class="company-address">PUROK 1, LODLOD, LIPA CITY, BATANGAS</div>
+        <div class="contact-details">Tel: (043) - 741 - 2023 | Email: kimoel_leotagle@yahoo.com</div>
+        <div class="proprietor">LEO TAGLE (Mobile: 0917 - 628 - 3217)</div>
+        <div class="document-title">PURCHASE ORDER</div>
+        
+        <!-- TOP INFO BOXES -->
+        <div class="info-section">
+          <div class="info-box">
+            <div class="info-box-title">SUPPLIER NAME AND ADDRESS</div>
+            <div class="info-content">
+              ${supplierData.name}<br>
+              ${supplierData.address}<br>
+              ${supplierData.contact}
+            </div>
+          </div>
+          <div class="info-box">
+            <div class="info-box-title">BILL TO</div>
+            <div class="info-content">
+              KIMOEL TRADING & CONSTRUCTION INCORPORATED<br>
+              PUROK 1, LODLOD, LIPA CITY, BATANGAS<br>
+              Tel: (043) - 741 - 2023<br>
+              Email: kimoel_leotagle@yahoo.com
+            </div>
+          </div>
+          <div class="info-box">
+            <div class="info-content">
+              <strong>PO Date:</strong> ${formatDate(po.createdDate)}<br>
+              <strong>PO Number:</strong> ${po.poNumber}<br>
+              <strong>Page:</strong> 1 of 1<br>
+              <strong>PO TYPE:</strong> ☑ Domestic ☐ Foreign<br>
+              <strong>VAT Type:</strong> ☑ Vatable ☐ Non-Vatable
+            </div>
+          </div>
         </div>
-        <div class="po-info">
-          <div class="field"><span class="label">Client:</span> ${po.client}</div>
-          <div class="field"><span class="label">Status:</span> ${po.status}</div>
-          <div class="field"><span class="label">Date:</span> ${po.createdDate}</div>
-          <div class="field"><span class="label">Delivery Date:</span> ${po.deliveryDate}</div>
-          <div class="field"><span class="label">Total Amount:</span> ${formatCurrency(po.amount)}</div>
-          <div class="field"><span class="label">Description:</span> ${po.description}</div>
+        
+        <!-- PAYMENT TERMS -->
+        <div class="payment-terms">
+          PAYMENT TERMS: 30 days from receipt/acceptance
+        </div>
+        
+        <!-- LINE ITEMS TABLE -->
+        <table class="items-table">
+          <thead>
+            <tr>
+              <th class="number-col">No.</th>
+              <th class="description-col">Description</th>
+              <th class="quantity-col">Quantity</th>
+              <th class="unit-col">Unit</th>
+              <th class="unit-cost-col">Unit Cost</th>
+              <th class="amount-col">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${lineItems.map((item: any) => `
+              <tr>
+                <td class="number-col">${item.no || item.id}</td>
+                <td class="description-col">${item.description || ''}</td>
+                <td class="quantity-col">${item.quantity || 1}</td>
+                <td class="unit-col">${item.unit || 'Lot'}</td>
+                <td class="unit-cost-col">${formatCurrency(item.unitPrice || item.amount || 0)}</td>
+                <td class="amount-col">${formatCurrency(item.amount || 0)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+        
+        <!-- SUMMARY SECTION -->
+        <div class="summary-section">
+          <div class="summary-box">
+            <div class="summary-row">
+              <div class="summary-label">Sub Total:</div>
+              <div class="summary-value">${formatCurrency(po.amount)}</div>
+            </div>
+            <div class="summary-row">
+              <div class="summary-label">EWT:</div>
+              <div class="summary-value">0.00</div>
+            </div>
+            <div class="summary-row">
+              <div class="summary-label">VAT Amount:</div>
+              <div class="summary-value">0.00</div>
+            </div>
+            <div class="summary-row">
+              <div class="summary-label">Total Amount:</div>
+              <div class="summary-value">${formatCurrency(po.amount)}</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- TERMS & CONDITIONS -->
+        <div class="terms-section">
+          <strong>TERMS & CONDITIONS:</strong><br>
+          1. Prices quoted are firm and valid for 30 days from PO date.<br>
+          2. Delivery shall be made to the specified address within the agreed timeframe.<br>
+          3. Materials shall conform to specifications and quality standards.<br>
+          4. Payment shall be made within 30 days from receipt and acceptance of materials.<br>
+          5. This PO is governed by the laws of the Republic of the Philippines.
+        </div>
+        
+        <!-- SIGNATURE SECTION -->
+        <div class="signature-section">
+          <div class="approved-header">APPROVED</div>
+          <div class="signature-boxes">
+            <div class="signature-box">
+              <div class="signature-title">Prepared By:</div>
+              <div class="signature-line"></div>
+              <div class="signature-name">Name: ${supplierData.preparedBy}</div>
+            </div>
+            <div class="signature-box">
+              <div class="signature-title">Reviewed By:</div>
+              <div class="signature-line"></div>
+              <div class="signature-name">Name: ${supplierData.reviewedBy}</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- FOOTER -->
+        <div class="footer">
+          <strong>KIMOEL TRADING & CONSTRUCTION INCORPORATED</strong><br>
+          PUROK 1, LODLOD, LIPA CITY, BATANGAS<br>
+          Tel: (043) - 741 - 2023 | Email: kimoel_leotagle@yahoo.com
+        </div>
+        
+        <div class="computer-generated">
+          Computer Generated - No Signature Required
         </div>
       </body>
       </html>
@@ -180,7 +555,12 @@ const formatCurrency = (amount: number) => {
 
     printWindow.document.write(printContent);
     printWindow.document.close();
-    printWindow.print();
+    
+    // Wait for content to load, then print
+    printWindow.onload = () => {
+      printWindow.print();
+      printWindow.close();
+    };
   };
 
 const filteredPOs = purchaseOrders.filter(po => {
