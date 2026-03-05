@@ -38,6 +38,18 @@ export interface OrderSummary {
     misc: number;
     total: number;
   };
+  deliveries: {
+    total: number;
+    pending: number;
+    assigned: number;
+    pickedUp: number;
+    inTransit: number;
+    arrived: number;
+    completed: number;
+    cancelled: number;
+    completedToday: number;
+    currentlyActive: number;
+  };
 }
 
 export interface InventorySummary {
@@ -200,6 +212,15 @@ export async function fetchOrderSummary(period: TimePeriod, customRange?: DateRa
       totalAmount: miscArray.reduce((sum: number, item: any) => sum + (item.amount || 0), 0)
     };
 
+    // Fetch Delivery Metrics
+    let deliveryMetrics: any = {};
+    try {
+      const deliveries = await fetchApi('/delivery-metrics');
+      deliveryMetrics = deliveries || {};
+    } catch {
+      deliveryMetrics = {};
+    }
+
     // Calculate pending approval across all modules
     const pendingApproval = {
       po: poArray.filter((po: any) => ['pending', 'approved'].includes(po.status)).length,
@@ -213,6 +234,7 @@ export async function fetchOrderSummary(period: TimePeriod, customRange?: DateRa
       purchaseOrders: purchaseOrderSummary,
       salesOrders: salesOrderSummary,
       miscellaneous: miscellaneousSummary,
+      deliveries: deliveryMetrics,
       pendingApproval
     };
   } catch (error) {
@@ -222,6 +244,7 @@ export async function fetchOrderSummary(period: TimePeriod, customRange?: DateRa
       purchaseOrders: { total: 0, received: 0, pending: 0, overdue: 0, totalAmount: 0 },
       salesOrders: { total: 0, completed: 0, pending: 0, overdue: 0, totalAmount: 0 },
       miscellaneous: { total: 0, completed: 0, pending: 0, cancelled: 0, totalAmount: 0 },
+      deliveries: { total: 0, pending: 0, assigned: 0, pickedUp: 0, inTransit: 0, arrived: 0, completed: 0, cancelled: 0, completedToday: 0, currentlyActive: 0 },
       pendingApproval: { po: 0, so: 0, misc: 0, total: 0 }
     };
   }

@@ -1023,6 +1023,13 @@ app.put('/api/deliveries/:id/status', async (req, res) => {
     if (delivery.rows[0]) {
       const soStatus = status === 'Completed' ? 'completed' : status === 'Cancelled' ? 'pending' : status;
       await query(`UPDATE sales_orders SET status=$1, updated_at=NOW() WHERE so_number=$2`, [soStatus, delivery.rows[0].so_number]);
+      
+      // If completed, release any reserved inventory (simple SO system - no line items)
+      if (status === 'Completed') {
+        console.log(`[Delivery] Completed ${req.params.id} - releasing reserved inventory for SO ${delivery.rows[0].so_number}`);
+        // In a full system, we would deduct specific line items here
+        // For now, we'll just note that inventory should be managed manually
+      }
     }
     const result = await query('SELECT * FROM deliveries WHERE id=$1', [req.params.id]);
     res.json(result.rows[0]);
@@ -1041,6 +1048,29 @@ app.get('/api/deliveries/driver/:driverId', async (req, res) => {
       [req.params.driverId]
     );
     res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/delivery-metrics
+app.get('/api/delivery-metrics', async (req, res) => {
+  try {
+    const result = await query(`
+      SELECT 
+        COUNT(*) as total_deliveries,
+        COUNT(*) FILTER (WHERE status = 'Pending') as pending,
+        COUNT(*) FILTER (WHERE status = 'Assigned') as assigned,
+        COUNT(*) FILTER (WHERE status = 'Picked Up') as picked_up,
+        COUNT(*) FILTER (WHERE status = 'In Transit') as in_transit,
+        COUNT(*) FILTER (WHERE status = 'Arrived') as arrived,
+        COUNT(*) FILTER (WHERE status = 'Completed') as completed,
+        COUNT(*) FILTER (WHERE status = 'Cancelled') as cancelled,
+        COUNT(*) FILTER (WHERE completed_time >= NOW() - INTERVAL '24 hours') as completed_today,
+        COUNT(*) FILTER (WHERE status = 'In Transit') as currently_active
+      FROM deliveries
+    `);
+    res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1742,8 +1772,15 @@ app.get('/api/sales-orders', async (req, res) => {
     }
 
     const result = await query(
-      `SELECT id, so_number, client, description, amount, status, created_date, delivery_date, assigned_assets
-       FROM sales_orders ${whereClause} ORDER BY created_date DESC`,
+      `SELECT so.*, 
+              d.driver_name, d.contact as driver_contact,
+              v.unit_name as vehicle_name, v.plate_number,
+              del.status as delivery_status, del.id as delivery_id
+       FROM sales_orders so
+       LEFT JOIN drivers d ON so.driver_id = d.id
+       LEFT JOIN vehicles v ON so.vehicle_id = v.id
+       LEFT JOIN deliveries del ON so.delivery_id = del.id
+       ${whereClause} ORDER BY so.created_date DESC`,
       params
     );
     
@@ -1757,6 +1794,12 @@ app.get('/api/sales-orders', async (req, res) => {
       createdDate: row.created_date,
       deliveryDate: row.delivery_date,
       assignedAssets: row.assigned_assets || [],
+      driverName: row.driver_name,
+      driverContact: row.driver_contact,
+      vehicleName: row.vehicle_name,
+      plateNumber: row.plate_number,
+      deliveryStatus: row.delivery_status,
+      deliveryId: row.delivery_id,
     }));
     
     res.json(orders);

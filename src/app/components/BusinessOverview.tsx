@@ -14,7 +14,8 @@ import {
   BarChart3,
   ArrowUpRight,
   ArrowDownRight,
-  Calendar
+  Calendar,
+  Truck
 } from 'lucide-react';
 import { ProperLineChart } from './ProperLineChart';
 import { 
@@ -279,6 +280,45 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
           </CardContent>
         </Card>
       </div>
+
+      {/* DELIVERY METRICS Card */}
+      <Card>
+        <CardContent className="p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="p-2 bg-amber-100 rounded-lg">
+              <Truck className="size-5 text-amber-600" />
+            </div>
+            <div className="text-right">
+              <p className="text-sm font-medium text-slate-600">DELIVERY METRICS</p>
+              <p className="text-xs text-slate-500">Real-time status</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="text-center">
+              <div className="text-2xl font-bold text-slate-900">{orderSummary?.deliveries?.total || 0}</div>
+              <p className="text-xs text-slate-500">Total</p>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-amber-600">{orderSummary?.deliveries?.inTransit || 0}</div>
+              <p className="text-xs text-slate-500">In Transit</p>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-green-600">{orderSummary?.deliveries?.completedToday || 0}</div>
+              <p className="text-xs text-slate-500">Completed Today</p>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-blue-600">{orderSummary?.deliveries?.completed || 0}</div>
+              <p className="text-xs text-slate-500">All Time</p>
+            </div>
+          </div>
+          <div className="mt-4 pt-4 border-t border-slate-100">
+            <div className="flex items-center justify-between text-xs text-slate-500">
+              <span>Status Breakdown:</span>
+              <span>Pending: {orderSummary?.deliveries?.pending || 0} | Assigned: {orderSummary?.deliveries?.assigned || 0} | Picked Up: {orderSummary?.deliveries?.pickedUp || 0} | Arrived: {orderSummary?.deliveries?.arrived || 0}</span>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* SECTION 3: FINANCIAL TREND GRAPH */}
       <Card>
