@@ -6,6 +6,7 @@ import { Input } from './ui/input';
 import { Package, Plus, Search, Filter, ArrowUpDown, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 import { CreateInventoryItemModal } from './CreateInventoryItemModal';
+import { EditInventoryItemModal } from './EditInventoryItemModal';
 
 interface InventoryItem {
   id: string;
@@ -14,8 +15,9 @@ interface InventoryItem {
   description: string;
   quantity: number;
   unit: string;
-  reorderLevel: number;
   location: string;
+  supplier: string;
+  unitCost: number;
   lastUpdated: string;
   status: 'in-stock' | 'low-stock' | 'out-of-stock';
 }
@@ -28,14 +30,15 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [filter, setFilter] = useState<'all' | 'in-stock' | 'low-stock' | 'out-of-stock'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<'itemCode' | 'itemName' | 'quantity'>('itemCode');
 
-  const determineStockStatus = (quantity: number, reorderLevel: number): 'in-stock' | 'low-stock' | 'out-of-stock' => {
+  const determineStockStatus = (quantity: number): 'in-stock' | 'low-stock' | 'out-of-stock' => {
     if (quantity === 0) return 'out-of-stock';
-    if (quantity <= reorderLevel) return 'low-stock';
+    if (quantity <= 10) return 'low-stock'; // Default reorder level of 10
     return 'in-stock';
   };
 
@@ -52,10 +55,11 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
         description: item.description || '',
         quantity: item.quantity || 0,
         unit: item.unit || 'pcs',
-        reorderLevel: item.reorder_level || 0,
         location: item.location || '',
+        supplier: item.supplier || '',
+        unitCost: item.unit_cost || 0,
         lastUpdated: item.last_updated || item.created_date || new Date().toISOString().split('T')[0],
-        status: item.status || determineStockStatus(item.quantity, item.reorder_level)
+        status: item.status || determineStockStatus(item.quantity)
       }));
       
       setInventory(transformedData);
@@ -245,7 +249,6 @@ useEffect(() => {
                   <th className="text-left p-4 font-medium text-sm text-slate-700">Description</th>
                   <th className="text-center p-4 font-medium text-sm text-slate-700">Quantity</th>
                   <th className="text-center p-4 font-medium text-sm text-slate-700">Unit</th>
-                  <th className="text-center p-4 font-medium text-sm text-slate-700">Reorder Level</th>
                   <th className="text-left p-4 font-medium text-sm text-slate-700">Location</th>
                   <th className="text-center p-4 font-medium text-sm text-slate-700">Status</th>
                   <th className="text-center p-4 font-medium text-sm text-slate-700">Actions</th>
@@ -267,7 +270,6 @@ useEffect(() => {
                       </span>
                     </td>
                     <td className="p-4 text-sm text-center">{item.unit}</td>
-                    <td className="p-4 text-sm text-center">{item.reorderLevel}</td>
                     <td className="p-4 text-sm">{item.location}</td>
                     <td className="p-4 text-center">{getStatusBadge(item.status)}</td>
                     <td className="p-4 text-center">
@@ -279,7 +281,7 @@ useEffect(() => {
                 ))
                 ) : (
                   <tr>
-                    <td colSpan={8} className="p-12 text-center">
+                    <td colSpan={7} className="p-12 text-center">
                       <Package className="size-12 text-slate-400 mx-auto mb-4" />
                       <h3 className="text-lg font-semibold text-slate-900 mb-2">No inventory items found</h3>
                       <p className="text-slate-500">Add your first inventory item to get started.</p>
@@ -315,10 +317,6 @@ useEffect(() => {
                 <p className="text-sm text-slate-900">{selectedItem.quantity} {selectedItem.unit}</p>
               </div>
               <div>
-                <label className="text-sm font-medium text-slate-700">Reorder Level</label>
-                <p className="text-sm text-slate-900">{selectedItem.reorderLevel} {selectedItem.unit}</p>
-              </div>
-              <div>
                 <label className="text-sm font-medium text-slate-700">Location</label>
                 <p className="text-sm text-slate-900">{selectedItem.location}</p>
               </div>
@@ -336,7 +334,7 @@ useEffect(() => {
                 Close
               </Button>
               {isAdmin && (
-                <Button>
+                <Button onClick={() => setShowEditModal(true)}>
                   Edit Item
                 </Button>
               )}
@@ -351,6 +349,22 @@ useEffect(() => {
           onClose={() => setShowCreateModal(false)}
           onCreated={() => {
             setShowCreateModal(false);
+            fetchInventory();
+          }}
+        />
+      )}
+
+      {/* Edit Item Modal */}
+      {showEditModal && selectedItem && (
+        <EditInventoryItemModal
+          item={selectedItem}
+          onClose={() => {
+            setShowEditModal(false);
+            setSelectedItem(null);
+          }}
+          onUpdated={() => {
+            setShowEditModal(false);
+            setSelectedItem(null);
             fetchInventory();
           }}
         />
