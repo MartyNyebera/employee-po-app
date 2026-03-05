@@ -14,8 +14,14 @@ interface CreateInventoryItemModalProps {
 }
 
 export function CreateInventoryItemModal({ onClose, onCreated }: CreateInventoryItemModalProps) {
+  const generateItemCode = () => {
+    const prefix = 'ITM';
+    const timestamp = Date.now().toString().slice(-6);
+    return `${prefix}-${timestamp}`;
+  };
+
   const [form, setForm] = useState({
-    itemCode: '',
+    itemCode: generateItemCode(),
     itemName: '',
     description: '',
     quantity: 0,
@@ -27,16 +33,10 @@ export function CreateInventoryItemModal({ onClose, onCreated }: CreateInventory
 
   const [loading, setLoading] = useState(false);
 
-  const generateItemCode = () => {
-    const prefix = 'ITM';
-    const timestamp = Date.now().toString().slice(-6);
-    return `${prefix}-${timestamp}`;
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!form.itemCode || !form.itemName || !form.location) {
+    if (!form.itemName || !form.location) {
       toast.error('Please fill in all required fields');
       return;
     }
@@ -90,22 +90,13 @@ export function CreateInventoryItemModal({ onClose, onCreated }: CreateInventory
             {/* Item Code and Name */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label className="block text-sm font-medium text-slate-700 mb-1">Item Code *</Label>
-                <div className="flex gap-2">
-                  <Input
-                    value={form.itemCode}
-                    onChange={(e) => setForm({ ...form, itemCode: e.target.value })}
-                    placeholder="e.g., ITM-001"
-                    className="flex-1"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setForm({ ...form, itemCode: generateItemCode() })}
-                  >
-                    Generate
-                  </Button>
-                </div>
+                <Label className="block text-sm font-medium text-slate-700 mb-1">Item Code</Label>
+                <Input
+                  value={form.itemCode}
+                  disabled
+                  className="bg-slate-50 text-slate-500"
+                  placeholder="Auto-generated"
+                />
               </div>
               <div>
                 <Label className="block text-sm font-medium text-slate-700 mb-1">Item Name *</Label>

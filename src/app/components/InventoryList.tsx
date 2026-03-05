@@ -50,14 +50,14 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
       // Transform API data to match component interface
       const transformedData = data.map((item: any) => ({
         id: item.id,
-        itemCode: item.item_code,
-        itemName: item.item_name,
+        itemCode: item.itemCode,
+        itemName: item.itemName,
         description: item.description || '',
         quantity: item.quantity || 0,
         unit: item.unit || 'pcs',
         location: item.location || '',
         supplier: item.supplier || '',
-        unitCost: item.unit_cost || 0,
+        unitCost: item.unitCost || 0,
         lastUpdated: item.last_updated || item.created_date || new Date().toISOString().split('T')[0],
         status: item.status || determineStockStatus(item.quantity)
       }));
