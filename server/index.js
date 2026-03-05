@@ -806,22 +806,50 @@ app.get('/api/delivery-metrics', async (req, res) => {
     const result = await query(`
       SELECT 
         COUNT(*) as total_deliveries,
-        COUNT(*) FILTER (WHERE status = 'Pending') as pending,
-        COUNT(*) FILTER (WHERE status = 'Assigned') as assigned,
-        COUNT(*) FILTER (WHERE status = 'Picked Up') as picked_up,
-        COUNT(*) FILTER (WHERE status = 'In Transit') as in_transit,
-        COUNT(*) FILTER (WHERE status = 'Arrived') as arrived,
-        COUNT(*) FILTER (WHERE status = 'Completed') as completed,
-        COUNT(*) FILTER (WHERE status = 'Cancelled') as cancelled,
-        COUNT(*) FILTER (WHERE completed_time >= NOW() - INTERVAL '24 hours') as completed_today,
-        COUNT(*) FILTER (WHERE status = 'In Transit') as currently_active
+        COUNT(CASE WHEN status = 'Pending' THEN 1 END) as pending,
+        COUNT(CASE WHEN status = 'Assigned' THEN 1 END) as assigned,
+        COUNT(CASE WHEN status = 'Picked Up' THEN 1 END) as picked_up,
+        COUNT(CASE WHEN status = 'In Transit' THEN 1 END) as in_transit,
+        COUNT(CASE WHEN status = 'Arrived' THEN 1 END) as arrived,
+        COUNT(CASE WHEN status = 'Completed' THEN 1 END) as completed,
+        COUNT(CASE WHEN status = 'Cancelled' THEN 1 END) as cancelled,
+        COUNT(CASE WHEN completed_time >= NOW() - INTERVAL '24 hours' THEN 1 END) as completed_today,
+        COUNT(CASE WHEN status = 'In Transit' THEN 1 END) as currently_active
       FROM deliveries
     `);
     console.log('[Delivery Metrics] Fetched:', result.rows[0]);
     res.json(result.rows[0]);
   } catch (err) {
     console.error('[Delivery Metrics] Error:', err);
+    // If deliveries table doesn't exist, return zeros
+    if (err.message && err.message.includes('deliveries')) {
+      console.log('[Delivery Metrics] Table not found, returning zeros');
+      return res.json({
+        total_deliveries: 0,
+        pending: 0,
+        assigned: 0,
+        picked_up: 0,
+        in_transit: 0,
+        arrived: 0,
+        completed: 0,
+        cancelled: 0,
+        completed_today: 0,
+        currently_active: 0
+      });
+    }
     res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/test-delivery (simple test endpoint)
+app.get('/api/test-delivery', async (req, res) => {
+  try {
+    const result = await query('SELECT COUNT(*) as count FROM deliveries');
+    console.log('[Test] Deliveries count:', result.rows[0]);
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('[Test] Error:', err);
+    res.json({ error: err.message, count: 0 });
   }
 });
 
