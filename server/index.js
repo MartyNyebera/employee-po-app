@@ -1486,6 +1486,10 @@ app.get('/api/inventory', async (req, res) => {
 
 // POST /api/inventory (admin only)
 app.post('/api/inventory', requireAdmin, async (req, res) => {
+  console.log('🔍 INVENTORY POST ROUTE HIT');
+  console.log('🔍 Request body:', req.body);
+  console.log('🔍 User from auth:', req.user);
+  
   try {
     const { 
       itemCode, 
@@ -1497,6 +1501,8 @@ app.post('/api/inventory', requireAdmin, async (req, res) => {
       location, 
       supplier 
     } = req.body;
+    
+    console.log('🔍 Parsed fields:', { itemCode, itemName, description, quantity, unit, unitCost, location, supplier });
     
     const id = `INV-${Date.now()}`;
     const defaultReorderLevel = 10; // Set default reorder level internally
@@ -2070,6 +2076,7 @@ if (process.env.NODE_ENV === 'production') {
 const httpServer = app.listen(PORT, '0.0.0.0', () => {
   console.log(`API server running at http://0.0.0.0:${PORT}`);
   console.log(`Using PORT from environment: ${PORT}`);
+  console.log('🔍 Inventory POST route registered: POST /api/inventory');
 });
 
 // ----- HTTPS server for phone GPS tracker (geolocation requires HTTPS) -----
