@@ -120,7 +120,11 @@ export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
   const updateLineItem = (id: string, field: keyof LineItem, value: string | number) => {
     setLineItems(prev => prev.map(item => {
       if (item.id === id) {
-        const updated = { ...item, [field]: value };
+        // Convert string values to numbers properly
+        const numValue = field === 'quantity' || field === 'unitCost' ? 
+          (typeof value === 'string' ? parseFloat(value) || 0 : value) : value;
+        
+        const updated = { ...item, [field]: numValue };
         // Recalculate amount if quantity or unit cost changed
         if (field === 'quantity' || field === 'unitCost') {
           updated.amount = Number(updated.quantity) * Number(updated.unitCost);
@@ -449,8 +453,8 @@ export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
                       <td className="border border-slate-300 px-2 py-1">
                         <input
                           type="number"
-                          value={item.quantity}
-                          onChange={e => updateLineItem(item.id, 'quantity', Number(e.target.value))}
+                          value={item.quantity || ''}
+                          onChange={e => updateLineItem(item.id, 'quantity', e.target.value)}
                           className="w-full px-1 py-0.5 text-xs border-0 bg-transparent"
                           min="1"
                         />
@@ -466,8 +470,8 @@ export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
                       <td className="border border-slate-300 px-2 py-1">
                         <input
                           type="number"
-                          value={item.unitCost}
-                          onChange={e => updateLineItem(item.id, 'unitCost', Number(e.target.value))}
+                          value={item.unitCost || ''}
+                          onChange={e => updateLineItem(item.id, 'unitCost', e.target.value)}
                           className="w-full px-1 py-0.5 text-xs border-0 bg-transparent text-right"
                           min="0"
                           step="0.01"
