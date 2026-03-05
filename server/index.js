@@ -457,13 +457,11 @@ app.post('/api/auth/login', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
-// ----- Mobile GPS Tracking (no auth required - phone sends location) -----
 // In-memory store: deviceId -> latest position
 const mobileLocations = new Map();
 
-// POST /api/mobile/location
-app.post('/api/mobile/location', (req, res) => {
+// POST /api/phone-location
+app.post('/api/phone-location', (req, res) => {
   const { deviceId, lat, lng, accuracy, speed, heading, timestamp } = req.body;
   if (!deviceId || typeof lat !== 'number' || typeof lng !== 'number') {
     return res.status(400).json({ error: 'deviceId, lat, lng are required' });
@@ -471,16 +469,29 @@ app.post('/api/mobile/location', (req, res) => {
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
     return res.status(400).json({ error: 'Invalid lat/lng range' });
   }
-  mobileLocations.set(String(deviceId), {
+  
+  const now = Date.now();
+  const locationData = {
     deviceId: String(deviceId),
-    lat,
-    lng,
+    lat, lng,
     accuracy: accuracy ?? null,
     speed: speed ?? null,
     heading: heading ?? null,
-    timestamp: timestamp || Date.now(),
+    timestamp: timestamp || now,
+    lastSeen: now,
+    serverTime: now,
+  };
+  
+  mobileLocations.set(String(deviceId), locationData);
+  
+  // Log for debugging (optional)
+  console.log(`[GPS] Device ${deviceId} at ${lat.toFixed(6)}, ${lng.toFixed(6)} - Speed: ${speed || 0} km/h`);
+  
+  res.json({ 
+    ok: true, 
+    timestamp: now,
+    devicesCount: mobileLocations.size
   });
-  res.json({ ok: true });
 });
 
 // GET /api/mobile/:deviceId/latest
@@ -490,24 +501,20 @@ app.get('/api/mobile/:deviceId/latest', (req, res) => {
   res.json(pos);
 });
 
-// Aliases: /api/phone-location (same store, same logic)
-app.post('/api/phone-location', (req, res) => {
-  const { deviceId, lat, lng, accuracy, speed, heading, timestamp } = req.body;
-  if (!deviceId || typeof lat !== 'number' || typeof lng !== 'number') {
-    return res.status(400).json({ error: 'deviceId, lat, lng are required' });
-  }
-  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-    return res.status(400).json({ error: 'Invalid lat/lng range' });
-  }
-  mobileLocations.set(String(deviceId), {
-    deviceId: String(deviceId),
-    lat, lng,
-    accuracy: accuracy ?? null,
-    speed: speed ?? null,
-    heading: heading ?? null,
-    timestamp: timestamp || Date.now(),
-  });
-  res.json({ ok: true });
+// GET /api/phone-location/devices - Get all active devices
+app.get('/api/phone-location/devices', (req, res) => {
+  const devices = Array.from(mobileLocations.values()).map(device => ({
+    deviceId: device.deviceId,
+    lat: device.lat,
+    lng: device.lng,
+    speed: device.speed,
+    heading: device.heading,
+    accuracy: device.accuracy,
+    timestamp: device.timestamp,
+    lastSeen: device.lastSeen,
+    serverTime: device.serverTime
+  }));
+  res.json({ devices, count: devices.length });
 });
 
 app.get('/api/phone-location/:deviceId/latest', (req, res) => {
