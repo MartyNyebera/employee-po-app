@@ -74,6 +74,8 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
       console.log('Net Profit:', metricsData.netProfit);
 
       setMetrics(metricsData);
+      console.log('[BusinessOverview] Setting orderSummary:', ordersData);
+      console.log('[BusinessOverview] Delivery metrics in orderSummary:', ordersData?.deliveries);
       setOrderSummary(ordersData);
       setInventorySummary(inventoryData);
       setChartData(chartDataResult);
@@ -146,6 +148,9 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
       </div>
     );
   }
+
+  // Debug: Log delivery metrics before render
+  console.log('[BusinessOverview] About to render delivery metrics:', orderSummary?.deliveries);
 
   return (
     <div className="p-6 space-y-6">
