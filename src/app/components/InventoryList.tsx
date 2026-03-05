@@ -146,7 +146,7 @@ useEffect(() => {
           </div>
         </div>
         {isAdmin && (
-          <Button onClick={() => setShowCreateModal(true)} className="bg-purple-600 hover:bg-purple-700">
+          <Button onClick={() => setShowCreateModal(true)} className="bg-blue-600 hover:bg-blue-700 text-white">
             <Plus className="size-4 mr-2" />
             Add Item
           </Button>
