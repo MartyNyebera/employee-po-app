@@ -1,12 +1,9 @@
 import { useEffect, useState, useRef } from 'react';
-import { fetchTraccarDevices, fetchTraccarPositions, type TraccarDevice, type TraccarPosition } from '../api/client';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { Badge } from './ui/badge';
-import { MapPin, Gauge, Navigation, AlertCircle } from 'lucide-react';
+import { MapPin, Wifi, WifiOff } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
-// Fix for default marker icons in Leaflet with Webpack/Vite
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
@@ -14,367 +11,222 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-interface DeviceWithPosition extends TraccarDevice {
-  position?: TraccarPosition;
+interface GPSDevice {
+  id: number;
+  name: string;
+  deviceId: string;
+  lat: number;
+  lng: number;
+  speed: number | null;
+  heading: number | null;
+  accuracy: number | null;
+  timestamp: number;
+  lastSeen: number;
 }
 
 export function WorkingMap() {
-  console.log('[WorkingMap] Component loading');
-  console.log('[WorkingMap] Leaflet available:', typeof L !== 'undefined');
-  
-  const [devices, setDevices] = useState<DeviceWithPosition[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [devices, setDevices] = useState<GPSDevice[]>([]);
+  const [lastUpdated, setLastUpdated] = useState<string>('');
+  const [connectionOk, setConnectionOk] = useState(true);
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
-  const markersRef = useRef<L.Marker[]>([]);
+  const markersRef = useRef<Map<string, L.Marker>>(new Map());
+  const mapReadyRef = useRef(false);
 
-  // Fetch devices and positions on mount
+  // Initialize map once on mount
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      setError(null);
-      
-      try {
-        // Fetch GPS data from server API
-        const response = await fetch('/api/phone-location/devices');
-        if (!response.ok) {
-          throw new Error('Failed to fetch GPS data');
-        }
-        
-        const data = await response.json();
-        
-        if (data.devices && data.devices.length > 0) {
-          const devices = data.devices.map((device: any, index: number) => ({
-            id: index + 1,
-            name: `${device.deviceId} GPS`,
-            uniqueId: device.deviceId,
-            status: 'online',
-            lastUpdate: new Date(device.lastSeen || device.timestamp).toISOString(),
-            positionId: index + 1,
-            category: 'phone',
-            position: {
-              id: index + 1,
-              deviceId: index + 1,
-              latitude: device.lat,
-              longitude: device.lng,
-              speed: device.speed || 0,
-              course: device.heading || 0,
-              altitude: 0,
-              accuracy: device.accuracy || 10,
-              fixTime: new Date(device.timestamp).toISOString(),
-              deviceTime: new Date(device.timestamp).toISOString(),
-              serverTime: new Date(device.serverTime).toISOString(),
-              attributes: {}
-            }
-          }));
-          
-          setDevices(devices);
-        } else {
-          // Fallback to localStorage for backward compatibility
-          let phoneData = null;
-          let laptopData = null;
-          
-          // Look for gpsData_* keys from tracker.html
-          for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (key && key.startsWith('gpsData_')) {
-              const deviceId = key.replace('gpsData_', '');
-              if (deviceId.includes('phone')) {
-                phoneData = localStorage.getItem(key);
-              } else if (deviceId.includes('laptop')) {
-                laptopData = localStorage.getItem(key);
-              }
-            }
-          }
-          
-          if (phoneData || laptopData) {
-            const devices = [];
-            if (phoneData) {
-              try {
-                const gpsData = JSON.parse(phoneData);
-                devices.push({
-                  id: 1,
-                  name: 'Phone GPS',
-                  uniqueId: 'phone',
-                  status: 'online',
-                  lastUpdate: new Date().toISOString(),
-                  positionId: 1,
-                  category: 'phone',
-                  position: {
-                    id: 1,
-                    deviceId: 1,
-                    latitude: gpsData.lat,
-                    longitude: gpsData.lng,
-                    speed: gpsData.speed || 0,
-                    course: gpsData.heading || 0,
-                    altitude: 0,
-                    accuracy: gpsData.accuracy || 10,
-                    fixTime: new Date(gpsData.timestamp).toISOString(),
-                    deviceTime: new Date(gpsData.timestamp).toISOString(),
-                    serverTime: new Date().toISOString(),
-                    attributes: {}
-                  }
-                });
-              } catch (e) {
-                console.warn('Invalid phone GPS data:', e);
-              }
-            }
-            
-            if (laptopData) {
-              try {
-                const gpsData = JSON.parse(laptopData);
-                devices.push({
-                  id: 2,
-                  name: 'Laptop GPS',
-                  uniqueId: 'laptop',
-                  status: 'online',
-                  lastUpdate: new Date().toISOString(),
-                  positionId: 2,
-                  category: 'laptop',
-                  position: {
-                    id: 2,
-                    deviceId: 2,
-                    latitude: gpsData.lat,
-                    longitude: gpsData.lng,
-                    speed: gpsData.speed || 0,
-                    course: gpsData.heading || 0,
-                    altitude: 0,
-                    accuracy: gpsData.accuracy || 10,
-                    fixTime: new Date(gpsData.timestamp).toISOString(),
-                    deviceTime: new Date(gpsData.timestamp).toISOString(),
-                    serverTime: new Date().toISOString(),
-                    attributes: {}
-                  }
-                });
-              } catch (e) {
-                console.warn('Invalid laptop GPS data:', e);
-              }
-            }
-            
-            setDevices(devices);
-          } else {
-            setError('No GPS data available. Use the GPS tracking page to add location data.');
-          }
-        }
-      } catch (error) {
-        console.error('Error fetching GPS data:', error);
-        setError('Failed to fetch GPS data. Make sure the GPS tracker is running.');
-      }
-      
-      setLoading(false);
-    };
-    
-    fetchData();
-    
-    // Refresh every 30 seconds
-    const interval = setInterval(fetchData, 30000);
-    return () => clearInterval(interval);
-  }, []);
+    if (!mapRef.current || mapReadyRef.current) return;
 
-  // Initialize map when component mounts and when devices change
-  useEffect(() => {
-    if (!mapRef.current || loading) return;
-
-    // Initialize map if not already done
-    if (!mapInstanceRef.current) {
-      console.log('[WorkingMap] Initializing map...');
-      
-      // Wait for next frame to ensure DOM is ready
-      requestAnimationFrame(() => {
-        if (!mapRef.current) return;
-        
-        try {
-          mapInstanceRef.current = L.map(mapRef.current, {
-            center: [12.8797, 121.7740],
-            zoom: 6
-          });
-          
-          // Add OpenStreetMap tiles
-          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          }).addTo(mapInstanceRef.current);
-          
-          console.log('[WorkingMap] Map initialized successfully!');
-        } catch (error) {
-          console.error('[WorkingMap] Map initialization failed:', error);
-        }
+    try {
+      const map = L.map(mapRef.current, {
+        center: [14.0, 121.0], // Philippines center
+        zoom: 7,
+        zoomControl: true,
       });
-    }
 
-    // Update markers when devices change
-    if (mapInstanceRef.current) {
-      // Clear existing markers
-      markersRef.current.forEach(marker => marker.remove());
-      markersRef.current = [];
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        maxZoom: 19,
+      }).addTo(map);
 
-      // Add markers for devices with positions
-      const devicesWithPositions = devices.filter(d => d.position);
-      
-      if (devicesWithPositions.length > 0) {
-        // Create custom icon for vehicles
-        const createVehicleIcon = (type: string, status: string) => {
-          const colors: Record<string, string> = {
-            online: '#10b981',
-            offline: '#6b7280',
-            unknown: '#f59e0b',
-          };
-          const color = colors[status] || colors.offline;
-          
-          return L.divIcon({
-            className: 'custom-marker',
-            html: `
-              <div style="
-                background: ${color};
-                width: 32px;
-                height: 32px;
-                border-radius: 50% 50% 50% 0;
-                transform: rotate(-45deg);
-                border: 3px solid white;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-              ">
-                <div style="transform: rotate(45deg); color: white; font-size: 16px; font-weight: bold;">
-                  🚛
-                </div>
-              </div>
-            `,
-            iconSize: [32, 32],
-            iconAnchor: [16, 32],
-            popupAnchor: [0, -32],
-          });
-        };
-
-        devicesWithPositions.forEach(device => {
-          const pos = device.position!;
-          const status = device.status || 'offline';
-          
-          const marker = L.marker([pos.latitude, pos.longitude], {
-            icon: createVehicleIcon(device.category || 'default', status)
-          }).addTo(mapInstanceRef.current!);
-          
-          // Add popup
-          const speedKmh = (pos.speed * 1.852).toFixed(1);
-          marker.bindPopup(`
-            <div style="min-width: 200px;">
-              <div style="font-weight: bold; margin-bottom: 8px;">${device.name}</div>
-              <div style="font-size: 12px; color: #666;">
-                <div>Status: <span style="color: ${status === 'online' ? '#10b981' : '#6b7280'}">${status}</span></div>
-                <div>Speed: ${speedKmh} km/h</div>
-                <div>Course: ${pos.course}°</div>
-                <div>Lat: ${pos.latitude.toFixed(4)}</div>
-                <div>Lng: ${pos.longitude.toFixed(4)}</div>
-                <div style="margin-top: 8px; font-size: 10px; color: #999;">
-                  ${new Date(pos.fixTime).toLocaleString()}
-                </div>
-              </div>
-            </div>
-          `);
-          
-          markersRef.current.push(marker);
-        });
-
-        // Fit map to show all markers
-        if (markersRef.current.length > 0) {
-          const group = new L.FeatureGroup(markersRef.current);
-          mapInstanceRef.current.fitBounds(group.getBounds().pad(0.1));
-        }
-      }
+      mapInstanceRef.current = map;
+      mapReadyRef.current = true;
+    } catch (e) {
+      console.error('[WorkingMap] init error:', e);
     }
 
     return () => {
-      // Cleanup map on unmount
       if (mapInstanceRef.current) {
         mapInstanceRef.current.remove();
         mapInstanceRef.current = null;
+        mapReadyRef.current = false;
       }
     };
-  }, [devices, loading]);
+  }, []);
 
-  if (loading) {
-    return (
-      <Card className="border-slate-200 shadow-sm bg-white">
-        <CardContent className="p-6 flex items-center justify-center min-h-[400px]">
-          <div className="flex flex-col items-center gap-3">
-            <div className="w-8 h-8 rounded-full border-2 border-slate-200 border-t-blue-500 animate-spin" />
-            <span className="text-sm font-medium text-slate-500">Loading GPS data...</span>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
+  // Update markers whenever devices change
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
 
-  if (error) {
-    return (
-      <Card className="border-slate-200 shadow-sm bg-white">
-        <CardContent className="p-6">
-          <div className="flex items-start gap-3 text-red-600">
-            <AlertCircle className="size-5 mt-0.5" />
-            <div>
-              <div className="font-semibold">GPS Data Not Available</div>
-              <div className="text-sm text-red-500 mt-1">{error}</div>
-              <div className="text-xs text-slate-500 mt-2">
-                Go to the GPS tracking page to add your location data
-              </div>
+    const activeIds = new Set(devices.map(d => d.deviceId));
+
+    // Remove markers for devices no longer present
+    markersRef.current.forEach((marker, id) => {
+      if (!activeIds.has(id)) {
+        marker.remove();
+        markersRef.current.delete(id);
+      }
+    });
+
+    devices.forEach(device => {
+      const icon = L.divIcon({
+        className: '',
+        html: `<div style="
+          background:#2563eb;width:36px;height:36px;border-radius:50% 50% 50% 0;
+          transform:rotate(-45deg);border:3px solid white;
+          box-shadow:0 2px 8px rgba(0,0,0,0.35);
+          display:flex;align-items:center;justify-content:center;">
+          <span style="transform:rotate(45deg);font-size:18px;">📱</span>
+        </div>`,
+        iconSize: [36, 36],
+        iconAnchor: [18, 36],
+        popupAnchor: [0, -38],
+      });
+
+      const popupHtml = `
+        <div style="min-width:180px;font-family:sans-serif;">
+          <div style="font-weight:700;font-size:13px;margin-bottom:6px;color:#1e293b;">📱 ${device.name}</div>
+          <div style="font-size:11px;color:#475569;line-height:1.7;">
+            <div>🟢 <b>Status:</b> Online</div>
+            <div>📍 <b>Lat:</b> ${device.lat.toFixed(6)}</div>
+            <div>📍 <b>Lng:</b> ${device.lng.toFixed(6)}</div>
+            <div>🚀 <b>Speed:</b> ${device.speed != null ? device.speed.toFixed(1) + ' km/h' : '—'}</div>
+            <div>🧭 <b>Heading:</b> ${device.heading != null ? device.heading.toFixed(0) + '°' : '—'}</div>
+            <div>🎯 <b>Accuracy:</b> ${device.accuracy != null ? '±' + device.accuracy.toFixed(0) + 'm' : '—'}</div>
+            <div style="margin-top:4px;color:#94a3b8;font-size:10px;">
+              Updated: ${new Date(device.lastSeen).toLocaleTimeString()}
             </div>
           </div>
-        </CardContent>
-      </Card>
-    );
-  }
+        </div>`;
 
-  if (devices.length === 0) {
-    return (
-      <Card className="border-slate-200 shadow-sm bg-white">
-        <CardContent className="p-6 text-center text-slate-500">
-          <MapPin className="size-12 mx-auto mb-3 text-slate-300" />
-          <div className="font-medium">No GPS devices registered</div>
-          <div className="text-sm mt-1">Add devices in Traccar to see them here</div>
-        </CardContent>
-      </Card>
-    );
-  }
+      if (markersRef.current.has(device.deviceId)) {
+        const existing = markersRef.current.get(device.deviceId)!;
+        existing.setLatLng([device.lat, device.lng]);
+        existing.setIcon(icon);
+        existing.setPopupContent(popupHtml);
+      } else {
+        const marker = L.marker([device.lat, device.lng], { icon })
+          .bindPopup(popupHtml)
+          .addTo(map);
+        markersRef.current.set(device.deviceId, marker);
+      }
+    });
+
+    // Fit bounds to show all devices
+    if (devices.length > 0) {
+      const group = L.featureGroup(Array.from(markersRef.current.values()));
+      map.fitBounds(group.getBounds().pad(0.2));
+    }
+  }, [devices]);
+
+  // Poll every 5 seconds
+  useEffect(() => {
+    const fetchDevices = async () => {
+      try {
+        const res = await fetch('/api/phone-location/devices');
+        if (!res.ok) throw new Error('fetch failed');
+        const data = await res.json();
+        setConnectionOk(true);
+        setLastUpdated(new Date().toLocaleTimeString());
+
+        if (data.devices && data.devices.length > 0) {
+          const mapped: GPSDevice[] = data.devices.map((d: any, i: number) => ({
+            id: i + 1,
+            name: d.deviceId,
+            deviceId: d.deviceId,
+            lat: d.lat,
+            lng: d.lng,
+            speed: d.speed ?? null,
+            heading: d.heading ?? null,
+            accuracy: d.accuracy ?? null,
+            timestamp: d.timestamp,
+            lastSeen: d.lastSeen || d.timestamp,
+          }));
+          setDevices(mapped);
+        } else {
+          setDevices([]);
+        }
+      } catch {
+        setConnectionOk(false);
+      }
+    };
+
+    fetchDevices();
+    const interval = setInterval(fetchDevices, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
-    <Card className="border-slate-200 shadow-sm bg-white overflow-hidden">
-      <CardHeader className="border-b border-slate-100 bg-slate-50/50 px-6 py-4">
-        <CardTitle className="flex items-center gap-2 text-slate-900 font-semibold">
-          <MapPin className="size-5 text-slate-600" />
-          Live GPS Tracking ({devices.length} devices)
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="p-0">
-        <div className="h-[500px] relative border-2 border-blue-500">
-          <div ref={mapRef} className="w-full h-full" style={{ minHeight: '500px' }} />
+    <div className="flex flex-col h-full">
+      {/* Status bar */}
+      <div className="flex items-center justify-between px-4 py-2 bg-slate-800 text-white text-xs">
+        <div className="flex items-center gap-2">
+          <MapPin className="size-3.5 text-blue-400" />
+          <span className="font-semibold">Live GPS Tracking</span>
+          {devices.length > 0 && (
+            <span className="bg-green-500 text-white px-2 py-0.5 rounded-full text-xs font-bold">
+              {devices.length} device{devices.length > 1 ? 's' : ''} online
+            </span>
+          )}
         </div>
-        
-        {/* Device list below map */}
-        <div className="border-t border-slate-100 p-4 bg-slate-50/50">
-          <div className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-3">
-            Tracked Devices
+        <div className="flex items-center gap-2 text-slate-400">
+          {connectionOk
+            ? <Wifi className="size-3.5 text-green-400" />
+            : <WifiOff className="size-3.5 text-red-400" />}
+          <span>{connectionOk ? `Updated ${lastUpdated}` : 'Connection error — retrying…'}</span>
+        </div>
+      </div>
+
+      {/* Map always rendered */}
+      <div className="relative flex-1" style={{ minHeight: '500px' }}>
+        <div ref={mapRef} className="w-full h-full absolute inset-0" />
+
+        {/* Overlay when no devices yet */}
+        {devices.length === 0 && (
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur px-4 py-2 rounded-full shadow text-sm text-slate-600 flex items-center gap-2 pointer-events-none">
+            <span className="animate-pulse text-blue-500">●</span>
+            Waiting for GPS signal… Start tracking on your phone
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+        )}
+      </div>
+
+      {/* Device list */}
+      {devices.length > 0 && (
+        <div className="border-t border-slate-200 bg-slate-50 p-3">
+          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Active Devices</div>
+          <div className="flex flex-wrap gap-2">
             {devices.map(device => (
-              <div
-                key={device.id}
-                className="flex items-center gap-2 p-2 bg-white rounded border border-slate-200 text-sm"
+              <div key={device.deviceId}
+                className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs shadow-sm cursor-pointer hover:border-blue-400"
+                onClick={() => {
+                  const marker = markersRef.current.get(device.deviceId);
+                  if (marker && mapInstanceRef.current) {
+                    mapInstanceRef.current.setView([device.lat, device.lng], 15);
+                    marker.openPopup();
+                  }
+                }}
               >
-                <div className={`size-2 rounded-full ${
-                  device.status === 'online' ? 'bg-green-500' : 'bg-gray-400'
-                }`} />
-                <span className="font-medium text-slate-900 truncate flex-1">{device.name}</span>
-                {device.position && (
-                  <span className="text-xs text-slate-500">
-                    {((device.position.speed * 1.852)).toFixed(0)} km/h
-                  </span>
+                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                <span className="font-medium text-slate-800">{device.name}</span>
+                {device.speed != null && (
+                  <span className="text-slate-500">{device.speed.toFixed(0)} km/h</span>
                 )}
               </div>
             ))}
           </div>
         </div>
-      </CardContent>
-    </Card>
+      )}
+    </div>
   );
 }
