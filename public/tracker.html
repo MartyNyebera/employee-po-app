@@ -171,8 +171,8 @@
       el('accuracy').textContent = data.accuracy != null ? '±' + data.accuracy.toFixed(0) + 'm' : '—';
 
       try {
-        // Send to GPS API
-        const res = await fetch('/api/phone-location', {
+        // Send to GPS API on Render server
+        const res = await fetch('https://employee-po-system.onrender.com/api/phone-location', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(data)
