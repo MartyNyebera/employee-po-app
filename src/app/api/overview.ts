@@ -224,10 +224,35 @@ export async function fetchOrderSummary(period: TimePeriod, customRange?: DateRa
       console.log('[Overview] Delivery metrics total:', deliveries?.total_deliveries);
       console.log('[Overview] Delivery metrics completed:', deliveries?.completed);
       console.log('[Overview] Delivery metrics in_transit:', deliveries?.in_transit);
-      deliveryMetrics = deliveries || {};
+      
+      // Convert string values to numbers for proper display
+      deliveryMetrics = {
+        total: parseInt(deliveries?.total_deliveries || '0'),
+        pending: parseInt(deliveries?.pending || '0'),
+        assigned: parseInt(deliveries?.assigned || '0'),
+        pickedUp: parseInt(deliveries?.picked_up || '0'),
+        inTransit: parseInt(deliveries?.in_transit || '0'),
+        arrived: parseInt(deliveries?.arrived || '0'),
+        completed: parseInt(deliveries?.completed || '0'),
+        cancelled: parseInt(deliveries?.cancelled || '0'),
+        completedToday: parseInt(deliveries?.completed_today || '0'),
+        currentlyActive: parseInt(deliveries?.currently_active || '0')
+      };
+      console.log('[Overview] Converted delivery metrics:', deliveryMetrics);
     } catch (err) {
       console.error('[Overview] Failed to fetch delivery metrics:', err);
-      deliveryMetrics = {};
+      deliveryMetrics = {
+        total: 0,
+        pending: 0,
+        assigned: 0,
+        pickedUp: 0,
+        inTransit: 0,
+        arrived: 0,
+        completed: 0,
+        cancelled: 0,
+        completedToday: 0,
+        currentlyActive: 0
+      };
     }
 
     // Calculate pending approval across all modules
