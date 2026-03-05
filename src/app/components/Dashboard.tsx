@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useAutoLogout } from '../hooks/useAutoLogout';
 import { Button } from './ui/button';
-import { Home, Truck, Wrench, MapPin, FileText, Receipt, User, LogOut, Menu, X, ShoppingCart, Package } from 'lucide-react';
+import { Home, Truck, Wrench, MapPin, FileText, Receipt, User, LogOut, Menu, X, ShoppingCart, Package, UserCheck } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
 import { BusinessOverview } from './BusinessOverview';
 import { AssetDetails } from './AssetDetails';
@@ -13,13 +13,15 @@ import { VehicleDetails } from './VehicleDetails';
 import { PMSReminders } from './PMSReminders';
 import { PurchaseOrderList } from './PurchaseOrderList';
 import { InventoryList } from './InventoryList';
+import { DriversList } from './DriversList';
+import { DeliveriesList } from './DeliveriesList';
 
 interface DashboardProps {
   userName: string;
   onLogout: () => void;
 }
 
-type View = 'home' | 'assets' | 'orders' | 'transactions' | 'gps' | 'fleet' | 'pms' | 'purchase-orders' | 'inventory';
+type View = 'home' | 'assets' | 'orders' | 'transactions' | 'gps' | 'fleet' | 'pms' | 'purchase-orders' | 'inventory' | 'drivers' | 'deliveries';
 
 export function Dashboard({ userName, onLogout }: DashboardProps) {
   // Enable auto-logout when app is closed
@@ -102,6 +104,14 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
       return <InventoryList isAdmin={false} />;
     }
 
+    if (currentView === 'drivers') {
+      return <DriversList isAdmin={false} />;
+    }
+
+    if (currentView === 'deliveries') {
+      return <DeliveriesList isAdmin={false} />;
+    }
+
     console.log('[Dashboard] No matching view, returning null');
     return null;
   };
@@ -111,6 +121,8 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
     { id: 'fleet', label: 'Fleet', icon: Truck },
     { id: 'pms', label: 'PMS Reminders', icon: Wrench },
     { id: 'gps', label: 'GPS Tracking', icon: MapPin },
+    { id: 'drivers', label: 'Drivers', icon: UserCheck },
+    { id: 'deliveries', label: 'Deliveries', icon: Package },
     { id: 'orders', label: 'Sales Order', icon: FileText },
     { id: 'purchase-orders', label: 'Purchase Order', icon: ShoppingCart },
     { id: 'inventory', label: 'Inventory', icon: Package },

@@ -270,10 +270,86 @@ async function runMigrations() {
     // Alter sales_orders: ensure PAID status is allowed
     try {
       await query(`ALTER TABLE sales_orders DROP CONSTRAINT IF EXISTS sales_orders_status_check`);
-      await query(`ALTER TABLE sales_orders ADD CONSTRAINT sales_orders_status_check CHECK (status IN ('pending', 'approved', 'in-progress', 'PAID', 'completed'))`);
-      console.log('✅ sales_orders status constraint set (includes PAID)');
+      await query(`ALTER TABLE sales_orders ADD CONSTRAINT sales_orders_status_check CHECK (status IN ('pending', 'approved', 'in-progress', 'PAID', 'completed', 'Assigned', 'Picked Up', 'In Transit', 'Delivered'))`);
+      console.log('✅ sales_orders status constraint set (includes PAID + delivery statuses)');
     } catch (err) {
       console.log('ℹ️ sales_orders constraint update skipped:', err.message);
+    }
+
+    // Create gps_locations table
+    await query(`
+      CREATE TABLE IF NOT EXISTS gps_locations (
+        device_id TEXT PRIMARY KEY,
+        lat DOUBLE PRECISION NOT NULL,
+        lng DOUBLE PRECISION NOT NULL,
+        accuracy DOUBLE PRECISION,
+        speed DOUBLE PRECISION,
+        heading DOUBLE PRECISION,
+        device_timestamp TIMESTAMPTZ,
+        last_seen TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    console.log('✅ gps_locations table ready');
+
+    // Create drivers table
+    await query(`
+      CREATE TABLE IF NOT EXISTS drivers (
+        id TEXT PRIMARY KEY,
+        driver_name TEXT NOT NULL,
+        contact TEXT NOT NULL,
+        email TEXT,
+        license_number TEXT NOT NULL,
+        license_expiry DATE NOT NULL,
+        assigned_vehicle_id TEXT REFERENCES vehicles(id) ON DELETE SET NULL,
+        status TEXT NOT NULL DEFAULT 'Active',
+        join_date DATE NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    console.log('✅ drivers table ready');
+
+    // Create deliveries table
+    await query(`
+      CREATE TABLE IF NOT EXISTS deliveries (
+        id TEXT PRIMARY KEY,
+        so_number TEXT NOT NULL,
+        vehicle_id TEXT REFERENCES vehicles(id) ON DELETE SET NULL,
+        driver_id TEXT REFERENCES drivers(id) ON DELETE SET NULL,
+        customer_name TEXT NOT NULL,
+        customer_address TEXT NOT NULL,
+        delivery_date TIMESTAMPTZ NOT NULL,
+        status TEXT NOT NULL DEFAULT 'Pending',
+        assigned_time TIMESTAMPTZ,
+        picked_up_time TIMESTAMPTZ,
+        in_transit_time TIMESTAMPTZ,
+        arrived_time TIMESTAMPTZ,
+        completed_time TIMESTAMPTZ,
+        proof_of_delivery_url TEXT,
+        notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    console.log('✅ deliveries table ready');
+
+    // Add reservation columns to inventory (non-breaking)
+    try {
+      await query(`ALTER TABLE inventory ADD COLUMN IF NOT EXISTS reserved_quantity NUMERIC(10,2) DEFAULT 0`);
+      await query(`ALTER TABLE inventory ADD COLUMN IF NOT EXISTS in_transit_quantity NUMERIC(10,2) DEFAULT 0`);
+      console.log('✅ inventory reservation columns ready');
+    } catch (err) {
+      console.log('ℹ️ inventory reservation columns skipped:', err.message);
+    }
+
+    // Add delivery linking columns to sales_orders (non-breaking)
+    try {
+      await query(`ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS driver_id TEXT REFERENCES drivers(id) ON DELETE SET NULL`);
+      await query(`ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS vehicle_id TEXT REFERENCES vehicles(id) ON DELETE SET NULL`);
+      await query(`ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS delivery_id TEXT`);
+      console.log('✅ sales_orders delivery linking columns ready');
+    } catch (err) {
+      console.log('ℹ️ sales_orders delivery columns skipped:', err.message);
     }
 
     console.log('✅ All migrations complete');
@@ -733,6 +809,288 @@ app.post('/api/fleet/vehicles/:id/maintenance', createMaintenance);
 app.get('/api/fleet/vehicles/:id/purchase-orders', getVehiclePOs);
 app.post('/api/fleet/vehicles/:id/purchase-orders', createVehiclePO);
 app.get('/api/fleet/pms-reminders', getPmsReminders);
+
+// ----- Driver Management API -----
+
+// GET /api/drivers
+app.get('/api/drivers', async (req, res) => {
+  try {
+    const result = await query(`
+      SELECT d.*, v.unit_name as vehicle_name, v.plate_number
+      FROM drivers d
+      LEFT JOIN vehicles v ON d.assigned_vehicle_id = v.id
+      ORDER BY d.driver_name ASC
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/drivers/:id
+app.get('/api/drivers/:id', async (req, res) => {
+  try {
+    const result = await query(`
+      SELECT d.*, v.unit_name as vehicle_name, v.plate_number
+      FROM drivers d
+      LEFT JOIN vehicles v ON d.assigned_vehicle_id = v.id
+      WHERE d.id = $1
+    `, [req.params.id]);
+    if (!result.rows[0]) return res.status(404).json({ error: 'Driver not found' });
+    const deliveries = await query(
+      `SELECT id, so_number, customer_name, status, delivery_date, completed_time FROM deliveries WHERE driver_id = $1 ORDER BY created_at DESC LIMIT 20`,
+      [req.params.id]
+    );
+    res.json({ ...result.rows[0], recentDeliveries: deliveries.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/drivers
+app.post('/api/drivers', requireAdmin, async (req, res) => {
+  try {
+    const { driver_name, contact, email, license_number, license_expiry, assigned_vehicle_id, status, join_date } = req.body;
+    if (!driver_name || !contact || !license_number || !license_expiry || !join_date) {
+      return res.status(400).json({ error: 'driver_name, contact, license_number, license_expiry, join_date are required' });
+    }
+    const id = 'DRV-' + Date.now();
+    await query(
+      `INSERT INTO drivers (id, driver_name, contact, email, license_number, license_expiry, assigned_vehicle_id, status, join_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [id, driver_name, contact, email || null, license_number, license_expiry, assigned_vehicle_id || null, status || 'Active', join_date]
+    );
+    const result = await query('SELECT * FROM drivers WHERE id = $1', [id]);
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/drivers/:id
+app.put('/api/drivers/:id', requireAdmin, async (req, res) => {
+  try {
+    const { driver_name, contact, email, license_number, license_expiry, assigned_vehicle_id, status, join_date } = req.body;
+    await query(
+      `UPDATE drivers SET driver_name=$1, contact=$2, email=$3, license_number=$4, license_expiry=$5,
+       assigned_vehicle_id=$6, status=$7, join_date=$8, updated_at=NOW() WHERE id=$9`,
+      [driver_name, contact, email || null, license_number, license_expiry, assigned_vehicle_id || null, status, join_date, req.params.id]
+    );
+    const result = await query('SELECT * FROM drivers WHERE id = $1', [req.params.id]);
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/drivers/:id
+app.delete('/api/drivers/:id', requireAdmin, async (req, res) => {
+  try {
+    await query('DELETE FROM drivers WHERE id = $1', [req.params.id]);
+    res.json({ message: 'Driver deleted' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/drivers/:id/assign-vehicle
+app.put('/api/drivers/:id/assign-vehicle', requireAdmin, async (req, res) => {
+  try {
+    const { vehicle_id } = req.body;
+    await query('UPDATE drivers SET assigned_vehicle_id=$1, updated_at=NOW() WHERE id=$2', [vehicle_id || null, req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----- Delivery Management API -----
+
+// GET /api/deliveries
+app.get('/api/deliveries', async (req, res) => {
+  try {
+    const { status, driver_id, vehicle_id } = req.query;
+    let where = 'WHERE 1=1';
+    const params = [];
+    if (status) { params.push(status); where += ` AND del.status = $${params.length}`; }
+    if (driver_id) { params.push(driver_id); where += ` AND del.driver_id = $${params.length}`; }
+    if (vehicle_id) { params.push(vehicle_id); where += ` AND del.vehicle_id = $${params.length}`; }
+    const result = await query(`
+      SELECT del.*,
+        d.driver_name, d.contact as driver_contact,
+        v.unit_name as vehicle_name, v.plate_number
+      FROM deliveries del
+      LEFT JOIN drivers d ON del.driver_id = d.id
+      LEFT JOIN vehicles v ON del.vehicle_id = v.id
+      ${where}
+      ORDER BY del.created_at DESC
+    `, params);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/deliveries/:id
+app.get('/api/deliveries/:id', async (req, res) => {
+  try {
+    const result = await query(`
+      SELECT del.*,
+        d.driver_name, d.contact as driver_contact, d.license_number,
+        v.unit_name as vehicle_name, v.plate_number, v.vehicle_type
+      FROM deliveries del
+      LEFT JOIN drivers d ON del.driver_id = d.id
+      LEFT JOIN vehicles v ON del.vehicle_id = v.id
+      WHERE del.id = $1
+    `, [req.params.id]);
+    if (!result.rows[0]) return res.status(404).json({ error: 'Delivery not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/deliveries
+app.post('/api/deliveries', requireAdmin, async (req, res) => {
+  try {
+    const { so_number, vehicle_id, driver_id, customer_name, customer_address, delivery_date, notes } = req.body;
+    if (!so_number || !customer_name || !customer_address || !delivery_date) {
+      return res.status(400).json({ error: 'so_number, customer_name, customer_address, delivery_date are required' });
+    }
+    const id = 'DEL-' + Date.now();
+    const now = new Date();
+    await query(
+      `INSERT INTO deliveries (id, so_number, vehicle_id, driver_id, customer_name, customer_address, delivery_date, status, assigned_time, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [id, so_number, vehicle_id || null, driver_id || null, customer_name, customer_address, delivery_date,
+       (driver_id || vehicle_id) ? 'Assigned' : 'Pending',
+       (driver_id || vehicle_id) ? now : null, notes || null]
+    );
+    // Update SO with delivery link
+    await query(
+      `UPDATE sales_orders SET delivery_id=$1, driver_id=$2, vehicle_id=$3, status='Assigned', updated_at=NOW() WHERE so_number=$4`,
+      [id, driver_id || null, vehicle_id || null, so_number]
+    );
+    const result = await query('SELECT * FROM deliveries WHERE id = $1', [id]);
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/deliveries/:id
+app.put('/api/deliveries/:id', requireAdmin, async (req, res) => {
+  try {
+    const { vehicle_id, driver_id, delivery_date, notes } = req.body;
+    await query(
+      `UPDATE deliveries SET vehicle_id=$1, driver_id=$2, delivery_date=$3, notes=$4, updated_at=NOW() WHERE id=$5`,
+      [vehicle_id || null, driver_id || null, delivery_date, notes || null, req.params.id]
+    );
+    const result = await query('SELECT * FROM deliveries WHERE id = $1', [req.params.id]);
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/deliveries/:id/status
+app.put('/api/deliveries/:id/status', async (req, res) => {
+  try {
+    const { status, notes, proof_of_delivery_url } = req.body;
+    const validStatuses = ['Pending', 'Assigned', 'Picked Up', 'In Transit', 'Arrived', 'Completed', 'Cancelled'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
+    }
+    const now = new Date();
+    const timeField = {
+      'Assigned': 'assigned_time',
+      'Picked Up': 'picked_up_time',
+      'In Transit': 'in_transit_time',
+      'Arrived': 'arrived_time',
+      'Completed': 'completed_time',
+    }[status];
+    let updateQuery = `UPDATE deliveries SET status=$1, updated_at=NOW()`;
+    const params = [status];
+    if (timeField) { params.push(now); updateQuery += `, ${timeField}=$${params.length}`; }
+    if (notes) { params.push(notes); updateQuery += `, notes=$${params.length}`; }
+    if (proof_of_delivery_url) { params.push(proof_of_delivery_url); updateQuery += `, proof_of_delivery_url=$${params.length}`; }
+    params.push(req.params.id);
+    updateQuery += ` WHERE id=$${params.length}`;
+    await query(updateQuery, params);
+
+    // Sync SO status
+    const delivery = await query('SELECT so_number FROM deliveries WHERE id=$1', [req.params.id]);
+    if (delivery.rows[0]) {
+      const soStatus = status === 'Completed' ? 'completed' : status === 'Cancelled' ? 'pending' : status;
+      await query(`UPDATE sales_orders SET status=$1, updated_at=NOW() WHERE so_number=$2`, [soStatus, delivery.rows[0].so_number]);
+    }
+    const result = await query('SELECT * FROM deliveries WHERE id=$1', [req.params.id]);
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/deliveries/driver/:driverId
+app.get('/api/deliveries/driver/:driverId', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT del.*, v.unit_name as vehicle_name FROM deliveries del
+       LEFT JOIN vehicles v ON del.vehicle_id = v.id
+       WHERE del.driver_id = $1 ORDER BY del.created_at DESC`,
+      [req.params.driverId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----- Inventory Reservation API -----
+
+// PUT /api/inventory/:id/reserve
+app.put('/api/inventory/:id/reserve', requireAdmin, async (req, res) => {
+  try {
+    const { quantity } = req.body;
+    const item = await query('SELECT quantity, reserved_quantity, in_transit_quantity FROM inventory WHERE id=$1', [req.params.id]);
+    if (!item.rows[0]) return res.status(404).json({ error: 'Item not found' });
+    const available = parseFloat(item.rows[0].quantity) - parseFloat(item.rows[0].reserved_quantity || 0) - parseFloat(item.rows[0].in_transit_quantity || 0);
+    if (quantity > available) return res.status(400).json({ error: `Only ${available} units available` });
+    await query('UPDATE inventory SET reserved_quantity = COALESCE(reserved_quantity,0) + $1, updated_at=NOW() WHERE id=$2', [quantity, req.params.id]);
+    res.json({ ok: true, reserved: quantity });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/inventory/:id/unreserve
+app.put('/api/inventory/:id/unreserve', requireAdmin, async (req, res) => {
+  try {
+    const { quantity } = req.body;
+    await query('UPDATE inventory SET reserved_quantity = GREATEST(0, COALESCE(reserved_quantity,0) - $1), updated_at=NOW() WHERE id=$2', [quantity, req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/inventory/:id/deduct
+app.put('/api/inventory/:id/deduct', requireAdmin, async (req, res) => {
+  try {
+    const { quantity } = req.body;
+    await query(
+      `UPDATE inventory SET
+        quantity = GREATEST(0, quantity - $1),
+        in_transit_quantity = GREATEST(0, COALESCE(in_transit_quantity,0) - $1),
+        updated_at=NOW()
+       WHERE id=$2`,
+      [quantity, req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // DELETE /api/vehicles (admin only - clear all vehicles)
 app.delete('/api/vehicles', requireAdmin, async (req, res) => {
