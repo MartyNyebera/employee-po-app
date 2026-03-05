@@ -135,6 +135,9 @@
   <script>
     let watchId = null;
     let sendCount = 0;
+    let lastPosition = null;
+    let resendInterval = null;
+    let wakeLock = null;
 
     function el(id) { return document.getElementById(id); }
 
@@ -168,8 +171,8 @@
       el('accuracy').textContent = data.accuracy != null ? '±' + data.accuracy.toFixed(0) + 'm' : '—';
 
       try {
-        // Send to new Mobile GPS API (primary)
-        const res = await fetch('/api/mobile/gps', {
+        // Send to GPS API
+        const res = await fetch('/api/phone-location', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(data)
