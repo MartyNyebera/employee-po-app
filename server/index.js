@@ -800,6 +800,31 @@ app.get('/api/miscellaneous', async (req, res) => {
   }
 });
 
+// GET /api/delivery-metrics (public for overview dashboard)
+app.get('/api/delivery-metrics', async (req, res) => {
+  try {
+    const result = await query(`
+      SELECT 
+        COUNT(*) as total_deliveries,
+        COUNT(*) FILTER (WHERE status = 'Pending') as pending,
+        COUNT(*) FILTER (WHERE status = 'Assigned') as assigned,
+        COUNT(*) FILTER (WHERE status = 'Picked Up') as picked_up,
+        COUNT(*) FILTER (WHERE status = 'In Transit') as in_transit,
+        COUNT(*) FILTER (WHERE status = 'Arrived') as arrived,
+        COUNT(*) FILTER (WHERE status = 'Completed') as completed,
+        COUNT(*) FILTER (WHERE status = 'Cancelled') as cancelled,
+        COUNT(*) FILTER (WHERE completed_time >= NOW() - INTERVAL '24 hours') as completed_today,
+        COUNT(*) FILTER (WHERE status = 'In Transit') as currently_active
+      FROM deliveries
+    `);
+    console.log('[Delivery Metrics] Fetched:', result.rows[0]);
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('[Delivery Metrics] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ----- All routes below require auth -----
 app.use('/api', requireAuth);
 
@@ -1060,28 +1085,6 @@ app.get('/api/deliveries/driver/:driverId', async (req, res) => {
   }
 });
 
-// GET /api/delivery-metrics
-app.get('/api/delivery-metrics', async (req, res) => {
-  try {
-    const result = await query(`
-      SELECT 
-        COUNT(*) as total_deliveries,
-        COUNT(*) FILTER (WHERE status = 'Pending') as pending,
-        COUNT(*) FILTER (WHERE status = 'Assigned') as assigned,
-        COUNT(*) FILTER (WHERE status = 'Picked Up') as picked_up,
-        COUNT(*) FILTER (WHERE status = 'In Transit') as in_transit,
-        COUNT(*) FILTER (WHERE status = 'Arrived') as arrived,
-        COUNT(*) FILTER (WHERE status = 'Completed') as completed,
-        COUNT(*) FILTER (WHERE status = 'Cancelled') as cancelled,
-        COUNT(*) FILTER (WHERE completed_time >= NOW() - INTERVAL '24 hours') as completed_today,
-        COUNT(*) FILTER (WHERE status = 'In Transit') as currently_active
-      FROM deliveries
-    `);
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 // ----- Inventory Reservation API -----
 

@@ -216,8 +216,10 @@ export async function fetchOrderSummary(period: TimePeriod, customRange?: DateRa
     let deliveryMetrics: any = {};
     try {
       const deliveries = await fetchApi('/delivery-metrics');
+      console.log('[Overview] Delivery metrics fetched:', deliveries);
       deliveryMetrics = deliveries || {};
-    } catch {
+    } catch (err) {
+      console.error('[Overview] Failed to fetch delivery metrics:', err);
       deliveryMetrics = {};
     }
 
