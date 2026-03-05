@@ -31,103 +31,144 @@ export function WorkingMap() {
 
   // Fetch devices and positions on mount
   useEffect(() => {
-    const loadData = async () => {
+    const fetchData = async () => {
       setLoading(true);
       setError(null);
       
-      // Use LocalStorage GPS system from tracker.html
-      let phoneData = null;
-      let laptopData = null;
-      
-      // Look for gpsData_* keys from tracker.html
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith('gpsData_')) {
-          const deviceId = key.replace('gpsData_', '');
-          if (deviceId.includes('phone')) {
-            phoneData = localStorage.getItem(key);
-          } else if (deviceId.includes('laptop')) {
-            laptopData = localStorage.getItem(key);
-          }
-        }
-      }
-      
-      if (phoneData || laptopData) {
-        const devices = [];
-        if (phoneData) {
-          try {
-            const gpsData = JSON.parse(phoneData);
-            devices.push({
-              id: 1,
-              name: 'Phone GPS',
-              uniqueId: 'phone',
-              status: 'online',
-              lastUpdate: new Date().toISOString(),
-              positionId: 1,
-              category: 'phone',
-              position: {
-                id: 1,
-                deviceId: 1,
-                latitude: gpsData.lat,
-                longitude: gpsData.lng,
-                speed: gpsData.speed || 0,
-                course: gpsData.heading || 0,
-                altitude: 0,
-                accuracy: gpsData.accuracy || 10,
-                fixTime: new Date(gpsData.timestamp).toISOString(),
-                deviceTime: new Date(gpsData.timestamp).toISOString(),
-                serverTime: new Date().toISOString(),
-                attributes: {}
-              }
-            });
-          } catch (e) {
-            console.warn('Invalid phone GPS data:', e);
-          }
+      try {
+        // Fetch GPS data from server API
+        const response = await fetch('/api/phone-location/devices');
+        if (!response.ok) {
+          throw new Error('Failed to fetch GPS data');
         }
         
-        if (laptopData) {
-          try {
-            const gpsData = JSON.parse(laptopData);
-            devices.push({
-              id: 2,
-              name: 'Laptop GPS',
-              uniqueId: 'laptop',
-              status: 'online',
-              lastUpdate: new Date().toISOString(),
-              positionId: 2,
-              category: 'laptop',
-              position: {
-                id: 2,
-                deviceId: 2,
-                latitude: gpsData.lat,
-                longitude: gpsData.lng,
-                speed: gpsData.speed || 0,
-                course: gpsData.heading || 0,
-                altitude: 0,
-                accuracy: gpsData.accuracy || 10,
-                fixTime: new Date(gpsData.timestamp).toISOString(),
-                deviceTime: new Date(gpsData.timestamp).toISOString(),
-                serverTime: new Date().toISOString(),
-                attributes: {}
+        const data = await response.json();
+        
+        if (data.devices && data.devices.length > 0) {
+          const devices = data.devices.map((device: any, index: number) => ({
+            id: index + 1,
+            name: `${device.deviceId} GPS`,
+            uniqueId: device.deviceId,
+            status: 'online',
+            lastUpdate: new Date(device.lastSeen || device.timestamp).toISOString(),
+            positionId: index + 1,
+            category: 'phone',
+            position: {
+              id: index + 1,
+              deviceId: index + 1,
+              latitude: device.lat,
+              longitude: device.lng,
+              speed: device.speed || 0,
+              course: device.heading || 0,
+              altitude: 0,
+              accuracy: device.accuracy || 10,
+              fixTime: new Date(device.timestamp).toISOString(),
+              deviceTime: new Date(device.timestamp).toISOString(),
+              serverTime: new Date(device.serverTime).toISOString(),
+              attributes: {}
+            }
+          }));
+          
+          setDevices(devices);
+        } else {
+          // Fallback to localStorage for backward compatibility
+          let phoneData = null;
+          let laptopData = null;
+          
+          // Look for gpsData_* keys from tracker.html
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith('gpsData_')) {
+              const deviceId = key.replace('gpsData_', '');
+              if (deviceId.includes('phone')) {
+                phoneData = localStorage.getItem(key);
+              } else if (deviceId.includes('laptop')) {
+                laptopData = localStorage.getItem(key);
               }
-            });
-          } catch (e) {
-            console.warn('Invalid laptop GPS data:', e);
+            }
+          }
+          
+          if (phoneData || laptopData) {
+            const devices = [];
+            if (phoneData) {
+              try {
+                const gpsData = JSON.parse(phoneData);
+                devices.push({
+                  id: 1,
+                  name: 'Phone GPS',
+                  uniqueId: 'phone',
+                  status: 'online',
+                  lastUpdate: new Date().toISOString(),
+                  positionId: 1,
+                  category: 'phone',
+                  position: {
+                    id: 1,
+                    deviceId: 1,
+                    latitude: gpsData.lat,
+                    longitude: gpsData.lng,
+                    speed: gpsData.speed || 0,
+                    course: gpsData.heading || 0,
+                    altitude: 0,
+                    accuracy: gpsData.accuracy || 10,
+                    fixTime: new Date(gpsData.timestamp).toISOString(),
+                    deviceTime: new Date(gpsData.timestamp).toISOString(),
+                    serverTime: new Date().toISOString(),
+                    attributes: {}
+                  }
+                });
+              } catch (e) {
+                console.warn('Invalid phone GPS data:', e);
+              }
+            }
+            
+            if (laptopData) {
+              try {
+                const gpsData = JSON.parse(laptopData);
+                devices.push({
+                  id: 2,
+                  name: 'Laptop GPS',
+                  uniqueId: 'laptop',
+                  status: 'online',
+                  lastUpdate: new Date().toISOString(),
+                  positionId: 2,
+                  category: 'laptop',
+                  position: {
+                    id: 2,
+                    deviceId: 2,
+                    latitude: gpsData.lat,
+                    longitude: gpsData.lng,
+                    speed: gpsData.speed || 0,
+                    course: gpsData.heading || 0,
+                    altitude: 0,
+                    accuracy: gpsData.accuracy || 10,
+                    fixTime: new Date(gpsData.timestamp).toISOString(),
+                    deviceTime: new Date(gpsData.timestamp).toISOString(),
+                    serverTime: new Date().toISOString(),
+                    attributes: {}
+                  }
+                });
+              } catch (e) {
+                console.warn('Invalid laptop GPS data:', e);
+              }
+            }
+            
+            setDevices(devices);
+          } else {
+            setError('No GPS data available. Use the GPS tracking page to add location data.');
           }
         }
-        
-        setDevices(devices);
-      } else {
-        setError('No GPS data available. Use the GPS tracking page to add location data.');
+      } catch (error) {
+        console.error('Error fetching GPS data:', error);
+        setError('Failed to fetch GPS data. Make sure the GPS tracker is running.');
       }
       
       setLoading(false);
     };
     
-    loadData();
+    fetchData();
     
     // Refresh every 30 seconds
-    const interval = setInterval(loadData, 30000);
+    const interval = setInterval(fetchData, 30000);
     return () => clearInterval(interval);
   }, []);
 
