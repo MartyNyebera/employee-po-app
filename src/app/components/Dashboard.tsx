@@ -199,7 +199,8 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
 
       {/* Mobile Bottom Tab Bar - COMPLETELY ISOLATED */}
       <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-slate-900 dark:bg-slate-800 border-t border-slate-700 z-50"
-           style={{ touchAction: 'none' }}>
+           style={{ touchAction: 'none' }}
+           id="mobile-tab-bar">
         {/* Tab Container with Pointer Events Control */}
         <div className="relative overflow-hidden" style={{ height: '60px' }}>
           {/* Scrollable Inner Container */}
@@ -210,8 +211,10 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
               scrollbarWidth: 'none',
               msOverflowStyle: 'none'
             }}
+            id="tab-scroll-container"
             ref={(el) => {
               if (el) {
+                console.log('🚀 Tab container ref:', el);
                 // Hide scrollbar
                 el.style.setProperty('scrollbar-width', 'none');
                 el.style.setProperty('-ms-overflow-style', 'none');
@@ -219,16 +222,19 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
               }
             }}
             onScroll={(e) => {
+              console.log('🚀 TAB SCROLL:', e.currentTarget.scrollLeft);
               // Prevent scroll propagation
               e.stopPropagation();
               e.nativeEvent.stopImmediatePropagation();
             }}
             onTouchStart={(e) => {
+              console.log('🚀 TAB TOUCH START!');
               // Capture touch and prevent propagation
               e.stopPropagation();
               e.nativeEvent.stopImmediatePropagation();
             }}
             onTouchMove={(e) => {
+              console.log('🚀 TAB TOUCH MOVE!');
               // Only allow horizontal movement, prevent vertical
               e.stopPropagation();
               e.nativeEvent.stopImmediatePropagation();
@@ -244,10 +250,12 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
               }
             }}
             onTouchEnd={(e) => {
+              console.log('🚀 TAB TOUCH END!');
               e.stopPropagation();
               e.nativeEvent.stopImmediatePropagation();
             }}
             onWheel={(e) => {
+              console.log('🚀 TAB WHEEL!');
               // Prevent wheel events from affecting page
               e.preventDefault();
               e.stopPropagation();
@@ -259,6 +267,7 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
                 <button
                   key={item.id}
                   onClick={(e) => {
+                    console.log('🚀 TAB CLICK:', item.label);
                     e.stopPropagation();
                     e.nativeEvent.stopImmediatePropagation();
                     handleViewChange(item.id as View);
