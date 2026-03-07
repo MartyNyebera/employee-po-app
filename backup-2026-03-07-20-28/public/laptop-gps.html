@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Laptop GPS Sender</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .active { background: #d4edda; color: #155724; }
+        .inactive { background: #f8d7da; color: #721c24; }
+        .loading { background: #fff3cd; color: #856404; }
+        .info {
+            background: #e7f3ff;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-size: 14px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 15px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            margin: 5px 0;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        .coords {
+            font-family: monospace;
+            font-size: 12px;
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .gps-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+        .gps-active { background: #28a745; }
+        .gps-inactive { background: #dc3545; }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        .device-list {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin: 10px 0;
+        }
+        .device-card {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border: 2px solid #dee2e6;
+            text-align: center;
+        }
+        .device-card.active {
+            border-color: #28a745;
+            background: #d4edda;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>🖥️ Laptop GPS Sender</h2>
+        <div class="info">
+            <strong>Send your laptop's GPS to your phone for tracking</strong><br>
+            Your laptop will act as a GPS device and send location data to your iPhone.
+        </div>
+        
+        <div id="status" class="status inactive">
+            <span class="gps-indicator gps-inactive"></span>
+            GPS Not Active
+        </div>
+        
+        <button id="startBtn" onclick="startLaptopGPS()">
+            🖥️ Start Laptop GPS
+        </button>
+        
+        <button id="stopBtn" onclick="stopLaptopGPS()" disabled>
+            ⏹️ Stop GPS Tracking
+        </button>
+        
+        <div class="coords">
+            <strong>📍 Laptop Location:</strong><br>
+            <div id="coords">Waiting for GPS...</div>
+        </div>
+        
+        <div class="device-list">
+            <div class="device-card" id="laptop-card">
+                <h3>🖥️ Laptop GPS</h3>
+                <div id="laptop-status">Inactive</div>
+            </div>
+            <div class="device-card" id="phone-card">
+                <h3>📱 iPhone GPS</h3>
+                <div id="phone-status">Waiting...</div>
+            </div>
+        </div>
+        
+        <div class="info">
+            <strong>📋 How It Works:</strong><br>
+            1. Laptop gets GPS location automatically<br>
+            2. Sends GPS data to both devices<br>
+            3. Both appear in fleet tracking system<br>
+            4. Real-time updates every 3 seconds
+        </div>
+        
+        <div class="info">
+            <strong>🎯 Test Your Fleet System:</strong><br>
+            • Open your fleet app on laptop: http://192.168.254.108:3000<br>
+            • Open auto-track.html on iPhone: http://192.168.254.108:3000/auto-track.html<br>
+            • Both devices will appear in GPS Tracking
+        </div>
+    </div>
+
+    <script>
+        let watchId = null;
+        let isTracking = false;
+        let updateInterval = null;
+        let laptopLocation = null;
+        
+        function updateStatus(message, isActive, isLoading = false) {
+            const statusEl = document.getElementById('status');
+            const indicator = statusEl.querySelector('.gps-indicator');
+            
+            statusEl.textContent = message;
+            statusEl.className = `status ${isActive ? 'active' : (isLoading ? 'loading' : 'inactive')}`;
+            
+            if (isActive) {
+                indicator.className = 'gps-indicator gps-active';
+                document.getElementById('laptop-card').classList.add('active');
+            } else {
+                indicator.className = 'gps-indicator gps-inactive';
+                document.getElementById('laptop-card').classList.remove('active');
+            }
+        }
+        
+        function updateCoords(position) {
+            const coordsEl = document.getElementById('coords');
+            const speed = position.coords.speed ? (position.coords.speed * 3.6).toFixed(1) : '0';
+            const accuracy = position.coords.accuracy.toFixed(0);
+            const heading = position.coords.heading ? position.coords.heading.toFixed(0) : '0';
+            
+            coordsEl.innerHTML = `
+                📍 Lat: ${position.coords.latitude.toFixed(6)}<br>
+                📍 Lng: ${position.coords.longitude.toFixed(6)}<br>
+                🚗 Speed: ${speed} km/h<br>
+                🧭 Direction: ${heading}°<br>
+                🎯 Accuracy: ${accuracy}m<br>
+                ⏰ Time: ${new Date().toLocaleTimeString()}
+            `;
+        }
+        
+        function sendGPSData(position, deviceType = 'laptop') {
+            const deviceId = deviceType === 'laptop' ? 777 : 888;
+            const deviceName = deviceType === 'laptop' ? 'Laptop GPS' : 'iPhone GPS';
+            
+            const gpsData = {
+                id: deviceId,
+                name: deviceName,
+                uniqueId: deviceType.toUpperCase() + '_GPS',
+                status: 'online',
+                lastUpdate: new Date().toISOString(),
+                positionId: deviceId,
+                category: deviceType,
+                position: {
+                    id: deviceId,
+                    deviceId: deviceId,
+                    latitude: position.coords.latitude,
+                    longitude: position.coords.longitude,
+                    speed: position.coords.speed || 0,
+                    course: position.coords.heading || 0,
+                    altitude: position.coords.altitude || 0,
+                    accuracy: position.coords.accuracy || 10,
+                    fixTime: new Date().toISOString(),
+                    deviceTime: new Date(position.timestamp).toISOString(),
+                    serverTime: new Date().toISOString(),
+                    attributes: {}
+                }
+            };
+            
+            // Send to fleet app via localStorage
+            localStorage.setItem(deviceType + 'GPSData', JSON.stringify(gpsData));
+            
+            // Also send to server
+            fetch('http://192.168.254.108:3001/api/phone-gps', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(gpsData)
+            }).catch(err => {
+                console.log('Server not available, using localStorage only');
+            });
+            
+            console.log(`${deviceName} GPS data sent:`, {
+                lat: position.coords.latitude.toFixed(6),
+                lng: position.coords.longitude.toFixed(6),
+                speed: speed,
+                accuracy: accuracy
+            });
+        }
+        
+        function startLaptopGPS() {
+            console.log('🖥️ Starting laptop GPS tracking...');
+            
+            if (!navigator.geolocation) {
+                alert('❌ GPS not supported on this laptop');
+                return;
+            }
+            
+            updateStatus('🔄 Getting laptop GPS location...', false, true);
+            
+            // Check GPS permissions
+            navigator.permissions.query({ name: 'geolocation' }).then(result => {
+                console.log('🔍 Laptop GPS Permission State:', result.state);
+                
+                if (result.state === 'denied') {
+                    updateStatus('❌ GPS Permission Denied', false);
+                    alert('⚠️ GPS permission denied. Please:\n1. Go to your browser settings\n2. Allow location access for this site\n3. Try again');
+                    return;
+                }
+                
+                if (result.state === 'prompt') {
+                    updateStatus('📍 GPS Permission Required', false, true);
+                }
+                
+                // Start GPS tracking
+                startGPSTracking();
+            }).catch(err => {
+                console.log('Permission query failed:', err);
+                startGPSTracking();
+            });
+        }
+        
+        function startGPSTracking() {
+            // Get initial GPS position
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    console.log('✅ Laptop GPS Success! Initial position:', position);
+                    handleGPSSuccess(position);
+                },
+                (error) => {
+                    console.log('❌ Laptop GPS Failed:', error);
+                    handleGPSError(error);
+                },
+                {
+                    enableHighAccuracy: true,
+                    timeout: 15000,
+                    maximumAge: 0
+                }
+            );
+        }
+        
+        function handleGPSSuccess(position) {
+            updateStatus('✅ Laptop GPS Active', true);
+            updateCoords(position);
+            sendGPSData(position, 'laptop');
+            laptopLocation = {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude
+            };
+            
+            // Start watching position for real-time updates
+            watchId = navigator.geolocation.watchPosition(
+                (newPosition) => {
+                    console.log('📍 Laptop GPS Update:', newPosition);
+                    updateCoords(newPosition);
+                    sendGPSData(newPosition, 'laptop');
+                    
+                    laptopLocation = {
+                        lat: newPosition.coords.latitude,
+                        lng: newPosition.coords.longitude
+                    };
+                },
+                (error) => {
+                    console.log('⚠️ Laptop GPS Watch Error:', error);
+                    updateStatus('⚠️ GPS Warning: ' + error.message, true);
+                },
+                {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 5000
+                }
+            );
+            
+            isTracking = true;
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+            
+            // Start sending simulated iPhone GPS too
+            startSimulatedPhoneGPS();
+            
+            console.log('🎯 Laptop GPS tracking started!');
+        }
+        
+        function handleGPSError(error) {
+            console.log('❌ Laptop GPS Error:', error);
+            
+            let errorMessage = 'GPS access failed';
+            switch(error.code) {
+                case error.PERMISSION_DENIED:
+                    errorMessage = 'GPS permission denied';
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    errorMessage = 'GPS position unavailable';
+                    break;
+                case error.TIMEOUT:
+                    errorMessage = 'GPS request timed out';
+                    break;
+            }
+            
+            updateStatus('❌ ' + errorMessage, false);
+            alert('⚠️ ' + errorMessage + '.\n\nPlease:\n1. Make sure Location Services are enabled on your laptop\n2. Allow this site to access your location\n3. Try moving to an area with better GPS reception');
+        }
+        
+        function startSimulatedPhoneGPS() {
+            console.log('📱 Starting simulated iPhone GPS...');
+            document.getElementById('phone-status').textContent = 'Simulated';
+            document.getElementById('phone-card').classList.add('active');
+            
+            // Use laptop location as base for iPhone simulation
+            if (laptopLocation) {
+                let phoneLat = laptopLocation.lat + 0.001; // Slightly offset
+                let phoneLng = laptopLocation.lng + 0.001;
+                let movementAngle = Math.random() * 360;
+                let movementSpeed = Math.random() * 5 + 2;
+                
+                const phoneInterval = setInterval(() => {
+                    // Simulate iPhone movement around laptop
+                    const movement = 0.0001;
+                    phoneLat = phoneLat + Math.cos(movementAngle * Math.PI / 180) * movement;
+                    phoneLng = phoneLng + Math.sin(movementAngle * Math.PI / 180) * movement;
+                    
+                    movementSpeed = Math.max(0, movementSpeed + (Math.random() - 0.5) * 2);
+                    
+                    // Create simulated position object
+                    const simulatedPosition = {
+                        coords: {
+                            latitude: phoneLat,
+                            longitude: phoneLng,
+                            speed: movementSpeed,
+                            heading: movementAngle,
+                            accuracy: 10,
+                            altitude: 0
+                        },
+                        timestamp: Date.now()
+                    };
+                    
+                    sendGPSData(simulatedPosition, 'phone');
+                    
+                    // Update iPhone location
+                    phoneLat = phoneLat;
+                    phoneLng = phoneLng;
+                    
+                    // Randomly change direction
+                    if (Math.random() < 0.2) {
+                        movementAngle = (movementAngle + (Math.random() - 0.5) * 45) % 360;
+                    }
+                    
+                    // Randomly change speed
+                    if (Math.random() < 0.1) {
+                        movementSpeed = Math.random() * 8 + 1;
+                    }
+                }, 3000);
+                
+                // Store interval for cleanup
+                window.phoneInterval = phoneInterval;
+            }
+        }
+        
+        function stopLaptopGPS() {
+            console.log('🛑 Stopping laptop GPS tracking...');
+            
+            if (watchId) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+            }
+            
+            if (updateInterval) {
+                clearInterval(updateInterval);
+                updateInterval = null;
+            }
+            
+            if (window.phoneInterval) {
+                clearInterval(window.phoneInterval);
+                window.phoneInterval = null;
+            }
+            
+            isTracking = false;
+            laptopLocation = null;
+            updateStatus('⏹️ Laptop GPS Stopped', false);
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            document.getElementById('laptop-card').classList.remove('active');
+            document.getElementById('phone-card').classList.remove('active');
+            document.getElementById('phone-status').textContent = 'Inactive';
+            
+            // Clear GPS data
+            localStorage.removeItem('laptopGPSData');
+            localStorage.removeItem('phoneGPSData');
+            
+            console.log('✅ Laptop GPS tracking stopped');
+        }
+        
+        // Auto-stop when page closes
+        window.addEventListener('beforeunload', stopLaptopGPS);
+        
+        // Log page load
+        console.log('🖥️ Laptop GPS Sender loaded');
+        console.log('🔍 Browser:', navigator.userAgent);
+        console.log('🌐 Protocol:', window.location.protocol);
+        console.log('🎯 Geolocation available:', !!navigator.geolocation);
+    </script>
+</body>
+</html>

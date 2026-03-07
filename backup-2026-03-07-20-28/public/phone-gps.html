@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phone GPS Sender</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 400px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .active { background: #d4edda; color: #155724; }
+        .inactive { background: #f8d7da; color: #721c24; }
+        .info {
+            background: #e7f3ff;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-size: 14px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            margin: 5px 0;
+        }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        .coords {
+            font-family: monospace;
+            font-size: 12px;
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .preset-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 5px;
+            margin: 10px 0;
+        }
+        .preset-btn {
+            background: #28a745;
+            font-size: 12px;
+            padding: 8px;
+        }
+        .preset-btn:hover { background: #218838; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>📱 Phone GPS Sender</h2>
+        <div class="info">
+            This app sends your phone's GPS location to your laptop fleet tracking system.
+        </div>
+        
+        <div id="status" class="status inactive">
+            ❌ Not connected
+        </div>
+        
+        <button id="startBtn" onclick="startTracking()">
+            🚀 Start GPS Tracking
+        </button>
+        
+        <button id="stopBtn" onclick="stopTracking()" disabled>
+            ⏹️ Stop GPS Tracking
+        </button>
+        
+        <div class="info">
+            <strong>📍 Manual GPS Mode (Recommended)</strong><br>
+            Since GPS permissions are restricted on iPhone, use manual mode:<br>
+            1. Open Google Maps on your iPhone<br>
+            2. Long press on your blue dot (current location)<br>
+            3. Copy the coordinates (e.g., 40.7128, -74.0060)<br>
+            4. Enter them below and click "Send Manual GPS"
+        </div>
+        
+        <div id="manualMode" style="display: block;">
+            <h3>📍 Manual GPS Mode</h3>
+            <label><strong>Latitude:</strong></label>
+            <input type="number" id="manualLat" placeholder="Your actual latitude" step="0.0001" value="">
+            
+            <label><strong>Longitude:</strong></label>
+            <input type="number" id="manualLng" placeholder="Your actual longitude" step="0.0001" value="">
+            
+            <label><strong>Speed (km/h):</strong></label>
+            <input type="number" id="manualSpeed" placeholder="0" value="0">
+            
+            <button onclick="sendManualGPS()">
+                📍 Send Manual GPS
+            </button>
+            
+            <div class="info">
+                <strong>📍 Manual Mode Instructions:</strong><br>
+                1. Open Google Maps on your iPhone<br>
+                2. Long press on your blue dot (current location)<br>
+                3. Copy the coordinates (e.g., 40.7128, -74.0060)<br>
+                4. Enter them in the fields above<br>
+                5. Click "Send Manual GPS" to see your location on laptop
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let watchId = null;
+        let isTracking = false;
+        let autoManualInterval = null;
+        
+        function updateStatus(message, isActive) {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = `status ${isActive ? 'active' : 'inactive'}`;
+        }
+        
+        function updateCoords(position) {
+            const coordsEl = document.getElementById('coords');
+            coordsEl.innerHTML = `
+                Latitude: ${position.coords.latitude.toFixed(6)}<br>
+                Longitude: ${position.coords.longitude.toFixed(6)}<br>
+                Speed: ${position.coords.speed ? (position.coords.speed * 3.6).toFixed(1) + ' km/h' : '0 km/h'}<br>
+                Accuracy: ${position.coords.accuracy.toFixed(0)}m<br>
+                Time: ${new Date().toLocaleTimeString()}
+            `;
+        }
+        
+        function sendGPSData(position) {
+            const gpsData = {
+                id: 888,
+                name: 'iPhone GPS',
+                uniqueId: 'IPHONE_GPS',
+                status: 'online',
+                lastUpdate: new Date().toISOString(),
+                positionId: 888,
+                category: 'phone',
+                position: {
+                    id: 888,
+                    deviceId: 888,
+                    latitude: position.coords.latitude,
+                    longitude: position.coords.longitude,
+                    speed: position.coords.speed || 0,
+                    course: position.coords.heading || 0,
+                    altitude: position.coords.altitude || 0,
+                    accuracy: position.coords.accuracy || 10,
+                    fixTime: new Date().toISOString(),
+                    deviceTime: new Date(position.timestamp).toISOString(),
+                    serverTime: new Date().toISOString(),
+                    attributes: {}
+                }
+            };
+            
+            // Send to laptop via localStorage
+            localStorage.setItem('phoneGPSData', JSON.stringify(gpsData));
+            
+            console.log('GPS data sent:', gpsData);
+        }
+        
+        function sendManualGPS() {
+            const lat = parseFloat(document.getElementById('manualLat').value);
+            const lng = parseFloat(document.getElementById('manualLng').value);
+            const speed = parseFloat(document.getElementById('manualSpeed').value) || 0;
+            
+            if (isNaN(lat) || isNaN(lng)) {
+                alert('Please enter valid latitude and longitude');
+                return;
+            }
+            
+            const gpsData = {
+                id: 888,
+                name: 'iPhone GPS',
+                uniqueId: 'IPHONE_GPS',
+                status: 'online',
+                lastUpdate: new Date().toISOString(),
+                positionId: 888,
+                category: 'phone',
+                position: {
+                    id: 888,
+                    deviceId: 888,
+                    latitude: lat,
+                    longitude: lng,
+                    speed: speed,
+                    course: Math.floor(Math.random() * 360),
+                    altitude: 0,
+                    accuracy: 10,
+                    fixTime: new Date().toISOString(),
+                    deviceTime: new Date().toISOString(),
+                    serverTime: new Date().toISOString(),
+                    attributes: {}
+                }
+            };
+            
+            // Send to laptop via localStorage
+            localStorage.setItem('phoneGPSData', JSON.stringify(gpsData));
+            
+            // Update display
+            updateCoords({
+                coords: {
+                    latitude: lat,
+                    longitude: lng,
+                    speed: speed,
+                    accuracy: 10
+                },
+                timestamp: Date.now()
+            });
+            
+            updateStatus('✅ Manual GPS Active', true);
+            console.log('Manual GPS data sent:', gpsData);
+        }
+        
+        function startTracking() {
+            if (!navigator.geolocation) {
+                alert('GPS not supported on this device');
+                return;
+            }
+            
+            updateStatus('🔄 Getting GPS location...', false);
+            
+            // Set timeout to switch to manual mode if GPS takes too long
+            const gpsTimeout = setTimeout(() => {
+                if (!isTracking) {
+                    console.log('GPS timeout - switching to manual mode');
+                    updateStatus('⏱️ GPS Timeout - Switching to Manual Mode', false);
+                    document.getElementById('manualMode').style.display = 'block';
+                    updateStatus('📍 Manual Mode - Enter Your Real GPS Coordinates', false);
+                    document.getElementById('startBtn').disabled = true;
+                    document.getElementById('manualBtn').disabled = false;
+                    document.getElementById('stopBtn').disabled = false;
+                    isTracking = true; // Set tracking to true for manual mode
+                }
+            }, 30000); // 30 second timeout
+            
+            // Check GPS permissions first
+            navigator.permissions.query({ name: 'geolocation' }).then(result => {
+                console.log('GPS Permission State:', result.state);
+                
+                if (result.state === 'denied') {
+                    clearTimeout(gpsTimeout);
+                    updateStatus('❌ GPS Permission Denied', false);
+                    alert('GPS permission denied. Please:\n1. Go to Settings > Privacy & Security > Location Services\n2. Find Chrome\n3. Set to "While Using" or "Always"\n4. Try again');
+                    return;
+                }
+                
+                if (result.state === 'prompt') {
+                    updateStatus('📍 GPS Permission Required', false);
+                }
+                
+                // Try to get GPS with multiple approaches
+                tryMultipleGPSApproaches();
+            }).catch(err => {
+                console.log('Permission query failed:', err);
+                tryMultipleGPSApproaches();
+            });
+        }
+        
+        function tryMultipleGPSApproaches() {
+            // Approach 1: High accuracy, short timeout
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    console.log('GPS Success (High Accuracy):', position);
+                    handleGPSSuccess(position);
+                },
+                (error) => {
+                    console.log('GPS Failed (High Accuracy):', error);
+                    // Approach 2: Low accuracy, longer timeout
+                    navigator.geolocation.getCurrentPosition(
+                        (position) => {
+                            console.log('GPS Success (Low Accuracy):', position);
+                            handleGPSSuccess(position);
+                        },
+                        (error2) => {
+                            console.log('GPS Failed (Low Accuracy):', error2);
+                            // Approach 3: Very low accuracy, very long timeout
+                            navigator.geolocation.getCurrentPosition(
+                                (position) => {
+                                    console.log('GPS Success (Very Low Accuracy):', position);
+                                    handleGPSSuccess(position);
+                                },
+                                (error3) => {
+                                    console.log('GPS Failed (Very Low Accuracy):', error3);
+                                    // All approaches failed
+                                    handleGPSFailure(error3);
+                                },
+                                {
+                                    enableHighAccuracy: false,
+                                    timeout: 60000,
+                                    maximumAge: 300000 // 5 minutes cache
+                                }
+                            );
+                        },
+                        {
+                            enableHighAccuracy: false,
+                            timeout: 30000,
+                            maximumAge: 120000 // 2 minutes cache
+                        }
+                    );
+                },
+                {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 0
+                }
+            );
+        }
+        
+        function handleGPSSuccess(position) {
+            updateStatus('✅ GPS Tracking Active', true);
+            updateCoords(position);
+            sendGPSData(position);
+            
+            // Start watching position
+            watchId = navigator.geolocation.watchPosition(
+                (newPosition) => {
+                    updateCoords(newPosition);
+                    sendGPSData(newPosition);
+                },
+                (error) => {
+                    console.log('GPS watch error:', error);
+                    updateStatus('⚠️ GPS Warning: ' + error.message, false);
+                },
+                {
+                    enableHighAccuracy: false,
+                    timeout: 20000,
+                    maximumAge: 60000
+                }
+            );
+            
+            isTracking = true;
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+        }
+        
+        function handleGPSFailure(error) {
+            console.log('All GPS approaches failed:', error);
+            updateStatus('❌ GPS Failed - Switching to Manual Mode', false);
+            document.getElementById('manualMode').style.display = 'block';
+            
+            // Don't send initial manual data - let user enter their real coordinates
+            updateStatus('📍 Manual Mode - Enter Your Real GPS Coordinates', false);
+        }
+        
+        function startManualMode() {
+            updateStatus('📍 Manual Mode Active', true);
+            document.getElementById('manualMode').style.display = 'block';
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+            document.getElementById('manualBtn').disabled = true;
+            
+            isTracking = true; // Set tracking to true for manual mode
+        }
+        
+        function stopTracking() {
+            // Clear GPS timeout
+            if (typeof gpsTimeout !== 'undefined') {
+                clearTimeout(gpsTimeout);
+            }
+            
+            if (watchId) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+            }
+            
+            if (autoManualInterval) {
+                clearInterval(autoManualInterval);
+                autoManualInterval = null;
+            }
+            
+            isTracking = false;
+            updateStatus('⏹️ GPS Tracking Stopped', false);
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            document.getElementById('manualBtn').disabled = false;
+            
+            // Clear GPS data
+            localStorage.removeItem('phoneGPSData');
+        }
+        
+        // Auto-stop when page closes
+        window.addEventListener('beforeunload', stopTracking);
+    </script>
+</body>
+</html>

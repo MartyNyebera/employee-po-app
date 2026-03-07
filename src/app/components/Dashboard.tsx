@@ -28,6 +28,9 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  
+  // Touch tracking for tab scrolling
+  const [touchStart, setTouchStart] = useState({ x: 0, y: 0 });
 
   const handleAssetClick = (assetId: string) => {
     setSelectedAssetId(assetId);
@@ -146,9 +149,9 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-hidden flex">
-        {/* Sidebar Navigation */}
-        <nav className="w-64 bg-slate-800 dark:bg-slate-900 border-r border-slate-700 dark:border-slate-600">
+      <main className="flex-1 overflow-hidden flex flex-col lg:flex-row">
+        {/* Sidebar Navigation - Desktop Only */}
+        <nav className="hidden lg:block w-64 bg-slate-800 dark:bg-slate-900 border-r border-slate-700 dark:border-slate-600">
           <div className="p-4">
             <h3 className="text-lg font-semibold text-white mb-4">Navigation</h3>
             <div className="space-y-2">
@@ -189,13 +192,96 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
         </nav>
 
         {/* Content Area */}
-        <div className={`flex-1 ${currentView === 'gps' ? 'overflow-hidden flex flex-col' : 'overflow-auto'}`}>
+        <div className={`flex-1 ${currentView === 'gps' ? 'overflow-hidden flex flex-col' : 'overflow-auto pb-20 lg:pb-0'}`}>
           {renderView()}
         </div>
       </main>
 
-      {/* Footer */}
-      <footer className="bg-slate-900 dark:bg-slate-800 text-slate-400 px-6 py-4 text-center text-sm border-t border-slate-700">
+      {/* Mobile Bottom Tab Bar - COMPLETELY ISOLATED */}
+      <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-slate-900 dark:bg-slate-800 border-t border-slate-700 z-50"
+           style={{ touchAction: 'none' }}>
+        {/* Tab Container with Pointer Events Control */}
+        <div className="relative overflow-hidden" style={{ height: '60px' }}>
+          {/* Scrollable Inner Container */}
+          <div 
+            className="absolute left-0 right-0 top-0 bottom-0 overflow-x-auto overflow-y-hidden whitespace-nowrap"
+            style={{ 
+              touchAction: 'pan-x',
+              scrollbarWidth: 'none',
+              msOverflowStyle: 'none'
+            }}
+            ref={(el) => {
+              if (el) {
+                // Hide scrollbar
+                el.style.setProperty('scrollbar-width', 'none');
+                el.style.setProperty('-ms-overflow-style', 'none');
+                el.style.setProperty('::-webkit-scrollbar', 'display: none');
+              }
+            }}
+            onScroll={(e) => {
+              // Prevent scroll propagation
+              e.stopPropagation();
+              e.nativeEvent.stopImmediatePropagation();
+            }}
+            onTouchStart={(e) => {
+              // Capture touch and prevent propagation
+              e.stopPropagation();
+              e.nativeEvent.stopImmediatePropagation();
+            }}
+            onTouchMove={(e) => {
+              // Only allow horizontal movement, prevent vertical
+              e.stopPropagation();
+              e.nativeEvent.stopImmediatePropagation();
+              
+              // Calculate if it's horizontal swipe
+              const touch = e.touches[0];
+              const deltaX = Math.abs(touch.clientX - (touchStart.x || touch.clientX));
+              const deltaY = Math.abs(touch.clientY - (touchStart.y || touch.clientY));
+              
+              if (deltaY > deltaX) {
+                // Vertical movement - prevent it
+                e.preventDefault();
+              }
+            }}
+            onTouchEnd={(e) => {
+              e.stopPropagation();
+              e.nativeEvent.stopImmediatePropagation();
+            }}
+            onWheel={(e) => {
+              // Prevent wheel events from affecting page
+              e.preventDefault();
+              e.stopPropagation();
+              e.nativeEvent.stopImmediatePropagation();
+            }}
+          >
+            <div className="flex items-center h-full px-2">
+              {navItems.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.nativeEvent.stopImmediatePropagation();
+                    handleViewChange(item.id as View);
+                    setSelectedAssetId(null);
+                  }}
+                  className={`flex-shrink-0 flex flex-col items-center justify-center gap-1 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-200 min-w-[60px] h-[52px] ${
+                    currentView === item.id
+                      ? 'bg-blue-600 text-white shadow-lg'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-700'
+                  }`}
+                  style={{ touchAction: 'none' }}
+                >
+                  <item.icon className="size-5 flex-shrink-0" />
+                  <span className="text-center leading-tight text-xs">{item.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Footer - Desktop Only */}
+      <footer className="hidden lg:block bg-slate-900 dark:bg-slate-800 text-slate-400 px-6 py-4 text-center text-sm border-t border-slate-700">
         <p>© 2026 KIMOEL Innovation. All rights reserved.</p>
       </footer>
     </div>

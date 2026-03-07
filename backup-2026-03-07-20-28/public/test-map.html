@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Map Test</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+        }
+        #map {
+            height: 400px;
+            width: 100%;
+            border: 1px solid #ccc;
+        }
+        .info {
+            margin: 10px 0;
+            padding: 10px;
+            background: #f0f0f0;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Map Test - KIMOEL Location</h1>
+    <div class="info">
+        <strong>Testing OpenStreetMap with Leaflet</strong><br>
+        This should show a map with KIMOEL location marker.
+    </div>
+    <div id="map"></div>
+    <div class="info">
+        <strong>KIMOEL Coordinates:</strong><br>
+        Latitude: 13.9334<br>
+        Longitude: 121.1471
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // Initialize map
+        const map = L.map('map').setView([13.9334, 121.1471], 15);
+
+        // Add OpenStreetMap tiles
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        // Add marker for KIMOEL
+        const marker = L.marker([13.9334, 121.1471]).addTo(map);
+        marker.bindPopup('<b>KIMOEL TRADING AND CONSTRUCTION INC.</b><br>13°56\'00.3"N 121°08\'49.4"E').openPopup();
+
+        console.log('Map test loaded successfully');
+    </script>
+</body>
+</html>

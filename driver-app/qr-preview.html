@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Kimoel Driver App - QR Code Preview</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background: #f0f0f0;
+        }
+        .container {
+            text-align: center;
+            background: white;
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        .qr-code {
+            width: 300px;
+            height: 300px;
+            margin: 20px auto;
+            border: 3px solid #2563eb;
+            border-radius: 15px;
+            background: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            color: #666;
+        }
+        .title {
+            font-size: 24px;
+            font-weight: bold;
+            color: #1e293b;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            font-size: 16px;
+            color: #64748b;
+            margin-bottom: 20px;
+        }
+        .instructions {
+            background: #f8fafc;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+            text-align: left;
+        }
+        .instructions h3 {
+            color: #2563eb;
+            margin-top: 0;
+        }
+        .instructions ol {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+        .instructions li {
+            margin: 8px 0;
+        }
+        .url {
+            background: #e0f2fe;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            word-break: break-all;
+            margin: 10px 0;
+        }
+        .platform-badges {
+            margin: 20px 0;
+        }
+        .badge {
+            display: inline-block;
+            padding: 8px 16px;
+            margin: 5px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        .android {
+            background: #22c55e;
+            color: white;
+        }
+        .ios {
+            background: #3b82f6;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="title">🚗 Kimoel Driver App</div>
+        <div class="subtitle">Professional Delivery Tracking</div>
+        
+        <div class="qr-code">
+            <img src="qr-codes/install-qr.png" alt="QR Code" style="width: 280px; height: 280px;">
+        </div>
+        
+        <div class="url">
+            🔗 https://employee-po-system.onrender.com/tracker.html
+        </div>
+        
+        <div class="platform-badges">
+            <span class="badge android">🤖 Android</span>
+            <span class="badge ios">🍎 iOS</span>
+        </div>
+        
+        <div class="instructions">
+            <h3>📱 How to Use GPS Tracker:</h3>
+            <ol>
+                <li>Open your phone camera</li>
+                <li>Scan this QR code</li>
+                <li>Tap the link to open GPS tracker</li>
+                <li>Enter device ID (e.g., "driver-001")</li>
+                <li>Click "Start Tracking" to begin GPS</li>
+            </ol>
+            <p><strong>Note:</strong> This is the current GPS tracker. The full Flutter app will be available soon!</p>
+        </div>
+        
+        <div style="margin-top: 30px; font-size: 14px; color: #64748b;">
+            <p>📧 Need help? Contact support@kimoel.com</p>
+            <p>© 2026 Kimoel Delivery Systems</p>
+        </div>
+    </div>
+</body>
+</html>

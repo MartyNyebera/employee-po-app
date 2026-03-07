@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width= initial-scale=1.0">
+    <title>Demo GPS Tracker</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .active { background: #d4edda; color: #155724; }
+        .inactive { background: #f8d7da; color: #721c24; }
+        .info {
+            background: #e7f3ff;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-size: 14px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 15px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            margin: 5px 0;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        .coords {
+            font-family: monospace;
+            font-size: 12px;
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .gps-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+        .gps-active { background: #28a745; }
+        .gps-inactive { background: #dc3545; }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        .device-list {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin: 10px 0;
+        }
+        .device-card {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border: 2px solid #dee2e6;
+            text-align: center;
+        }
+        .device-card.active {
+            border-color: #28a745;
+            background: #d4edda;
+        }
+        .route-list {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .route-item {
+            padding: 8px;
+            margin: 5px 0;
+            background: white;
+            border-radius: 5px;
+            cursor: pointer;
+            border: 1px solid #ddd;
+        }
+        .route-item:hover { background: #e9ecef; }
+        .route-item.selected { background: #007bff; color: white; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>🚀 Demo GPS Tracker</h2>
+        <div class="info">
+            <strong>Realistic GPS tracking simulation (no permissions needed)</strong><br>
+            This app simulates GPS tracking for both devices without requiring any location permissions.
+        </div>
+        
+        <div id="status" class="status inactive">
+            <span class="gps-indicator gps-inactive"></span>
+            GPS Not Active
+        </div>
+        
+        <button id="startBtn" onclick="startDemoGPS()">
+            🚀 Start Demo GPS
+        </button>
+        
+        <button id="stopBtn" onclick="stopDemoGPS()" disabled>
+            ⏹️ Stop GPS Tracking
+        </button>
+        
+        <div class="route-list">
+            <strong>📍 Choose Demo Route:</strong><br>
+            <div id="routeList">
+                <div class="route-item selected" onclick="selectRoute(0)">🏠 Home to Office Route</div>
+                <div class="route-item" onclick="selectRoute(1)">🛍️ Shopping Mall Route</div>
+                <div class="route-item" onclick="selectRoute(2)">🏢️ Delivery Route</div>
+                <div class="route-item" onclick="selectRoute(3)">🏪 Warehouse Route</div>
+            </div>
+        </div>
+        
+        <div class="device-list">
+            <div class="device-card" id="laptop-card">
+                <h3>🖥️ Laptop GPS</h3>
+                <div id="laptop-status">Inactive</div>
+            </div>
+            <div class="device-card" id="phone-card">
+                <h3>📱 iPhone GPS</h3>
+                <div id="phone-status">Inactive</div>
+            </div>
+        </div>
+        
+        <div class="coords">
+            <strong>📍 Current Location:</strong><br>
+            <div id="coords">Waiting for GPS...</div>
+        </div>
+        
+        <div class="info">
+            <strong>📋 How It Works:</strong><br>
+            1. Choose a demo route (realistic GPS paths)<br>
+            2. Both devices start tracking automatically<br>
+            3. Realistic movement patterns and speeds<br>
+            4. Both appear in your fleet tracking system
+        </div>
+        
+        <div class="info">
+            <strong>🎯 Test Your Fleet System:</strong><br>
+            • Open your fleet app: http://192.168.254.108:3000<br>
+            • Click GPS Tracking tab<br>
+            • Both devices will appear with realistic movement
+        </div>
+    </div>
+
+    <script>
+        let isTracking = false;
+        let updateInterval = null;
+        let selectedRoute = 0;
+        
+        // Demo routes with realistic GPS coordinates
+        const routes = [
+            {
+                name: "Home to Office Route",
+                laptop: [
+                    { lat: 14.5995, lng: 120.9842, speed: 0 }, // Home
+                    { lat: 14.6005, lng: 120.9850, speed: 15 }, // Moving
+                    { lat: 14.6015, lng: 120.9860, speed: 25 }, // Accelerating
+                    { lat: 14.6091, lng: 120.9925, speed: 35 }, // Office
+                ],
+                phone: [
+                    { lat: 14.5985, lng: 120.9832, speed: 0 }, // Near home
+                    { lat: 14.6000, lng: 120.9845, speed: 12 }, // Following
+                    { lat: 14.6010, lng: 120.9865, speed: 20 }, // Following
+                    { lat: 14.6085, lng: 120.9915, speed: 25 }, // Near office
+                ]
+            },
+            {
+                name: "Shopping Mall Route",
+                laptop: [
+                    { lat: 14.6091, lng: 120.9925, speed: 0 }, // Office
+                    { lat: 14.6105, lng: 120.9950, speed: 20 }, // Moving
+                    { lat: 14.5890, lng: 120.9768, speed: 30 }, // Mall
+                    { lat: 14.5875, lng: 120.9745, speed: 25 }, // Parking
+                    { lat: 14.5890, lng: 120.9768, speed: 0 }, // In mall
+                ],
+                phone: [
+                    { lat: 14.6081, lng: 120.9910, speed: 0 }, // Near office
+                    { lat: 14.6095, lng: 120.9930, speed: 18 }, // Following
+                    { lat: 14.5900, lng: 120.9780, speed: 25 }, // Following
+                    { lat: 14.5870, lng: 120.9730, speed: 22 }, // Following
+                    { lat: 14.5890, lng: 120.9768, speed: 0 }, // At mall
+                ]
+            },
+            {
+                name: "Delivery Route",
+                laptop: [
+                    { lat: 14.6170, lng: 121.0050, speed: 0 }, // Warehouse
+                    { lat: 14.6150, lng: 121.0030, speed: 25 }, // Starting
+                    { lat: 14.6091, lng: 120.9925, speed: 40 }, // Office
+                    { lat: 14.5890, lng: 120.9768, speed: 35 }, // Mall
+                    { lat: 14.6170, lng: 121.0050, speed: 30 }, // Back to warehouse
+                ],
+                phone: [
+                    { lat: 14.6155, lng: 121.0035, speed: 0 }, // Near warehouse
+                    { lat: 14.6130, lng: 121.0015, speed: 22 }, // Following
+                    { lat: 14.6070, lng: 120.9940, speed: 35 }, // Following
+                    { lat: 14.5950, lng: 120.9785, speed: 30 }, // Following
+                    { lat: 14.6150, lng: 121.0020, speed: 25 }, // Following
+                    { lat: 14.6170, lng: 121.0050, speed: 0 }, // At warehouse
+                ]
+            },
+            {
+                name: "Warehouse Route",
+                laptop: [
+                    { lat: 14.6170, lng: 121.0050, speed: 0 }, // Warehouse
+                    { lat: 14.6180, lng: 121.0060, speed: 10 }, // Moving
+                    { lat: 14.6200, lng: 121.0080, speed: 15 }, // Around warehouse
+                    { lat: 14.6170, lng: 121.0050, speed: 5 }, // Back
+                    { lat: 14.6170, lng: 121.0050, speed: 0 }, // At warehouse
+                ],
+                phone: [
+                    { lat: 14.6165, lng: 121.0045, speed: 0 }, // Near warehouse
+                    { lat: 14.6175, lng: 121.0055, speed: 8 }, // Following
+                    { lat: 14.6185, lng: 121.0065, speed: 12 }, // Following
+                    { lat: 14.6170, lng: 121.0050, speed: 5 }, // Following
+                    { lat: 14.6170, lng: 121.0050, speed: 0 }, // At warehouse
+                ]
+            }
+        ];
+        
+        let laptopIndex = 0;
+        let phoneIndex = 0;
+        
+        function updateStatus(message, isActive) {
+            const statusEl = document.getElementById('status');
+            const indicator = statusEl.querySelector('.gps-indicator');
+            
+            statusEl.textContent = message;
+            statusEl.className = `status ${isActive ? 'active' : 'inactive'}`;
+            
+            if (isActive) {
+                indicator.className = 'gps-indicator gps-active';
+                document.getElementById('laptop-card').classList.add('active');
+                document.getElementById('phone-card').classList.add('active');
+            } else {
+                indicator.className = 'gps-indicator gps-inactive';
+                document.getElementById('laptop-card').classList.remove('active');
+                document.getElementById('phone-card').classList.remove('active');
+            }
+        }
+        
+        function updateCoords(deviceName, position) {
+            const coordsEl = document.getElementById('coords');
+            const speed = position.speed.toFixed(1);
+            const heading = position.heading ? position.heading.toFixed(0) : '0';
+            
+            coordsEl.innerHTML = `
+                🖥️ ${deviceName}: Lat ${position.lat.toFixed(6)}, Lng ${position.lng.toFixed(6)}<br>
+                📱 iPhone: Lat ${(position.lat - 0.001).toFixed(6)}, Lng ${(position.lng - 0.001).toFixed(6)}<br>
+                🚗 Speed: ${speed} km/h | 🧭 Direction: ${heading}°<br>
+                ⏰ Time: ${new Date().toLocaleTimeString()}
+            `;
+        }
+        
+        function sendGPSData(position, deviceType) {
+            const deviceId = deviceType === 'laptop' ? 777 : 888;
+            const deviceName = deviceType === 'laptop' ? 'Laptop GPS' : 'iPhone GPS';
+            
+            const gpsData = {
+                id: deviceId,
+                name: deviceName,
+                uniqueId: deviceType.toUpperCase() + '_GPS',
+                status: 'online',
+                lastUpdate: new Date().toISOString(),
+                positionId: deviceId,
+                category: deviceType,
+                position: {
+                    id: deviceId,
+                    deviceId: deviceId,
+                    latitude: position.lat,
+                    longitude: position.lng,
+                    speed: position.speed,
+                    course: position.heading,
+                    altitude: Math.floor(Math.random() * 50) + 10,
+                    accuracy: Math.floor(Math.random() * 5) + 5,
+                    fixTime: new Date().toISOString(),
+                    deviceTime: new Date().toISOString(),
+                    serverTime: new Date().toISOString(),
+                    attributes: {}
+                }
+            };
+            
+            // Send to fleet app via localStorage
+            localStorage.setItem(deviceType + 'GPSData', JSON.stringify(gpsData));
+            
+            // Also try to send to server
+            fetch('http://192.168.254.108:3001/api/phone-gps', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(gpsData)
+            }).catch(err => {
+                console.log('Server not available, using localStorage only');
+            });
+            
+            console.log(`${deviceName} GPS data sent:`, {
+                lat: position.lat.toFixed(6),
+                lng: position.lng.toFixed(6),
+                speed: position.speed,
+                heading: position.heading
+            });
+        }
+        
+        function selectRoute(routeIndex) {
+            selectedRoute = routeIndex;
+            laptopIndex = 0;
+            phoneIndex = 0;
+            
+            // Update UI
+            document.querySelectorAll('.route-item').forEach((el, index) => {
+                el.classList.toggle('selected', index === routeIndex);
+            });
+            
+            console.log('Selected route:', routes[routeIndex].name);
+        }
+        
+        function startDemoGPS() {
+            if (isTracking) return;
+            
+            updateStatus('✅ Demo GPS Active', true);
+            
+            const route = routes[selectedRoute];
+            
+            updateInterval = setInterval(() => {
+                // Update laptop position
+                const laptopPos = route.laptop[laptopIndex];
+                updateCoords('Laptop', laptopPos);
+                sendGPSData(laptopPos, 'laptop');
+                
+                // Update iPhone position (slightly offset)
+                const iPhonePos = route.phone[phoneIndex];
+                updateCoords('iPhone', iPhonePos);
+                sendGPSData(iPhonePos, 'phone');
+                
+                // Move to next positions
+                laptopIndex = (laptopIndex + 1) % route.laptop.length;
+                phoneIndex = (phoneIndex + 1) % route.phone.length;
+                
+                // Add some random variation
+                if (Math.random() < 0.1) {
+                    // Random speed variation
+                    const laptopPosVar = route.laptop[laptopIndex];
+                    laptopPosVar.speed = Math.max(0, laptopPosVar.speed + (Math.random() - 0.5) * 5);
+                    sendGPSData(laptopPosVar, 'laptop');
+                }
+            }, 3000); // Update every 3 seconds
+            
+            isTracking = true;
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+            
+            console.log('Demo GPS tracking started for route:', routes[selectedRoute].name);
+        }
+        
+        function stopDemoGPS() {
+            if (updateInterval) {
+                clearInterval(updateInterval);
+                updateInterval = null;
+            }
+            
+            isTracking = false;
+            updateStatus('⏹️ Demo GPS Stopped', false);
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            
+            // Clear GPS data
+            localStorage.removeItem('laptopGPSData');
+            localStorage.removeItem('phoneGPSData');
+            
+            console.log('Demo GPS tracking stopped');
+        }
+        
+        // Auto-stop when page closes
+        window.addEventListener('beforeunload', stopDemoGPS);
+        
+        // Initialize
+        console.log('Demo GPS Tracker loaded');
+        console.log('Available routes:', routes.map(r => r.name));
+    </script>
+</body>
+</html>

@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Kimoel Driver">
+    <meta name="application-name" content="Kimoel Driver">
+    <meta name="theme-color" content="#1e3a5f">
+    <meta name="description" content="Professional GPS tracking for Kimoel delivery drivers">
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="manifest.json">
+    
+    <!-- iOS Icons -->
+    <link rel="apple-touch-icon" href="icon-192.png" sizes="192x192">
+    <link rel="apple-touch-icon" href="icon-512.png" sizes="512x512">
+    
+    <!-- Prevent zoom on input focus -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    
+    <title>Kimoel Driver - GPS Tracking</title>
+    
+    <style>
+        * { 
+            margin: 0; 
+            padding: 0; 
+            box-sizing: border-box; 
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%);
+            min-height: 100vh;
+            color: white;
+            overflow-x: hidden;
+            position: relative;
+        }
+        
+        /* iOS Safe Area Support */
+        @supports (padding: max(0px)) {
+            body {
+                padding-left: max(1rem, env(safe-area-inset-left));
+                padding-right: max(1rem, env(safe-area-inset-right));
+                padding-bottom: max(1rem, env(safe-area-inset-bottom));
+            }
+        }
+        
+        .container {
+            max-width: 100%;
+            margin: 0 auto;
+            padding: 20px;
+            text-align: center;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        
+        .logo {
+            font-size: 60px;
+            margin-bottom: 20px;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+        
+        .title {
+            font-size: 28px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .subtitle {
+            font-size: 16px;
+            color: #94a3b8;
+            margin-bottom: 30px;
+        }
+        
+        .device-input {
+            background: rgba(255,255,255,0.1);
+            border: 2px solid rgba(255,255,255,0.2);
+            border-radius: 15px;
+            padding: 15px;
+            margin-bottom: 20px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .device-input input {
+            width: 100%;
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 10px;
+            padding: 12px;
+            color: white;
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+        
+        .device-input input::placeholder {
+            color: rgba(255,255,255,0.6);
+        }
+        
+        .device-input input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            background: rgba(255,255,255,0.15);
+        }
+        
+        .track-button {
+            background: linear-gradient(45deg, #3b82f6, #1d4ed8);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            padding: 15px 30px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+            margin: 10px 0;
+            width: 100%;
+            max-width: 300px;
+        }
+        
+        .track-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
+        }
+        
+        .track-button:active {
+            transform: translateY(0);
+        }
+        
+        .track-button.stop {
+            background: linear-gradient(45deg, #ef4444, #dc2626);
+            box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);
+        }
+        
+        .track-button.stop:hover {
+            box-shadow: 0 6px 20px rgba(239, 68, 68, 0.4);
+        }
+        
+        .status {
+            background: rgba(255,255,255,0.1);
+            border-radius: 15px;
+            padding: 20px;
+            margin: 20px 0;
+            backdrop-filter: blur(10px);
+        }
+        
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 10px 0;
+            padding: 10px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+        }
+        
+        .status-label {
+            font-weight: 600;
+            color: #cbd5e1;
+        }
+        
+        .status-value {
+            color: #10b981;
+            font-weight: bold;
+        }
+        
+        .status-value.inactive {
+            color: #ef4444;
+        }
+        
+        .instructions {
+            background: rgba(255,255,255,0.1);
+            border-radius: 15px;
+            padding: 20px;
+            margin: 20px 0;
+            backdrop-filter: blur(10px);
+            text-align: left;
+        }
+        
+        .instructions h3 {
+            color: #3b82f6;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+        
+        .instructions ol {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+        
+        .instructions li {
+            margin: 8px 0;
+            line-height: 1.4;
+        }
+        
+        .add-to-home {
+            background: linear-gradient(45deg, #10b981, #059669);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            padding: 12px 20px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            margin: 10px 0;
+            box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+        }
+        
+        .ios-only {
+            display: none;
+        }
+        
+        @supports (-webkit-touch-callout: none) {
+            .ios-only {
+                display: block;
+            }
+        }
+        
+        .features {
+            background: rgba(255,255,255,0.1);
+            border-radius: 15px;
+            padding: 20px;
+            margin: 20px 0;
+            backdrop-filter: blur(10px);
+        }
+        
+        .feature {
+            display: flex;
+            align-items: center;
+            margin: 10px 0;
+            font-size: 14px;
+            text-align: left;
+        }
+        
+        .feature-icon {
+            margin-right: 10px;
+            color: #10b981;
+            font-size: 18px;
+        }
+        
+        .location-display {
+            background: rgba(255,255,255,0.1);
+            border-radius: 15px;
+            padding: 15px;
+            margin: 20px 0;
+            backdrop-filter: blur(10px);
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+        
+        .error {
+            background: rgba(239, 68, 68, 0.2);
+            border: 1px solid rgba(239, 68, 68, 0.5);
+            border-radius: 10px;
+            padding: 15px;
+            margin: 10px 0;
+            color: #fca5a5;
+        }
+        
+        .success {
+            background: rgba(16, 185, 129, 0.2);
+            border: 1px solid rgba(16, 185, 129, 0.5);
+            border-radius: 10px;
+            padding: 15px;
+            margin: 10px 0;
+            color: #86efac;
+        }
+        
+        /* iOS PWA Standalone Mode */
+        @media (display-mode: standalone) {
+            .container {
+                padding-top: 40px;
+            }
+            
+            .add-to-home {
+                display: none;
+            }
+        }
+        
+        /* Loading Animation */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: #3b82f6;
+            animation: spin 1s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Logo and Title -->
+        <div class="logo">🚗</div>
+        <div class="title">Kimoel Driver</div>
+        <div class="subtitle">Professional GPS Tracking</div>
+
+        <!-- Add to Home Screen Button (iOS only) -->
+        <div class="ios-only">
+            <button class="add-to-home" onclick="showAddToHomeInstructions()">
+                📱 Add to Home Screen
+            </button>
+        </div>
+
+        <!-- Device Input -->
+        <div class="device-input">
+            <input type="text" id="deviceId" placeholder="Enter Device ID (e.g., driver-001)" value="">
+            <button class="track-button" id="trackBtn" onclick="toggleTracking()">
+                📍 Start Tracking
+            </button>
+        </div>
+
+        <!-- Status Display -->
+        <div class="status">
+            <div class="status-item">
+                <span class="status-label">Status:</span>
+                <span class="status-value inactive" id="statusText">Not Tracking</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Device ID:</span>
+                <span class="status-value" id="deviceIdDisplay">-</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Location Updates:</span>
+                <span class="status-value" id="updateCount">0</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Last Update:</span>
+                <span class="status-value" id="lastUpdate">-</span>
+            </div>
+        </div>
+
+        <!-- Location Display -->
+        <div class="location-display" id="locationDisplay" style="display: none;">
+            <strong>Recent Location Data:</strong><br>
+            <div id="locationData">No location data yet...</div>
+        </div>
+
+        <!-- Instructions -->
+        <div class="instructions">
+            <h3>📱 How to Use:</h3>
+            <ol>
+                <li>Enter your device ID (e.g., driver-001)</li>
+                <li>Tap "Start Tracking" to begin GPS</li>
+                <li>Allow location permissions when prompted</li>
+                <li>Keep this page open for continuous tracking</li>
+                <li>Tap "Stop Tracking" when done</li>
+            </ol>
+            
+            <div class="ios-only">
+                <h3>🍎 iOS Users:</h3>
+                <ol>
+                    <li>Tap "Share" button in Safari</li>
+                    <li>Scroll down and tap "Add to Home Screen"</li>
+                    <li>Tap "Add" to install app icon</li>
+                    <li>Use the app icon for easy access</li>
+                </ol>
+            </div>
+        </div>
+
+        <!-- Features -->
+        <div class="features">
+            <div class="feature">
+                <span class="feature-icon">✅</span>
+                <span>Real-time GPS tracking</span>
+            </div>
+            <div class="feature">
+                <span class="feature-icon">✅</span>
+                <span>30-second update intervals</span>
+            </div>
+            <div class="feature">
+                <span class="feature-icon">✅</span>
+                <span>Works in background (when added to home screen)</span>
+            </div>
+            <div class="feature">
+                <span class="feature-icon">✅</span>
+                <span>Secure data transmission</span>
+            </div>
+        </div>
+
+        <!-- Messages -->
+        <div id="messageArea"></div>
+    </div>
+
+    <script>
+        let isTracking = false;
+        let watchId = null;
+        let updateCount = 0;
+        let deviceId = '';
+
+        // Check if running as PWA
+        if (window.matchMedia('(display-mode: standalone)').matches) {
+            console.log('Running as PWA');
+        }
+
+        function showAddToHomeInstructions() {
+            const instructions = `
+🍎 How to Add to Home Screen:
+
+1. Tap the Share button (square with arrow) at the bottom of Safari
+2. Scroll down and tap "Add to Home Screen"
+3. Tap "Add" to confirm
+4. The app icon will appear on your home screen
+5. Use the icon for easy access (works better than browser)
+
+This will allow the app to run more reliably and use background features!
+            `;
+            
+            showMessage(instructions, 'success');
+        }
+
+        function toggleTracking() {
+            const deviceIdInput = document.getElementById('deviceId');
+            const trackBtn = document.getElementById('trackBtn');
+            const statusText = document.getElementById('statusText');
+            const locationDisplay = document.getElementById('locationDisplay');
+            
+            deviceId = deviceIdInput.value.trim();
+            
+            if (!deviceId) {
+                showMessage('Please enter a device ID', 'error');
+                return;
+            }
+            
+            if (!isTracking) {
+                startTracking();
+            } else {
+                stopTracking();
+            }
+        }
+
+        function startTracking() {
+            const trackBtn = document.getElementById('trackBtn');
+            const statusText = document.getElementById('statusText');
+            const deviceIdDisplay = document.getElementById('deviceIdDisplay');
+            
+            if (!navigator.geolocation) {
+                showMessage('Geolocation is not supported by this browser', 'error');
+                return;
+            }
+            
+            trackBtn.textContent = '⏳ Starting...';
+            trackBtn.disabled = true;
+            
+            // Request permission
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    // Permission granted, start tracking
+                    isTracking = true;
+                    updateCount = 0;
+                    
+                    trackBtn.textContent = '🛑 Stop Tracking';
+                    trackBtn.className = 'track-button stop';
+                    trackBtn.disabled = false;
+                    
+                    statusText.textContent = 'Tracking';
+                    statusText.className = 'status-value';
+                    deviceIdDisplay.textContent = deviceId;
+                    
+                    locationDisplay.style.display = 'block';
+                    
+                    showMessage('GPS tracking started successfully!', 'success');
+                    
+                    // Start continuous tracking
+                    startContinuousTracking();
+                },
+                (error) => {
+                    trackBtn.textContent = '📍 Start Tracking';
+                    trackBtn.disabled = false;
+                    
+                    let errorMessage = 'Location permission denied. Please enable location access.';
+                    if (error.code === error.PERMISSION_DENIED) {
+                        errorMessage = 'Location permission denied. Please enable location access in Settings.';
+                    } else if (error.code === error.POSITION_UNAVAILABLE) {
+                        errorMessage = 'Location information is unavailable.';
+                    } else if (error.code === error.TIMEOUT) {
+                        errorMessage = 'Location request timed out.';
+                    }
+                    
+                    showMessage(errorMessage, 'error');
+                },
+                {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 0
+                }
+            );
+        }
+
+        function startContinuousTracking() {
+            const options = {
+                enableHighAccuracy: true,
+                timeout: 10000,
+                maximumAge: 0
+            };
+            
+            watchId = navigator.geolocation.watchPosition(
+                (position) => {
+                    updateCount++;
+                    updateLocation(position);
+                },
+                (error) => {
+                    console.error('Tracking error:', error);
+                    if (error.code === error.PERMISSION_DENIED) {
+                        showMessage('Location permission revoked. Tracking stopped.', 'error');
+                        stopTracking();
+                    }
+                },
+                options
+            );
+        }
+
+        function updateLocation(position) {
+            const locationData = {
+                deviceId: deviceId,
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+                accuracy: position.coords.accuracy,
+                altitude: position.coords.altitude,
+                altitudeAccuracy: position.coords.altitudeAccuracy,
+                heading: position.coords.heading,
+                speed: position.coords.speed,
+                timestamp: new Date().toISOString()
+            };
+            
+            // Update UI
+            document.getElementById('updateCount').textContent = updateCount;
+            document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+            
+            // Update location display
+            const locationDiv = document.getElementById('locationData');
+            locationDiv.innerHTML = `
+                <strong>Update #${updateCount}</strong><br>
+                Lat: ${position.coords.latitude.toFixed(6)}<br>
+                Lng: ${position.coords.longitude.toFixed(6)}<br>
+                Accuracy: ${position.coords.accuracy.toFixed(0)}m<br>
+                Time: ${new Date().toLocaleTimeString()}
+            `;
+            
+            // Send to server
+            sendLocationToServer(locationData);
+        }
+
+        function sendLocationToServer(locationData) {
+            fetch('https://employee-po-system.onrender.com/api/phone-location', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(locationData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Location sent successfully:', data);
+            })
+            .catch(error => {
+                console.error('Error sending location:', error);
+                // Don't show error to user, just log it
+            });
+        }
+
+        function stopTracking() {
+            const trackBtn = document.getElementById('trackBtn');
+            const statusText = document.getElementById('statusText');
+            
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+            }
+            
+            isTracking = false;
+            
+            trackBtn.textContent = '📍 Start Tracking';
+            trackBtn.className = 'track-button';
+            
+            statusText.textContent = 'Not Tracking';
+            statusText.className = 'status-value inactive';
+            
+            showMessage('GPS tracking stopped', 'success');
+        }
+
+        function showMessage(message, type) {
+            const messageArea = document.getElementById('messageArea');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = type;
+            messageDiv.textContent = message;
+            
+            messageArea.appendChild(messageDiv);
+            
+            // Auto-remove after 5 seconds
+            setTimeout(() => {
+                messageDiv.remove();
+            }, 5000);
+        }
+
+        // Handle page visibility changes (for background tracking)
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden && isTracking) {
+                console.log('Page hidden, tracking continues in background');
+            } else if (!document.hidden && isTracking) {
+                console.log('Page visible, tracking active');
+            }
+        });
+
+        // Handle beforeunload (page close)
+        window.addEventListener('beforeunload', () => {
+            if (isTracking) {
+                // Send final location
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const locationData = {
+                            deviceId: deviceId,
+                            latitude: position.coords.latitude,
+                            longitude: position.coords.longitude,
+                            timestamp: new Date().toISOString(),
+                            event: 'page_close'
+                        };
+                        sendLocationToServer(locationData);
+                    }
+                );
+            }
+        });
+
+        // Check if running as standalone PWA
+        if (window.navigator.standalone) {
+            console.log('Running as iOS standalone app');
+        }
+    </script>
+</body>
+</html>

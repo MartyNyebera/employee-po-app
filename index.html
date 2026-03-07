@@ -17,9 +17,50 @@
     
     <!-- Icons -->
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" sizes="152x152" href="/kimoel-logo.png" />
+    <link rel="apple-touch-icon" sizes="167x167" href="/kimoel-logo.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/kimoel-logo.png" />
     <link rel="apple-touch-icon" href="/kimoel-logo.png" />
     
     <title>Kimoel Tracking System</title>
+
+    <!-- iOS Chrome Detection -->
+    <script>
+      // Detect Chrome on iOS and show helpful message
+      if (navigator.userAgent.includes('CriOS')) {
+        console.log('Chrome on iOS detected - please use Safari for PWA installation');
+      }
+    </script>
+
+    <!-- Simple CSS for tab isolation -->
+    <style>
+      /* Basic horizontal scroll prevention */
+      html, body {
+        overflow-x: hidden;
+        max-width: 100vw;
+      }
+      
+      /* Main containers */
+      #root, .min-h-screen {
+        overflow-x: hidden;
+        max-width: 100vw;
+      }
+      
+      /* Content areas - no horizontal scroll */
+      main, .content-area {
+        overflow-x: hidden;
+        max-width: 100%;
+      }
+      
+      /* Hide scrollbar on tab container */
+      .tab-scroll-container::-webkit-scrollbar {
+        display: none;
+      }
+      .tab-scroll-container {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+    </style>
 
     <!-- Apply theme before React mounts to prevent flash -->
     <script>
@@ -27,6 +68,86 @@
         var theme = localStorage.getItem('theme') || 'light';
         document.documentElement.classList.add(theme);
       })();
+    </script>
+
+    <!-- Simple Debug Test -->
+    <script>
+      // Immediate test - should show up right away
+      console.log('🚀 DEBUG SCRIPT LOADED!');
+      
+      document.addEventListener('DOMContentLoaded', function() {
+        console.log('� DOM LOADED - Starting debug monitoring');
+        
+        // Add visual indicator
+        const debugDiv = document.createElement('div');
+        debugDiv.id = 'debug-indicator';
+        debugDiv.style.cssText = `
+          position: fixed;
+          top: 10px;
+          right: 10px;
+          background: red;
+          color: white;
+          padding: 5px 10px;
+          z-index: 9999;
+          font-size: 12px;
+          border-radius: 3px;
+        `;
+        debugDiv.textContent = 'DEBUG ACTIVE';
+        document.body.appendChild(debugDiv);
+        
+        // Test basic events
+        document.addEventListener('click', function() {
+          console.log('🚀 CLICK DETECTED');
+        });
+        
+        document.addEventListener('touchstart', function(e) {
+          console.log('� TOUCH START!', e.touches.length);
+          debugDiv.textContent = 'TOUCH START';
+          debugDiv.style.background = 'orange';
+        });
+        
+        document.addEventListener('touchmove', function(e) {
+          console.log('� TOUCH MOVE!', e.touches.length);
+          debugDiv.textContent = 'TOUCH MOVE';
+          debugDiv.style.background = 'yellow';
+          debugDiv.style.color = 'black';
+        });
+        
+        document.addEventListener('touchend', function(e) {
+          console.log('� TOUCH END!');
+          debugDiv.textContent = 'TOUCH END';
+          debugDiv.style.background = 'green';
+        });
+        
+        window.addEventListener('scroll', function() {
+          console.log('� SCROLL!', window.scrollX, window.scrollY);
+          debugDiv.textContent = `SCROLL: ${window.scrollX},${window.scrollY}`;
+          debugDiv.style.background = 'blue';
+        });
+        
+        // Check scroll position every second
+        setInterval(function() {
+          const scrollX = window.scrollX;
+          const scrollY = window.scrollY;
+          const bodyWidth = document.body.scrollWidth;
+          const windowWidth = window.innerWidth;
+          
+          console.log('🚀 STATUS CHECK:', {
+            scrollX: scrollX,
+            scrollY: scrollY,
+            bodyWidth: bodyWidth,
+            windowWidth: windowWidth,
+            overflow: bodyWidth > windowWidth
+          });
+          
+          if (scrollX !== 0) {
+            console.log('🚀 HORIZONTAL SCROLL DETECTED - RESETTING!');
+            window.scrollTo(0, scrollY);
+            debugDiv.textContent = 'RESET H-SCROLL';
+            debugDiv.style.background = 'red';
+          }
+        }, 1000);
+      });
     </script>
     
     <script type="module" src="/src/app/index.tsx"></script>
@@ -45,12 +166,16 @@
         });
       }
       
-      // Unregister any existing service workers
+      // Register Service Worker for PWA functionality
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(registrations => {
-          registrations.forEach(registration => {
-            registration.unregister();
-          });
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then(registration => {
+              console.log('Service Worker registered successfully:', registration);
+            })
+            .catch(error => {
+              console.log('Service Worker registration failed:', error);
+            });
         });
       }
     </script>
