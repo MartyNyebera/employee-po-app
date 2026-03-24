@@ -33,6 +33,8 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [filterType, setFilterType] = useState('all');
+  const [filterVehicle, setFilterVehicle] = useState('all');
 
   useEffect(() => {
     Promise.all([
@@ -211,51 +213,32 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
       {/* Enhanced Filter Bar */}
       <Card className="bg-white border border-slate-200/60 shadow-lg shadow-slate-900/5 dark:bg-slate-800/50 dark:border dark:border-white/10 dark:shadow-xl dark:shadow-black/20">
         <CardContent className="p-4">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
-              <Filter className="size-5" />
-              <span className="font-medium">Filter</span>
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-1 text-slate-500">
+              <Filter className="size-4 flex-shrink-0" />
+              <span className="text-sm">Filter</span>
             </div>
-            <div className="flex-1">
-              <Input 
-                placeholder="Search transactions..." 
-                className="bg-slate-50 dark:bg-slate-700/50 border-slate-200 dark:border-slate-600 focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 dark:focus:ring-amber-500/40"
-              />
-            </div>
-            <Select defaultValue="all">
-              <SelectTrigger className="w-32 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600">
-                <SelectValue placeholder="Type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="fuel">Fuel</SelectItem>
-                <SelectItem value="maintenance">Maintenance</SelectItem>
-                <SelectItem value="parts">Parts</SelectItem>
-                <SelectItem value="rental">Rental</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select defaultValue="all">
-              <SelectTrigger className="w-32 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600">
-                <SelectValue placeholder="Asset" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Vehicles</SelectItem>
-                {vehicles.map(vehicle => (
-                  <SelectItem key={vehicle.id} value={vehicle.id}>{vehicle.unit_name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select defaultValue="newest">
-              <SelectTrigger className="w-32 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600">
-                <SelectValue placeholder="Sort" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="newest">Newest</SelectItem>
-                <SelectItem value="oldest">Oldest</SelectItem>
-                <SelectItem value="amount-high">Amount High</SelectItem>
-                <SelectItem value="amount-low">Amount Low</SelectItem>
-              </SelectContent>
-            </Select>
+            <select
+              className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 flex-1 min-w-[100px]"
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value)}
+            >
+              <option value="all">All Types</option>
+              <option value="fuel">Fuel</option>
+              <option value="maintenance">Maintenance</option>
+              <option value="parts">Parts</option>
+              <option value="rental">Rental</option>
+            </select>
+            <select
+              className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 flex-1 min-w-[110px]"
+              value={filterVehicle}
+              onChange={(e) => setFilterVehicle(e.target.value)}
+            >
+              <option value="all">All Vehicles</option>
+              {vehicles.map(vehicle => (
+                <option key={vehicle.id} value={vehicle.id}>{vehicle.unit_name}</option>
+              ))}
+            </select>
           </div>
         </CardContent>
       </Card>
