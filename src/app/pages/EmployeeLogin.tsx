@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Package } from 'lucide-react';
+import { Package, XCircle, CheckCircle } from 'lucide-react';
 
 export function EmployeeLogin() {
   const [mode, setMode] = useState
@@ -74,168 +74,287 @@ export function EmployeeLogin() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 
-      flex items-center justify-center p-4">
+  <div className="min-h-screen bg-slate-900 
+    flex flex-col">
+    {/* Top Brand Bar */}
+    <div className="bg-slate-800 px-6 py-4 
+      flex items-center gap-3 border-b 
+      border-slate-700">
+      <img 
+        src="/kimoel-logo.png" 
+        alt="Kimoel" 
+        className="h-8 w-auto object-contain"
+        onError={(e) => {
+          e.currentTarget.style.display = 'none'
+        }}
+      />
+      <div>
+        <p className="text-white font-bold text-sm">
+          KIMOEL INNOVATION
+        </p>
+        <p className="text-slate-400 text-xs">
+          Employee Portal
+        </p>
+      </div>
+    </div>
+
+    {/* Main Content */}
+    <div className="flex-1 flex items-center 
+      justify-center p-4">
       <div className="bg-white rounded-2xl 
-        shadow-2xl w-full max-w-sm p-6">
-        <div className="text-center mb-6">
-          <div className="w-16 h-16 bg-blue-100 
+        shadow-2xl w-full max-w-sm overflow-hidden">
+        
+        {/* Card Header */}
+        <div className="bg-blue-600 px-6 py-8 
+          text-center">
+          <div className="w-16 h-16 bg-white/20 
             rounded-2xl flex items-center 
             justify-center mx-auto mb-3">
-            <Package className="size-8 
-              text-blue-600" />
+            <Package className="size-8 text-white" />
           </div>
           <h1 className="text-xl font-bold 
-            text-slate-900">Employee Portal</h1>
-          <p className="text-sm text-slate-500">
-            Kimoel Innovation
+            text-white">Employee Portal</h1>
+          <p className="text-blue-200 text-sm mt-1">
+            Material Requests & Inventory
           </p>
         </div>
 
-        {error && (
-          <div className="bg-red-50 border 
-            border-red-200 rounded-lg p-3 mb-4">
-            <p className="text-sm text-red-700">
-              {error}
-            </p>
-          </div>
-        )}
+        {/* Tab Switcher */}
+        <div className="flex border-b 
+          border-slate-200">
+          <button
+            onClick={() => {
+              setMode('login');
+              setError('');
+              setSuccess('');
+            }}
+            className={`flex-1 py-3 text-sm 
+              font-medium transition-colors
+              ${mode === 'login'
+                ? 'text-blue-600 border-b-2 border-blue-600'
+                : 'text-slate-500'
+              }`}
+          >
+            Sign In
+          </button>
+          <button
+            onClick={() => {
+              setMode('register');
+              setError('');
+              setSuccess('');
+            }}
+            className={`flex-1 py-3 text-sm 
+              font-medium transition-colors
+              ${mode === 'register'
+                ? 'text-blue-600 border-b-2 border-blue-600'
+                : 'text-slate-500'
+              }`}
+          >
+            Register
+          </button>
+        </div>
 
-        {success && (
-          <div className="bg-green-50 border 
-            border-green-200 rounded-lg p-3 mb-4">
-            <p className="text-sm text-green-700">
-              {success}
-            </p>
-          </div>
-        )}
+        {/* Form Area */}
+        <div className="p-6">
+          {error && (
+            <div className="bg-red-50 border 
+              border-red-200 rounded-xl p-3 mb-4 
+              flex items-start gap-2">
+              <XCircle className="size-4 
+                text-red-500 mt-0.5 flex-shrink-0" />
+              <p className="text-sm text-red-700">
+                {error}
+              </p>
+            </div>
+          )}
 
-        {mode === 'login' ? (
-          <div className="space-y-3">
-            <input
-              type="email"
-              placeholder="Email"
-              className="w-full border border-slate-200 
-                rounded-xl px-4 py-3 text-sm"
-              value={loginForm.email}
-              onChange={e => setLoginForm(
-                f => ({...f, email: e.target.value})
-              )}
-            />
-            <input
-              type="password"
-              placeholder="Password"
-              className="w-full border border-slate-200 
-                rounded-xl px-4 py-3 text-sm"
-              value={loginForm.password}
-              onChange={e => setLoginForm(
-                f => ({...f, password: e.target.value})
-              )}
-            />
-            <button
-              onClick={handleLogin}
-              disabled={loading}
-              className="w-full bg-blue-600 text-white 
-                py-3 rounded-xl font-semibold text-sm
-                disabled:opacity-50"
-            >
-              {loading ? 'Logging in...' : 'Login'}
-            </button>
-            <p className="text-center text-sm 
-              text-slate-500">
-              No account?{' '}
+          {success && (
+            <div className="bg-green-50 border 
+              border-green-200 rounded-xl p-3 mb-4
+              flex items-start gap-2">
+              <CheckCircle className="size-4 
+                text-green-500 mt-0.5 flex-shrink-0"/>
+              <p className="text-sm text-green-700">
+                {success}
+              </p>
+            </div>
+          )}
+
+          {mode === 'login' ? (
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold 
+                  text-slate-600 uppercase tracking-wider 
+                  block mb-1.5">Email</label>
+                <input
+                  type="email"
+                  placeholder="your@email.com"
+                  className="w-full border border-slate-200 
+                    rounded-xl px-4 py-3 text-sm 
+                    focus:outline-none focus:ring-2 
+                    focus:ring-blue-500 bg-slate-50"
+                  value={loginForm.email}
+                  onChange={e => setLoginForm(
+                    f => ({...f, email: e.target.value})
+                  )}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold 
+                  text-slate-600 uppercase tracking-wider 
+                  block mb-1.5">Password</label>
+                <input
+                  type="password"
+                  placeholder="••••••••"
+                  className="w-full border border-slate-200 
+                    rounded-xl px-4 py-3 text-sm
+                    focus:outline-none focus:ring-2 
+                    focus:ring-blue-500 bg-slate-50"
+                  value={loginForm.password}
+                  onChange={e => setLoginForm(
+                    f => ({...f, password: e.target.value})
+                  )}
+                  onKeyPress={e => {
+                    if (e.key === 'Enter') handleLogin();
+                  }}
+                />
+              </div>
               <button
-                onClick={() => setMode('register')}
-                className="text-blue-600 font-medium"
+                onClick={handleLogin}
+                disabled={loading}
+                className="w-full bg-blue-600 
+                  hover:bg-blue-700 text-white py-3 
+                  rounded-xl font-semibold text-sm
+                  disabled:opacity-50 transition-colors
+                  flex items-center justify-center gap-2"
               >
-                Register here
+                {loading ? (
+                  <>
+                    <div className="w-4 h-4 border-2 
+                      border-white/30 border-t-white 
+                      rounded-full animate-spin" />
+                    Signing in...
+                  </>
+                ) : 'Sign In'}
               </button>
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <input
-              placeholder="Full Name *"
-              className="w-full border border-slate-200 
-                rounded-xl px-4 py-3 text-sm"
-              value={registerForm.full_name}
-              onChange={e => setRegisterForm(
-                f => ({...f, 
-                  full_name: e.target.value})
-              )}
-            />
-            <input
-              type="email"
-              placeholder="Email *"
-              className="w-full border border-slate-200 
-                rounded-xl px-4 py-3 text-sm"
-              value={registerForm.email}
-              onChange={e => setRegisterForm(
-                f => ({...f, email: e.target.value})
-              )}
-            />
-            <input
-              type="password"
-              placeholder="Password *"
-              className="w-full border border-slate-200 
-                rounded-xl px-4 py-3 text-sm"
-              value={registerForm.password}
-              onChange={e => setRegisterForm(
-                f => ({...f, password: e.target.value})
-              )}
-            />
-            <input
-              placeholder="Department"
-              className="w-full border border-slate-200 
-                rounded-xl px-4 py-3 text-sm"
-              value={registerForm.department}
-              onChange={e => setRegisterForm(
-                f => ({...f, 
-                  department: e.target.value})
-              )}
-            />
-            <input
-              placeholder="Position"
-              className="w-full border border-slate-200 
-                rounded-xl px-4 py-3 text-sm"
-              value={registerForm.position}
-              onChange={e => setRegisterForm(
-                f => ({...f, position: e.target.value})
-              )}
-            />
-            <input
-              placeholder="Phone"
-              className="w-full border border-slate-200 
-                rounded-xl px-4 py-3 text-sm"
-              value={registerForm.phone}
-              onChange={e => setRegisterForm(
-                f => ({...f, phone: e.target.value})
-              )}
-            />
-            <button
-              onClick={handleRegister}
-              disabled={loading}
-              className="w-full bg-blue-600 text-white 
-                py-3 rounded-xl font-semibold text-sm
-                disabled:opacity-50"
-            >
-              {loading 
-                ? 'Submitting...' 
-                : 'Submit Registration'}
-            </button>
-            <p className="text-center text-sm 
-              text-slate-500">
-              Have an account?{' '}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 gap-3">
+                <input
+                  placeholder="Full Name *"
+                  className="w-full border border-slate-200 
+                    rounded-xl px-4 py-3 text-sm
+                    focus:outline-none focus:ring-2 
+                    focus:ring-blue-500 bg-slate-50"
+                  value={registerForm.full_name}
+                  onChange={e => setRegisterForm(
+                    f => ({...f, 
+                      full_name: e.target.value})
+                  )}
+                />
+                <input
+                  type="email"
+                  placeholder="Email *"
+                  className="w-full border border-slate-200 
+                    rounded-xl px-4 py-3 text-sm
+                    focus:outline-none focus:ring-2 
+                    focus:ring-blue-500 bg-slate-50"
+                  value={registerForm.email}
+                  onChange={e => setRegisterForm(
+                    f => ({...f, email: e.target.value})
+                  )}
+                />
+                <input
+                  type="password"
+                  placeholder="Password *"
+                  className="w-full border border-slate-200 
+                    rounded-xl px-4 py-3 text-sm
+                    focus:outline-none focus:ring-2 
+                    focus:ring-blue-500 bg-slate-50"
+                  value={registerForm.password}
+                  onChange={e => setRegisterForm(
+                    f => ({...f, password: e.target.value})
+                  )}
+                />
+                <div className="grid grid-cols-2 gap-3">
+                  <input
+                    placeholder="Department"
+                    className="w-full border border-slate-200 
+                      rounded-xl px-4 py-3 text-sm
+                      focus:outline-none focus:ring-2 
+                      focus:ring-blue-500 bg-slate-50"
+                    value={registerForm.department}
+                    onChange={e => setRegisterForm(
+                      f => ({...f, 
+                        department: e.target.value})
+                    )}
+                  />
+                  <input
+                    placeholder="Position"
+                    className="w-full border border-slate-200 
+                      rounded-xl px-4 py-3 text-sm
+                      focus:outline-none focus:ring-2 
+                      focus:ring-blue-500 bg-slate-50"
+                    value={registerForm.position}
+                    onChange={e => setRegisterForm(
+                      f => ({...f, 
+                        position: e.target.value})
+                    )}
+                  />
+                </div>
+                <input
+                  placeholder="Phone Number"
+                  className="w-full border border-slate-200 
+                    rounded-xl px-4 py-3 text-sm
+                    focus:outline-none focus:ring-2 
+                    focus:ring-blue-500 bg-slate-50"
+                  value={registerForm.phone}
+                  onChange={e => setRegisterForm(
+                    f => ({...f, phone: e.target.value})
+                  )}
+                />
+              </div>
               <button
-                onClick={() => setMode('login')}
-                className="text-blue-600 font-medium"
+                onClick={handleRegister}
+                disabled={loading}
+                className="w-full bg-blue-600 
+                  hover:bg-blue-700 text-white py-3 
+                  rounded-xl font-semibold text-sm
+                  disabled:opacity-50 transition-colors
+                  flex items-center justify-center gap-2"
               >
-                Login here
+                {loading ? (
+                  <>
+                    <div className="w-4 h-4 border-2 
+                      border-white/30 border-t-white 
+                      rounded-full animate-spin" />
+                    Submitting...
+                  </>
+                ) : 'Submit Registration'}
               </button>
-            </p>
-          </div>
-        )}
+              <p className="text-center text-xs 
+                text-slate-500">
+                Your account requires admin approval
+                before you can sign in
+              </p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
-  );
+
+    {/* Footer */}
+    <div className="text-center py-4">
+      <p className="text-slate-500 text-xs">
+        © 2026 Kimoel Innovation. 
+        Admin portal at{' '}
+        <a href="/" 
+          className="text-slate-400 underline">
+          kimoel.onrender.com
+        </a>
+      </p>
+    </div>
+  </div>
+);
 }
