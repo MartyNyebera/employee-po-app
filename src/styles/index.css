@@ -2,6 +2,3 @@
 @import './tailwind.css';
 @import './theme.css';
 
-#tab-scroll-container::-webkit-scrollbar {
-  display: none;
-}

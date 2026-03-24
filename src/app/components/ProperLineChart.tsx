@@ -12,10 +12,15 @@ interface ProperLineChartProps {
 }
 
 export function ProperLineChart({ data, height = 400 }: ProperLineChartProps) {
+  // Check if expenses data has any non-zero values
+  const hasExpensesData = data && 
+    data.some((d: any) => (d.expenses || d.value || d.amount || 0) > 0);
+
   // DEBUG: Log what data the chart receives
   console.log('🔍 CHART COMPONENT DEBUG:');
   console.log('Chart received data:', data);
   console.log('Data length:', data.length);
+  console.log('Has expenses data:', hasExpensesData);
   if (data.length > 0) {
     console.log('First point:', data[0]);
     console.log('Last point:', data[data.length - 1]);
@@ -106,17 +111,31 @@ export function ProperLineChart({ data, height = 400 }: ProperLineChartProps) {
             isAnimationActive={true}
             animationDuration={1000}
           />
-          <Line
-            type="monotone"
-            dataKey="expenses"
-            stroke="#f59e0b"
-            strokeWidth={2}
-            dot={{ fill: '#f59e0b', strokeWidth: 2, r: 4 }}
-            activeDot={{ r: 6 }}
-            name="Expenses"
-            isAnimationActive={true}
-            animationDuration={1200}
-          />
+          {hasExpensesData && (
+            <Line
+              type="monotone"
+              dataKey="expenses"
+              stroke="#EF4444"
+              strokeWidth={2}
+              dot={(props) => {
+                const { cx, cy, value } = props;
+                if (!value || value === 0) return <g key={props.key} />;
+                return (
+                  <circle 
+                    key={props.key}
+                    cx={cx} cy={cy} r={4} 
+                    fill="#EF4444" 
+                    stroke="white" 
+                    strokeWidth={2}
+                  />
+                );
+              }}
+              activeDot={{ r: 6 }}
+              name="Expenses"
+              isAnimationActive={true}
+              animationDuration={1200}
+            />
+          )}
         </LineChart>
       </ResponsiveContainer>
     </div>
