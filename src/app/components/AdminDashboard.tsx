@@ -16,7 +16,20 @@ import { PurchaseOrderList } from './PurchaseOrderList';
 import { InventoryList } from './InventoryList';
 import { DriversList } from './DriversList';
 import { DeliveriesList } from './DeliveriesList';
-import { fetchAdminRequests, approveAdminRequest, rejectAdminRequest, type AdminApprovalRequest } from '../api/client';
+import { 
+  fetchAdminRequests, 
+  approveAdminRequest, 
+  rejectAdminRequest, 
+  fetchPendingEmployees,
+  fetchPendingDrivers,
+  approveEmployee,
+  rejectEmployee,
+  approveDriver,
+  rejectDriver,
+  type AdminApprovalRequest,
+  type EmployeeRegistration,
+  type DriverRegistration
+} from '../api/client';
 import { toast } from 'sonner';
 
 interface AdminDashboardProps {
@@ -25,7 +38,7 @@ interface AdminDashboardProps {
   onLogout: () => void;
 }
 
-type View = 'home' | 'orders' | 'transactions' | 'requests' | 'gps' | 'fleet' | 'pms' | 'purchase-orders' | 'inventory' | 'drivers' | 'deliveries';
+type View = 'home' | 'orders' | 'transactions' | 'requests' | 'employee-approvals' | 'driver-approvals' | 'gps' | 'fleet' | 'pms' | 'purchase-orders' | 'inventory' | 'drivers' | 'deliveries';
 
 export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashboardProps) {
   // Enable auto-logout when app is closed
@@ -37,6 +50,10 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
   const [menuOpen, setMenuOpen] = useState(false);
   const [adminRequests, setAdminRequests] = useState<AdminApprovalRequest[]>([]);
   const [loadingRequests, setLoadingRequests] = useState(false);
+  const [pendingEmployees, setPendingEmployees] = useState<EmployeeRegistration[]>([]);
+  const [pendingDrivers, setPendingDrivers] = useState<DriverRegistration[]>([]);
+  const [loadingEmployees, setLoadingEmployees] = useState(false);
+  const [loadingDrivers, setLoadingDrivers] = useState(false);
 
   useEffect(() => {
     if (isSuperAdmin && currentView === 'requests') {
@@ -47,6 +64,26 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
         .finally(() => setLoadingRequests(false));
     }
   }, [isSuperAdmin, currentView]);
+
+  useEffect(() => {
+    if (currentView === 'employee-approvals') {
+      setLoadingEmployees(true);
+      fetchPendingEmployees()
+        .then(setPendingEmployees)
+        .catch(() => toast.error('Failed to load employee registrations'))
+        .finally(() => setLoadingEmployees(false));
+    }
+  }, [currentView]);
+
+  useEffect(() => {
+    if (currentView === 'driver-approvals') {
+      setLoadingDrivers(true);
+      fetchPendingDrivers()
+        .then(setPendingDrivers)
+        .catch(() => toast.error('Failed to load driver registrations'))
+        .finally(() => setLoadingDrivers(false));
+    }
+  }, [currentView]);
 
   const handleApprove = async (id: string) => {
     try {
@@ -65,6 +102,46 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
       setAdminRequests((prev) => prev.filter((r) => r.id !== id));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to reject');
+    }
+  };
+
+  const handleApproveEmployee = async (id: string) => {
+    try {
+      await approveEmployee(id, userName);
+      toast.success('Employee registration approved');
+      setPendingEmployees((prev) => prev.filter((r) => r.id !== id));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to approve employee');
+    }
+  };
+
+  const handleRejectEmployee = async (id: string) => {
+    try {
+      await rejectEmployee(id, userName);
+      toast.success('Employee registration rejected');
+      setPendingEmployees((prev) => prev.filter((r) => r.id !== id));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to reject employee');
+    }
+  };
+
+  const handleApproveDriver = async (id: string) => {
+    try {
+      await approveDriver(id, userName);
+      toast.success('Driver registration approved');
+      setPendingDrivers((prev) => prev.filter((r) => r.id !== id));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to approve driver');
+    }
+  };
+
+  const handleRejectDriver = async (id: string) => {
+    try {
+      await rejectDriver(id, userName);
+      toast.success('Driver registration rejected');
+      setPendingDrivers((prev) => prev.filter((r) => r.id !== id));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to reject driver');
     }
   };
 
@@ -123,6 +200,190 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
 
     if (currentView === 'deliveries') {
       return <DeliveriesList isAdmin={true} />;
+    }
+
+    if (currentView === 'employee-approvals') {
+      return (
+        <div className="p-6 space-y-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-blue-100 rounded-lg">
+                <UserCheck className="size-6 text-blue-600" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-slate-900">Employee Registration Approvals</h1>
+                <p className="text-slate-600">Review and approve employee account requests</p>
+              </div>
+            </div>
+            <div className="text-sm text-slate-500">
+              {pendingEmployees.length} pending
+            </div>
+          </div>
+
+          {loadingEmployees ? (
+            <div className="text-center py-8">
+              <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+              <p className="mt-2 text-slate-600">Loading employee registrations...</p>
+            </div>
+          ) : pendingEmployees.length === 0 ? (
+            <div className="text-center py-12 bg-slate-50 rounded-lg border-2 border-dashed border-slate-300">
+              <UserCheck className="size-12 text-slate-400 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-slate-700 mb-2">No Pending Employee Registrations</h3>
+              <p className="text-slate-500">All employee registrations have been reviewed</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {pendingEmployees.map((employee) => (
+                <div key={employee.id} className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm hover:shadow-md transition-shadow">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
+                          <UserCheck className="size-6 text-blue-600" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-semibold text-slate-900">{employee.full_name}</h3>
+                          <p className="text-slate-600">{employee.email}</p>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                        <div>
+                          <span className="text-slate-500">Department:</span>
+                          <p className="font-medium text-slate-900">{employee.department || 'Not specified'}</p>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Position:</span>
+                          <p className="font-medium text-slate-900">{employee.position || 'Not specified'}</p>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Phone:</span>
+                          <p className="font-medium text-slate-900">{employee.phone || 'Not specified'}</p>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Applied:</span>
+                          <p className="font-medium text-slate-900">
+                            {new Date(employee.created_at).toLocaleDateString()}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 ml-4">
+                      <Button
+                        onClick={() => handleApproveEmployee(employee.id)}
+                        className="bg-green-600 hover:bg-green-700 text-white"
+                        size="sm"
+                      >
+                        <Check className="size-4 mr-1" />
+                        Approve
+                      </Button>
+                      <Button
+                        onClick={() => handleRejectEmployee(employee.id)}
+                        variant="destructive"
+                        size="sm"
+                      >
+                        <XCircle className="size-4 mr-1" />
+                        Reject
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (currentView === 'driver-approvals') {
+      return (
+        <div className="p-6 space-y-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-green-100 rounded-lg">
+                <Truck className="size-6 text-green-600" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-slate-900">Driver Registration Approvals</h1>
+                <p className="text-slate-600">Review and approve driver account requests</p>
+              </div>
+            </div>
+            <div className="text-sm text-slate-500">
+              {pendingDrivers.length} pending
+            </div>
+          </div>
+
+          {loadingDrivers ? (
+            <div className="text-center py-8">
+              <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div>
+              <p className="mt-2 text-slate-600">Loading driver registrations...</p>
+            </div>
+          ) : pendingDrivers.length === 0 ? (
+            <div className="text-center py-12 bg-slate-50 rounded-lg border-2 border-dashed border-slate-300">
+              <Truck className="size-12 text-slate-400 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-slate-700 mb-2">No Pending Driver Registrations</h3>
+              <p className="text-slate-500">All driver registrations have been reviewed</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {pendingDrivers.map((driver) => (
+                <div key={driver.id} className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm hover:shadow-md transition-shadow">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
+                          <Truck className="size-6 text-green-600" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-semibold text-slate-900">{driver.full_name}</h3>
+                          <p className="text-slate-600">{driver.email}</p>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                        <div>
+                          <span className="text-slate-500">Phone:</span>
+                          <p className="font-medium text-slate-900">{driver.phone || 'Not specified'}</p>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">License:</span>
+                          <p className="font-medium text-slate-900">{driver.license_number || 'Not specified'}</p>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Vehicle:</span>
+                          <p className="font-medium text-slate-900">{driver.vehicle_assigned || 'Not assigned'}</p>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Applied:</span>
+                          <p className="font-medium text-slate-900">
+                            {new Date(driver.created_at).toLocaleDateString()}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 ml-4">
+                      <Button
+                        onClick={() => handleApproveDriver(driver.id)}
+                        className="bg-green-600 hover:bg-green-700 text-white"
+                        size="sm"
+                      >
+                        <Check className="size-4 mr-1" />
+                        Approve
+                      </Button>
+                      <Button
+                        onClick={() => handleRejectDriver(driver.id)}
+                        variant="destructive"
+                        size="sm"
+                      >
+                        <XCircle className="size-4 mr-1" />
+                        Reject
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
     }
 
     if (currentView === 'requests' && isSuperAdmin) {
@@ -236,6 +497,8 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
     { id: 'purchase-orders', label: 'Purchase Order', icon: ShoppingCart },
     { id: 'inventory', label: 'Inventory', icon: Package },
     { id: 'transactions', label: 'Miscellaneous', icon: Receipt },
+    { id: 'employee-approvals', label: 'Employee Approvals', icon: UserCheck },
+    { id: 'driver-approvals', label: 'Driver Approvals', icon: Truck },
     ...(isSuperAdmin ? [{ id: 'requests', label: 'Admin Requests', icon: UserPlus }] : []),
   ];
 

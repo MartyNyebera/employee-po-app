@@ -105,6 +105,65 @@ export async function rejectAdminRequest(id: string): Promise<{ message: string 
   return fetchApi<{ message: string }>(`/admin-requests/${id}/reject`, { method: 'POST' });
 }
 
+// Employee and Driver Approval APIs
+export interface EmployeeRegistration {
+  id: string;
+  full_name: string;
+  email: string;
+  department: string;
+  position: string;
+  phone: string;
+  status: string;
+  created_at: string;
+}
+
+export interface DriverRegistration {
+  id: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  license_number: string;
+  vehicle_assigned?: string;
+  status: string;
+  created_at: string;
+}
+
+export async function fetchPendingEmployees(): Promise<EmployeeRegistration[]> {
+  return fetchApi<EmployeeRegistration[]>('/admin/employees/pending');
+}
+
+export async function fetchPendingDrivers(): Promise<DriverRegistration[]> {
+  return fetchApi<DriverRegistration[]>('/admin/drivers/pending');
+}
+
+export async function approveEmployee(id: string, reviewedBy: string): Promise<EmployeeRegistration> {
+  return fetchApi<EmployeeRegistration>(`/admin/employees/${id}/review`, {
+    method: 'PUT',
+    body: JSON.stringify({ status: 'approved', reviewed_by: reviewedBy })
+  });
+}
+
+export async function rejectEmployee(id: string, reviewedBy: string): Promise<EmployeeRegistration> {
+  return fetchApi<EmployeeRegistration>(`/admin/employees/${id}/review`, {
+    method: 'PUT',
+    body: JSON.stringify({ status: 'rejected', reviewed_by: reviewedBy })
+  });
+}
+
+export async function approveDriver(id: string, reviewedBy: string): Promise<DriverRegistration> {
+  return fetchApi<DriverRegistration>(`/admin/drivers/${id}/review`, {
+    method: 'PUT',
+    body: JSON.stringify({ status: 'approved', reviewed_by: reviewedBy })
+  });
+}
+
+export async function rejectDriver(id: string, reviewedBy: string): Promise<DriverRegistration> {
+  return fetchApi<DriverRegistration>(`/admin/drivers/${id}/review`, {
+    method: 'PUT',
+    body: JSON.stringify({ status: 'rejected', reviewed_by: reviewedBy })
+  });
+}
+
 export async function fetchAssets(): Promise<Asset[]> {
   return fetchApi<Asset[]>('/assets');
 }
