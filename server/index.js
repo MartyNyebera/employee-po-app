@@ -29,6 +29,8 @@ const upload = multer({
   storage,
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB
 });
+import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
 import { seed } from './seed.js';
 import { hashPassword, comparePassword, signToken, requireAuth, requireAdmin, requireSuperAdmin } from './auth.js';
 import { sendEmailToAdminsNewRequest, sendEmailToApplicant } from './email.js';
@@ -910,6 +912,226 @@ app.get('/api/test-delivery', async (req, res) => {
   } catch (err) {
     console.error('[Test] Error:', err);
     res.json({ error: err.message, count: 0 });
+  }
+});
+
+// ----- PUBLIC AUTH ENDPOINTS (no token required) -----
+
+// Employee Registration
+app.post('/api/employee/register', async (req, res) => {
+  try {
+    const { 
+      full_name, email, password, 
+      department, position, phone 
+    } = req.body;
+    
+    if (!full_name || !email || !password) {
+      return res.status(400).json({ 
+        error: 'Name, email and password required' 
+      });
+    }
+    
+    const existing = await query(
+      'SELECT id FROM employee_accounts WHERE email = $1',
+      [email]
+    );
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ 
+        error: 'Email already registered' 
+      });
+    }
+    
+        const hash = await bcrypt.hash(password, 10);
+    
+    const result = await query(
+      `INSERT INTO employee_accounts 
+       (full_name, email, password_hash, department, 
+        position, phone, status)
+       VALUES ($1,$2,$3,$4,$5,$6,'pending')
+       RETURNING id, full_name, email, status`,
+      [full_name, email, hash, department, position, phone]
+    );
+    
+    res.json({ 
+      success: true, 
+      message: 'Registration submitted. Await admin approval.',
+      employee: result.rows[0]
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Employee Login
+app.post('/api/employee/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const result = await query(
+      'SELECT * FROM employee_accounts WHERE email = $1',
+      [email]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(401).json({ 
+        error: 'Invalid credentials' 
+      });
+    }
+    
+    const employee = result.rows[0];
+    
+    if (employee.status === 'pending') {
+      return res.status(403).json({ 
+        error: 'Account pending admin approval' 
+      });
+    }
+    
+    if (employee.status === 'rejected') {
+      return res.status(403).json({ 
+        error: 'Account has been rejected' 
+      });
+    }
+    
+        const valid = await bcrypt.compare(
+      password, employee.password_hash
+    );
+    if (!valid) {
+      return res.status(401).json({ 
+        error: 'Invalid credentials' 
+      });
+    }
+    
+        const token = jwt.sign(
+      { 
+        id: employee.id, 
+        email: employee.email,
+        role: 'employee',
+        name: employee.full_name
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    
+    res.json({ 
+      token, 
+      employee: {
+        id: employee.id,
+        full_name: employee.full_name,
+        email: employee.email,
+        department: employee.department,
+        position: employee.position
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Driver Registration
+app.post('/api/driver/register', async (req, res) => {
+  try {
+    const { 
+      full_name, email, password, 
+      phone, license_number 
+    } = req.body;
+    
+    if (!full_name || !email || !password) {
+      return res.status(400).json({ 
+        error: 'Name, email and password required' 
+      });
+    }
+    
+    const existing = await query(
+      'SELECT id FROM driver_accounts WHERE email = $1',
+      [email]
+    );
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ 
+        error: 'Email already registered' 
+      });
+    }
+    
+        const hash = await bcrypt.hash(password, 10);
+    
+    const result = await query(
+      `INSERT INTO driver_accounts 
+       (full_name, email, password_hash, 
+        phone, license_number, status)
+       VALUES ($1,$2,$3,$4,$5,'pending')
+       RETURNING id, full_name, email, status`,
+      [full_name, email, hash, phone, license_number]
+    );
+    
+    res.json({ 
+      success: true,
+      message: 'Registration submitted. Await admin approval.',
+      driver: result.rows[0]
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Driver Login
+app.post('/api/driver/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const result = await query(
+      'SELECT * FROM driver_accounts WHERE email = $1',
+      [email]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(401).json({ 
+        error: 'Invalid credentials' 
+      });
+    }
+    
+    const driver = result.rows[0];
+    
+    if (driver.status === 'pending') {
+      return res.status(403).json({ 
+        error: 'Account pending admin approval' 
+      });
+    }
+    
+    if (driver.status === 'rejected') {
+      return res.status(403).json({ 
+        error: 'Account has been rejected' 
+      });
+    }
+    
+        const valid = await bcrypt.compare(
+      password, driver.password_hash
+    );
+    if (!valid) {
+      return res.status(401).json({ 
+        error: 'Invalid credentials' 
+      });
+    }
+    
+        const token = jwt.sign(
+      { 
+        id: driver.id, 
+        email: driver.email,
+        role: 'driver',
+        name: driver.full_name
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    
+    res.json({ 
+      token,
+      driver: {
+        id: driver.id,
+        full_name: driver.full_name,
+        email: driver.email,
+        phone: driver.phone,
+        vehicle_assigned: driver.vehicle_assigned
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -2485,119 +2707,6 @@ app.post('/api/init', async (req, res) => {
 // EMPLOYEE & DRIVER PORTAL API ENDPOINTS
 // ====================================================
 
-// --- EMPLOYEE AUTH ENDPOINTS ---
-
-// Employee Registration
-app.post('/api/employee/register', async (req, res) => {
-  try {
-    const { 
-      full_name, email, password, 
-      department, position, phone 
-    } = req.body;
-    
-    if (!full_name || !email || !password) {
-      return res.status(400).json({ 
-        error: 'Name, email and password required' 
-      });
-    }
-    
-    const existing = await query(
-      'SELECT id FROM employee_accounts WHERE email = $1',
-      [email]
-    );
-    if (existing.rows.length > 0) {
-      return res.status(400).json({ 
-        error: 'Email already registered' 
-      });
-    }
-    
-    const bcrypt = require('bcrypt');
-    const hash = await bcrypt.hash(password, 10);
-    
-    const result = await query(
-      `INSERT INTO employee_accounts 
-       (full_name, email, password_hash, department, 
-        position, phone, status)
-       VALUES ($1,$2,$3,$4,$5,$6,'pending')
-       RETURNING id, full_name, email, status`,
-      [full_name, email, hash, department, position, phone]
-    );
-    
-    res.json({ 
-      success: true, 
-      message: 'Registration submitted. Await admin approval.',
-      employee: result.rows[0]
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Employee Login
-app.post('/api/employee/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    const result = await query(
-      'SELECT * FROM employee_accounts WHERE email = $1',
-      [email]
-    );
-    
-    if (result.rows.length === 0) {
-      return res.status(401).json({ 
-        error: 'Invalid credentials' 
-      });
-    }
-    
-    const employee = result.rows[0];
-    
-    if (employee.status === 'pending') {
-      return res.status(403).json({ 
-        error: 'Account pending admin approval' 
-      });
-    }
-    
-    if (employee.status === 'rejected') {
-      return res.status(403).json({ 
-        error: 'Account has been rejected' 
-      });
-    }
-    
-    const bcrypt = require('bcrypt');
-    const valid = await bcrypt.compare(
-      password, employee.password_hash
-    );
-    if (!valid) {
-      return res.status(401).json({ 
-        error: 'Invalid credentials' 
-      });
-    }
-    
-    const jwt = require('jsonwebtoken');
-    const token = jwt.sign(
-      { 
-        id: employee.id, 
-        email: employee.email,
-        role: 'employee',
-        name: employee.full_name
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: '24h' }
-    );
-    
-    res.json({ 
-      token, 
-      employee: {
-        id: employee.id,
-        full_name: employee.full_name,
-        email: employee.email,
-        department: employee.department,
-        position: employee.position
-      }
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 // Get employee notifications
 app.get('/api/employee/:id/notifications', async (req, res) => {
@@ -2728,119 +2837,6 @@ app.put('/api/material-requests/:id/review', async (req, res) => {
   }
 });
 
-// --- DRIVER AUTH ENDPOINTS ---
-
-// Driver Registration
-app.post('/api/driver/register', async (req, res) => {
-  try {
-    const { 
-      full_name, email, password, 
-      phone, license_number 
-    } = req.body;
-    
-    if (!full_name || !email || !password) {
-      return res.status(400).json({ 
-        error: 'Name, email and password required' 
-      });
-    }
-    
-    const existing = await query(
-      'SELECT id FROM driver_accounts WHERE email = $1',
-      [email]
-    );
-    if (existing.rows.length > 0) {
-      return res.status(400).json({ 
-        error: 'Email already registered' 
-      });
-    }
-    
-    const bcrypt = require('bcrypt');
-    const hash = await bcrypt.hash(password, 10);
-    
-    const result = await query(
-      `INSERT INTO driver_accounts 
-       (full_name, email, password_hash, 
-        phone, license_number, status)
-       VALUES ($1,$2,$3,$4,$5,'pending')
-       RETURNING id, full_name, email, status`,
-      [full_name, email, hash, phone, license_number]
-    );
-    
-    res.json({ 
-      success: true,
-      message: 'Registration submitted. Await admin approval.',
-      driver: result.rows[0]
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Driver Login
-app.post('/api/driver/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    const result = await query(
-      'SELECT * FROM driver_accounts WHERE email = $1',
-      [email]
-    );
-    
-    if (result.rows.length === 0) {
-      return res.status(401).json({ 
-        error: 'Invalid credentials' 
-      });
-    }
-    
-    const driver = result.rows[0];
-    
-    if (driver.status === 'pending') {
-      return res.status(403).json({ 
-        error: 'Account pending admin approval' 
-      });
-    }
-    
-    if (driver.status === 'rejected') {
-      return res.status(403).json({ 
-        error: 'Account has been rejected' 
-      });
-    }
-    
-    const bcrypt = require('bcrypt');
-    const valid = await bcrypt.compare(
-      password, driver.password_hash
-    );
-    if (!valid) {
-      return res.status(401).json({ 
-        error: 'Invalid credentials' 
-      });
-    }
-    
-    const jwt = require('jsonwebtoken');
-    const token = jwt.sign(
-      { 
-        id: driver.id, 
-        email: driver.email,
-        role: 'driver',
-        name: driver.full_name
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: '24h' }
-    );
-    
-    res.json({ 
-      token,
-      driver: {
-        id: driver.id,
-        full_name: driver.full_name,
-        email: driver.email,
-        phone: driver.phone,
-        vehicle_assigned: driver.vehicle_assigned
-      }
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 // --- DRIVER GPS ENDPOINTS ---
 
