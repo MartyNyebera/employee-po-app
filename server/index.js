@@ -915,38 +915,6 @@ app.get('/api/test-delivery', async (req, res) => {
   }
 });
 
-// ----- MANUAL MIGRATION ENDPOINT (for production) -----
-
-// Manual database migration endpoint
-app.post('/api/admin/migrate-approval-columns', async (req, res) => {
-  try {
-    console.log('🔄 Running manual migration for approval columns...');
-    
-    // Add missing approval columns to existing tables
-    await query('ALTER TABLE employee_accounts ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP');
-    await query('ALTER TABLE employee_accounts ADD COLUMN IF NOT EXISTS approved_by INTEGER');
-    await query('ALTER TABLE driver_accounts ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP');
-    await query('ALTER TABLE driver_accounts ADD COLUMN IF NOT EXISTS approved_by INTEGER');
-    
-    console.log('✅ Approval columns migration completed successfully');
-    res.json({ 
-      success: true, 
-      message: 'Database migration completed successfully',
-      columns_added: [
-        'employee_accounts.approved_at',
-        'employee_accounts.approved_by', 
-        'driver_accounts.approved_at',
-        'driver_accounts.approved_by'
-      ]
-    });
-  } catch (err) {
-    console.error('❌ Migration failed:', err.message);
-    res.status(500).json({ 
-      error: 'Migration failed', 
-      details: err.message 
-    });
-  }
-});
 
 // ----- PUBLIC AUTH ENDPOINTS (no token required) -----
 
@@ -1165,6 +1133,39 @@ app.post('/api/driver/login', async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ----- MANUAL MIGRATION ENDPOINT (for production) -----
+
+// Manual database migration endpoint (public access for production fixes)
+app.post('/api/admin/migrate-approval-columns', async (req, res) => {
+  try {
+    console.log('🔄 Running manual migration for approval columns...');
+    
+    // Add missing approval columns to existing tables
+    await query('ALTER TABLE employee_accounts ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP');
+    await query('ALTER TABLE employee_accounts ADD COLUMN IF NOT EXISTS approved_by INTEGER');
+    await query('ALTER TABLE driver_accounts ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP');
+    await query('ALTER TABLE driver_accounts ADD COLUMN IF NOT EXISTS approved_by INTEGER');
+    
+    console.log('✅ Approval columns migration completed successfully');
+    res.json({ 
+      success: true, 
+      message: 'Database migration completed successfully',
+      columns_added: [
+        'employee_accounts.approved_at',
+        'employee_accounts.approved_by', 
+        'driver_accounts.approved_at',
+        'driver_accounts.approved_by'
+      ]
+    });
+  } catch (err) {
+    console.error('❌ Migration failed:', err.message);
+    res.status(500).json({ 
+      error: 'Migration failed', 
+      details: err.message 
+    });
   }
 });
 
