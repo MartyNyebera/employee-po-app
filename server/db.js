@@ -158,6 +158,17 @@ export async function createNewTables() {
       )
     `);
 
+    // Add missing approval columns to existing tables
+    try {
+      await pool.query('ALTER TABLE employee_accounts ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP');
+      await pool.query('ALTER TABLE employee_accounts ADD COLUMN IF NOT EXISTS approved_by INTEGER');
+      await pool.query('ALTER TABLE driver_accounts ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP');
+      await pool.query('ALTER TABLE driver_accounts ADD COLUMN IF NOT EXISTS approved_by INTEGER');
+      console.log('✅ Approval columns added to existing tables');
+    } catch (err) {
+      console.log('ℹ️ Approval columns already exist or error adding them:', err.message);
+    }
+
     // Create indexes for performance
     await pool.query('CREATE INDEX IF NOT EXISTS idx_employee_accounts_email ON employee_accounts(email)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_driver_accounts_email ON driver_accounts(email)');
