@@ -73,7 +73,13 @@ export default function App() {
     );
   }
 
-  if (!userRole) {
+  // Allow portal routes to bypass main auth check
+  const currentPath = window.location.pathname;
+  const isPortalRoute = 
+    currentPath.startsWith('/employee') || 
+    currentPath.startsWith('/driver');
+
+  if (!userRole && !isPortalRoute) {
     return <LoginScreen onLogin={handleLogin} />;
   }
 
