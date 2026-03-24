@@ -4,8 +4,31 @@ import https from 'https';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { query, testConnection } from './db.js';
+import { query, testConnection, createNewTables } from './db.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Multer for file uploads
+import multer from 'multer';
+
+// Setup upload directory
+const uploadDir = path.join(__dirname, '../public/uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    cb(null, Date.now() + '-' + file.originalname);
+  }
+});
+
+const upload = multer({ 
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB
+});
 import { seed } from './seed.js';
 import { hashPassword, comparePassword, signToken, requireAuth, requireAdmin, requireSuperAdmin } from './auth.js';
 import { sendEmailToAdminsNewRequest, sendEmailToApplicant } from './email.js';
@@ -2458,6 +2481,721 @@ app.post('/api/init', async (req, res) => {
   }
 });
 
+// ====================================================
+// EMPLOYEE & DRIVER PORTAL API ENDPOINTS
+// ====================================================
+
+// --- EMPLOYEE AUTH ENDPOINTS ---
+
+// Employee Registration
+app.post('/api/employee/register', async (req, res) => {
+  try {
+    const { 
+      full_name, email, password, 
+      department, position, phone 
+    } = req.body;
+    
+    if (!full_name || !email || !password) {
+      return res.status(400).json({ 
+        error: 'Name, email and password required' 
+      });
+    }
+    
+    const existing = await query(
+      'SELECT id FROM employee_accounts WHERE email = $1',
+      [email]
+    );
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ 
+        error: 'Email already registered' 
+      });
+    }
+    
+    const bcrypt = require('bcrypt');
+    const hash = await bcrypt.hash(password, 10);
+    
+    const result = await query(
+      `INSERT INTO employee_accounts 
+       (full_name, email, password_hash, department, 
+        position, phone, status)
+       VALUES ($1,$2,$3,$4,$5,$6,'pending')
+       RETURNING id, full_name, email, status`,
+      [full_name, email, hash, department, position, phone]
+    );
+    
+    res.json({ 
+      success: true, 
+      message: 'Registration submitted. Await admin approval.',
+      employee: result.rows[0]
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Employee Login
+app.post('/api/employee/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const result = await query(
+      'SELECT * FROM employee_accounts WHERE email = $1',
+      [email]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(401).json({ 
+        error: 'Invalid credentials' 
+      });
+    }
+    
+    const employee = result.rows[0];
+    
+    if (employee.status === 'pending') {
+      return res.status(403).json({ 
+        error: 'Account pending admin approval' 
+      });
+    }
+    
+    if (employee.status === 'rejected') {
+      return res.status(403).json({ 
+        error: 'Account has been rejected' 
+      });
+    }
+    
+    const bcrypt = require('bcrypt');
+    const valid = await bcrypt.compare(
+      password, employee.password_hash
+    );
+    if (!valid) {
+      return res.status(401).json({ 
+        error: 'Invalid credentials' 
+      });
+    }
+    
+    const jwt = require('jsonwebtoken');
+    const token = jwt.sign(
+      { 
+        id: employee.id, 
+        email: employee.email,
+        role: 'employee',
+        name: employee.full_name
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    
+    res.json({ 
+      token, 
+      employee: {
+        id: employee.id,
+        full_name: employee.full_name,
+        email: employee.email,
+        department: employee.department,
+        position: employee.position
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get employee notifications
+app.get('/api/employee/:id/notifications', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT * FROM notifications 
+       WHERE recipient_type = 'employee' 
+       AND recipient_id = $1
+       ORDER BY created_at DESC LIMIT 20`,
+      [req.params.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Mark notification as read
+app.put('/api/notifications/:id/read', async (req, res) => {
+  try {
+    await query(
+      'UPDATE notifications SET is_read=true WHERE id=$1',
+      [req.params.id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- MATERIAL REQUEST ENDPOINTS ---
+
+// Submit material request
+app.post('/api/material-requests', async (req, res) => {
+  try {
+    const {
+      employee_id, employee_name, item_name,
+      item_code, quantity_requested, unit,
+      purpose, urgency
+    } = req.body;
+    
+    const reqNum = 'REQ-' + Date.now();
+    
+    const result = await query(
+      `INSERT INTO material_requests
+       (request_number, employee_id, employee_name,
+        item_name, item_code, quantity_requested,
+        unit, purpose, urgency, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending')
+       RETURNING *`,
+      [reqNum, employee_id, employee_name, item_name,
+       item_code, quantity_requested, unit, 
+       purpose, urgency || 'normal']
+    );
+    
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get material requests for employee
+app.get('/api/material-requests/employee/:id', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT * FROM material_requests 
+       WHERE employee_id = $1
+       ORDER BY created_at DESC`,
+      [req.params.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get ALL material requests (admin)
+app.get('/api/material-requests', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT * FROM material_requests 
+       ORDER BY created_at DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin approve/reject material request
+app.put('/api/material-requests/:id/review', async (req, res) => {
+  try {
+    const { status, admin_notes, reviewed_by } = req.body;
+    
+    const result = await query(
+      `UPDATE material_requests 
+       SET status=$1, admin_notes=$2, 
+           reviewed_by=$3, reviewed_at=NOW(),
+           updated_at=NOW()
+       WHERE id=$4 RETURNING *`,
+      [status, admin_notes, reviewed_by, req.params.id]
+    );
+    
+    const request = result.rows[0];
+    
+    // Send notification to employee
+    if (request.employee_id) {
+      await query(
+        `INSERT INTO notifications
+         (recipient_type, recipient_id, title, 
+          message, type)
+         VALUES ('employee', $1, $2, $3, $4)`,
+        [
+          request.employee_id,
+          `Request ${status === 'approved' 
+            ? 'Approved' : 'Rejected'}`,
+          `Your request for ${request.item_name} 
+           has been ${status}. 
+           ${admin_notes ? 'Note: ' + admin_notes : ''}`,
+          status === 'approved' ? 'success' : 'error'
+        ]
+      );
+    }
+    
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- DRIVER AUTH ENDPOINTS ---
+
+// Driver Registration
+app.post('/api/driver/register', async (req, res) => {
+  try {
+    const { 
+      full_name, email, password, 
+      phone, license_number 
+    } = req.body;
+    
+    if (!full_name || !email || !password) {
+      return res.status(400).json({ 
+        error: 'Name, email and password required' 
+      });
+    }
+    
+    const existing = await query(
+      'SELECT id FROM driver_accounts WHERE email = $1',
+      [email]
+    );
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ 
+        error: 'Email already registered' 
+      });
+    }
+    
+    const bcrypt = require('bcrypt');
+    const hash = await bcrypt.hash(password, 10);
+    
+    const result = await query(
+      `INSERT INTO driver_accounts 
+       (full_name, email, password_hash, 
+        phone, license_number, status)
+       VALUES ($1,$2,$3,$4,$5,'pending')
+       RETURNING id, full_name, email, status`,
+      [full_name, email, hash, phone, license_number]
+    );
+    
+    res.json({ 
+      success: true,
+      message: 'Registration submitted. Await admin approval.',
+      driver: result.rows[0]
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Driver Login
+app.post('/api/driver/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const result = await query(
+      'SELECT * FROM driver_accounts WHERE email = $1',
+      [email]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(401).json({ 
+        error: 'Invalid credentials' 
+      });
+    }
+    
+    const driver = result.rows[0];
+    
+    if (driver.status === 'pending') {
+      return res.status(403).json({ 
+        error: 'Account pending admin approval' 
+      });
+    }
+    
+    if (driver.status === 'rejected') {
+      return res.status(403).json({ 
+        error: 'Account has been rejected' 
+      });
+    }
+    
+    const bcrypt = require('bcrypt');
+    const valid = await bcrypt.compare(
+      password, driver.password_hash
+    );
+    if (!valid) {
+      return res.status(401).json({ 
+        error: 'Invalid credentials' 
+      });
+    }
+    
+    const jwt = require('jsonwebtoken');
+    const token = jwt.sign(
+      { 
+        id: driver.id, 
+        email: driver.email,
+        role: 'driver',
+        name: driver.full_name
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    
+    res.json({ 
+      token,
+      driver: {
+        id: driver.id,
+        full_name: driver.full_name,
+        email: driver.email,
+        phone: driver.phone,
+        vehicle_assigned: driver.vehicle_assigned
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- DRIVER GPS ENDPOINTS ---
+
+// Send driver GPS location
+app.post('/api/driver/location', async (req, res) => {
+  try {
+    const { 
+      driver_id, driver_name,
+      latitude, longitude, 
+      accuracy, speed, heading 
+    } = req.body;
+    
+    await query(
+      `INSERT INTO driver_locations
+       (driver_id, driver_name, latitude, longitude,
+        accuracy, speed, heading)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [driver_id, driver_name, latitude, longitude,
+       accuracy, speed, heading]
+    );
+    
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get latest location of all active drivers (admin)
+app.get('/api/driver/locations/live', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT DISTINCT ON (driver_id)
+        driver_id, driver_name, 
+        latitude, longitude, timestamp
+       FROM driver_locations
+       WHERE timestamp > NOW() - INTERVAL '30 minutes'
+       ORDER BY driver_id, timestamp DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- DRIVER DELIVERY ENDPOINTS ---
+
+// Get deliveries for driver
+app.get('/api/driver/:id/deliveries', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT * FROM driver_deliveries 
+       WHERE driver_id = $1
+       ORDER BY assigned_at DESC`,
+      [req.params.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get ALL deliveries (admin)
+app.get('/api/deliveries', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT d.*, da.full_name as driver_name
+       FROM driver_deliveries d
+       LEFT JOIN driver_accounts da 
+         ON d.driver_id = da.id
+       ORDER BY d.assigned_at DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create delivery (admin assigns to driver)
+app.post('/api/deliveries', async (req, res) => {
+  try {
+    const {
+      driver_id, customer_name,
+      delivery_address, items, notes
+    } = req.body;
+    
+    const delNum = 'DEL-' + Date.now();
+    
+    const result = await query(
+      `INSERT INTO driver_deliveries
+       (driver_id, delivery_number, customer_name,
+        delivery_address, items, status, notes)
+       VALUES ($1,$2,$3,$4,$5,'pending',$6)
+       RETURNING *`,
+      [driver_id, delNum, customer_name,
+       delivery_address, items, notes]
+    );
+    
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update delivery status (driver updates)
+app.put('/api/deliveries/:id/status', async (req, res) => {
+  try {
+    const { status, notes } = req.body;
+    
+    const timeFields = {
+      'pickup': 'pickup_at',
+      'on_the_way': 'on_the_way_at',
+      'delivered': 'delivered_at',
+      'going_back': 'going_back_at',
+      'done': 'done_at'
+    };
+    
+    const timeField = timeFields[status];
+    
+    const queryStr = timeField
+      ? `UPDATE driver_deliveries 
+         SET status=$1, ${timeField}=NOW(), 
+             notes=COALESCE($2,notes)
+         WHERE id=$3 RETURNING *`
+      : `UPDATE driver_deliveries 
+         SET status=$1, 
+             notes=COALESCE($2,notes)
+         WHERE id=$3 RETURNING *`;
+    
+    const result = await query(queryStr, 
+      [status, notes, req.params.id]
+    );
+    
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- DRIVER CHAT ENDPOINTS ---
+
+// Send message
+app.post('/api/driver/messages', async (req, res) => {
+  try {
+    const {
+      driver_id, driver_name,
+      sender_type, message,
+      image_url, file_url, file_name
+    } = req.body;
+    
+    const result = await query(
+      `INSERT INTO driver_messages
+       (driver_id, driver_name, sender_type,
+        message, image_url, file_url, file_name)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       RETURNING *`,
+      [driver_id, driver_name, sender_type,
+       message, image_url, file_url, file_name]
+    );
+    
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get messages for a driver
+app.get('/api/driver/:id/messages', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT * FROM driver_messages
+       WHERE driver_id = $1
+       ORDER BY created_at ASC`,
+      [req.params.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get ALL driver chats (admin - grouped by driver)
+app.get('/api/driver/messages/all', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT DISTINCT ON (driver_id)
+        driver_id, driver_name,
+        message, created_at,
+        COUNT(*) FILTER (
+          WHERE is_read = false 
+          AND sender_type = 'driver'
+        ) OVER (PARTITION BY driver_id) as unread_count
+       FROM driver_messages
+       ORDER BY driver_id, created_at DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Mark messages as read
+app.put('/api/driver/:id/messages/read', async (req, res) => {
+  try {
+    await query(
+      `UPDATE driver_messages 
+       SET is_read = true
+       WHERE driver_id = $1 
+       AND sender_type = 'driver'`,
+      [req.params.id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- ADMIN USER MANAGEMENT ENDPOINTS ---
+
+// Get all pending employee registrations
+app.get('/api/admin/employees/pending', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT id, full_name, email, department,
+        position, phone, status, created_at
+       FROM employee_accounts
+       WHERE status = 'pending'
+       ORDER BY created_at DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get ALL employees
+app.get('/api/admin/employees', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT id, full_name, email, department,
+        position, phone, status, created_at
+       FROM employee_accounts
+       ORDER BY created_at DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Approve or reject employee
+app.put('/api/admin/employees/:id/review', async (req, res) => {
+  try {
+    const { status, reviewed_by } = req.body;
+    const result = await query(
+      `UPDATE employee_accounts
+       SET status=$1, approved_by=$2,
+           approved_at=NOW()
+       WHERE id=$3 RETURNING *`,
+      [status, reviewed_by, req.params.id]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get all pending driver registrations
+app.get('/api/admin/drivers/pending', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT id, full_name, email, phone,
+        license_number, status, created_at
+       FROM driver_accounts
+       WHERE status = 'pending'
+       ORDER BY created_at DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get ALL drivers
+app.get('/api/admin/drivers', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT id, full_name, email, phone,
+        license_number, vehicle_assigned,
+        status, created_at
+       FROM driver_accounts
+       ORDER BY created_at DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Approve or reject driver
+app.put('/api/admin/drivers/:id/review', async (req, res) => {
+  try {
+    const { status, reviewed_by } = req.body;
+    const result = await query(
+      `UPDATE driver_accounts
+       SET status=$1, approved_by=$2,
+           approved_at=NOW()
+       WHERE id=$3 RETURNING *`,
+      [status, reviewed_by, req.params.id]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- FILE UPLOAD ENDPOINT ---
+
+// File upload for driver messages
+app.post('/api/driver/messages/upload', upload.single('file'), async (req, res) => {
+  try {
+    const { driver_id, driver_name, sender_type } = req.body;
+    const file = req.file;
+    
+    if (!file) {
+      return res.status(400).json({ 
+        error: 'No file uploaded' 
+      });
+    }
+    
+    const isImage = file.mimetype.startsWith('image/');
+    const fileUrl = `/uploads/${file.filename}`;
+    
+    const result = await query(
+      `INSERT INTO driver_messages
+       (driver_id, driver_name, sender_type,
+        image_url, file_url, file_name)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       RETURNING *`,
+      [
+        driver_id, driver_name, sender_type,
+        isImage ? fileUrl : null,
+        !isImage ? fileUrl : null,
+        file.originalname
+      ]
+    );
+    
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Serve uploaded files
+app.use('/uploads', express.static(uploadDir));
+
 
 // ----- Static Frontend Serving (Production Only) -----
 if (process.env.NODE_ENV === 'production') {
@@ -2611,65 +3349,57 @@ if (process.env.NODE_ENV === 'production') {
   }
 }
 
-const httpServer = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`API server running at http://0.0.0.0:${PORT}`);
-  console.log(`Using PORT from environment: ${PORT}`);
-});
+// Create new tables before starting server
+const startServer = async () => {
+  await createNewTables();
+  
+  const httpServer = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`API server running at http://0.0.0.0:${PORT}`);
+    console.log(`Using PORT from environment: ${PORT}`);
+  });
 
-// ----- HTTPS server for phone GPS tracker (geolocation requires HTTPS) -----
-// Skip HTTPS server on Render (only run locally)
-let httpsSrv = null;
-if (!process.env.RENDER && process.env.ENABLE_HTTPS === "true") {
-  const HTTPS_PORT = process.env.HTTPS_PORT || 3443;
-  const certPath = path.join(__dirname, 'cert.pem');
-  const keyPath = path.join(__dirname, 'cert.key');
-  const publicDir = path.join(__dirname, '..', 'public');
+  // ----- HTTPS server for phone GPS tracker (geolocation requires HTTPS) -----
+  // Skip HTTPS server on Render (only run locally)
+  let httpsSrv = null;
+  if (!process.env.RENDER && process.env.ENABLE_HTTPS === "true") {
+    const HTTPS_PORT = process.env.HTTPS_PORT || 3443;
+    const certPath = path.join(__dirname, 'cert.pem');
+    const keyPath = path.join(__dirname, 'cert.key');
+    const publicDir = path.join(__dirname, '..', 'public');
 
-  if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
-    httpsSrv = https.createServer(
-      { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) },
-      (req, res) => {
-        // Serve static files from public/
-        let filePath = path.join(publicDir, req.url === '/' ? 'tracker.html' : req.url);
-        // Strip query string
-        filePath = filePath.split('?')[0];
-        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-          const ext = path.extname(filePath);
-          const mime = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json' }[ext] || 'text/plain';
-          res.writeHead(200, { 'Content-Type': mime });
-          fs.createReadStream(filePath).pipe(res);
-        } else {
-          // Forward API calls to the express app
-          app(req, res);
+    if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+      httpsSrv = https.createServer(
+        { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) },
+        (req, res) => {
+          // Serve static files from public/
+          let filePath = path.join(publicDir, req.url === '/' ? 'tracker.html' : req.url);
+          // Strip query string
+          filePath = filePath.split('?')[0];
+          if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+            const ext = path.extname(filePath);
+            const mime = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json' }[ext] || 'text/plain';
+            res.writeHead(200, { 'Content-Type': mime });
+            fs.createReadStream(filePath).pipe(res);
+          } else {
+            // Forward API calls to the express app
+            app(req, res);
+          }
         }
-      }
-    );
-    httpsSrv.listen(HTTPS_PORT, '0.0.0.0', () => {
-      console.log(`HTTPS server running at https://localhost:${HTTPS_PORT}`);
-      console.log(`Phone tracker: https://192.168.254.108:${HTTPS_PORT}/tracker.html`);
-    });
-  } else {
-    console.log('No cert found. Run: node server/gen-cert.cjs');
-  }
-} else {
-  console.log('HTTPS server disabled (set ENABLE_HTTPS=true to enable)');
-}
-
-// Graceful shutdown
-function shutdown() {
-  console.log('Shutting down...');
-  httpServer.close(() => {
-    if (httpsSrv) {
-      httpsSrv.close(() => {
-        console.log('Servers closed. Exiting.');
-        process.exit(0);
+      );
+      httpsSrv.listen(HTTPS_PORT, '0.0.0.0', () => {
+        console.log(`HTTPS server running at https://localhost:${HTTPS_PORT}`);
+        console.log(`Phone tracker: https://192.168.254.108:${HTTPS_PORT}/tracker.html`);
       });
     } else {
-      console.log('HTTP server closed. Exiting.');
-      process.exit(0);
+      console.log('HTTPS certificates not found, skipping HTTPS server');
     }
-  });
-}
+  }
 
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+  return httpServer;
+};
+
+startServer().catch(err => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
+});
+

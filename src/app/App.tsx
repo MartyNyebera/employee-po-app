@@ -1,8 +1,13 @@
 import { useState, useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { LoginScreen } from './components/LoginScreen';
 import { Dashboard } from './components/Dashboard';
 import { AdminDashboard } from './components/AdminDashboard';
 import { getStoredAuth, clearStoredAuth } from './api/client';
+import { EmployeePortal } from './pages/EmployeePortal';
+import { EmployeeLogin } from './pages/EmployeeLogin';
+import { DriverPortal } from './pages/DriverPortal';
+import { DriverLogin } from './pages/DriverLogin';
 
 export type UserRole = 'employee' | 'admin' | null;
 
@@ -73,12 +78,30 @@ export default function App() {
   }
 
   return (
-    <>
-      {userRole === 'employee' ? (
-        <Dashboard userName={userName} onLogout={handleLogout} />
-      ) : (
-        <AdminDashboard userName={userName} isSuperAdmin={userIsSuperAdmin} onLogout={handleLogout} />
-      )}
-    </>
+    <Router>
+      <Routes>
+        {/* Admin Portal Routes */}
+        <Route path="/" element={
+          !userRole ? (
+            <LoginScreen onLogin={handleLogin} />
+          ) : userRole === 'employee' ? (
+            <Dashboard userName={userName} onLogout={handleLogout} />
+          ) : (
+            <AdminDashboard userName={userName} isSuperAdmin={userIsSuperAdmin} onLogout={handleLogout} />
+          )
+        } />
+        
+        {/* Employee Portal Routes */}
+        <Route path="/employee" element={<EmployeePortal />} />
+        <Route path="/employee/login" element={<EmployeeLogin />} />
+        
+        {/* Driver Portal Routes */}
+        <Route path="/driver" element={<DriverPortal />} />
+        <Route path="/driver/login" element={<DriverLogin />} />
+        
+        {/* Fallback */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </Router>
   );
 }
