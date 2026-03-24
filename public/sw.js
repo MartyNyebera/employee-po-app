@@ -1,5 +1,5 @@
 // Service Worker for Fleet Manager Pro PWA
-const CACHE_NAME = 'kimoel-v2';
+const CACHE_NAME = 'kimoel-v3';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
