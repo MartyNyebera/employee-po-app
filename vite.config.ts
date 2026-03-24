@@ -4,6 +4,9 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  define: {
+    __CACHE_BUST__: JSON.stringify(Date.now().toString())
+  },
   server: {
     host: '0.0.0.0',
     port: 3000,
