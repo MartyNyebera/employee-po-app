@@ -347,27 +347,6 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
         </div>
       </div>
 
-      {/* Bottom Navigation - Mobile Only */}
-      <nav className="md:hidden bg-white border-t border-slate-200 flex items-center justify-around py-2 sticky bottom-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          return (
-            <button
-              key={item.id}
-              onClick={() => {
-                setCurrentView(item.id as View);
-                setSelectedAssetId(null);
-              }}
-              className={`flex flex-col items-center gap-1 px-4 py-2 rounded-lg text-xs font-medium transition-colors ${
-                currentView === item.id ? 'text-blue-600' : 'text-slate-500'
-              }`}
-            >
-              <Icon className="size-5" />
-              <span>{item.label}</span>
-            </button>
-          );
-        })}
-      </nav>
-    </div>
+          </div>
   );
 }
