@@ -154,45 +154,23 @@ useEffect(() => {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-slate-900">{inventory.length}</div>
-              <div className="text-sm text-slate-500">Total Items</div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-green-600">
-                {inventory.filter(item => item.status === 'in-stock').length}
-              </div>
-              <div className="text-sm text-slate-500">In Stock</div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-yellow-600">
-                {inventory.filter(item => item.status === 'low-stock').length}
-              </div>
-              <div className="text-sm text-slate-500">Low Stock</div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-red-600">
-                {inventory.filter(item => item.status === 'out-of-stock').length}
-              </div>
-              <div className="text-sm text-slate-500">Out of Stock</div>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="grid grid-cols-2 gap-3 mb-4">
+        <div className="bg-white rounded-xl border border-slate-200 p-4 text-center">
+          <p className="text-2xl font-bold text-slate-800">{inventory.length}</p>
+          <p className="text-sm text-slate-500">Total Items</p>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 p-4 text-center">
+          <p className="text-2xl font-bold text-green-600">{inventory.filter(item => item.status === 'in-stock').length}</p>
+          <p className="text-sm text-slate-500">In Stock</p>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 p-4 text-center">
+          <p className="text-2xl font-bold text-yellow-500">{inventory.filter(item => item.status === 'low-stock').length}</p>
+          <p className="text-sm text-slate-500">Low Stock</p>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 p-4 text-center">
+          <p className="text-2xl font-bold text-red-500">{inventory.filter(item => item.status === 'out-of-stock').length}</p>
+          <p className="text-sm text-slate-500">Out of Stock</p>
+        </div>
       </div>
 
       {/* Filter Bar */}

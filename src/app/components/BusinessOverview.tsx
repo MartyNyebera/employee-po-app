@@ -626,35 +626,29 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
       {/* SECTION 6: QUICK ACTION BUTTONS */}
       <Card>
         <CardContent className="p-4">
-          <div className="flex flex-wrap gap-3 justify-center">
+          <div className="grid grid-cols-2 gap-3 p-4">
             {isAdmin && (
               <>
-                <Button className="bg-green-600 hover:bg-green-700">
-                  <Plus className="size-4 mr-2" />
-                  New Sales Order
-                </Button>
-                <Button className="bg-orange-600 hover:bg-orange-700">
-                  <Plus className="size-4 mr-2" />
-                  New Purchase Order
-                </Button>
-                <Button className="bg-purple-600 hover:bg-purple-700">
-                  <Plus className="size-4 mr-2" />
-                  Add Inventory
-                </Button>
+                <button onClick={() => {}} className="bg-green-600 hover:bg-green-700 text-white rounded-xl py-3 px-4 text-sm font-medium flex items-center justify-center gap-2">
+                  + New Sales Order
+                </button>
+                <button onClick={() => {}} className="bg-orange-500 hover:bg-orange-600 text-white rounded-xl py-3 px-4 text-sm font-medium flex items-center justify-center gap-2">
+                  + New Purchase Order
+                </button>
+                <button onClick={() => {}} className="bg-purple-600 hover:bg-purple-700 text-white rounded-xl py-3 px-4 text-sm font-medium flex items-center justify-center gap-2">
+                  + Add Inventory
+                </button>
               </>
             )}
-            <Button variant="outline">
-              <FileText className="size-4 mr-2" />
+            <button onClick={() => {}} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl py-3 px-4 text-sm font-medium flex items-center justify-center gap-2">
               View All Orders
-            </Button>
-            <Button variant="outline">
-              <BarChart3 className="size-4 mr-2" />
+            </button>
+            <button onClick={() => {}} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl py-3 px-4 text-sm font-medium flex items-center justify-center gap-2 col-span-2">
               View Analytics
-            </Button>
-            <Button variant="outline">
-              <Download className="size-4 mr-2" />
+            </button>
+            <button onClick={() => {}} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl py-3 px-4 text-sm font-medium flex items-center justify-center gap-2 col-span-2">
               Download Report
-            </Button>
+            </button>
           </div>
         </CardContent>
       </Card>

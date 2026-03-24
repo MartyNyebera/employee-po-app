@@ -81,10 +81,11 @@ const formatCurrency = (amount: number) => {
   };
 
   const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString('en-US', {
+    if (!dateStr) return 'N/A';
+    return new Date(dateStr).toLocaleDateString('en-PH', {
       year: 'numeric',
-      month: 'long',
-      day: 'numeric',
+      month: 'short',
+      day: 'numeric'
     });
   };
 
@@ -653,47 +654,40 @@ useEffect(() => {
       <div className="space-y-3">
         {filteredPOs.length > 0 ? (
           filteredPOs.map((po) => (
-            <Card key={po.id} className="hover:shadow-md transition-shadow">
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-4 mb-2">
-                      <h3 className="font-semibold text-lg">{po.poNumber}</h3>
-                      {getStatusBadge(po.status)}
-                    </div>
-                    <div className="grid grid-cols-2 gap-4 text-sm text-slate-600">
-                      <div>
-                        <span className="font-medium">Vendor:</span> {po.client}
-                      </div>
-                      <div>
-                        <span className="font-medium">Date:</span> {po.createdDate}
-                      </div>
-                      <div>
-                        <span className="font-medium">Delivery:</span> {po.deliveryDate}
-                      </div>
-                      <div>
-                        <span className="font-medium">Total:</span> {formatCurrency(po.amount)}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {isAdmin && (
-                      <>
-                        <Button variant="outline" size="sm" onClick={() => handleEditClick(po)}>
-                          <Edit className="size-4" />
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={() => handlePrintPO(po)}>
-                          <Printer className="size-4" />
-                        </Button>
-                        <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700" onClick={() => handleDeletePO(po)}>
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+            <div className="bg-white rounded-xl border border-slate-200 p-4 mb-3">
+              <div className="flex justify-between items-start mb-2">
+                <span className="font-bold text-lg">{po.poNumber}</span>
+                {getStatusBadge(po.status)}
+              </div>
+              <div className="flex justify-between text-sm text-slate-500 mb-1">
+                <span>Vendor: {po.client}</span>
+                <span>{formatDate(po.createdDate)}</span>
+              </div>
+              <div className="flex justify-between text-sm mb-3">
+                <span className="text-slate-500">
+                  Delivery: {formatDate(po.deliveryDate)}
+                </span>
+                <span className="font-semibold text-slate-800">
+                  ₱{Number(po.amount).toLocaleString('en-PH', 
+                    {minimumFractionDigits: 2})}
+                </span>
+              </div>
+              <div className="flex justify-end gap-2">
+                {isAdmin && (
+                  <>
+                    <Button variant="outline" size="sm" onClick={() => handleEditClick(po)}>
+                      <Edit className="size-4" />
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => handlePrintPO(po)}>
+                      <Printer className="size-4" />
+                    </Button>
+                    <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700" onClick={() => handleDeletePO(po)}>
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
           ))
         ) : (
           <Card>

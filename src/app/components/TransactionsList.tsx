@@ -97,10 +97,11 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
   };
 
   const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
+    if (!dateStr) return 'N/A';
+    return new Date(dateStr).toLocaleDateString('en-PH', {
       year: 'numeric',
+      month: 'short',
+      day: 'numeric'
     });
   };
 
