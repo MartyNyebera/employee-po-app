@@ -9,7 +9,7 @@ import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { CreateSOModal } from './CreatePOModal';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { FileText, Plus, DollarSign, Calendar, Building2, Truck, Edit, Filter, Printer, Trash2, X } from 'lucide-react';
+import { FileText, Plus, DollarSign, Calendar, Building2, Truck, Edit, Filter, Printer, Trash2, X, Search } from 'lucide-react';
 import { toast } from 'sonner';
 
 const formatDate = (dateString: string) => {
@@ -605,16 +605,16 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
 
   return (
     <>
-      <div className="p-6 space-y-6">
+      <div className="p-3 sm:p-6 space-y-4">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-start justify-between gap-2">
           <div>
-            <div className="flex items-center gap-3 mb-1">
+            <div className="flex items-center gap-2 mb-1">
               <div className="p-2 bg-amber-100 rounded-lg">
                 <FileText className="size-5 text-amber-600" />
               </div>
               <div>
-                <h2 className="text-2xl font-bold text-slate-900">Sales Orders</h2>
+                <h2 className="text-lg sm:text-2xl font-bold text-slate-900">Sales Orders</h2>
                 <p className="text-slate-600 text-sm">Manage and track Sales Orders</p>
               </div>
             </div>
@@ -631,13 +631,13 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
       {/* Filter Bar */}
       <Card className="mb-4">
         <CardContent className="p-4">
-          <div className="flex items-center gap-4">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
             <div className="flex items-center gap-2">
-              <Filter className="size-4 text-slate-500" />
+              <Filter className="size-4 text-slate-500 flex-shrink-0" />
               <select 
                 value={statusFilter} 
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white min-w-0"
               >
                 <option value="all">All Status</option>
                 <option value="pending">Pending</option>
@@ -647,12 +647,14 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
                 <option value="completed">Completed</option>
               </select>
             </div>
-            <div className="flex-1">
-              <Input
+            <div className="flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-2 border border-slate-200">
+              <Search className="size-4 text-slate-400 flex-shrink-0" />
+              <input
+                type="text"
                 placeholder="Search SO number or customer..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="max-w-sm"
+                className="flex-1 bg-transparent text-sm outline-none text-slate-700 min-w-0"
               />
             </div>
           </div>
@@ -660,7 +662,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
       </Card>
 
       {/* Sales Orders List */}
-      <div className="space-y-3">
+      <div className="space-y-3 mt-4">
         {filteredOrders.length > 0 ? (
           filteredOrders.map((po) => {
           const assignedAssetNames = po.assignedAssets
@@ -668,23 +670,27 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
             .filter(Boolean);
 
           return (
-            <div className="bg-white rounded-xl border border-slate-200 p-4 mb-3">
-              <div className="flex justify-between items-start mb-2">
-                <span className="font-bold text-lg">{po.poNumber}</span>
-                {getStatusBadge(po.status)}
+            <div key={po.id} className="bg-white rounded-xl border border-slate-200 p-3 sm:p-4 mb-3">
+              <div className="flex justify-between items-start mb-2 gap-2">
+                <span className="font-bold text-base sm:text-lg break-all">{po.poNumber}</span>
+                <div className="flex-shrink-0">
+                  {getStatusBadge(po.status)}
+                </div>
               </div>
-              <div className="flex justify-between text-sm text-slate-500 mb-1">
-                <span>Customer: {po.client}</span>
-                <span>{formatDate(po.createdDate)}</span>
-              </div>
-              <div className="flex justify-between text-sm mb-3">
-                <span className="text-slate-500">
-                  Delivery: {formatDate(po.deliveryDate)}
-                </span>
-                <span className="font-semibold text-slate-800">
-                  ₱{Number(po.amount).toLocaleString('en-PH', 
-                    {minimumFractionDigits: 2})}
-                </span>
+              <div className="flex flex-col gap-1 mb-3">
+                <div className="flex justify-between text-xs sm:text-sm text-slate-500">
+                  <span>Customer: {po.client}</span>
+                  <span>{formatDate(po.createdDate)}</span>
+                </div>
+                <div className="flex justify-between text-xs sm:text-sm">
+                  <span className="text-slate-500">
+                    Delivery: {formatDate(po.deliveryDate)}
+                  </span>
+                  <span className="font-semibold text-slate-800">
+                    ₱{Number(po.amount).toLocaleString('en-PH', 
+                      {minimumFractionDigits: 2})}
+                  </span>
+                </div>
               </div>
               <div className="flex justify-end gap-2">
                 {isAdmin && (

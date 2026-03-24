@@ -132,7 +132,7 @@ useEffect(() => {
 
   
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-3 sm:p-6 space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -141,7 +141,7 @@ useEffect(() => {
               <Package className="size-5 text-purple-600" />
             </div>
             <div>
-              <h2 className="text-2xl font-bold text-slate-900">Inventory</h2>
+              <h2 className="text-lg sm:text-2xl font-bold text-slate-900">Inventory</h2>
               <p className="text-slate-600 text-sm">Manage items and track stock levels</p>
             </div>
           </div>
@@ -177,8 +177,8 @@ useEffect(() => {
       {/* Filter Bar */}
       <Card>
         <CardContent className="p-4">
-          <div className="flex items-center gap-4 overflow-visible">
-            <div className="flex items-center gap-2 bg-slate-50 rounded-full px-4 py-2 flex-1 min-w-0">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+            <div className="flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-2 flex-1 min-w-0 border border-slate-200">
               <Search className="size-4 text-slate-400 flex-shrink-0" />
               <input
                 type="text"
@@ -189,11 +189,11 @@ useEffect(() => {
               />
             </div>
             <div className="flex items-center gap-2">
-              <Filter className="size-4 text-slate-500" />
+              <Filter className="size-4 text-slate-500 flex-shrink-0" />
               <select 
                 value={filter} 
                 onChange={(e) => setFilter(e.target.value as any)}
-                className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
               >
                 <option value="all">All Items</option>
                 <option value="in-stock">In Stock</option>
@@ -202,11 +202,11 @@ useEffect(() => {
               </select>
             </div>
             <div className="flex items-center gap-2">
-              <ArrowUpDown className="size-4 text-slate-500" />
+              <ArrowUpDown className="size-4 text-slate-500 flex-shrink-0" />
               <select 
                 value={sortBy} 
                 onChange={(e) => setSortBy(e.target.value as any)}
-                className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
               >
                 <option value="itemCode">Item Code</option>
                 <option value="itemName">Item Name</option>
@@ -217,60 +217,152 @@ useEffect(() => {
         </CardContent>
       </Card>
 
-      {/* Inventory Table */}
+      {/* Inventory - Cards on mobile, Table on desktop */}
       <Card>
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
+          
+          {/* Mobile Card View */}
+          <div className="sm:hidden divide-y divide-slate-100">
+            {filteredInventory.length > 0 ? (
+              filteredInventory.map((item) => (
+                <div key={item.id} 
+                  className="p-3 hover:bg-slate-50">
+                  <div className="flex justify-between 
+                    items-start mb-2 gap-2">
+                    <div>
+                      <p className="font-semibold text-sm 
+                        text-slate-900">{item.itemName}</p>
+                      <p className="text-xs text-slate-500">
+                        {item.itemCode}
+                      </p>
+                    </div>
+                    <div className="flex-shrink-0">
+                      {getStatusBadge(item.status)}
+                    </div>
+                  </div>
+                  <div className="flex justify-between 
+                    items-center">
+                    <p className="text-xs text-slate-500">
+                      {item.description}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-sm font-bold 
+                        ${item.status === 'out-of-stock' 
+                          ? 'text-red-600' :
+                          item.status === 'low-stock' 
+                          ? 'text-yellow-600' 
+                          : 'text-green-600'}`}>
+                        {item.quantity} {item.unit}
+                      </span>
+                      <Button variant="outline" size="sm"
+                        onClick={() => setSelectedItem(item)}>
+                        <Eye className="size-3" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="p-8 text-center">
+                <Package className="size-10 text-slate-400 
+                  mx-auto mb-3" />
+                <p className="text-sm font-semibold 
+                  text-slate-900 mb-1">
+                  No inventory items found
+                </p>
+                <p className="text-xs text-slate-500">
+                  Add your first item to get started.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Desktop Table View - unchanged */}
+          <div className="hidden sm:block overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-slate-200 bg-slate-50">
-                  <th className="text-left p-4 font-medium text-sm text-slate-700">Item Code</th>
-                  <th className="text-left p-4 font-medium text-sm text-slate-700">Item Name</th>
-                  <th className="text-left p-4 font-medium text-sm text-slate-700">Description</th>
-                  <th className="text-center p-4 font-medium text-sm text-slate-700">Quantity</th>
-                  <th className="text-center p-4 font-medium text-sm text-slate-700">Unit</th>
-                  <th className="text-left p-4 font-medium text-sm text-slate-700">Location</th>
-                  <th className="text-center p-4 font-medium text-sm text-slate-700">Status</th>
-                  <th className="text-center p-4 font-medium text-sm text-slate-700">Actions</th>
+                <tr className="border-b border-slate-200 
+                  bg-slate-50">
+                  <th className="text-left p-4 font-medium 
+                    text-sm text-slate-700">Item Code</th>
+                  <th className="text-left p-4 font-medium 
+                    text-sm text-slate-700">Item Name</th>
+                  <th className="text-left p-4 font-medium 
+                    text-sm text-slate-700">Description</th>
+                  <th className="text-center p-4 font-medium 
+                    text-sm text-slate-700">Quantity</th>
+                  <th className="text-center p-4 font-medium 
+                    text-sm text-slate-700">Unit</th>
+                  <th className="text-left p-4 font-medium 
+                    text-sm text-slate-700">Location</th>
+                  <th className="text-center p-4 font-medium 
+                    text-sm text-slate-700">Status</th>
+                  <th className="text-center p-4 font-medium 
+                    text-sm text-slate-700">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredInventory.length > 0 ? (
                   filteredInventory.map((item) => (
-                  <tr key={item.id} className="border-b border-slate-100 hover:bg-slate-50">
-                    <td className="p-4 font-medium text-sm">{item.itemCode}</td>
-                    <td className="p-4 text-sm">{item.itemName}</td>
-                    <td className="p-4 text-sm text-slate-600">{item.description}</td>
-                    <td className="p-4 text-sm text-center">
-                      <span className={`font-medium ${
-                        item.status === 'out-of-stock' ? 'text-red-600' :
-                        item.status === 'low-stock' ? 'text-yellow-600' : 'text-green-600'
-                      }`}>
-                        {item.quantity}
-                      </span>
-                    </td>
-                    <td className="p-4 text-sm text-center">{item.unit}</td>
-                    <td className="p-4 text-sm">{item.location}</td>
-                    <td className="p-4 text-center">{getStatusBadge(item.status)}</td>
-                    <td className="p-4 text-center">
-                      <Button variant="outline" size="sm" onClick={() => setSelectedItem(item)}>
-                        <Eye className="size-4" />
-                      </Button>
-                    </td>
-                  </tr>
-                ))
+                    <tr key={item.id} 
+                      className="border-b border-slate-100 
+                        hover:bg-slate-50">
+                      <td className="p-4 font-medium text-sm">
+                        {item.itemCode}
+                      </td>
+                      <td className="p-4 text-sm">
+                        {item.itemName}
+                      </td>
+                      <td className="p-4 text-sm text-slate-600">
+                        {item.description}
+                      </td>
+                      <td className="p-4 text-sm text-center">
+                        <span className={`font-medium ${
+                          item.status === 'out-of-stock' 
+                            ? 'text-red-600' :
+                          item.status === 'low-stock' 
+                            ? 'text-yellow-600' 
+                            : 'text-green-600'}`}>
+                          {item.quantity}
+                        </span>
+                      </td>
+                      <td className="p-4 text-sm text-center">
+                        {item.unit}
+                      </td>
+                      <td className="p-4 text-sm">
+                        {item.location}
+                      </td>
+                      <td className="p-4 text-center">
+                        {getStatusBadge(item.status)}
+                      </td>
+                      <td className="p-4 text-center">
+                        <Button variant="outline" size="sm" 
+                          onClick={() => setSelectedItem(item)}>
+                          <Eye className="size-4" />
+                        </Button>
+                      </td>
+                    </tr>
+                  ))
                 ) : (
                   <tr>
-                    <td colSpan={7} className="p-12 text-center">
-                      <Package className="size-12 text-slate-400 mx-auto mb-4" />
-                      <h3 className="text-lg font-semibold text-slate-900 mb-2">No inventory items found</h3>
-                      <p className="text-slate-500">Add your first inventory item to get started.</p>
+                    <td colSpan={8} className="p-12 text-center">
+                      <Package className="size-12 text-slate-400 
+                        mx-auto mb-4" />
+                      <h3 className="text-lg font-semibold 
+                        text-slate-900 mb-2">
+                        No inventory items found
+                      </h3>
+                      <p className="text-slate-500">
+                        Add your first inventory item 
+                        to get started.
+                      </p>
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
+
         </CardContent>
       </Card>
 

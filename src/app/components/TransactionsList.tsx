@@ -139,7 +139,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-3 sm:p-6 space-y-4">
       {/* Enhanced Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -148,7 +148,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
               <Receipt className="size-5 text-amber-600 dark:text-amber-400" />
             </div>
             <div>
-              <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100">Miscellaneous</h2>
+              <h2 className="text-lg sm:text-2xl font-bold text-slate-900 dark:text-slate-100">Miscellaneous</h2>
               <p className="text-slate-600 text-sm dark:text-slate-400">Track miscellaneous transactions and entries</p>
             </div>
           </div>
@@ -167,7 +167,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
       {/* Summary Card */}
       <Card className="bg-gradient-to-br from-amber-50 to-amber-100 border border-amber-200/60 shadow-xl shadow-amber-500/10 dark:from-slate-800/50 dark:to-slate-900/50 dark:border dark:border-white/10 dark:shadow-xl dark:shadow-black/20">
         <CardContent className="p-6">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-2">
             <div className="flex items-center gap-2">
               <div className="p-2 bg-amber-100 rounded-lg dark:bg-amber-500/20">
                 <Receipt className="size-5 text-amber-600 dark:text-amber-400" />
@@ -178,10 +178,10 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
               </div>
             </div>
             <div className="text-right">
-              <div className="text-3xl font-bold text-amber-800 dark:text-amber-200">{formatCurrency(totalAmount)}</div>
+              <div className="text-xl sm:text-3xl font-bold text-amber-800 dark:text-amber-200">{formatCurrency(totalAmount)}</div>
             </div>
           </div>
-          <div className="grid grid-cols-4 gap-4 mt-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-4 mt-4">
             <div className="text-center">
               <div className="text-xs text-amber-600 dark:text-amber-400">Fuel</div>
               <div className="text-lg font-bold text-amber-800 dark:text-amber-200">
@@ -252,14 +252,14 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
 
           return (
             <Card key={txn.id} className="bg-white border border-slate-200/60 shadow-lg shadow-slate-900/5 hover:shadow-xl hover:shadow-slate-900/10 hover:-translate-y-1 transition-all duration-300 dark:bg-slate-800/50 dark:border dark:border-white/10 dark:shadow-xl dark:shadow-black/20 dark:hover:shadow-2xl dark:hover:shadow-black/30">
-              <CardContent className="p-6">
-                <div className="flex items-start justify-between mb-4">
+              <CardContent className="p-3 sm:p-6">
+                <div className="flex items-start justify-between mb-3 gap-2">
                   <div className="flex items-start gap-4">
                     <div className="p-2 bg-amber-50 rounded-lg dark:bg-amber-500/20">
                       {getTypeIcon(txn.type)}
                     </div>
                     <div className="flex-1">
-                      <div className="text-lg font-bold text-slate-900 dark:text-slate-100 mb-1">{txn.description}</div>
+                      <div className="text-sm sm:text-lg font-bold text-slate-900 dark:text-slate-100 mb-1">{txn.description}</div>
                       <div className="text-sm text-slate-500 dark:text-slate-400">
                         PO: {txn.poNumber}
                       </div>
@@ -268,8 +268,8 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
                   {getTypeBadge(txn.type)}
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div className="flex items-center gap-3 p-3 bg-amber-50 dark:bg-amber-500/20 rounded-lg border border-amber-200 dark:border-amber-500/30">
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  <div className="flex items-center gap-2 p-2 sm:p-3 bg-amber-50 dark:bg-amber-500/20 rounded-lg border border-amber-200 dark:border-amber-500/30">
                     <div className="p-2 bg-amber-100 dark:bg-amber-500/30 rounded-lg">
                       <DollarSign className="size-4 text-amber-600 dark:text-amber-400" />
                     </div>
@@ -278,7 +278,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
                       <div className="text-xs text-amber-600 dark:text-amber-400">Amount</div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 p-3 bg-blue-50 dark:bg-blue-500/20 rounded-lg border border-blue-200 dark:border-blue-500/30">
+                  <div className="flex items-center gap-2 p-2 sm:p-3 bg-blue-50 dark:bg-blue-500/20 rounded-lg border border-blue-200 dark:border-blue-500/30">
                     <div className="p-2 bg-blue-100 dark:bg-blue-500/30 rounded-lg">
                       <Calendar className="size-4 text-blue-600 dark:text-blue-400" />
                     </div>
