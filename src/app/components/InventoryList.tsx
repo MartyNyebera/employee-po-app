@@ -31,6 +31,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [filter, setFilter] = useState<'all' | 'in-stock' | 'low-stock' | 'out-of-stock'>('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -108,7 +109,7 @@ const getStatusBadge = (status: string) => {
 
 useEffect(() => {
   fetchInventory();
-}, []);
+}, [refreshKey]);
 
   // Real-time refresh - listen for inventory updates
   useEffect(() => {
@@ -327,7 +328,7 @@ useEffect(() => {
           onClose={() => setShowCreateModal(false)}
           onCreated={() => {
             setShowCreateModal(false);
-            fetchInventory();
+            setRefreshKey(prev => prev + 1);
           }}
         />
       )}
@@ -343,7 +344,7 @@ useEffect(() => {
           onUpdated={() => {
             setShowEditModal(false);
             setSelectedItem(null);
-            fetchInventory();
+            setRefreshKey(prev => prev + 1);
           }}
         />
       )}

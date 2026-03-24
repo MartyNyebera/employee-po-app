@@ -95,7 +95,7 @@ export function UltraSimpleGPS() {
     checkGPS();
 
     // Check every 2 seconds
-    const interval = setInterval(checkGPS, 2000);
+    const interval = setInterval(checkGPS, 15000);
 
     // Listen for storage events
     const handleStorage = (e: StorageEvent) => {

@@ -216,7 +216,7 @@ export function LiveVehicleMap() {
     }
 
     // Start polling for GPS data updates every 2 seconds
-    const pollInterval = setInterval(checkGPSData, 2000);
+    const pollInterval = setInterval(checkGPSData, 15000);
 
     return () => {
       window.removeEventListener('storage', handleGPSData);

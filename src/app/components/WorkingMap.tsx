@@ -202,7 +202,7 @@ export function WorkingMap() {
     };
 
     fetchDevices();
-    const interval = setInterval(fetchDevices, 5000);
+    const interval = setInterval(fetchDevices, 15000);
     return () => clearInterval(interval);
   }, []);
 

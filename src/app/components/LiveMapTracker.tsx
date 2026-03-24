@@ -290,7 +290,7 @@ export function LiveMapTracker() {
     fetchVehicleLocation();
 
     // Poll every 2 seconds
-    pollingIntervalRef.current = setInterval(fetchVehicleLocation, 2000);
+    pollingIntervalRef.current = setInterval(fetchVehicleLocation, 15000);
 
     return () => {
       if (pollingIntervalRef.current) {

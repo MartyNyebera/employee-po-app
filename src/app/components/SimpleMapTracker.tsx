@@ -349,7 +349,7 @@ export function SimpleMapTracker() {
     }
 
     // Start polling every 5 seconds (slower to prevent freeze)
-    const pollInterval = setInterval(checkGPSData, 5000);
+    const pollInterval = setInterval(checkGPSData, 15000);
 
     return () => {
       window.removeEventListener('storage', handleGPSData);

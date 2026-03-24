@@ -196,7 +196,7 @@ export function LegacyLiveMap() {
     fetchMobileGPSData(); // Initial fetch
     
     // Poll every 2 seconds
-    pollingIntervalRef.current = setInterval(fetchMobileGPSData, 2000);
+    pollingIntervalRef.current = setInterval(fetchMobileGPSData, 15000);
 
     return () => {
       if (pollingIntervalRef.current) {

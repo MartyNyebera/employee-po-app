@@ -195,9 +195,9 @@ export default function TrackerPage() {
         }
       },
       { 
-        enableHighAccuracy: true, 
+        enableHighAccuracy: false, 
         timeout: 15000, 
-        maximumAge: 0,
+        maximumAge: 10000,
         // Adaptive accuracy based on battery level
         ...(batteryLevel && batteryLevel < 20 && {
           enableHighAccuracy: false,

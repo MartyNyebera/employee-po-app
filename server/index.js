@@ -21,6 +21,43 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Smart cache middleware
+app.use((req, res, next) => {
+  // Never cache auth routes or mutations
+  if (
+    req.method !== 'GET' ||
+    req.path.includes('/auth') ||
+    req.path.includes('/login') ||
+    req.path.includes('/logout')
+  ) {
+    res.setHeader('Cache-Control', 
+      'no-store, no-cache, must-revalidate');
+    return next();
+  }
+
+  // Cache GPS data for 15 seconds
+  if (req.path.includes('/gps') || 
+      req.path.includes('/location') ||
+      req.path.includes('/tracking')) {
+    res.setHeader('Cache-Control', 
+      'private, max-age=15, stale-while-revalidate=10');
+    return next();
+  }
+
+  // Cache fleet/vehicle data for 60 seconds
+  if (req.path.includes('/fleet') || 
+      req.path.includes('/vehicle')) {
+    res.setHeader('Cache-Control', 
+      'private, max-age=60, stale-while-revalidate=30');
+    return next();
+  }
+
+  // Cache general data (orders, inventory) for 30 seconds
+  res.setHeader('Cache-Control', 
+    'private, max-age=30, stale-while-revalidate=15');
+  next();
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.status(200).send('ok');

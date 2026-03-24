@@ -28,6 +28,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [filter, setFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null);
@@ -121,6 +122,7 @@ const formatCurrency = (amount: number) => {
       setPurchaseOrders(purchaseOrders.map(po => po.id === selectedPO.id ? (updated as unknown as PurchaseOrder) : po));
       setIsEditing(false);
       toast.success('Purchase order updated successfully');
+      setRefreshKey(prev => prev + 1);
       
       // Trigger Overview refresh
       window.dispatchEvent(new CustomEvent('ordersUpdated'));
@@ -139,6 +141,7 @@ const formatCurrency = (amount: number) => {
       await deletePurchaseOrder(po.id);
       setPurchaseOrders(purchaseOrders.filter(p => p.id !== po.id));
       toast.success('Purchase order deleted successfully');
+      setRefreshKey(prev => prev + 1);
       
       // Trigger Overview refresh
       window.dispatchEvent(new CustomEvent('ordersUpdated'));
@@ -574,7 +577,7 @@ const filteredPOs = purchaseOrders.filter(po => {
 
 useEffect(() => {
   fetchPurchaseOrders();
-}, []);
+}, [refreshKey]);
 
   // Real-time refresh - listen for order updates
   useEffect(() => {
@@ -706,7 +709,7 @@ useEffect(() => {
           onClose={() => setShowCreateModal(false)}
           onCreated={() => {
             setShowCreateModal(false);
-            fetchPurchaseOrders();
+            setRefreshKey(prev => prev + 1);
           }}
         />
       )}

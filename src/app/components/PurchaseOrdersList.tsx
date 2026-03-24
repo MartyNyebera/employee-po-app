@@ -46,6 +46,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
   const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [editForm, setEditForm] = useState({
     status: '',
     description: '',
@@ -66,7 +67,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
         .then(setVehicles)
         .catch(() => setVehicles([])),
     ]).finally(() => setLoading(false));
-  }, []);
+  }, [refreshKey]);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -130,6 +131,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
       setOrders(orders.map(po => po.id === selectedPO.id ? updated : po));
       setIsEditing(false);
       toast.success('Purchase order updated successfully');
+      setRefreshKey(prev => prev + 1);
       
       // Trigger Overview refresh
       window.dispatchEvent(new CustomEvent('ordersUpdated'));
@@ -147,6 +149,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
       await deletePurchaseOrder(po.id);
       setOrders(orders.filter(order => order.id !== po.id));
       toast.success('Purchase order deleted successfully');
+      setRefreshKey(prev => prev + 1);
       
       // Trigger Overview refresh
       window.dispatchEvent(new CustomEvent('ordersUpdated'));
@@ -790,7 +793,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
         onClose={() => setShowCreateModal(false)}
         onCreated={() => {
           setShowCreateModal(false);
-          loadOrders();
+          setRefreshKey(prev => prev + 1);
         }}
       />
     )}

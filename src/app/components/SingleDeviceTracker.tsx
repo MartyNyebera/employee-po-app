@@ -102,7 +102,7 @@ export function SingleDeviceTracker({ device, onBack }: SingleDeviceTrackerProps
     fetchLatestPosition();
     
     // Refresh every 10 seconds for real-time tracking
-    const interval = setInterval(fetchLatestPosition, 10000);
+    const interval = setInterval(fetchLatestPosition, 20000);
     return () => clearInterval(interval);
   }, [device.id]);
 

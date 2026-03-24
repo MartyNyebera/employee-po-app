@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useAutoLogout } from '../hooks/useAutoLogout';
 import { Button } from './ui/button';
 import { Home, Truck, Wrench, MapPin, FileText, Receipt, User, LogOut, Menu, X, ShoppingCart, Package } from 'lucide-react';
@@ -28,6 +28,8 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  
+  const fetchedTabs = useRef<Set<string>>(new Set());
   
   
   const handleAssetClick = (assetId: string) => {
