@@ -239,10 +239,14 @@ export function EmployeeLogin() {
               </button>
             </div>
           ) : (
-            <div className="space-y-3">
-              <div className="grid grid-cols-1 gap-3">
+            <div className="space-y-4">
+              {/* Full Name */}
+              <div>
+                <label className="text-xs font-semibold 
+                  text-slate-600 uppercase tracking-wider 
+                  block mb-1.5">Full Name</label>
                 <input
-                  placeholder="Full Name *"
+                  placeholder="Enter your full name"
                   className="w-full border border-slate-200 
                     rounded-xl px-4 py-3 text-sm
                     focus:outline-none focus:ring-2 
@@ -253,9 +257,16 @@ export function EmployeeLogin() {
                       full_name: e.target.value})
                   )}
                 />
+              </div>
+
+              {/* Email */}
+              <div>
+                <label className="text-xs font-semibold 
+                  text-slate-600 uppercase tracking-wider 
+                  block mb-1.5">Email</label>
                 <input
                   type="email"
-                  placeholder="Email *"
+                  placeholder="your@email.com"
                   className="w-full border border-slate-200 
                     rounded-xl px-4 py-3 text-sm
                     focus:outline-none focus:ring-2 
@@ -265,9 +276,16 @@ export function EmployeeLogin() {
                     f => ({...f, email: e.target.value})
                   )}
                 />
+              </div>
+
+              {/* Password */}
+              <div>
+                <label className="text-xs font-semibold 
+                  text-slate-600 uppercase tracking-wider 
+                  block mb-1.5">Password</label>
                 <input
                   type="password"
-                  placeholder="Password *"
+                  placeholder="••••••••"
                   className="w-full border border-slate-200 
                     rounded-xl px-4 py-3 text-sm
                     focus:outline-none focus:ring-2 
@@ -277,7 +295,14 @@ export function EmployeeLogin() {
                     f => ({...f, password: e.target.value})
                   )}
                 />
-                <div className="grid grid-cols-2 gap-3">
+              </div>
+
+              {/* Department and Position - Side by Side */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold 
+                    text-slate-600 uppercase tracking-wider 
+                    block mb-1.5">Department</label>
                   <input
                     placeholder="Department"
                     className="w-full border border-slate-200 
@@ -290,6 +315,11 @@ export function EmployeeLogin() {
                         department: e.target.value})
                     )}
                   />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold 
+                    text-slate-600 uppercase tracking-wider 
+                    block mb-1.5">Position</label>
                   <input
                     placeholder="Position"
                     className="w-full border border-slate-200 
@@ -303,8 +333,15 @@ export function EmployeeLogin() {
                     )}
                   />
                 </div>
+              </div>
+
+              {/* Phone Number */}
+              <div>
+                <label className="text-xs font-semibold 
+                  text-slate-600 uppercase tracking-wider 
+                  block mb-1.5">Phone Number</label>
                 <input
-                  placeholder="Phone Number"
+                  placeholder="Enter phone number"
                   className="w-full border border-slate-200 
                     rounded-xl px-4 py-3 text-sm
                     focus:outline-none focus:ring-2 
