@@ -414,6 +414,23 @@ async function runMigrations() {
       console.log('ℹ️ sales_orders delivery columns skipped:', err.message);
     }
 
+    // Add migration for approved_by column type change (integer to text)
+    try {
+      // Change approved_by from INTEGER to VARCHAR(255) to store names
+      await query(`ALTER TABLE employee_accounts ALTER COLUMN approved_by TYPE VARCHAR(255) USING approved_by::VARCHAR(255)`);
+      console.log('✅ employee_accounts approved_by column migrated to VARCHAR(255)');
+    } catch (err) {
+      console.log('ℹ️ employee_accounts approved_by column migration skipped:', err.message);
+    }
+
+    // Add migration for driver_accounts approved_by column type change
+    try {
+      await query(`ALTER TABLE driver_accounts ALTER COLUMN approved_by TYPE VARCHAR(255) USING approved_by::VARCHAR(255)`);
+      console.log('✅ driver_accounts approved_by column migrated to VARCHAR(255)');
+    } catch (err) {
+      console.log('ℹ️ driver_accounts approved_by column migration skipped:', err.message);
+    }
+
     console.log('✅ All migrations complete');
   } catch (err) {
     console.error('❌ Migration error:', err.message);
@@ -3212,25 +3229,48 @@ app.put('/api/admin/employees/:id/review', requireAdmin, async (req, res) => {
       return res.json(mockEmployee);
     }
     
-    // Check if employee exists first
-    const checkResult = await query('SELECT * FROM employee_accounts WHERE id = $1', [req.params.id]);
-    if (checkResult.rows.length === 0) {
-      console.log(`❌ Employee not found: ${req.params.id}`);
-      return res.status(404).json({ error: 'Employee not found' });
+    // First, try to update the approved_by column as text (if it was migrated)
+    try {
+      const result = await query(
+        `UPDATE employee_accounts
+         SET status=$1, approved_by=$2,
+             approved_at=NOW()
+         WHERE id=$3 RETURNING *`,
+        [status, reviewed_by, req.params.id]
+      );
+      
+      if (result.rows.length > 0) {
+        console.log(`✅ Employee review completed: ${result.rows[0].full_name} -> ${status} by ${reviewed_by}`);
+        return res.json(result.rows[0]);
+      }
+    } catch (textErr) {
+      // If text update fails, try with integer (old schema)
+      console.log('⚠️ Text update failed, trying integer approach...');
+      
+      // Check if employee exists first
+      const checkResult = await query('SELECT * FROM employee_accounts WHERE id = $1', [req.params.id]);
+      if (checkResult.rows.length === 0) {
+        console.log(`❌ Employee not found: ${req.params.id}`);
+        return res.status(404).json({ error: 'Employee not found' });
+      }
+      
+      console.log(`✅ Found employee: ${checkResult.rows[0].full_name}`);
+      
+      // For integer schema, use the current user's ID or a default value
+      const reviewerId = req.user?.userId || 1;
+      
+      const result = await query(
+        `UPDATE employee_accounts
+         SET status=$1, approved_by=$2,
+             approved_at=NOW()
+         WHERE id=$3 RETURNING *`,
+        [status, reviewerId, req.params.id]
+      );
+      
+      console.log(`✅ Employee review completed: ${result.rows[0].full_name} -> ${status} by ID ${reviewerId}`);
+      res.json(result.rows[0]);
     }
     
-    console.log(`✅ Found employee: ${checkResult.rows[0].full_name}`);
-    
-    const result = await query(
-      `UPDATE employee_accounts
-       SET status=$1, approved_by=$2,
-           approved_at=NOW()
-       WHERE id=$3 RETURNING *`,
-      [status, reviewed_by, req.params.id]
-    );
-    
-    console.log(`✅ Employee review completed: ${result.rows[0].full_name} -> ${status}`);
-    res.json(result.rows[0]);
   } catch (err) {
     console.error('❌ Employee review error:', err);
     res.status(500).json({ error: err.message });
