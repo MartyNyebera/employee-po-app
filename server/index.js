@@ -3121,7 +3121,7 @@ app.put('/api/driver/:id/messages/read', async (req, res) => {
 // --- ADMIN USER MANAGEMENT ENDPOINTS ---
 
 // Get all pending employee registrations
-app.get('/api/admin/employees/pending', async (req, res) => {
+app.get('/api/admin/employees/pending', requireAdmin, async (req, res) => {
   try {
     // Mock response if database not available
     if (!process.env.DATABASE_URL) {
@@ -3168,7 +3168,7 @@ app.get('/api/admin/employees/pending', async (req, res) => {
 });
 
 // Get ALL employees
-app.get('/api/admin/employees', async (req, res) => {
+app.get('/api/admin/employees', requireAdmin, async (req, res) => {
   try {
     const result = await query(
       `SELECT id, full_name, email, department,
@@ -3183,7 +3183,7 @@ app.get('/api/admin/employees', async (req, res) => {
 });
 
 // Approve or reject employee
-app.put('/api/admin/employees/:id/review', async (req, res) => {
+app.put('/api/admin/employees/:id/review', requireAdmin, async (req, res) => {
   try {
     const { status, reviewed_by } = req.body;
     console.log(`🔍 Employee review request: ID=${req.params.id}, status=${status}, reviewed_by=${reviewed_by}`);
