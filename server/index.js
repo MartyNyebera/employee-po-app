@@ -921,6 +921,16 @@ app.get('/api/test-delivery', async (req, res) => {
 // Employee Registration
 app.post('/api/employee/register', async (req, res) => {
   try {
+    // TEMP: Trigger migration if needed (for production fix)
+    if (req.body.migrate === 'true') {
+      console.log('🔄 Running migration from employee register endpoint...');
+      await query('ALTER TABLE employee_accounts ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP');
+      await query('ALTER TABLE employee_accounts ADD COLUMN IF NOT EXISTS approved_by INTEGER');
+      await query('ALTER TABLE driver_accounts ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP');
+      await query('ALTER TABLE driver_accounts ADD COLUMN IF NOT EXISTS approved_by INTEGER');
+      return res.json({ success: true, message: 'Migration completed' });
+    }
+
     const { 
       full_name, email, password, 
       department, position, phone 
@@ -3155,6 +3165,14 @@ app.get('/api/admin/employees', async (req, res) => {
 app.put('/api/admin/employees/:id/review', async (req, res) => {
   try {
     const { status, reviewed_by } = req.body;
+    
+    // First, ensure approved_by column can store text
+    try {
+      await query('ALTER TABLE employee_accounts ALTER COLUMN approved_by TYPE TEXT');
+    } catch (err) {
+      // Column might already be TEXT or doesn't exist, continue
+    }
+    
     const result = await query(
       `UPDATE employee_accounts
        SET status=$1, approved_by=$2,
@@ -3204,6 +3222,14 @@ app.get('/api/admin/drivers', async (req, res) => {
 app.put('/api/admin/drivers/:id/review', async (req, res) => {
   try {
     const { status, reviewed_by } = req.body;
+    
+    // First, ensure approved_by column can store text
+    try {
+      await query('ALTER TABLE driver_accounts ALTER COLUMN approved_by TYPE TEXT');
+    } catch (err) {
+      // Column might already be TEXT or doesn't exist, continue
+    }
+    
     const result = await query(
       `UPDATE driver_accounts
        SET status=$1, approved_by=$2,
