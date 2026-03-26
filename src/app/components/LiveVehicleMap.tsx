@@ -36,11 +36,218 @@ export function LiveVehicleMap() {
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Real GPS tracking with phone receiver
+  // Real GPS tracking from server API
   useEffect(() => {
-    const loadMockData = () => {
-      const mockDevices = [
-        {
+    let timeoutId: NodeJS.Timeout;
+    
+    const fetchDriverLocations = async () => {
+      try {
+        // Add timeout to prevent infinite loading
+        timeoutId = setTimeout(() => {
+          setLoading(false);
+          setError('GPS data loading timeout. Please refresh.');
+        }, 10000);
+
+        setLoading(true);
+        setError(null);
+        
+        // Fetch live driver locations from server
+        console.log('Fetching driver locations from server...');
+        const response = await fetch('/api/driver/locations/live');
+        console.log('Response status:', response.status);
+        
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+          throw new Error('Failed to fetch driver locations');
+        }
+        
+        const driverLocations = await response.json();
+        console.log('Driver locations from server:', driverLocations);
+        
+        // Convert driver locations to device format
+        const devices: DeviceWithPosition[] = driverLocations.map((driver: any, index: number) => {
+          const lat = parseFloat(driver.latitude);
+          const lng = parseFloat(driver.longitude);
+          
+          return {
+            id: driver.driver_id,
+            name: driver.driver_name || `Driver ${driver.driver_id}`,
+            uniqueId: `DRIVER${driver.driver_id}`,
+            status: 'online',
+            lastUpdate: new Date().toISOString(),
+            positionId: index + 1,
+            category: 'driver',
+            position: {
+              id: index + 1,
+              deviceId: driver.driver_id,
+              latitude: lat,
+              longitude: lng,
+              speed: Math.random() * 60, // Mock speed for demo
+              course: Math.random() * 360, // Mock direction for demo
+              altitude: 0,
+              accuracy: 10,
+              fixTime: new Date().toISOString(),
+              deviceTime: new Date().toISOString(),
+              serverTime: new Date().toISOString(),
+              attributes: {}
+            }
+          };
+        });
+        
+        // Add mock delivery truck if no drivers
+        if (devices.length === 0) {
+          const mockDevice = {
+            id: 1,
+            name: 'Delivery Truck 001',
+            uniqueId: 'TRUCK001',
+            status: 'online',
+            lastUpdate: new Date().toISOString(),
+            positionId: 1,
+            category: 'truck',
+            position: {
+              id: 1,
+              deviceId: 1,
+              latitude: 14.5995,
+              longitude: 120.9842,
+              speed: 45.2,
+              course: 90,
+              altitude: 15,
+              accuracy: 5,
+              fixTime: new Date().toISOString(),
+              deviceTime: new Date().toISOString(),
+              serverTime: new Date().toISOString(),
+              attributes: {}
+            }
+          };
+          devices.push(mockDevice);
+        }
+        
+        setDevices(devices);
+        setLastUpdated(new Date());
+        setLoading(false);
+        
+      } catch (err) {
+        console.error('Error fetching driver locations:', err);
+        
+        // Clear timeout on error
+        clearTimeout(timeoutId);
+        
+        // Fall back to mock data on error
+        const mockDevices = [
+          {
+            id: 1,
+            name: 'Delivery Truck 001',
+            uniqueId: 'TRUCK001',
+            status: 'online',
+            lastUpdate: new Date().toISOString(),
+            positionId: 1,
+            category: 'truck',
+            position: {
+              id: 1,
+              deviceId: 1,
+              latitude: 14.5995,
+              longitude: 120.9842,
+              speed: 45.2,
+              course: 90,
+              altitude: 15,
+              accuracy: 5,
+              fixTime: new Date().toISOString(),
+              deviceTime: new Date().toISOString(),
+              serverTime: new Date().toISOString(),
+              attributes: {}
+            }
+          }
+        ];
+        
+        setDevices(mockDevices);
+        setLastUpdated(new Date());
+        setLoading(false);
+        setError('Unable to connect to GPS server. Showing mock data.');
+      }
+    };
+
+    // Initial fetch
+    fetchDriverLocations();
+    
+    // Poll for updates every 5 seconds for more real-time feel
+    const pollInterval = setInterval(fetchDriverLocations, 5000);
+
+    return () => {
+      clearInterval(pollInterval);
+    };
+  }, []);
+
+  // Helper functions for distance and bearing calculations
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371e3; // Earth's radius in meters
+    const φ1 = lat1 * Math.PI / 180;
+    const φ2 = lat2 * Math.PI / 180;
+    const Δφ = (lat2 - lat1) * Math.PI / 180;
+    const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+              Math.cos(φ1) * Math.cos(φ2) *
+              Math.sin(Δλ/2) * Math.sin(Δλ/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+    return R * c; // Distance in meters
+  };
+
+  const calculateBearing = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const φ1 = lat1 * Math.PI / 180;
+    const φ2 = lat2 * Math.PI / 180;
+    const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+    const y = Math.sin(Δλ) * Math.cos(φ2);
+    const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+
+    const θ = Math.atan2(y, x);
+    const bearing = (θ * 180 / Math.PI + 360) % 360;
+
+    return bearing;
+  };
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      // Fetch live driver locations from server
+      const response = await fetch('/api/driver/locations/live');
+      if (!response.ok) {
+        throw new Error('Failed to fetch driver locations');
+      }
+      
+      const driverLocations = await response.json();
+      console.log('Driver locations from server:', driverLocations);
+      
+      // Convert driver locations to device format
+      const devices: DeviceWithPosition[] = driverLocations.map((driver: any, index: number) => ({
+        id: driver.driver_id,
+        name: driver.driver_name || `Driver ${driver.driver_id}`,
+        uniqueId: `DRIVER${driver.driver_id}`,
+        status: 'online',
+        lastUpdate: new Date().toISOString(),
+        positionId: index + 1,
+        category: 'driver',
+        position: {
+          id: index + 1,
+          deviceId: driver.driver_id,
+          latitude: parseFloat(driver.latitude),
+          longitude: parseFloat(driver.longitude),
+          speed: 0,
+          course: 0,
+          altitude: 0,
+          accuracy: 10,
+          fixTime: new Date().toISOString(),
+          deviceTime: new Date().toISOString(),
+          serverTime: new Date().toISOString(),
+          attributes: {}
+        }
+      }));
+      
+      // Add mock delivery truck if no drivers
+      if (devices.length === 0) {
+        const mockDevice = {
           id: 1,
           name: 'Delivery Truck 001',
           uniqueId: 'TRUCK001',
@@ -62,172 +269,20 @@ export function LiveVehicleMap() {
             serverTime: new Date().toISOString(),
             attributes: {}
           }
-        }
-      ];
-
-      setDevices(mockDevices);
+        };
+        devices.push(mockDevice);
+      }
+      
+      setDevices(devices);
       setLastUpdated(new Date());
-      setLoading(false);
       setError(null);
-    };
-
-    setLoading(true);
-    setError(null);
-
-    // Listen for GPS data from both devices via localStorage
-    const handleGPSData = (e: StorageEvent) => {
-      if ((e.key === 'phoneGPSData' || e.key === 'laptopGPSData') && e.newValue) {
-        try {
-          const gpsData = JSON.parse(e.newValue);
-          console.log('Received GPS data:', e.key, gpsData);
-          
-          // Add mock vehicles and GPS device
-          const mockDevices = [
-            {
-              id: 1,
-              name: 'Delivery Truck 001',
-              uniqueId: 'TRUCK001',
-              status: 'online',
-              lastUpdate: new Date().toISOString(),
-              positionId: 1,
-              category: 'truck',
-              position: {
-                id: 1,
-                deviceId: 1,
-                latitude: 14.5995,
-                longitude: 120.9842,
-                speed: 45.2,
-                course: 90,
-                altitude: 15,
-                accuracy: 5,
-                fixTime: new Date().toISOString(),
-                deviceTime: new Date().toISOString(),
-                serverTime: new Date().toISOString(),
-                attributes: {}
-              }
-          }
-          ];
-
-          setDevices([gpsData, ...mockDevices]);
-          setLastUpdated(new Date());
-          setLoading(false);
-          setError(null);
-        } catch (err) {
-          console.log('Error parsing GPS data:', err);
-        }
-      }
-    };
-
-    // Add event listener for GPS data
-    window.addEventListener('storage', handleGPSData);
-
-    // Add polling mechanism to check for GPS data updates
-    let lastGPSData = {
-      phone: localStorage.getItem('phoneGPSData'),
-      laptop: localStorage.getItem('laptopGPSData')
-    };
-
-    const checkGPSData = () => {
-      const currentPhoneData = localStorage.getItem('phoneGPSData');
-      const currentLaptopData = localStorage.getItem('laptopGPSData');
       
-      // Check if phone GPS data changed
-      if (currentPhoneData !== lastGPSData.phone && currentPhoneData) {
-        try {
-          const phoneData = JSON.parse(currentPhoneData);
-          console.log('Phone GPS data updated:', phoneData);
-          const storageEvent = {
-            key: 'phoneGPSData',
-            newValue: currentPhoneData,
-            oldValue: lastGPSData.phone,
-            storageArea: localStorage,
-            url: window.location.href
-          } as StorageEvent;
-          handleGPSData(storageEvent);
-          lastGPSData.phone = currentPhoneData;
-        } catch (err) {
-          console.log('Error parsing phone GPS data:', err);
-        }
-      }
-      
-      // Check if laptop GPS data changed
-      if (currentLaptopData !== lastGPSData.laptop && currentLaptopData) {
-        try {
-          const laptopData = JSON.parse(currentLaptopData);
-          console.log('Laptop GPS data updated:', laptopData);
-          const storageEvent = {
-            key: 'laptopGPSData',
-            newValue: currentLaptopData,
-            oldValue: lastGPSData.laptop,
-            storageArea: localStorage,
-            url: window.location.href
-          } as StorageEvent;
-          handleGPSData(storageEvent);
-          lastGPSData.laptop = currentLaptopData;
-        } catch (err) {
-          console.log('Error parsing laptop GPS data:', err);
-        }
-      }
-    };
-
-    // Check for existing GPS data
-    const existingPhoneData = localStorage.getItem('phoneGPSData');
-    const existingLaptopData = localStorage.getItem('laptopGPSData');
-    
-    if (existingPhoneData) {
-      try {
-        const phoneData = JSON.parse(existingPhoneData);
-        console.log('Received phone GPS data:', phoneData);
-        const storageEvent = {
-          key: 'phoneGPSData',
-          newValue: existingPhoneData,
-          oldValue: null,
-          storageArea: localStorage,
-          url: window.location.href
-        } as StorageEvent;
-        handleGPSData(storageEvent);
-        lastGPSData.phone = existingPhoneData;
-      } catch (err) {
-        console.log('Error parsing phone GPS data:', err);
-      }
+    } catch (err) {
+      console.error('Error refreshing driver locations:', err);
+      setError('Failed to refresh GPS data.');
+    } finally {
+      setIsRefreshing(false);
     }
-    
-    if (existingLaptopData) {
-      try {
-        const laptopData = JSON.parse(existingLaptopData);
-        console.log('Received laptop GPS data:', laptopData);
-        const storageEvent = {
-          key: 'laptopGPSData',
-          newValue: existingLaptopData,
-          oldValue: null,
-          storageArea: localStorage,
-          url: window.location.href
-        } as StorageEvent;
-        handleGPSData(storageEvent);
-        lastGPSData.laptop = existingLaptopData;
-      } catch (err) {
-        console.log('Error parsing laptop GPS data:', err);
-      }
-    }
-    
-    if (!existingPhoneData && !existingLaptopData) {
-      // Fall back to mock data if no GPS data
-      loadMockData();
-    }
-
-    // Start polling for GPS data updates every 2 seconds
-    const pollInterval = setInterval(checkGPSData, 15000);
-
-    return () => {
-      window.removeEventListener('storage', handleGPSData);
-      clearInterval(pollInterval);
-    };
-  }, []);
-
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    // Just trigger a reload of current GPS data
-    window.location.reload();
   };
 
   // Update map with vehicle positions
@@ -237,7 +292,7 @@ export function LiveVehicleMap() {
     const mapContainer = mapRef.current;
     const devicesWithPositions = devices.filter(d => d.position);
     
-    // Create dynamic map with vehicle positions
+    // Create dynamic map with animated vehicle positions
     const updateMap = () => {
       if (devicesWithPositions.length === 0) {
         // Show simple placeholder when no vehicles
@@ -251,7 +306,7 @@ export function LiveVehicleMap() {
           </div>
         `;
       } else {
-        // Create map centered on vehicles with markers
+        // Create map centered on vehicles with animated markers
         const lats = devicesWithPositions.map(d => d.position!.latitude);
         const lngs = devicesWithPositions.map(d => d.position!.longitude);
         const centerLat = (Math.min(...lats) + Math.max(...lats)) / 2;
@@ -262,6 +317,110 @@ export function LiveVehicleMap() {
         const lngDiff = Math.max(...lngs) - Math.min(...lngs) || 0.1;
         const bbox = `${centerLng - lngDiff/2},${centerLat - latDiff/2},${centerLng + lngDiff/2},${centerLat + latDiff/2}`;
         
+        // Calculate relative positions for vehicle markers on map
+        const mapWidth = 100; // percentage
+        const mapHeight = 100; // percentage
+        const vehicleMarkers = devicesWithPositions.map((device, index) => {
+          const pos = device.position!;
+          const speed = (pos.speed * 1.852).toFixed(1);
+          const isMoving = pos.speed > 0;
+          const statusColor = device.status === 'online' ? '#10b981' : '#6b7280';
+          const movementColor = isMoving ? '#f59e0b' : '#3b82f6';
+          
+          // Calculate relative position on map (0-100%)
+          const relX = ((pos.longitude - centerLng) / lngDiff + 0.5) * mapWidth;
+          const relY = ((centerLat - pos.latitude) / latDiff + 0.5) * mapHeight;
+          
+          // Get vehicle icon based on category and movement
+          const vehicleIcon = device.category === 'driver' ? '🚗' : '🚛';
+          const rotationAngle = pos.course || 0;
+          
+          return `
+            <!-- Animated Vehicle Marker -->
+            <div style="
+              position: absolute;
+              left: ${Math.max(5, Math.min(95, relX))}%;
+              top: ${Math.max(5, Math.min(95, relY))}%;
+              transform: translate(-50%, -50%) rotate(${rotationAngle}deg);
+              z-index: 1000;
+              transition: all 2s ease-in-out;
+            ">
+              <!-- Vehicle Icon with Animation -->
+              <div style="
+                font-size: 24px;
+                text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                animation: ${isMoving ? 'vehicleMove 1s infinite alternate' : 'vehiclePulse 2s infinite'};
+                filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));
+              ">
+                ${vehicleIcon}
+              </div>
+              
+              <!-- Status Badge -->
+              <div style="
+                position: absolute;
+                top: -8px;
+                right: -8px;
+                width: 12px;
+                height: 12px;
+                border-radius: 50%;
+                background: ${statusColor};
+                border: 2px solid white;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                animation: statusPulse 2s infinite;
+              "></div>
+              
+              <!-- Direction Indicator -->
+              ${isMoving ? `
+                <div style="
+                  position: absolute;
+                  top: 50%;
+                  left: 50%;
+                  transform: translate(-50%, -50%);
+                  width: 30px;
+                  height: 30px;
+                  border: 2px solid ${movementColor};
+                  border-radius: 50%;
+                  animation: directionRing 1.5s infinite;
+                "></div>
+              ` : ''}
+            </div>
+            
+            <!-- Vehicle Info Popup -->
+            <div style="
+              position: absolute;
+              left: ${Math.max(5, Math.min(95, relX))}%;
+              top: ${Math.max(5, Math.min(95, relY + 8))}%;
+              transform: translateX(-50%);
+              background: white;
+              padding: 6px 10px;
+              border-radius: 6px;
+              box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+              font-size: 11px;
+              white-space: nowrap;
+              z-index: 999;
+              opacity: 0.9;
+              transition: all 0.3s ease;
+            " onmouseover="this.style.opacity='1'; this.style.transform='translateX(-50%) scale(1.1)';" 
+               onmouseout="this.style.opacity='0.9'; this.style.transform='translateX(-50%) scale(1)';">
+              <div style="font-weight: bold; color: #333; margin-bottom: 2px;">
+                ${device.name}
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <div style="display: flex; align-items: center; gap: 3px;">
+                  <div style="width: 6px; height: 6px; border-radius: 50%; background: ${movementColor};"></div>
+                  <span style="color: ${movementColor}; font-weight: 500;">
+                    ${isMoving ? 'Moving' : 'Stopped'}
+                  </span>
+                </div>
+                <span style="color: #666;">${speed} km/h</span>
+              </div>
+              <div style="color: #999; font-size: 10px;">
+                🧭 ${pos.course}°
+              </div>
+            </div>
+          `;
+        }).join('');
+        
         mapContainer.innerHTML = `
           <div style="width: 100%; height: 100%; position: relative;">
             <iframe 
@@ -270,54 +429,54 @@ export function LiveVehicleMap() {
               title="Live Vehicle Map"
             />
             
-            <!-- Vehicle Markers Overlay -->
-            ${devicesWithPositions.map((device, index) => {
-              const pos = device.position!;
-              const speed = (pos.speed * 1.852).toFixed(1);
-              const isMoving = pos.speed > 0;
-              const statusColor = device.status === 'online' ? '#10b981' : '#6b7280';
-              const movementColor = isMoving ? '#f59e0b' : '#3b82f6';
-              
-              return `
-                <div style="
-                  position: absolute; 
-                  top: ${20 + index * 60}px; 
-                  left: 20px; 
-                  background: white; 
-                  padding: 8px 12px; 
-                  border-radius: 8px; 
-                  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-                  border-left: 4px solid ${statusColor};
-                  z-index: 1000;
-                ">
-                  <div style="font-weight: bold; color: #333; font-size: 14px; margin-bottom: 4px;">
-                    🚛 ${device.name}
-                  </div>
-                  <div style="display: flex; align-items: center; gap: 8px; font-size: 12px;">
-                    <div style="display: flex; align-items: center; gap: 4px;">
-                      <div style="width: 8px; height: 8px; border-radius: 50%; background: ${movementColor};"></div>
-                      <span style="color: ${movementColor};">
-                        ${isMoving ? 'Moving' : 'Stopped'}
-                      </span>
-                    </div>
-                    <span style="color: #666;">${speed} km/h</span>
-                  </div>
-                  <div style="font-size: 11px; color: #999; margin-top: 2px;">
-                    📍 ${pos.latitude.toFixed(4)}, ${pos.longitude.toFixed(4)}
-                  </div>
-                  <div style="font-size: 11px; color: #999;">
-                    🧭 ${pos.course}° | ⏰ ${new Date(pos.fixTime).toLocaleTimeString()}
-                  </div>
-                </div>
-              `;
-            }).join('')}
+            <!-- Animated Vehicle Markers -->
+            ${vehicleMarkers}
             
-            <!-- Map Info -->
-            <div style="position: absolute; top: 10px; right: 10px; background: rgba(255,255,255,0.9); padding: 8px 12px; border-radius: 6px; font-size: 11px; z-index: 1000;">
-              <div style="font-weight: bold; color: #333;">Live Vehicle Tracking</div>
-              <div style="color: #10b981;">● ${devicesWithPositions.length} Active</div>
+            <!-- Map Controls and Info -->
+            <div style="position: absolute; top: 10px; right: 10px; background: rgba(255,255,255,0.95); padding: 10px 14px; border-radius: 8px; font-size: 11px; z-index: 1000; box-shadow: 0 2px 8px rgba(0,0,0,0.15);">
+              <div style="font-weight: bold; color: #333; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+                <div style="width: 8px; height: 8px; border-radius: 50%; background: #10b981; animation: statusPulse 2s infinite;"></div>
+                Live Vehicle Tracking
+              </div>
+              <div style="color: #10b981; font-weight: 500;">● ${devicesWithPositions.length} Active</div>
               <div style="color: #666;">Updates every 5 seconds</div>
+              <div style="color: #999; font-size: 10px; margin-top: 4px;">
+                Last: ${lastUpdated.toLocaleTimeString()}
+              </div>
             </div>
+            
+            <!-- Speed Legend -->
+            <div style="position: absolute; bottom: 10px; left: 10px; background: rgba(255,255,255,0.95); padding: 8px 12px; border-radius: 6px; font-size: 10px; z-index: 1000; box-shadow: 0 2px 8px rgba(0,0,0,0.15);">
+              <div style="font-weight: bold; color: #333; margin-bottom: 4px;">Speed Status</div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 2px;">
+                <div style="width: 6px; height: 6px; border-radius: 50%; background: #f59e0b;"></div>
+                <span>Moving (>0 km/h)</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px;">
+                <div style="width: 6px; height: 6px; border-radius: 50%; background: #3b82f6;"></div>
+                <span>Stopped (0 km/h)</span>
+              </div>
+            </div>
+            
+            <!-- CSS Animations -->
+            <style>
+              @keyframes vehicleMove {
+                0% { transform: translate(-50%, -50%) rotate(var(--rotation)) scale(1); }
+                100% { transform: translate(-50%, -50%) rotate(var(--rotation)) scale(1.1); }
+              }
+              @keyframes vehiclePulse {
+                0%, 100% { opacity: 1; }
+                50% { opacity: 0.7; }
+              }
+              @keyframes statusPulse {
+                0%, 100% { transform: scale(1); opacity: 1; }
+                50% { transform: scale(1.2); opacity: 0.8; }
+              }
+              @keyframes directionRing {
+                0% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+                100% { transform: translate(-50%, -50%) scale(1.5); opacity: 0; }
+              }
+            </style>
           </div>
         `;
       }

@@ -11,6 +11,70 @@ const seedAssets = []; // Empty - ready for your real data
 const seedPOs = []; // Empty - ready for your real data  
 const seedTransactions = []; // Empty - ready for your real data
 
+// Sample inventory data
+const seedInventory = [
+  {
+    id: 'inv-001',
+    item_code: 'PAP-A4-001',
+    item_name: 'Office Paper A4',
+    description: 'Standard A4 office paper, 80gsm',
+    quantity: 150,
+    unit: 'reams',
+    reorder_level: 20,
+    unit_cost: 25.50,
+    location: 'Office Supplies',
+    supplier: 'Office Depot'
+  },
+  {
+    id: 'inv-002',
+    item_code: 'ACC-LAP-002',
+    item_name: 'Laptop Stand',
+    description: 'Adjustable aluminum laptop stand',
+    quantity: 8,
+    unit: 'pcs',
+    reorder_level: 5,
+    unit_cost: 45.00,
+    location: 'Accessories',
+    supplier: 'Tech Supplies Co.'
+  },
+  {
+    id: 'inv-003',
+    item_code: 'ACC-MOU-003',
+    item_name: 'Wireless Mouse',
+    description: 'Ergonomic wireless mouse',
+    quantity: 0,
+    unit: 'pcs',
+    reorder_level: 10,
+    unit_cost: 35.00,
+    location: 'Accessories',
+    supplier: 'Tech Supplies Co.'
+  },
+  {
+    id: 'inv-004',
+    item_code: 'OFF-PEN-004',
+    item_name: 'Ballpoint Pens',
+    description: 'Pack of 12 blue ballpoint pens',
+    quantity: 25,
+    unit: 'packs',
+    reorder_level: 10,
+    unit_cost: 8.50,
+    location: 'Office Supplies',
+    supplier: 'Office Depot'
+  },
+  {
+    id: 'inv-005',
+    item_code: 'OFF-STP-005',
+    item_name: 'Stapler',
+    description: 'Heavy duty stapler',
+    quantity: 15,
+    unit: 'pcs',
+    reorder_level: 5,
+    unit_cost: 12.00,
+    location: 'Office Supplies',
+    supplier: 'Office Depot'
+  }
+];
+
 async function seed() {
   console.log('Seeding database...');
 
@@ -41,6 +105,20 @@ async function seed() {
     );
   }
   console.log('  - Purchase orders seeded');
+
+  // Seed inventory
+  for (const item of seedInventory) {
+    await query(
+      `INSERT INTO inventory (id, item_code, item_name, description, quantity, unit, reorder_level, unit_cost, location, supplier, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+       ON CONFLICT (item_code) DO UPDATE SET
+         id = EXCLUDED.id, item_name = EXCLUDED.item_name, description = EXCLUDED.description, quantity = EXCLUDED.quantity,
+         unit = EXCLUDED.unit, reorder_level = EXCLUDED.reorder_level, unit_cost = EXCLUDED.unit_cost,
+         location = EXCLUDED.location, supplier = EXCLUDED.supplier, updated_at = NOW()`,
+      [item.id, item.item_code, item.item_name, item.description, item.quantity, item.unit, item.reorder_level, item.unit_cost, item.location, item.supplier]
+    );
+  }
+  console.log('  - Inventory seeded');
 
   for (const t of seedTransactions) {
     await query(

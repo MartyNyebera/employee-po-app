@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>GPS Geolocation Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 20px; border: 1px solid #ccc; border-radius: 8px; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .warning { background: #fff3cd; color: #856404; }
+        .gps-data { background: #f8f9fa; padding: 10px; margin: 10px 0; border-radius: 4px; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <h1>GPS Geolocation Test</h1>
+    
+    <div class="test-section">
+        <h2>Browser Geolocation Test</h2>
+        <button onclick="testBrowserGPS()">Test Browser GPS</button>
+        <div id="browser-gps-results"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Driver GPS Simulation</h2>
+        <button onclick="simulateDriverGPS()">Simulate Driver GPS</button>
+        <div id="driver-gps-results"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Check GPS Data in Server</h2>
+        <button onclick="checkServerGPS()">Check Server GPS Data</button>
+        <div id="server-gps-results"></div>
+    </div>
+
+    <script>
+        // Test browser geolocation
+        function testBrowserGPS() {
+            const resultsDiv = document.getElementById('browser-gps-results');
+            
+            if (!navigator.geolocation) {
+                resultsDiv.innerHTML = '<div class="status error">❌ Geolocation is not supported by this browser</div>';
+                return;
+            }
+            
+            resultsDiv.innerHTML = '<div class="status">Requesting GPS location...</div>';
+            
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    resultsDiv.innerHTML = `
+                        <div class="status success">✅ Browser GPS Working!</div>
+                        <div class="gps-data">
+                            <strong>Your Location:</strong><br>
+                            Latitude: ${position.coords.latitude}<br>
+                            Longitude: ${position.coords.longitude}<br>
+                            Accuracy: ${position.coords.accuracy} meters<br>
+                            Speed: ${position.coords.speed || 'N/A'}<br>
+                            Heading: ${position.coords.heading || 'N/A'}<br>
+                            Timestamp: ${new Date(position.timestamp).toLocaleString()}
+                        </div>
+                    `;
+                },
+                (error) => {
+                    let errorMessage = 'Unknown error';
+                    switch(error.code) {
+                        case error.PERMISSION_DENIED:
+                            errorMessage = 'Location permission denied. Please allow location access.';
+                            break;
+                        case error.POSITION_UNAVAILABLE:
+                            errorMessage = 'Location information is unavailable.';
+                            break;
+                        case error.TIMEOUT:
+                            errorMessage = 'Location request timed out.';
+                            break;
+                    }
+                    resultsDiv.innerHTML = `<div class="status error">❌ GPS Error: ${errorMessage}</div>`;
+                },
+                {
+                    enableHighAccuracy: false,
+                    timeout: 15000,
+                    maximumAge: 10000
+                }
+            );
+        }
+        
+        // Simulate driver GPS submission
+        async function simulateDriverGPS() {
+            const resultsDiv = document.getElementById('driver-gps-results');
+            resultsDiv.innerHTML = '<div class="status">Simulating driver GPS submission...</div>';
+            
+            try {
+                // Get current position or use mock data
+                let latitude, longitude;
+                
+                if (navigator.geolocation) {
+                    const position = await new Promise((resolve, reject) => {
+                        navigator.geolocation.getCurrentPosition(resolve, reject);
+                    });
+                    latitude = position.coords.latitude;
+                    longitude = position.coords.longitude;
+                } else {
+                    // Use mock coordinates (Manila, Philippines)
+                    latitude = 14.5995;
+                    longitude = 120.9842;
+                }
+                
+                // Submit GPS data as driver
+                const response = await fetch('/api/driver/location', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        driver_id: 999,
+                        driver_name: 'Test Driver (Browser)',
+                        latitude: latitude,
+                        longitude: longitude,
+                        accuracy: 10,
+                        speed: 0,
+                        heading: 0
+                    })
+                });
+                
+                const result = await response.json();
+                
+                resultsDiv.innerHTML = `
+                    <div class="status success">✅ Driver GPS Submitted!</div>
+                    <div class="gps-data">
+                        <strong>Submitted Data:</strong><br>
+                        Driver ID: 999<br>
+                        Name: Test Driver (Browser)<br>
+                        Location: ${latitude}, ${longitude}<br>
+                        Server Response: ${JSON.stringify(result)}
+                    </div>
+                `;
+                
+            } catch (error) {
+                resultsDiv.innerHTML = `<div class="status error">❌ Driver GPS Failed: ${error.message}</div>`;
+            }
+        }
+        
+        // Check server GPS data
+        async function checkServerGPS() {
+            const resultsDiv = document.getElementById('server-gps-results');
+            resultsDiv.innerHTML = '<div class="status">Checking server GPS data...</div>';
+            
+            try {
+                const response = await fetch('/api/driver/locations/live');
+                const data = await response.json();
+                
+                resultsDiv.innerHTML = `
+                    <div class="status success">✅ Server GPS Data Retrieved!</div>
+                    <div class="gps-data">
+                        <strong>Active Drivers (${data.length}):</strong><br>
+                        ${data.map(d => `
+                            Driver ${d.driver_id}: ${d.driver_name}<br>
+                            Location: ${d.latitude}, ${d.longitude}<br>
+                            Last Update: ${new Date(d.timestamp).toLocaleString()}<br>
+                            Age: ${Math.round((Date.now() - new Date(d.timestamp).getTime()) / 1000 / 60)} minutes ago<br>
+                            <br>
+                        `).join('')}
+                    </div>
+                `;
+                
+            } catch (error) {
+                resultsDiv.innerHTML = `<div class="status error">❌ Server GPS Check Failed: ${error.message}</div>`;
+            }
+        }
+    </script>
+</body>
+</html>

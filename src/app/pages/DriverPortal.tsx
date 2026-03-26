@@ -3,19 +3,36 @@ import { Truck, MapPin, Package,
   MessageSquare, LogOut, Send,
   Image, Paperclip, CheckCircle } from 'lucide-react';
 
+// Driver-specific fetch function
+const fetchDriverApi = async (path: string, options?: RequestInit) => {
+  const token = localStorage.getItem('driver_token');
+  const headers = { 
+    'Content-Type': 'application/json',
+    ...(token && { Authorization: `Bearer ${token}` }),
+    ...options?.headers 
+  } as Record<string, string>;
+  
+  const res = await fetch(`/api${path}`, { ...options, headers });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
 type DriverView = 'deliveries' | 'chat';
 
 const DELIVERY_STATUSES = [
-  { key: 'pickup', label: 'Pick Up', 
+  { key: 'Picked Up', label: 'Pick Up', 
     color: 'bg-blue-500' },
-  { key: 'on_the_way', label: 'On the Way', 
+  { key: 'In Transit', label: 'On the Way', 
     color: 'bg-orange-500' },
-  { key: 'delivered', label: 'Delivered', 
+  { key: 'Completed', label: 'Delivered', 
     color: 'bg-green-500' },
-  { key: 'going_back', label: 'Going Back', 
+  { key: 'Arrived', label: 'Arrived', 
     color: 'bg-purple-500' },
-  { key: 'done', label: 'Done for Today', 
-    color: 'bg-slate-500' },
+  { key: 'Cancelled', label: 'Cancelled', 
+    color: 'bg-red-500' },
 ];
 
 export function DriverPortal() {
@@ -76,19 +93,16 @@ export function DriverPortal() {
       navigator.geolocation.getCurrentPosition(
         async (pos) => {
           try {
-            await fetch('/api/driver/location', {
+            await fetchDriverApi('/driver/location', {
               method: 'POST',
-              headers: { 
-                'Content-Type': 'application/json' 
-              },
               body: JSON.stringify({
                 driver_id: driverData.id,
                 driver_name: driverData.full_name,
                 latitude: pos.coords.latitude,
                 longitude: pos.coords.longitude,
                 accuracy: pos.coords.accuracy,
-                speed: pos.coords.speed,
-                heading: pos.coords.heading
+                speed: pos.coords.speed || 0,
+                heading: pos.coords.heading || 0
               })
             });
           } catch {}
@@ -110,20 +124,14 @@ export function DriverPortal() {
 
   const loadDeliveries = async (id: number) => {
     try {
-      const res = await fetch(
-        `/api/driver/${id}/deliveries` 
-      );
-      const data = await res.json();
-      setDeliveries(Array.isArray(data) ? data : []);
+      const data = await fetchDriverApi(`/driver/${id}/deliveries`);
+      setDeliveries(data);
     } catch { setDeliveries([]); }
   };
 
   const loadMessages = async (id: number) => {
     try {
-      const res = await fetch(
-        `/api/driver/${id}/messages` 
-      );
-      const data = await res.json();
+      const data = await fetchDriverApi(`/driver/${id}/messages`);
       setMessages(Array.isArray(data) ? data : []);
       setUnreadMessages(
         data.filter((m: any) => 
@@ -137,11 +145,8 @@ export function DriverPortal() {
     deliveryId: string, status: string
   ) => {
     try {
-      await fetch(`/api/deliveries/${deliveryId}/status`, {
+      await fetchDriverApi(`/deliveries/${deliveryId}/status`, {
         method: 'PUT',
-        headers: { 
-          'Content-Type': 'application/json' 
-        },
         body: JSON.stringify({ status })
       });
       if (driver) loadDeliveries(driver.id);
@@ -153,16 +158,13 @@ export function DriverPortal() {
   const handleSendMessage = async () => {
     if (!newMessage.trim() || !driver) return;
     try {
-      await fetch('/api/driver/messages', {
+      await fetchDriverApi('/driver/messages', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json' 
-        },
         body: JSON.stringify({
           driver_id: driver.id,
           driver_name: driver.full_name,
           sender_type: 'driver',
-          message: newMessage.trim()
+          message: newMessage
         })
       });
       setNewMessage('');
@@ -185,8 +187,10 @@ export function DriverPortal() {
     formData.append('sender_type', 'driver');
     
     try {
+      const token = localStorage.getItem('driver_token');
       await fetch('/api/driver/messages/upload', {
         method: 'POST',
+        headers: { ...(token && { Authorization: `Bearer ${token}` }) },
         body: formData
       });
       loadMessages(driver.id);

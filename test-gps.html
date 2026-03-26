@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>GPS Test</title>
+</head>
+<body>
+    <h1>GPS Tracking Test</h1>
+    <button onclick="testGPSSubmission()">Test GPS Submission</button>
+    <button onclick="testGPSFetch()">Test GPS Fetch</button>
+    <div id="results"></div>
+
+    <script>
+        async function testGPSSubmission() {
+            try {
+                const response = await fetch('/api/driver/location', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        driver_id: 1,
+                        driver_name: 'Test Driver',
+                        latitude: 14.5995,
+                        longitude: 120.9842,
+                        accuracy: 10,
+                        speed: 0,
+                        heading: 0
+                    })
+                });
+                
+                const result = await response.json();
+                document.getElementById('results').innerHTML += '<p>GPS Submission: ' + JSON.stringify(result) + '</p>';
+            } catch (error) {
+                document.getElementById('results').innerHTML += '<p>GPS Submission Error: ' + error.message + '</p>';
+            }
+        }
+
+        async function testGPSFetch() {
+            try {
+                const response = await fetch('/api/driver/locations/live');
+                const result = await response.json();
+                document.getElementById('results').innerHTML += '<p>GPS Fetch: ' + JSON.stringify(result) + '</p>';
+            } catch (error) {
+                document.getElementById('results').innerHTML += '<p>GPS Fetch Error: ' + error.message + '</p>';
+            }
+        }
+    </script>
+</body>
+</html>

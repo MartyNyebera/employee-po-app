@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Live Map Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 20px; border: 1px solid #ccc; border-radius: 8px; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .gps-data { background: #f8f9fa; padding: 10px; margin: 10px 0; border-radius: 4px; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <h1>GPS Live Map Test</h1>
+    
+    <div class="test-section">
+        <h2>Test 1: GPS API Connection</h2>
+        <button onclick="testGPSAPI()">Test GPS API</button>
+        <div id="api-results"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Test 2: Live Map Component Simulation</h2>
+        <button onclick="simulateLiveMap()">Simulate Live Map</button>
+        <div id="map-results"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Test 3: Real-time Updates</h2>
+        <button onclick="startRealTime()">Start Real-time Updates</button>
+        <button onclick="stopRealTime()">Stop Updates</button>
+        <div id="realtime-results"></div>
+    </div>
+
+    <script>
+        let realTimeInterval = null;
+        
+        async function testGPSAPI() {
+            const resultsDiv = document.getElementById('api-results');
+            resultsDiv.innerHTML = '<div class="status">Testing GPS API...</div>';
+            
+            try {
+                const response = await fetch('/api/driver/locations/live');
+                const data = await response.json();
+                
+                resultsDiv.innerHTML = `
+                    <div class="status success">✅ GPS API Working!</div>
+                    <div class="gps-data">
+                        <strong>Found ${data.length} drivers:</strong><br>
+                        ${data.map(d => `
+                            Driver ${d.driver_id}: ${d.driver_name}<br>
+                            Location: ${d.latitude}, ${d.longitude}<br>
+                            Last Update: ${new Date(d.timestamp).toLocaleString()}<br>
+                            <br>
+                        `).join('')}
+                    </div>
+                `;
+            } catch (error) {
+                resultsDiv.innerHTML = `
+                    <div class="status error">❌ GPS API Failed: ${error.message}</div>
+                `;
+            }
+        }
+        
+        async function simulateLiveMap() {
+            const resultsDiv = document.getElementById('map-results');
+            resultsDiv.innerHTML = '<div class="status">Simulating Live Map...</div>';
+            
+            try {
+                // Simulate what LiveVehicleMap component does
+                const response = await fetch('/api/driver/locations/live');
+                const driverLocations = await response.json();
+                
+                console.log('Driver locations from server:', driverLocations);
+                
+                // Convert to device format (like LiveVehicleMap does)
+                const devices = driverLocations.map((driver, index) => ({
+                    id: driver.driver_id,
+                    name: driver.driver_name || `Driver ${driver.driver_id}`,
+                    uniqueId: `DRIVER${driver.driver_id}`,
+                    status: 'online',
+                    lastUpdate: new Date().toISOString(),
+                    positionId: index + 1,
+                    category: 'driver',
+                    position: {
+                        id: index + 1,
+                        deviceId: driver.driver_id,
+                        latitude: parseFloat(driver.latitude),
+                        longitude: parseFloat(driver.longitude),
+                        speed: 0,
+                        course: 0,
+                        altitude: 0,
+                        accuracy: 10,
+                        fixTime: new Date().toISOString(),
+                        deviceTime: new Date().toISOString(),
+                        serverTime: new Date().toISOString(),
+                        attributes: {}
+                    }
+                }));
+                
+                // Add mock truck if no drivers
+                if (devices.length === 0) {
+                    devices.push({
+                        id: 1,
+                        name: 'Delivery Truck 001',
+                        uniqueId: 'TRUCK001',
+                        status: 'online',
+                        lastUpdate: new Date().toISOString(),
+                        positionId: 1,
+                        category: 'truck',
+                        position: {
+                            id: 1,
+                            deviceId: 1,
+                            latitude: 14.5995,
+                            longitude: 120.9842,
+                            speed: 45.2,
+                            course: 90,
+                            altitude: 15,
+                            accuracy: 5,
+                            fixTime: new Date().toISOString(),
+                            deviceTime: new Date().toISOString(),
+                            serverTime: new Date().toISOString(),
+                            attributes: {}
+                        }
+                    });
+                }
+                
+                resultsDiv.innerHTML = `
+                    <div class="status success">✅ Live Map Simulation Working!</div>
+                    <div class="gps-data">
+                        <strong>Devices for Map (${devices.length}):</strong><br>
+                        ${devices.map(d => `
+                            ${d.name} (${d.category})<br>
+                            Status: ${d.status}<br>
+                            Position: ${d.position?.latitude}, ${d.position?.longitude}<br>
+                            <br>
+                        `).join('')}
+                    </div>
+                `;
+                
+                console.log('Simulated devices for map:', devices);
+                
+            } catch (error) {
+                resultsDiv.innerHTML = `
+                    <div class="status error">❌ Live Map Simulation Failed: ${error.message}</div>
+                `;
+            }
+        }
+        
+        function startRealTime() {
+            const resultsDiv = document.getElementById('realtime-results');
+            resultsDiv.innerHTML = '<div class="status">Starting real-time updates...</div>';
+            
+            realTimeInterval = setInterval(async () => {
+                try {
+                    const response = await fetch('/api/driver/locations/live');
+                    const data = await response.json();
+                    
+                    const timestamp = new Date().toLocaleTimeString();
+                    resultsDiv.innerHTML = `
+                        <div class="status success">✅ Real-time Updates Active</div>
+                        <div class="gps-data">
+                            <strong>Last update: ${timestamp}</strong><br>
+                            ${data.length} drivers tracked<br>
+                            ${data.map(d => `${d.driver_name}: ${d.latitude}, ${d.longitude}`).join('<br>')}
+                        </div>
+                    `;
+                } catch (error) {
+                    resultsDiv.innerHTML = `
+                        <div class="status error">❌ Update failed: ${error.message}</div>
+                    `;
+                }
+            }, 5000); // Update every 5 seconds for testing
+            
+        }
+        
+        function stopRealTime() {
+            if (realTimeInterval) {
+                clearInterval(realTimeInterval);
+                realTimeInterval = null;
+                document.getElementById('realtime-results').innerHTML = '<div class="status">Real-time updates stopped</div>';
+            }
+        }
+    </script>
+</body>
+</html>
