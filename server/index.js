@@ -414,6 +414,23 @@ async function runMigrations() {
       console.log('ℹ️ sales_orders delivery columns skipped:', err.message);
     }
 
+    // Add migration for approved_by column type change (integer to text)
+    try {
+      // Change approved_by from INTEGER to VARCHAR(255) to store names
+      await query(`ALTER TABLE employee_accounts ALTER COLUMN approved_by TYPE VARCHAR(255) USING approved_by::VARCHAR(255)`);
+      console.log('✅ employee_accounts approved_by column migrated to VARCHAR(255)');
+    } catch (err) {
+      console.log('ℹ️ employee_accounts approved_by column migration skipped:', err.message);
+    }
+
+    // Add migration for driver_accounts approved_by column type change
+    try {
+      await query(`ALTER TABLE driver_accounts ALTER COLUMN approved_by TYPE VARCHAR(255) USING approved_by::VARCHAR(255)`);
+      console.log('✅ driver_accounts approved_by column migrated to VARCHAR(255)');
+    } catch (err) {
+      console.log('ℹ️ driver_accounts approved_by column migration skipped:', err.message);
+    }
+
     console.log('✅ All migrations complete');
   } catch (err) {
     console.error('❌ Migration error:', err.message);
@@ -3639,8 +3656,38 @@ app.put('/api/driver/:id/messages/read', async (req, res) => {
 // --- ADMIN USER MANAGEMENT ENDPOINTS ---
 
 // Get all pending employee registrations
-app.get('/api/admin/employees/pending', async (req, res) => {
+app.get('/api/admin/employees/pending', requireAdmin, async (req, res) => {
   try {
+    // Mock response if database not available
+    if (!process.env.DATABASE_URL) {
+      console.log('🧪 Using mock pending employees (no database)');
+      
+      const mockEmployees = [
+        {
+          id: '1',
+          full_name: 'John Doe',
+          email: 'john.doe@company.com',
+          department: 'Engineering',
+          position: 'Software Developer',
+          phone: '123-456-7890',
+          status: 'pending',
+          created_at: new Date(Date.now() - 86400000).toISOString() // 1 day ago
+        },
+        {
+          id: '2',
+          full_name: 'Jane Smith',
+          email: 'jane.smith@company.com',
+          department: 'Human Resources',
+          position: 'HR Specialist',
+          phone: '098-765-4321',
+          status: 'pending',
+          created_at: new Date(Date.now() - 172800000).toISOString() // 2 days ago
+        }
+      ];
+      
+      return res.json(mockEmployees);
+    }
+    
     const result = await query(
       `SELECT id, full_name, email, department,
         position, phone, status, created_at
@@ -3650,12 +3697,13 @@ app.get('/api/admin/employees/pending', async (req, res) => {
     );
     res.json(result.rows);
   } catch (err) {
+    console.error('❌ Pending employees error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
 // Get ALL employees
-app.get('/api/admin/employees', async (req, res) => {
+app.get('/api/admin/employees', requireAdmin, async (req, res) => {
   try {
     const result = await query(
       `SELECT id, full_name, email, department,
@@ -3670,9 +3718,10 @@ app.get('/api/admin/employees', async (req, res) => {
 });
 
 // Approve or reject employee
-app.put('/api/admin/employees/:id/review', async (req, res) => {
+app.put('/api/admin/employees/:id/review', requireAdmin, async (req, res) => {
   try {
     const { status, reviewed_by } = req.body;
+<<<<<<< HEAD
     
     // First, ensure approved_by column can store text
     try {
@@ -3689,7 +3738,78 @@ app.put('/api/admin/employees/:id/review', async (req, res) => {
       [status, reviewed_by, req.params.id]
     );
     res.json(result.rows[0]);
+=======
+    console.log(`🔍 Employee review request: ID=${req.params.id}, status=${status}, reviewed_by=${reviewed_by}`);
+    
+    // Mock response if database not available
+    if (!process.env.DATABASE_URL) {
+      console.log('🧪 Using mock employee review (no database)');
+      
+      // Simulate processing delay
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      const mockEmployee = {
+        id: req.params.id,
+        full_name: 'Mock Employee',
+        email: 'employee@test.com',
+        department: 'IT',
+        position: 'Developer',
+        phone: '123-456-7890',
+        status: status,
+        approved_at: new Date().toISOString(),
+        approved_by: reviewed_by,
+        created_at: new Date().toISOString()
+      };
+      
+      console.log(`✅ Mock employee review completed: ${mockEmployee.full_name} -> ${status}`);
+      return res.json(mockEmployee);
+    }
+    
+    // First, try to update the approved_by column as text (if it was migrated)
+    try {
+      const result = await query(
+        `UPDATE employee_accounts
+         SET status=$1, approved_by=$2,
+             approved_at=NOW()
+         WHERE id=$3 RETURNING *`,
+        [status, reviewed_by, req.params.id]
+      );
+      
+      if (result.rows.length > 0) {
+        console.log(`✅ Employee review completed: ${result.rows[0].full_name} -> ${status} by ${reviewed_by}`);
+        return res.json(result.rows[0]);
+      }
+    } catch (textErr) {
+      // If text update fails, try with integer (old schema)
+      console.log('⚠️ Text update failed, trying integer approach...');
+      
+      // Check if employee exists first
+      const checkResult = await query('SELECT * FROM employee_accounts WHERE id = $1', [req.params.id]);
+      if (checkResult.rows.length === 0) {
+        console.log(`❌ Employee not found: ${req.params.id}`);
+        return res.status(404).json({ error: 'Employee not found' });
+      }
+      
+      console.log(`✅ Found employee: ${checkResult.rows[0].full_name}`);
+      
+      // For integer schema, use the current user's ID or a default value
+      const reviewerId = req.user?.userId || 1;
+      
+      const result = await query(
+        `UPDATE employee_accounts
+         SET status=$1, approved_by=$2,
+             approved_at=NOW()
+         WHERE id=$3 RETURNING *`,
+        [status, reviewerId, req.params.id]
+      );
+      
+      console.log(`✅ Employee review completed: ${result.rows[0].full_name} -> ${status} by ID ${reviewerId}`);
+      res.json(result.rows[0]);
+    }
+    
+>>>>>>> a835e9e11e6d3fa778414ba04afb5a92895f710a
   } catch (err) {
+    console.error('❌ Employee review error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -3946,7 +4066,18 @@ if (process.env.NODE_ENV === 'production') {
 
 // Create new tables before starting server
 const startServer = async () => {
-  await createNewTables();
+  // Skip database connection for testing if DATABASE_URL not set
+  if (!process.env.DATABASE_URL) {
+    console.log('⚠️ DATABASE_URL not set - starting server without database (login will be limited)');
+  } else {
+    try {
+      await createNewTables();
+      console.log('✅ Database connection established');
+    } catch (err) {
+      console.log('❌ Database connection failed, starting server without database');
+      console.log('   Error:', err.message);
+    }
+  }
   
   const httpServer = app.listen(PORT, '0.0.0.0', () => {
     console.log(`API server running at http://0.0.0.0:${PORT}`);
