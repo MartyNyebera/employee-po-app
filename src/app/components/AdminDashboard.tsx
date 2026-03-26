@@ -3,7 +3,7 @@ import { useAutoLogout } from '../hooks/useAutoLogout';
 import { Button } from './ui/button';
 import { LogOut, Home, FileText, Receipt, Menu, X, UserPlus, Check, XCircle, MapPin, Calendar, Clock, Truck, Wrench, ShoppingCart, Package, User, UserCheck } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
-import { BusinessOverview } from './BusinessOverview';
+import { BusinessOverview } from './BusinessOverview-InlineStyles';
 import { AssetDetails } from './AssetDetails';
 import { PurchaseOrdersList } from './PurchaseOrdersList';
 import { TransactionsList } from './TransactionsList';
@@ -16,6 +16,7 @@ import { PurchaseOrderList } from './PurchaseOrderList';
 import { InventoryList } from './InventoryList';
 import { DriversList } from './DriversList';
 import { DeliveriesList } from './DeliveriesList';
+import { MaterialRequests } from './MaterialRequests';
 import { 
   fetchAdminRequests, 
   approveAdminRequest, 
@@ -38,7 +39,7 @@ interface AdminDashboardProps {
   onLogout: () => void;
 }
 
-type View = 'home' | 'orders' | 'transactions' | 'requests' | 'employee-approvals' | 'driver-approvals' | 'gps' | 'fleet' | 'pms' | 'purchase-orders' | 'inventory' | 'drivers' | 'deliveries';
+type View = 'home' | 'orders' | 'transactions' | 'requests' | 'material-requests' | 'employee-approvals' | 'driver-approvals' | 'gps' | 'fleet' | 'pms' | 'purchase-orders' | 'inventory' | 'drivers' | 'deliveries';
 
 export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashboardProps) {
   // Enable auto-logout when app is closed
@@ -47,6 +48,18 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
   const [currentView, setCurrentView] = useState<View>('home');
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
+
+  // Listen for navigation events from child components
+  useEffect(() => {
+    const handleNavigation = (event: CustomEvent) => {
+      const { view } = event.detail;
+      console.log('🧭 Navigation event received:', view);
+      setCurrentView(view as View);
+    };
+
+    window.addEventListener('navigateToView', handleNavigation as EventListener);
+    return () => window.removeEventListener('navigateToView', handleNavigation as EventListener);
+  }, []);
   const [menuOpen, setMenuOpen] = useState(false);
   const [adminRequests, setAdminRequests] = useState<AdminApprovalRequest[]>([]);
   const [loadingRequests, setLoadingRequests] = useState(false);
@@ -172,7 +185,7 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
     }
 
     if (currentView === 'gps') {
-      return <WorkingMap />;
+      return <LiveVehicleMap />;
     }
 
     if (currentView === 'fleet') {
@@ -192,6 +205,10 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
 
     if (currentView === 'inventory') {
       return <InventoryList isAdmin={true} />;
+    }
+
+    if (currentView === 'material-requests') {
+      return <MaterialRequests />;
     }
 
     if (currentView === 'drivers') {
@@ -497,6 +514,7 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
     { id: 'purchase-orders', label: 'Purchase Order', icon: ShoppingCart },
     { id: 'inventory', label: 'Inventory', icon: Package },
     { id: 'transactions', label: 'Miscellaneous', icon: Receipt },
+    { id: 'material-requests', label: 'Material Requests', icon: Package },
     { id: 'employee-approvals', label: 'Employee Approvals', icon: UserCheck },
     { id: 'driver-approvals', label: 'Driver Approvals', icon: Truck },
     ...(isSuperAdmin ? [{ id: 'requests', label: 'Admin Requests', icon: UserPlus }] : []),
