@@ -153,7 +153,6 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
       
       setIsEditing(false);
       toast.success('Purchase order updated successfully');
-      setRefreshKey(prev => prev + 1);
       
       // Trigger Overview refresh to ensure consistency
       window.dispatchEvent(new CustomEvent('ordersUpdated'));
@@ -616,10 +615,11 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
     fetchPurchaseOrders();
   }, [refreshKey]);
 
-  // Real-time refresh - listen for order updates
+  // Real-time refresh - listen for order updates (but don't auto-fetch to avoid conflicts)
   useEffect(() => {
     const handleOrdersUpdated = () => {
-      fetchPurchaseOrders();
+      // Don't auto-fetch here - let the instant UI updates handle it
+      console.log('ordersUpdated event received, but not auto-fetching to avoid conflicts');
     };
 
     window.addEventListener('ordersUpdated', handleOrdersUpdated);
@@ -1421,25 +1421,42 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                     onChange={e => {
                       const newStatus = e.target.value;
                       console.log('Status changed to:', newStatus);
+                      console.log('selectedPO:', selectedPO);
+                      console.log('selectedPO.id:', selectedPO?.id);
+                      console.log('Current purchaseOrders count:', purchaseOrders.length);
                       
                       // Update form immediately
                       setEditForm({ ...editForm, status: newStatus });
                       
                       // Update UI immediately for instant feedback
                       if (selectedPO) {
-                        setPurchaseOrders(prevOrders => 
-                          prevOrders.map(po => 
+                        console.log('Updating PO with ID:', selectedPO.id, 'to status:', newStatus);
+                        
+                        setPurchaseOrders(prevOrders => {
+                          console.log('Before update:', prevOrders.map(po => ({ id: po.id, status: po.status })));
+                          const updated = prevOrders.map(po => 
                             po.id === selectedPO.id ? { ...po, status: newStatus as PurchaseOrder['status'] } : po
-                          )
-                        );
+                          );
+                          console.log('After update:', updated.map(po => ({ id: po.id, status: po.status })));
+                          return updated;
+                        });
                         
                         // Update selected PO as well
-                        setSelectedPO(prev => prev ? { ...prev, status: newStatus as PurchaseOrder['status'] } : null);
+                        setSelectedPO(prev => {
+                          console.log('Updating selectedPO from', prev?.status, 'to', newStatus);
+                          return prev ? { ...prev, status: newStatus as PurchaseOrder['status'] } : null;
+                        });
                         
                         // Trigger Overview refresh immediately
                         window.dispatchEvent(new CustomEvent('ordersUpdated'));
+                        // Also trigger a specific refresh for expense calculation
+                        window.dispatchEvent(new CustomEvent('purchaseOrderStatusChanged', { 
+                          detail: { poId: selectedPO.id, newStatus: newStatus, amount: selectedPO.amount }
+                        }));
                         
                         console.log('UI updated immediately for status:', newStatus);
+                      } else {
+                        console.error('No selectedPO found!');
                       }
                     }}
                     style={{

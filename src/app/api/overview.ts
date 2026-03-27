@@ -384,10 +384,24 @@ export async function fetchChartData(period: TimePeriod, customRange?: DateRange
     console.log('RECEIVED Purchase Orders:', purchaseOrders.filter((po: any) => isOrderReceived(po)).length);
     
     const paidSOs = salesOrders.filter((so: any) => isOrderPaid(so));
-    const receivedPOs = purchaseOrders.filter((po: any) => isOrderReceived(po));
+    const receivedPOs = purchaseOrders.filter((po: any) => isOrderReceived(po) && po.orderType !== 'sales');
     
     console.log('PAID SOs total:', paidSOs.reduce((sum: number, so: any) => sum + (so.amount || 0), 0));
     console.log('RECEIVED POs total:', receivedPOs.reduce((sum: number, po: any) => sum + (po.amount || 0), 0));
+    
+    // DEBUG: Log all Purchase Orders with their status
+    console.log('🔍 ALL PURCHASE ORDERS STATUS:');
+    purchaseOrders.forEach((po: any, index: number) => {
+      console.log(`PO ${index}:`, {
+        id: po.id,
+        poNumber: po.poNumber,
+        status: po.status,
+        statusTrimmed: po.status?.toString().trim(),
+        statusUpper: po.status?.toString().trim().toUpperCase(),
+        isReceived: isOrderReceived(po),
+        amount: po.amount
+      });
+    });
     
     // DEBUG: Log actual dates of PAID SOs
     console.log('🔍 PAID SOs DETAILS:');

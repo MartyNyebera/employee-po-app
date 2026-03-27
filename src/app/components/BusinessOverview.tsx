@@ -97,8 +97,18 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
       loadData();
     };
 
+    const handlePurchaseOrderStatusChanged = (event: any) => {
+      console.log('💰 Purchase Order status changed - refreshing expenses:', event.detail);
+      loadData();
+    };
+
     window.addEventListener('ordersUpdated', handleOrdersUpdated);
-    return () => window.removeEventListener('ordersUpdated', handleOrdersUpdated);
+    window.addEventListener('purchaseOrderStatusChanged', handlePurchaseOrderStatusChanged);
+    
+    return () => {
+      window.removeEventListener('ordersUpdated', handleOrdersUpdated);
+      window.removeEventListener('purchaseOrderStatusChanged', handlePurchaseOrderStatusChanged);
+    };
   }, [timePeriod, customRange]);
 
   const formatCurrency = (amount: number) => {
