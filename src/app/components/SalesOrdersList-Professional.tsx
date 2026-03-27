@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { fetchPurchaseOrders, createPurchaseOrder, updatePurchaseOrder, deletePurchaseOrder, deleteSalesOrder, fetchSalesOrders, createSalesOrder, updateSalesOrder } from '../api/client';
 import { fetchVehicles, type Vehicle } from '../api/fleet';
 import { CreateSOModal } from './CreatePOModal';
-import { FileText, Plus, DollarSign, Calendar, Building2, Truck, Edit, Filter, Printer, Trash2, X, Search, Check } from 'lucide-react';
+import { FileText, Plus, DollarSign, Calendar, Building2, Truck, Edit, Filter, Printer, Trash2, X, Search, Check, Package } from 'lucide-react';
 import { toast } from 'sonner';
 
 const formatDate = (dateString: string) => {
@@ -231,32 +231,31 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
     if (!selectedPO) return;
     
     try {
+      console.log('🔧 Updating Sales Order:', selectedPO.id, 'with status:', editForm.status);
+      
       // Reconstruct the description with customer info
       let newDescription = editForm.description;
       if (editForm.customerAddress || editForm.customerContact) {
         newDescription = `${editForm.description}\n\nAddress: ${editForm.customerAddress}\nContact: ${editForm.customerContact}`;
       }
       
-      // Optimistic update - update local state immediately
-      const updatedOrder: PurchaseOrder = {
-        ...selectedPO,
-        status: editForm.status as PurchaseOrder['status'],
-        description: newDescription,
-        client: editForm.customerName
-      };
-      
-      // Update local state immediately
-      setOrders(prev => prev.map(po => po.id === selectedPO.id ? updatedOrder : po));
-      
-      // Then update backend
-      await updateSalesOrder(selectedPO.id, { 
+      // Update backend first
+      const updated = await updateSalesOrder(selectedPO.id, { 
         status: editForm.status, 
         description: newDescription,
         client: editForm.customerName
       });
       
+      console.log('🔧 Updated Sales Order response:', updated);
+      
+      // Then refresh data from server
+      await fetchSalesOrders();
+      
       setIsEditing(false);
       toast.success('Sales order updated successfully');
+      
+      // Trigger Overview refresh
+      window.dispatchEvent(new CustomEvent('ordersUpdated'));
       
       // Dispatch event to notify other components
       window.dispatchEvent(new CustomEvent('salesOrderUpdated', { 
@@ -904,6 +903,276 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
         )}
       </div>
 
+      {/* METRIC CARDS */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+        gap: '20px',
+        marginBottom: '32px'
+      }}>
+        <div style={{
+          background: '#ffffff',
+          border: '1px solid #e5e7eb',
+          borderRadius: '16px',
+          padding: '24px',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+          transition: 'all 0.2s ease'
+        }}
+        onMouseOver={(e) => {
+          e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)';
+          e.currentTarget.style.transform = 'translateY(-2px)';
+        }}
+        onMouseOut={(e) => {
+          e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)';
+          e.currentTarget.style.transform = 'translateY(0)';
+        }}
+        >
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: '12px'
+          }}>
+            <div style={{
+              width: '48px',
+              height: '48px',
+              borderRadius: '12px',
+              backgroundColor: '#dbeafe',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <FileText style={{ width: '24px', height: '24px', color: '#3b82f6' }} />
+            </div>
+          </div>
+          <h3 style={{
+            fontSize: '32px',
+            fontWeight: '700',
+            color: '#111827',
+            margin: '0 0 8px 0',
+            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+          }}>
+            {orders.length}
+          </h3>
+          <p style={{
+            fontSize: '14px',
+            fontWeight: '500',
+            color: '#6b7280',
+            margin: '0',
+            fontFamily: 'Inter, sans-serif'
+          }}>
+            Total SOs
+          </p>
+        </div>
+
+        <div style={{
+          background: '#ffffff',
+          border: '1px solid #fffbeb',
+          borderRadius: '16px',
+          padding: '24px',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+          transition: 'all 0.2s ease'
+        }}
+        onMouseOver={(e) => {
+          e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)';
+          e.currentTarget.style.transform = 'translateY(-2px)';
+        }}
+        onMouseOut={(e) => {
+          e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)';
+          e.currentTarget.style.transform = 'translateY(0)';
+        }}
+        >
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: '12px'
+          }}>
+            <div style={{
+              width: '48px',
+              height: '48px',
+              borderRadius: '12px',
+              backgroundColor: '#fffbeb',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <Package style={{ width: '24px', height: '24px', color: '#d97706' }} />
+            </div>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              padding: '4px 8px',
+              borderRadius: '6px',
+              fontSize: '12px',
+              fontWeight: '600',
+              color: '#d97706',
+              backgroundColor: '#fffbeb',
+              fontFamily: 'Inter, sans-serif'
+            }}>
+              Pending
+            </div>
+          </div>
+          <h3 style={{
+            fontSize: '32px',
+            fontWeight: '700',
+            color: '#d97706',
+            margin: '0 0 8px 0',
+            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+          }}>
+            {pendingCount}
+          </h3>
+          <p style={{
+            fontSize: '14px',
+            fontWeight: '500',
+            color: '#92400e',
+            margin: '0',
+            fontFamily: 'Inter, sans-serif'
+          }}>
+            Pending
+          </p>
+        </div>
+
+        <div style={{
+          background: '#ffffff',
+          border: '1px solid #dbeafe',
+          borderRadius: '16px',
+          padding: '24px',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+          transition: 'all 0.2s ease'
+        }}
+        onMouseOver={(e) => {
+          e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)';
+          e.currentTarget.style.transform = 'translateY(-2px)';
+        }}
+        onMouseOut={(e) => {
+          e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)';
+          e.currentTarget.style.transform = 'translateY(0)';
+        }}
+        >
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: '12px'
+          }}>
+            <div style={{
+              width: '48px',
+              height: '48px',
+              borderRadius: '12px',
+              backgroundColor: '#dbeafe',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <FileText style={{ width: '24px', height: '24px', color: '#3b82f6' }} />
+            </div>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              padding: '4px 8px',
+              borderRadius: '6px',
+              fontSize: '12px',
+              fontWeight: '600',
+              color: '#3b82f6',
+              backgroundColor: '#dbeafe',
+              fontFamily: 'Inter, sans-serif'
+            }}>
+              Approved
+            </div>
+          </div>
+          <h3 style={{
+            fontSize: '32px',
+            fontWeight: '700',
+            color: '#3b82f6',
+            margin: '0 0 8px 0',
+            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+          }}>
+            {approvedCount}
+          </h3>
+          <p style={{
+            fontSize: '14px',
+            fontWeight: '500',
+            color: '#1e40af',
+            margin: '0',
+            fontFamily: 'Inter, sans-serif'
+          }}>
+            Approved
+          </p>
+        </div>
+
+        <div style={{
+          background: '#ffffff',
+          border: '1px solid #f0fdf4',
+          borderRadius: '16px',
+          padding: '24px',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+          transition: 'all 0.2s ease'
+        }}
+        onMouseOver={(e) => {
+          e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)';
+          e.currentTarget.style.transform = 'translateY(-2px)';
+        }}
+        onMouseOut={(e) => {
+          e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)';
+          e.currentTarget.style.transform = 'translateY(0)';
+        }}
+        >
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: '12px'
+          }}>
+            <div style={{
+              width: '48px',
+              height: '48px',
+              borderRadius: '12px',
+              backgroundColor: '#f0fdf4',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <Check style={{ width: '24px', height: '24px', color: '#059669' }} />
+            </div>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              padding: '4px 8px',
+              borderRadius: '6px',
+              fontSize: '12px',
+              fontWeight: '600',
+              color: '#059669',
+              backgroundColor: '#f0fdf4',
+              fontFamily: 'Inter, sans-serif'
+            }}>
+              PAID
+            </div>
+          </div>
+          <h3 style={{
+            fontSize: '32px',
+            fontWeight: '700',
+            color: '#059669',
+            margin: '0 0 8px 0',
+            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+          }}>
+            {paidCount}
+          </h3>
+          <p style={{
+            fontSize: '14px',
+            fontWeight: '500',
+            color: '#065f46',
+            margin: '0',
+            fontFamily: 'Inter, sans-serif'
+          }}>
+            PAID
+          </p>
+        </div>
+      </div>
+
       {/* SEARCH AND FILTER BAR */}
       <div style={{
         display: 'flex',
@@ -976,7 +1245,6 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
             <option value="approved">Approved</option>
             <option value="in-progress">In Progress</option>
             <option value="PAID">PAID</option>
-            <option value="completed">Completed</option>
           </select>
         </div>
       </div>
@@ -1419,7 +1687,6 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
                     <option value="approved">Approved</option>
                     <option value="in-progress">In Progress</option>
                     <option value="PAID">PAID</option>
-                    <option value="completed">Completed</option>
                   </select>
                 </div>
 

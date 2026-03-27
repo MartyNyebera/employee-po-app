@@ -66,14 +66,14 @@ export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
     const generateSONumber = async () => {
       try {
         const currentYear = new Date().getFullYear();
-        const orders = await fetchApi<any[]>('/purchase-orders') || [];
+        const orders = await fetchApi<any[]>('/sales-orders') || [];
         const lastSO = orders
-          .filter((order: any) => order.poNumber.startsWith(`KTCI-SO-${currentYear}-`))
-          .sort((a: any, b: any) => b.poNumber.localeCompare(a.poNumber))[0];
+          .filter((order: any) => order.soNumber.startsWith(`KTCI-SO-${currentYear}-`))
+          .sort((a: any, b: any) => b.soNumber.localeCompare(a.soNumber))[0];
         
         let counter = 1;
         if (lastSO) {
-          const lastNumber = lastSO.poNumber.split('-')[3];
+          const lastNumber = lastSO.soNumber.split('-')[3];
           counter = parseInt(lastNumber) + 1;
         }
         
@@ -196,7 +196,13 @@ export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
         createdDate: new Date().toISOString().split('T')[0]
       };
 
-      await createSalesOrder(soData);
+      console.log('Creating Sales Order with data:', soData);
+      console.log('Line items:', lineItems);
+      console.log('Total amount:', calculateTotal());
+
+      const result = await createSalesOrder(soData);
+      console.log('Sales Order created successfully:', result);
+      
       toast.success('Sales Order created successfully!');
       onCreated();
       
@@ -206,7 +212,9 @@ export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
       }));
       window.dispatchEvent(new CustomEvent('ordersUpdated'));
     } catch (err: any) {
-      toast.error('Failed to create Sales Order: ' + err.message);
+      console.error('Sales Order creation error:', err);
+      console.error('Error details:', err.response?.data || err.message);
+      toast.error('Failed to create Sales Order: ' + (err.response?.data?.error || err.message));
     } finally {
       setLoading(false);
     }

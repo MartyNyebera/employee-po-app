@@ -10,7 +10,7 @@ interface PurchaseOrder {
   client: string;
   description: string;
   amount: number;
-  status: 'pending' | 'approved' | 'RECEIVED' | 'completed';
+  status: 'pending' | 'approved' | 'RECEIVED';
   createdDate: string;
   deliveryDate: string;
   assignedAssets: string[];
@@ -93,11 +93,6 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
         color: '#059669', 
         bgColor: '#f0fdf4', 
         borderColor: '#bbf7d0'
-      },
-      'completed': { 
-        color: '#6b7280', 
-        bgColor: '#f3f4f6', 
-        borderColor: '#d1d5db'
       },
     };
     return configs[status] || configs['pending'];
@@ -597,7 +592,6 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
   const pendingCount = purchaseOrders.filter(po => po.status === 'pending').length;
   const approvedCount = purchaseOrders.filter(po => po.status === 'approved').length;
   const receivedCount = purchaseOrders.filter(po => po.status === 'RECEIVED').length;
-  const completedCount = purchaseOrders.filter(po => po.status === 'completed').length;
 
   useEffect(() => {
     fetchPurchaseOrders();
@@ -966,32 +960,12 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
               padding: '4px 8px',
               borderRadius: '6px',
               fontSize: '12px',
-              fontWeight: '600',
-              color: '#6b7280',
               backgroundColor: '#f3f4f6',
               fontFamily: 'Inter, sans-serif'
             }}>
-              Completed
+              Approved
             </div>
           </div>
-          <h3 style={{
-            fontSize: '32px',
-            fontWeight: '700',
-            color: '#6b7280',
-            margin: '0 0 8px 0',
-            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
-          }}>
-            {completedCount}
-          </h3>
-          <p style={{
-            fontSize: '14px',
-            fontWeight: '500',
-            color: '#374151',
-            margin: '0',
-            fontFamily: 'Inter, sans-serif'
-          }}>
-            Completed
-          </p>
         </div>
       </div>
 
@@ -1043,7 +1017,6 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
               <option value="pending">Pending</option>
               <option value="approved">Approved</option>
               <option value="RECEIVED">Received</option>
-              <option value="completed">Completed</option>
             </select>
             <div style={{
               position: 'absolute',
@@ -1441,7 +1414,6 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                     <option value="pending">Pending</option>
                     <option value="approved">Approved</option>
                     <option value="RECEIVED">Received</option>
-                    <option value="completed">Completed</option>
                   </select>
                 </div>
 

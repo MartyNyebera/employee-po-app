@@ -46,7 +46,7 @@ interface BusinessOverviewProps {
 
 export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
   const [loading, setLoading] = useState(true);
-  const [timePeriod, setTimePeriod] = useState<TimePeriod>('this-month');
+  const [timePeriod, setTimePeriod] = useState<TimePeriod>('year-to-date');
   const [customRange, setCustomRange] = useState<DateRange | undefined>();
   const [metrics, setMetrics] = useState<OverviewMetrics | null>(null);
   const [orderSummary, setOrderSummary] = useState<OrderSummary | null>(null);

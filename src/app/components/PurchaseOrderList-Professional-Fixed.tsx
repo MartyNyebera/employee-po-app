@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { FileText, Plus, ShoppingCart, Package, Edit, Trash2, Filter, Printer, X } from 'lucide-react';
+import { FileText, Plus, ShoppingCart, Package, Edit, Trash2, Filter, Printer, X, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import { fetchApi, updatePurchaseOrder, deletePurchaseOrder } from '../api/client';
 import { CreatePurchaseOrderModal } from './CreatePurchaseOrderModal';
@@ -10,7 +10,7 @@ interface PurchaseOrder {
   client: string;
   description: string;
   amount: number;
-  status: 'pending' | 'approved' | 'RECEIVED' | 'completed';
+  status: 'pending' | 'approved' | 'RECEIVED';
   createdDate: string;
   deliveryDate: string;
   assignedAssets: string[];
@@ -34,10 +34,12 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
     description: '',
   });
 
-  const fetchPurchaseOrders = async () => {
+  const fetchPurchaseOrders = async (trackPoId?: string) => {
     try {
       const data = await fetchApi<any[]>('/purchase-orders');
+      console.log('Raw API data:', data);
       const poData = (data || []).filter((item: any) => item.orderType !== 'sales');
+      console.log('Filtered PO data:', poData);
       
       // Transform API data to match component interface
       const transformedData = poData.map((po: any) => ({
@@ -51,6 +53,14 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
         deliveryDate: po.deliveryDate || po.delivery_date,
         assignedAssets: po.assignedAssets || []
       }));
+      
+      console.log('Transformed data:', transformedData);
+      if (trackPoId) {
+        const trackedPo = transformedData.find(po => po.id === trackPoId);
+        console.log('PO with updated status (tracking ID:', trackPoId, '):', trackedPo);
+      } else {
+        console.log('PO with updated status:', transformedData.find(po => po.id === selectedPO?.id));
+      }
       
       setPurchaseOrders(transformedData);
     } catch (error) {
@@ -94,11 +104,6 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
         bgColor: '#f0fdf4', 
         borderColor: '#bbf7d0'
       },
-      'completed': { 
-        color: '#6b7280', 
-        bgColor: '#f3f4f6', 
-        borderColor: '#d1d5db'
-      },
     };
     return configs[status] || configs['pending'];
   };
@@ -125,6 +130,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
   };
 
   const handleEditClick = (po: PurchaseOrder) => {
+    console.log('Editing PO:', po);
     setSelectedPO(po);
     setEditForm({
       status: po.status,
@@ -136,18 +142,26 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
   const handleSaveEdit = async () => {
     if (!selectedPO) return;
     
+    const poId = selectedPO.id;
+    const newStatus = editForm.status;
+    console.log('Saving edit with status:', newStatus);
+    
     try {
-      const updated = await updatePurchaseOrder(selectedPO.id, { status: editForm.status, description: editForm.description });
-      setPurchaseOrders(purchaseOrders.map(po => po.id === selectedPO.id ? (updated as unknown as PurchaseOrder) : po));
+      // Only update backend - UI is already updated by dropdown onChange
+      const updated = await updatePurchaseOrder(selectedPO.id, { status: newStatus, description: editForm.description });
+      console.log('Backend updated:', updated);
+      
       setIsEditing(false);
       toast.success('Purchase order updated successfully');
       setRefreshKey(prev => prev + 1);
       
-      // Trigger Overview refresh
+      // Trigger Overview refresh to ensure consistency
       window.dispatchEvent(new CustomEvent('ordersUpdated'));
     } catch (error) {
       console.error('Error updating purchase order:', error);
       toast.error('Failed to update purchase order');
+      // Revert on error
+      fetchPurchaseOrders();
     }
   };
 
@@ -597,7 +611,6 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
   const pendingCount = purchaseOrders.filter(po => po.status === 'pending').length;
   const approvedCount = purchaseOrders.filter(po => po.status === 'approved').length;
   const receivedCount = purchaseOrders.filter(po => po.status === 'RECEIVED').length;
-  const completedCount = purchaseOrders.filter(po => po.status === 'completed').length;
 
   useEffect(() => {
     fetchPurchaseOrders();
@@ -789,6 +802,75 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
 
         <div style={{
           background: '#ffffff',
+          border: '1px solid #fffbeb',
+          borderRadius: '16px',
+          padding: '24px',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+          transition: 'all 0.2s ease'
+        }}
+        onMouseOver={(e) => {
+          e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)';
+          e.currentTarget.style.transform = 'translateY(-2px)';
+        }}
+        onMouseOut={(e) => {
+          e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)';
+          e.currentTarget.style.transform = 'translateY(0)';
+        }}
+        >
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: '12px'
+          }}>
+            <div style={{
+              width: '48px',
+              height: '48px',
+              borderRadius: '12px',
+              backgroundColor: '#fffbeb',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <Package style={{ width: '24px', height: '24px', color: '#d97706' }} />
+            </div>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              padding: '4px 8px',
+              borderRadius: '6px',
+              fontSize: '12px',
+              fontWeight: '600',
+              color: '#d97706',
+              backgroundColor: '#fffbeb',
+              fontFamily: 'Inter, sans-serif'
+            }}>
+              Pending
+            </div>
+          </div>
+          <h3 style={{
+            fontSize: '32px',
+            fontWeight: '700',
+            color: '#d97706',
+            margin: '0 0 8px 0',
+            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+          }}>
+            {pendingCount}
+          </h3>
+          <p style={{
+            fontSize: '14px',
+            fontWeight: '500',
+            color: '#92400e',
+            margin: '0',
+            fontFamily: 'Inter, sans-serif'
+          }}>
+            Pending
+          </p>
+        </div>
+
+        <div style={{
+          background: '#ffffff',
           border: '1px solid #dbeafe',
           borderRadius: '16px',
           padding: '24px',
@@ -924,75 +1006,6 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
             Received
           </p>
         </div>
-
-        <div style={{
-          background: '#ffffff',
-          border: '1px solid #f3f4f6',
-          borderRadius: '16px',
-          padding: '24px',
-          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-          transition: 'all 0.2s ease'
-        }}
-        onMouseOver={(e) => {
-          e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)';
-          e.currentTarget.style.transform = 'translateY(-2px)';
-        }}
-        onMouseOut={(e) => {
-          e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)';
-          e.currentTarget.style.transform = 'translateY(0)';
-        }}
-        >
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            marginBottom: '12px'
-          }}>
-            <div style={{
-              width: '48px',
-              height: '48px',
-              borderRadius: '12px',
-              backgroundColor: '#f3f4f6',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}>
-              <FileText style={{ width: '24px', height: '24px', color: '#6b7280' }} />
-            </div>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              padding: '4px 8px',
-              borderRadius: '6px',
-              fontSize: '12px',
-              fontWeight: '600',
-              color: '#6b7280',
-              backgroundColor: '#f3f4f6',
-              fontFamily: 'Inter, sans-serif'
-            }}>
-              Completed
-            </div>
-          </div>
-          <h3 style={{
-            fontSize: '32px',
-            fontWeight: '700',
-            color: '#6b7280',
-            margin: '0 0 8px 0',
-            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
-          }}>
-            {completedCount}
-          </h3>
-          <p style={{
-            fontSize: '14px',
-            fontWeight: '500',
-            color: '#374151',
-            margin: '0',
-            fontFamily: 'Inter, sans-serif'
-          }}>
-            Completed
-          </p>
-        </div>
       </div>
 
       {/* FILTERS */}
@@ -1044,7 +1057,6 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
               <option value="pending">Pending</option>
               <option value="approved">Approved</option>
               <option value="RECEIVED">Received</option>
-              <option value="completed">Completed</option>
             </select>
           </div>
           <div style={{ flex: 1, minWidth: '250px' }}>
@@ -1406,7 +1418,30 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                   </label>
                   <select
                     value={editForm.status}
-                    onChange={e => setEditForm({ ...editForm, status: e.target.value })}
+                    onChange={e => {
+                      const newStatus = e.target.value;
+                      console.log('Status changed to:', newStatus);
+                      
+                      // Update form immediately
+                      setEditForm({ ...editForm, status: newStatus });
+                      
+                      // Update UI immediately for instant feedback
+                      if (selectedPO) {
+                        setPurchaseOrders(prevOrders => 
+                          prevOrders.map(po => 
+                            po.id === selectedPO.id ? { ...po, status: newStatus as PurchaseOrder['status'] } : po
+                          )
+                        );
+                        
+                        // Update selected PO as well
+                        setSelectedPO(prev => prev ? { ...prev, status: newStatus as PurchaseOrder['status'] } : null);
+                        
+                        // Trigger Overview refresh immediately
+                        window.dispatchEvent(new CustomEvent('ordersUpdated'));
+                        
+                        console.log('UI updated immediately for status:', newStatus);
+                      }
+                    }}
                     style={{
                       width: '100%',
                       padding: '12px 16px',
@@ -1430,7 +1465,6 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                     <option value="pending">Pending</option>
                     <option value="approved">Approved</option>
                     <option value="RECEIVED">Received</option>
-                    <option value="completed">Completed</option>
                   </select>
                 </div>
 

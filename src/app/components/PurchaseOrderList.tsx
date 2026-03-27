@@ -14,7 +14,7 @@ interface PurchaseOrder {
   client: string;
   description: string;
   amount: number;
-  status: 'pending' | 'approved' | 'RECEIVED' | 'completed';
+  status: 'pending' | 'approved' | 'RECEIVED';
   createdDate: string;
   deliveryDate: string;
   assignedAssets: string[];
@@ -86,8 +86,6 @@ const formatCurrency = (amount: number) => {
         return <Badge className="bg-blue-50 text-blue-700 border-blue-200 px-3 py-1 rounded-full font-medium text-xs">Approved</Badge>;
       case 'RECEIVED':
         return <Badge className="bg-green-50 text-green-700 border-green-200 px-3 py-1 rounded-full font-medium text-xs">Received</Badge>;
-      case 'completed':
-        return <Badge className="bg-gray-50 text-gray-700 border-gray-200 px-3 py-1 rounded-full font-medium text-xs">Completed</Badge>;
       default:
         return <Badge className="bg-gray-50 text-gray-700 border-gray-200 px-3 py-1 rounded-full font-medium text-xs">{status}</Badge>;
     }
@@ -106,11 +104,15 @@ const formatCurrency = (amount: number) => {
     if (!selectedPO) return;
     
     try {
+      console.log('🔧 Updating PO:', selectedPO.id, 'with status:', editForm.status);
       const updated = await updatePurchaseOrder(selectedPO.id, { status: editForm.status, description: editForm.description });
-      setPurchaseOrders(purchaseOrders.map(po => po.id === selectedPO.id ? (updated as unknown as PurchaseOrder) : po));
+      console.log('🔧 Updated PO response:', updated);
+      console.log('🔧 New status from response:', updated.status);
+      console.log('🔧 Status comparison - sent:', editForm.status, 'received:', updated.status);
+      // Force immediate refresh by calling fetchPurchaseOrders
+      await fetchPurchaseOrders();
       setIsEditing(false);
       toast.success('Purchase order updated successfully');
-      setRefreshKey(prev => prev + 1);
       
       // Trigger Overview refresh
       window.dispatchEvent(new CustomEvent('ordersUpdated'));
@@ -625,7 +627,6 @@ useEffect(() => {
                 <option value="pending">Pending</option>
                 <option value="approved">Approved</option>
                 <option value="RECEIVED">Received</option>
-                <option value="completed">Completed</option>
               </select>
             </div>
             <div className="flex-1">
@@ -737,7 +738,6 @@ useEffect(() => {
                   <option value="pending">Pending</option>
                   <option value="approved">Approved</option>
                   <option value="RECEIVED">Received</option>
-                  <option value="completed">Completed</option>
                 </select>
               </div>
 
