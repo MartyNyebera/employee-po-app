@@ -32,6 +32,18 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
   const [editForm, setEditForm] = useState({
     status: '',
     description: '',
+    customerAddress: '',
+    customerContact: '',
+    preparedBy: '',
+    reviewedBy: '',
+    poType: '',
+    paymentTerms: '',
+    lineItems: [],
+    subTotal: 0,
+    otherCharges: 0,
+    vatAmount: 0,
+    totalAmount: 0,
+    termsAndConditions: '',
   });
 
   const fetchPurchaseOrders = async (trackPoId?: string) => {
@@ -131,10 +143,113 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
 
   const handleEditClick = (po: PurchaseOrder) => {
     console.log('Editing PO:', po);
+    
+    // Debug: Log the raw description
+    console.log('🔍 PURCHASE ORDER RAW DESCRIPTION DEBUG:');
+    console.log('Description:', JSON.stringify(po.description));
+    console.log('Description split by lines:', po.description.split('\n'));
+    
+    // Parse the description to extract all fields
+    let description = '';
+    let customerAddress = '';
+    let customerContact = '';
+    let preparedBy = '';
+    let reviewedBy = '';
+    let poType = '';
+    let paymentTerms = '';
+    let lineItems = [];
+    let subTotal = 0;
+    let otherCharges = 0;
+    let vatAmount = 0;
+    let totalAmount = 0;
+    let termsAndConditions = '';
+    
+    try {
+      const lines = po.description.split('\n');
+      let foundLineItems = false;
+      let foundTerms = false;
+      let firstLine = true;
+      
+      lines.forEach(line => {
+        const trimmedLine = line.trim();
+        
+        if (trimmedLine.includes('Address:')) {
+          customerAddress = trimmedLine.replace('Address:', '').trim();
+        } else if (trimmedLine.includes('Contact:')) {
+          customerContact = trimmedLine.replace('Contact:', '').trim();
+        } else if (trimmedLine.includes('Prepared By:')) {
+          preparedBy = trimmedLine.replace('Prepared By:', '').trim();
+        } else if (trimmedLine.includes('Reviewed By:')) {
+          reviewedBy = trimmedLine.replace('Reviewed By:', '').trim();
+        } else if (trimmedLine.includes('PO Type:')) {
+          poType = trimmedLine.replace('PO Type:', '').trim();
+        } else if (trimmedLine.includes('Payment Terms:')) {
+          paymentTerms = trimmedLine.replace('Payment Terms:', '').trim();
+        } else if (trimmedLine.includes('Line Items:')) {
+          foundLineItems = true;
+          try {
+            const lineItemsStr = trimmedLine.replace('Line Items:', '').trim();
+            if (lineItemsStr) {
+              lineItems = JSON.parse(lineItemsStr);
+            }
+          } catch (e) {
+            console.error('Error parsing line items:', e);
+          }
+        } else if (trimmedLine.includes('Sub Total:')) {
+          subTotal = parseFloat(trimmedLine.replace('Sub Total:', '').trim().replace(/[^\d.-]/g, '')) || 0;
+        } else if (trimmedLine.includes('Other Charges:')) {
+          otherCharges = parseFloat(trimmedLine.replace('Other Charges:', '').trim().replace(/[^\d.-]/g, '')) || 0;
+        } else if (trimmedLine.includes('VAT Amount:')) {
+          vatAmount = parseFloat(trimmedLine.replace('VAT Amount:', '').trim().replace(/[^\d.-]/g, '')) || 0;
+        } else if (trimmedLine.includes('Total Amount:')) {
+          totalAmount = parseFloat(trimmedLine.replace('Total Amount:', '').trim().replace(/[^\d.-]/g, '')) || 0;
+        } else if (trimmedLine.includes('Terms & Conditions:')) {
+          foundTerms = true;
+          // Start collecting terms
+        } else if (foundTerms) {
+          // Collect terms and conditions
+          if (termsAndConditions) termsAndConditions += ' ' + trimmedLine;
+          else termsAndConditions = trimmedLine;
+        } else if (trimmedLine && !foundLineItems && !foundTerms && firstLine) {
+          // First non-empty line is the product description
+          description = trimmedLine;
+          firstLine = false;
+        }
+      });
+    } catch (error) {
+      console.error('Error parsing PO description:', error);
+      description = po.description;
+    }
+    
+    // Debug: Log parsed values
+    console.log('🔍 PURCHASE ORDER PARSED VALUES DEBUG:');
+    console.log('Description:', JSON.stringify(description));
+    console.log('Customer Address:', JSON.stringify(customerAddress));
+    console.log('Customer Contact:', JSON.stringify(customerContact));
+    console.log('Prepared By:', JSON.stringify(preparedBy));
+    console.log('Reviewed By:', JSON.stringify(reviewedBy));
+    console.log('PO Type:', JSON.stringify(poType));
+    console.log('Payment Terms:', JSON.stringify(paymentTerms));
+    console.log('Line Items:', lineItems);
+    console.log('Sub Total:', subTotal);
+    console.log('Total Amount:', totalAmount);
+    
     setSelectedPO(po);
     setEditForm({
       status: po.status,
-      description: po.description,
+      description: description,
+      customerAddress: customerAddress,
+      customerContact: customerContact,
+      preparedBy: preparedBy,
+      reviewedBy: reviewedBy,
+      poType: poType,
+      paymentTerms: paymentTerms,
+      lineItems: lineItems,
+      subTotal: subTotal,
+      otherCharges: otherCharges,
+      vatAmount: vatAmount,
+      totalAmount: totalAmount,
+      termsAndConditions: termsAndConditions,
     });
     setIsEditing(true);
   };
@@ -571,6 +686,11 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
               <div class="signature-title">Reviewed By:</div>
               <div class="signature-line"></div>
               <div class="signature-name">Name: ${supplierData.reviewedBy}</div>
+            </div>
+            <div class="signature-box">
+              <div class="signature-title">Approved By:</div>
+              <div class="signature-line"></div>
+              <div class="signature-name">Leo Tagle</div>
             </div>
           </div>
         </div>

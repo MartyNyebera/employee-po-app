@@ -66,6 +66,8 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
     customerName: '',
     customerAddress: '',
     customerContact: '',
+    preparedBy: '',
+    reviewedBy: '',
   });
 
   useEffect(() => {
@@ -189,27 +191,64 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
   const handleEditClick = (po: PurchaseOrder) => {
     setSelectedPO(po);
     
+    // Debug: Log the raw description
+    console.log('🔍 RAW DESCRIPTION DEBUG:');
+    console.log('Description:', JSON.stringify(po.description));
+    console.log('Description split by lines:', po.description.split('\n'));
+    
     // Parse the description to extract customer info
     let customerName = po.client;
     let customerAddress = '';
     let customerContact = '';
+    let preparedBy = '';
+    let reviewedBy = '';
     let description = '';
+    let lineItems = [];
     
     try {
       // Try to extract structured data from description
       const lines = po.description.split('\n');
+      let foundLineItems = false;
+      let firstNonEmptyLine = true;
+      
       lines.forEach(line => {
-        if (line.includes('Address:')) {
-          customerAddress = line.replace('Address:', '').trim();
-        } else if (line.includes('Contact:')) {
-          customerContact = line.replace('Contact:', '').trim();
-        } else if (line.includes('Line Items:')) {
-          // Stop parsing at line items
-          return;
-        } else if (line && !line.includes('Prepared By:') && !line.includes('Reviewed By:')) {
-          // Collect other lines as description
-          if (description) description += '\n' + line;
-          else description = line;
+        const trimmedLine = line.trim();
+        
+        if (trimmedLine.includes('Address:')) {
+          customerAddress = trimmedLine.replace('Address:', '').trim();
+        } else if (trimmedLine.includes('Contact:')) {
+          customerContact = trimmedLine.replace('Contact:', '').trim();
+        } else if (trimmedLine.includes('Prepared By:')) {
+          preparedBy = trimmedLine.replace('Prepared By:', '').trim();
+        } else if (trimmedLine.includes('Reviewed By:')) {
+          reviewedBy = trimmedLine.replace('Reviewed By:', '').trim();
+        } else if (trimmedLine.includes('Line Items:')) {
+          foundLineItems = true;
+          // Parse line items JSON
+          try {
+            const lineItemsStr = trimmedLine.replace('Line Items:', '').trim();
+            if (lineItemsStr) {
+              lineItems = JSON.parse(lineItemsStr);
+            }
+          } catch (e) {
+            console.error('Error parsing line items:', e);
+          }
+        } else if (trimmedLine && !foundLineItems && 
+                   trimmedLine !== 'Address: [Customer Address]' && 
+                   trimmedLine !== 'Contact: [Customer Contact]' && 
+                   trimmedLine !== 'Prepared By: [Prepared By]' && 
+                   trimmedLine !== 'Reviewed By: [Reviewed By]') {
+          
+          // If this is the first non-empty line and we don't have an address yet, treat it as address
+          if (firstNonEmptyLine && !customerAddress) {
+            customerAddress = trimmedLine;
+            firstNonEmptyLine = false;
+          }
+          // Otherwise, collect as description (but skip structured fields)
+          else if (!firstNonEmptyLine || customerAddress) {
+            if (description) description += '\n' + trimmedLine;
+            else description = trimmedLine;
+          }
         }
       });
     } catch (error) {
@@ -217,12 +256,23 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
       description = po.description;
     }
     
+    // Debug: Log parsed values
+    console.log('🔍 PARSED VALUES DEBUG:');
+    console.log('Customer Address:', JSON.stringify(customerAddress));
+    console.log('Customer Contact:', JSON.stringify(customerContact));
+    console.log('Prepared By:', JSON.stringify(preparedBy));
+    console.log('Reviewed By:', JSON.stringify(reviewedBy));
+    console.log('Description:', JSON.stringify(description));
+    console.log('Line Items:', lineItems);
+    
     setEditForm({
       status: po.status,
       description: description || '',
       customerName: customerName,
       customerAddress: customerAddress,
       customerContact: customerContact,
+      preparedBy: preparedBy,
+      reviewedBy: reviewedBy,
     });
     setIsEditing(true);
   };
@@ -327,7 +377,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
     let lineItems = [];
     let customerData = {
       name: po.client,
-      address: '[Customer Address]',
+      address: '',
       contact: '[Customer Contact]',
       preparedBy: '[Prepared By]',
       reviewedBy: '[Reviewed By]',
@@ -703,6 +753,11 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
               <div class="signature-title">Reviewed By:</div>
               <div class="signature-line"></div>
               <div class="signature-name">Name: ${customerData.reviewedBy}</div>
+            </div>
+            <div class="signature-box">
+              <div class="signature-title">Approved By:</div>
+              <div class="signature-line"></div>
+              <div class="signature-name">Leo Tagle</div>
             </div>
           </div>
         </div>

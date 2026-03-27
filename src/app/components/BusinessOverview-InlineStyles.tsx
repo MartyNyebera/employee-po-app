@@ -94,6 +94,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
 
   // Load all data
   const loadData = async () => {
+    console.log('🔄 Business Overview loadData() called - refreshing all data');
     setLoading(true);
     try {
       const [metricsData, ordersData, inventoryData, chartDataResult] = await Promise.all([
@@ -103,6 +104,8 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
         fetchChartData(timePeriod, customRange)
       ]);
 
+      console.log('🔍 BUSINESS OVERVIEW METRICS RECEIVED:', metricsData);
+      console.log('Expenses value:', metricsData?.expenses, 'Type:', typeof metricsData?.expenses, 'Is NaN:', isNaN(metricsData?.expenses || 0));
       setMetrics(metricsData);
       setOrderSummary(ordersData);
       setInventorySummary(inventoryData);
@@ -121,7 +124,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
   // Listen for order updates and refresh data
   useEffect(() => {
     const handleOrdersUpdated = () => {
-      console.log(' Orders updated - refreshing Overview data');
+      console.log('🔄 Business Overview received ordersUpdated event - refreshing data');
       loadData();
     };
 
@@ -131,12 +134,29 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
 
   // Format currency
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-PH', {
+    console.log('💰 formatCurrency called with:', amount, 'Type:', typeof amount, 'Is NaN:', isNaN(amount));
+    
+    // Handle NaN and invalid values
+    if (isNaN(amount) || amount === null || amount === undefined) {
+      console.log('🚨 formatCurrency received invalid amount:', amount, 'Type:', typeof amount);
+      const result = new Intl.NumberFormat('en-PH', {
+        style: 'currency',
+        currency: 'PHP',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+      }).format(0);
+      console.log('💰 formatCurrency returning (fallback):', result);
+      return result;
+    }
+    
+    const result = new Intl.NumberFormat('en-PH', {
       style: 'currency',
       currency: 'PHP',
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     }).format(amount);
+    console.log('💰 formatCurrency returning (normal):', result);
+    return result;
   };
 
   // Format percentage
@@ -472,7 +492,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 fontFamily: 'Inter, sans-serif'
               }}>
                 <ArrowUpRight style={{ width: '16px', height: '16px' }} />
-                <span>{Math.abs(metrics?.expensesTrend || 0)}%</span>
+                <span>{Math.abs(metrics?.expensesTrend || 0).toFixed(1)}%</span>
               </div>
             ) : (
               <div style={{
@@ -488,7 +508,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 fontFamily: 'Inter, sans-serif'
               }}>
                 <ArrowDownRight style={{ width: '16px', height: '16px' }} />
-                <span>{Math.abs(metrics?.expensesTrend || 0)}%</span>
+                <span>{Math.abs(metrics?.expensesTrend || 0).toFixed(1)}%</span>
               </div>
             )}
           </div>
@@ -500,7 +520,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
             margin: '0 0 8px 0',
             fontFamily: 'Plus Jakarta Sans, Inter, monospace'
           }}>
-            {formatCurrency(metrics?.expenses || 0)}
+            ₱{metrics?.expenses?.toLocaleString('en-PH') || 0}
           </p>
           <p style={{ 
             fontSize: '13px', 
@@ -599,7 +619,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
             margin: '0 0 8px 0',
             fontFamily: 'Plus Jakarta Sans, Inter, monospace'
           }}>
-            {formatCurrency((metrics?.revenue || 0) - (metrics?.expenses || 0))}
+            {formatCurrency(((metrics?.revenue || 0) - (isNaN(metrics?.expenses || 0) ? 0 : (metrics?.expenses || 0))) as number)}
           </p>
           <p style={{ 
             fontSize: '13px', 

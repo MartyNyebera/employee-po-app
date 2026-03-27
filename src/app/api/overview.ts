@@ -129,15 +129,44 @@ export function getDateRange(period: TimePeriod, customRange?: DateRange): DateR
 export async function fetchOverviewMetrics(period: TimePeriod, customRange?: DateRange): Promise<OverviewMetrics> {
   const range = getDateRange(period, customRange);
   
+  console.log('🔍 OVERVIEW METRICS DEBUG:');
+  console.log('Date range:', range.startDate, 'to', range.endDate);
+  
   try {
     // Fetch orders with RECEIVED status as expenses
     const purchaseOrders = await fetchApi(`/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}&status=RECEIVED`);
-    const expenses = Array.isArray(purchaseOrders) ? purchaseOrders.reduce((sum: number, po: any) => sum + (po.amount || 0), 0) : 0;
+    const poExpenses = Array.isArray(purchaseOrders) ? purchaseOrders.reduce((sum: number, po: any) => sum + (po.amount || 0), 0) : 0;
+
+    // Fetch miscellaneous expenses
+    const miscellaneousData = await fetchApi(`/miscellaneous-expenses?startDate=${range.startDate}&endDate=${range.endDate}`);
+    const miscExpenses = Array.isArray(miscellaneousData) ? miscellaneousData.reduce((sum: number, misc: any) => sum + parseFloat(misc.amount || 0), 0) : 0;
+
+    // Total expenses = Purchase Orders + Miscellaneous
+    // Ensure we have valid numbers to prevent NaN
+    const validPOExpenses = isNaN(poExpenses) ? 0 : poExpenses;
+    const validMiscExpenses = isNaN(miscExpenses) ? 0 : miscExpenses;
+    const expenses = validPOExpenses + validMiscExpenses;
+
+    console.log('Purchase Orders expenses:', poExpenses, '-> valid:', validPOExpenses);
+    console.log('Miscellaneous expenses:', miscExpenses, '-> valid:', validMiscExpenses);
+    console.log('Total expenses:', expenses);
+    
+    // Debug individual miscellaneous expenses
+    if (miscellaneousData && Array.isArray(miscellaneousData)) {
+      console.log('Individual misc expenses:', miscellaneousData.map(misc => ({
+        amount: misc.amount,
+        parsed: parseFloat(misc.amount || 0),
+        isNaN: isNaN(parseFloat(misc.amount || 0))
+      })));
+    }
 
     // Fetch sales orders for revenue (all sales orders are revenue-generating)
     const salesOrdersData = await fetchApi(`/sales-orders?startDate=${range.startDate}&endDate=${range.endDate}`);
     const salesOrders = Array.isArray(salesOrdersData) ? salesOrdersData.filter((so: any) => isOrderPaid(so)) : [];
     const revenue = salesOrders.reduce((sum: number, so: any) => sum + (so.amount || 0), 0);
+    
+    console.log('Revenue:', revenue);
+    console.log('Net profit:', revenue - expenses);
 
     // Calculate previous period for trend
     const previousRange = getPreviousPeriodRange(period, customRange);
@@ -146,7 +175,12 @@ export async function fetchOverviewMetrics(period: TimePeriod, customRange?: Dat
 
     try {
       const prevPurchaseOrders = await fetchApi(`/purchase-orders?startDate=${previousRange.startDate}&endDate=${previousRange.endDate}&status=RECEIVED`);
-      previousExpenses = Array.isArray(prevPurchaseOrders) ? prevPurchaseOrders.reduce((sum: number, po: any) => sum + (po.amount || 0), 0) : 0;
+      const prevPOExpenses = Array.isArray(prevPurchaseOrders) ? prevPurchaseOrders.reduce((sum: number, po: any) => sum + (po.amount || 0), 0) : 0;
+
+      const prevMiscData = await fetchApi(`/miscellaneous-expenses?startDate=${previousRange.startDate}&endDate=${previousRange.endDate}`);
+      const prevMiscExpenses = Array.isArray(prevMiscData) ? prevMiscData.reduce((sum: number, misc: any) => sum + parseFloat(misc.amount || 0), 0) : 0;
+
+      previousExpenses = prevPOExpenses + prevMiscExpenses;
 
       const prevSalesOrdersData = await fetchApi(`/sales-orders?startDate=${previousRange.startDate}&endDate=${previousRange.endDate}`);
       const prevSalesOrders = Array.isArray(prevSalesOrdersData) ? prevSalesOrdersData.filter((so: any) => isOrderPaid(so)) : [];
@@ -353,13 +387,16 @@ export async function fetchChartData(period: TimePeriod, customRange?: DateRange
   const data: ChartDataPoint[] = [];
 
   try {
-    // Fetch sales orders for revenue and purchase orders for expenses
-    const [salesOrdersData, purchaseOrdersData] = await Promise.all([
+    // Fetch sales orders for revenue, purchase orders for expenses, and miscellaneous expenses
+    console.log('🔍 FETCHING DATA WITH DATE RANGE:', range.startDate, 'to', range.endDate);
+    const [salesOrdersData, purchaseOrdersData, miscellaneousData] = await Promise.all([
       fetchApi(`/sales-orders?startDate=${range.startDate}&endDate=${range.endDate}`),
-      fetchApi(`/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}`)
+      fetchApi(`/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}`),
+      fetchApi(`/miscellaneous-expenses?startDate=${range.startDate}&endDate=${range.endDate}`)
     ]);
     const salesOrders = Array.isArray(salesOrdersData) ? salesOrdersData : [];
     const purchaseOrders = Array.isArray(purchaseOrdersData) ? purchaseOrdersData : [];
+    const miscellaneousExpenses = Array.isArray(miscellaneousData) ? miscellaneousData : [];
     // DEBUG: Log API responses
     console.log('🔍 CHART API DEBUG:');
     console.log('Date range:', range.startDate, 'to', range.endDate);
@@ -382,12 +419,27 @@ export async function fetchChartData(period: TimePeriod, customRange?: DateRange
     })), null, 2));
     console.log('PAID Sales Orders:', salesOrders.filter((so: any) => isOrderPaid(so)).length);
     console.log('RECEIVED Purchase Orders:', purchaseOrders.filter((po: any) => isOrderReceived(po)).length);
+    console.log('Miscellaneous Expenses:', miscellaneousExpenses.length);
+    console.log('🔍 MISCELLANEOUS EXPENSES DATA:', JSON.stringify(miscellaneousExpenses.map((misc: any) => ({
+      id: misc.id,
+      description: misc.description,
+      amount: misc.amount,
+      expenseDate: misc.expenseDate,
+      category: misc.category
+    })), null, 2));
     
     const paidSOs = salesOrders.filter((so: any) => isOrderPaid(so));
     const receivedPOs = purchaseOrders.filter((po: any) => isOrderReceived(po) && po.orderType !== 'sales');
     
+    // Calculate total expenses (Purchase Orders + Miscellaneous)
+    const poExpenses = receivedPOs.reduce((sum: number, po: any) => sum + (po.amount || 0), 0);
+    const miscExpenses = miscellaneousExpenses.reduce((sum: number, misc: any) => sum + parseFloat(misc.amount || 0), 0);
+    const totalExpenses = poExpenses + miscExpenses;
+    
     console.log('PAID SOs total:', paidSOs.reduce((sum: number, so: any) => sum + (so.amount || 0), 0));
-    console.log('RECEIVED POs total:', receivedPOs.reduce((sum: number, po: any) => sum + (po.amount || 0), 0));
+    console.log('RECEIVED POs total:', poExpenses);
+    console.log('Miscellaneous Expenses total:', miscExpenses);
+    console.log('TOTAL EXPENSES:', totalExpenses);
     
     // DEBUG: Log all Purchase Orders with their status
     console.log('🔍 ALL PURCHASE ORDERS STATUS:');
@@ -436,13 +488,36 @@ export async function fetchChartData(period: TimePeriod, customRange?: DateRange
           })
           .reduce((sum: number, so: any) => sum + (so.amount || 0), 0);
 
-        // Expenses: RECEIVED Purchase Orders only
-        const dayExpenses = purchaseOrders
+        // Expenses: RECEIVED Purchase Orders + Miscellaneous Expenses
+        const dayPOExpenses = purchaseOrders
           .filter((po: any) => {
             const poDate = po.createdDate ? po.createdDate.split('T')[0] : '';
-            return poDate === dateString && isOrderReceived(po);
+            return poDate === dateString && isOrderReceived(po) && po.orderType !== 'sales';
           })
           .reduce((sum: number, po: any) => sum + (po.amount || 0), 0);
+        
+        const dayMiscExpenses = miscellaneousExpenses
+          .filter((misc: any) => {
+            // Use expenseDate if available, otherwise use created_at or today's date
+            const miscDate = misc.expenseDate ? misc.expenseDate.split('T')[0] : 
+                            (misc.created_at ? misc.created_at.split('T')[0] : new Date().toISOString().split('T')[0]);
+            return miscDate === dateString;
+          })
+          .reduce((sum: number, misc: any) => sum + parseFloat(misc.amount || 0), 0);
+        
+        // DEBUG: Log miscellaneous expenses for first few days
+        if (i < 5) {
+          console.log(`🔍 MISC EXPENSES DEBUG - Day ${i}:`);
+          console.log(`Date: ${dateString}`);
+          console.log(`Misc expenses on this date:`, miscellaneousExpenses.filter((misc: any) => {
+            const miscDate = misc.expenseDate ? misc.expenseDate.split('T')[0] : 
+                            (misc.created_at ? misc.created_at.split('T')[0] : new Date().toISOString().split('T')[0]);
+            return miscDate === dateString;
+          }));
+          console.log(`Day Misc Expenses: ${dayMiscExpenses}`);
+        }
+        
+        const dayExpenses = dayPOExpenses + dayMiscExpenses;
 
         // DEBUG: Log date filtering for first few days
         if (i < 5) {

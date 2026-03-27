@@ -37,6 +37,12 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
   };
 
   return (
+    <>
+      <style>{`.kimoel-title { color: white !important; }
+      .text-slate-50 { color: white !important; }
+      .text-slate-300 { color: white !important; }
+      .text-slate-500 { color: white !important; }
+    `}</style>
     <div className="min-h-screen flex">
       {/* Left panel - brand */}
       <div className="hidden lg:flex lg:w-[420px] xl:w-[480px] bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex-col justify-between p-10 text-white relative overflow-hidden">
@@ -53,9 +59,9 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
             <img
               src="/kimoel-logo.png"
               alt="Kimoel Innovation"
-              className="h-24 w-auto object-contain mb-6 drop-shadow-lg"
+              className="h-32 w-auto object-contain mb-6 drop-shadow-lg"
             />
-            <span className="font-bold text-3xl tracking-tight text-center bg-gradient-to-r from-white to-amber-100 bg-clip-text text-transparent">Kimoel Tracking System</span>
+            <span className="font-bold text-3xl tracking-tight text-center kimoel-title">Kimoel Tracking System</span>
           </div>
           <h1 className="text-4xl xl:text-5xl font-bold tracking-tight text-slate-50 leading-tight text-center mb-6 max-w-lg">
             Fleet tracking & purchase orders in one place
@@ -71,20 +77,9 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
       <div className="flex-1 flex items-center justify-center p-6 bg-gradient-to-br from-slate-50 to-slate-100">
         <Card className="w-full max-w-md border-0 shadow-2xl shadow-slate-300/20 bg-white/95 backdrop-blur-sm rounded-2xl border border-slate-200/50">
           <CardHeader className="space-y-1 pb-8">
-            <div className="lg:hidden flex flex-col items-center mb-6">
-              <img
-                src="/kimoel-logo.png"
-                alt="Kimoel Innovation"
-                className="h-16 w-auto object-contain mb-3 drop-shadow-lg"
-              />
-              <span className="font-bold text-xl text-slate-900 text-center bg-gradient-to-r from-slate-900 to-amber-600 bg-clip-text text-transparent">Kimoel Tracking System</span>
-            </div>
             <CardTitle className="text-2xl font-bold text-slate-900 tracking-tight">
               Sign in
             </CardTitle>
-            <CardDescription className="text-slate-600 text-base">
-              Enter your credentials to access the dashboard.
-            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
             <form onSubmit={handleLoginSubmit} className="space-y-4">
@@ -184,5 +179,6 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
         </Card>
       </div>
     </div>
+    </>
   );
 }

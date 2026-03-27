@@ -2879,6 +2879,155 @@ app.post('/api/sales-orders', requireAdmin, async (req, res) => {
   }
 });
 
+// GET /api/miscellaneous-expenses (admin only)
+app.get('/api/miscellaneous-expenses', requireAdmin, async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    let whereClause = '';
+    const params = [];
+    
+    if (startDate || endDate) {
+      whereClause = 'WHERE 1=1';
+      if (startDate) {
+        whereClause += ` AND expense_date >= $${params.length + 1}`;
+        params.push(startDate);
+      }
+      if (endDate) {
+        whereClause += ` AND expense_date <= $${params.length + 1}`;
+        params.push(endDate);
+      }
+    }
+    
+    const result = await query(
+      `SELECT id, description, amount, category, expense_date, created_by, created_at, updated_at
+       FROM miscellaneous_expenses 
+       ${whereClause}
+       ORDER BY created_at DESC`,
+      params
+    );
+    
+    // Ensure expense_date is properly formatted and returned
+    const expenses = result.rows.map(row => ({
+      ...row,
+      expenseDate: row.expense_date || new Date().toISOString().split('T')[0] // Fallback to today if missing
+    }));
+    
+    res.json(expenses);
+  } catch (err) {
+    console.error('Error fetching miscellaneous expenses:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/miscellaneous-expenses (admin only)
+app.post('/api/miscellaneous-expenses', requireAdmin, async (req, res) => {
+  try {
+    const { description, amount, category, expense_date, created_by } = req.body;
+    
+    const id = `MISC-${Date.now()}`;
+    
+    await query(
+      `INSERT INTO miscellaneous_expenses (id, description, amount, category, expense_date, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id, description, amount, category, expense_date, created_by]
+    );
+    
+    const result = await query(
+      `SELECT id, description, amount, category, expense_date, created_by, created_at, updated_at
+       FROM miscellaneous_expenses WHERE id = $1`,
+      [id]
+    );
+    
+    const row = result.rows[0];
+    res.status(201).json({
+      id: row.id,
+      description: row.description,
+      amount: parseFloat(row.amount),
+      category: row.category,
+      expenseDate: row.expense_date,
+      createdBy: row.created_by,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    });
+  } catch (err) {
+    console.error('Error creating miscellaneous expense:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/miscellaneous-expenses/:id (admin only)
+app.patch('/api/miscellaneous-expenses/:id', requireAdmin, async (req, res) => {
+  try {
+    const { description, amount, category, expense_date } = req.body;
+    const updates = [];
+    const values = [];
+    let i = 1;
+    
+    if (description !== undefined) {
+      updates.push(`description = $${i++}`);
+      values.push(description);
+    }
+    if (amount !== undefined) {
+      updates.push(`amount = $${i++}`);
+      values.push(amount);
+    }
+    if (category !== undefined) {
+      updates.push(`category = $${i++}`);
+      values.push(category);
+    }
+    if (expense_date !== undefined) {
+      updates.push(`expense_date = $${i++}`);
+      values.push(expense_date);
+    }
+    
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+    
+    updates.push('updated_at = NOW()');
+    values.push(req.params.id);
+    
+    await query(
+      `UPDATE miscellaneous_expenses SET ${updates.join(', ')} WHERE id = $${i}`,
+      values
+    );
+    
+    const result = await query(
+      `SELECT id, description, amount, category, expense_date, created_by, created_at, updated_at
+       FROM miscellaneous_expenses WHERE id = $1`,
+      [req.params.id]
+    );
+    
+    const row = result.rows[0];
+    if (!row) return res.status(404).json({ error: 'Miscellaneous expense not found' });
+    
+    res.json({
+      id: row.id,
+      description: row.description,
+      amount: parseFloat(row.amount),
+      category: row.category,
+      expenseDate: row.expense_date,
+      createdBy: row.created_by,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    });
+  } catch (err) {
+    console.error('Error updating miscellaneous expense:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/miscellaneous-expenses/:id (admin only)
+app.delete('/api/miscellaneous-expenses/:id', requireAdmin, async (req, res) => {
+  try {
+    await query('DELETE FROM miscellaneous_expenses WHERE id = $1', [req.params.id]);
+    res.status(204).send();
+  } catch (err) {
+    console.error('Error deleting miscellaneous expense:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // PATCH /api/sales-orders/:id (admin only)
 app.patch('/api/sales-orders/:id', requireAdmin, async (req, res) => {
   try {

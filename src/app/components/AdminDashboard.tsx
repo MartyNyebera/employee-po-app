@@ -21,6 +21,7 @@ import { PurchaseOrderList } from './PurchaseOrderList-Professional-Fixed';
 import { InventoryList } from './InventoryList-Professional';
 import { DriversList } from './DriversList-Professional';
 import { DeliveriesList } from './DeliveriesList-Professional';
+import { MiscellaneousManagement } from './MiscellaneousManagement-Simple';
 import { 
   fetchAdminRequests, 
   approveAdminRequest, 
@@ -218,7 +219,7 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
     }
 
     if (currentView === 'miscellaneous') {
-      return <div className="p-6"><h2 className="text-2xl font-bold text-black">Miscellaneous</h2><p className="text-black">Miscellaneous features coming soon...</p></div>;
+      return <MiscellaneousManagement />;
     }
 
     if (currentView === 'request-form') {

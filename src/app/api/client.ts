@@ -50,7 +50,14 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || `HTTP ${res.status}`);
   }
-  return res.json();
+  
+  // Handle empty responses (like DELETE operations)
+  const text = await res.text();
+  if (!text) {
+    return {} as T;
+  }
+  
+  return JSON.parse(text);
 }
 
 export async function login(email: string, password: string): Promise<{ user: AuthUser; token: string }> {
@@ -320,6 +327,31 @@ export async function updateSalesOrder(id: string, data: any): Promise<any> {
   return fetchApi(`/sales-orders/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(data),
+  });
+}
+
+// Miscellaneous Expenses API
+export async function fetchMiscellaneousExpenses(): Promise<any[]> {
+  return fetchApi('/miscellaneous-expenses');
+}
+
+export async function createMiscellaneousExpense(data: any): Promise<any> {
+  return fetchApi('/miscellaneous-expenses', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateMiscellaneousExpense(id: string, data: any): Promise<any> {
+  return fetchApi(`/miscellaneous-expenses/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteMiscellaneousExpense(id: string): Promise<void> {
+  return fetchApi(`/miscellaneous-expenses/${id}`, {
+    method: 'DELETE',
   });
 }
 

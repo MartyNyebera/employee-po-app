@@ -189,7 +189,7 @@ export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
       const soData = {
         soNumber: form.soNumber,
         client: form.customerName,
-        description: `${form.customerAddress}\n\nContact: ${form.customerContact}\n\nPrepared By: ${form.preparedBy}\n\nReviewed By: ${form.reviewedBy}\n\nLine Items: ${JSON.stringify(lineItems)}`,
+        description: `Address: ${form.customerAddress}\n\nContact: ${form.customerContact}\n\nPrepared By: ${form.preparedBy}\n\nReviewed By: ${form.reviewedBy}\n\nLine Items: ${JSON.stringify(lineItems)}`,
         amount: calculateTotal(),
         deliveryDate: form.deliveryDate,
         assignedAssets: [],
