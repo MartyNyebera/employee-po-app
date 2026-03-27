@@ -40,11 +40,27 @@ import mobileGPSRouter from './mobile-gps.js';
 import { seedFleet } from './seed-fleet.js';
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Add CSP headers to allow frontend connections
+app.use((req, res, next) => {
+  res.setHeader('Content-Security-Policy', 
+    "default-src 'self'; " +
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
+    "style-src 'self' 'unsafe-inline'; " +
+    "img-src 'self' data: blob:; " +
+    "connect-src 'self' ws: wss: http://localhost:3000 https://localhost:3000; " +
+    "font-src 'self'; " +
+    "object-src 'none'; " +
+    "media-src 'self'; " +
+    "frame-src 'none';"
+  );
+  next();
+});
 
 // Smart cache middleware
 app.use((req, res, next) => {
@@ -83,9 +99,36 @@ app.use((req, res, next) => {
   next();
 });
 
+// Performance timing middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  
+  // Log when response finishes
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    console.log(`🚀 ${req.method} ${req.path} - ${res.statusCode} - ${duration}ms`);
+    
+    // Warn about slow responses
+    if (duration > 1000) {
+      console.warn(`⚠️  SLOW RESPONSE: ${req.method} ${req.path} took ${duration}ms`);
+    }
+  });
+  
+  next();
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.status(200).send('ok');
+});
+
+// Test endpoint for frontend connectivity
+app.get('/api/test', (req, res) => {
+  res.json({ 
+    message: 'API is working!', 
+    timestamp: new Date().toISOString(),
+    port: PORT 
+  });
 });
 
 // Environment health check
@@ -2559,11 +2602,31 @@ app.delete('/api/purchase-orders', requireAdmin, async (req, res) => {
 
 // DELETE /api/purchase-orders/:id (admin only)
 app.delete('/api/purchase-orders/:id', requireAdmin, async (req, res) => {
+  const start = Date.now();
   try {
-    await query('DELETE FROM purchase_orders WHERE id = $1', [req.params.id]);
-    res.json({ message: 'Purchase order deleted' });
+    console.log(`🗑️  Deleting purchase order ${req.params.id}`);
+    
+    const result = await query('DELETE FROM purchase_orders WHERE id = $1', [req.params.id]);
+    
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Purchase order not found' });
+    }
+    
+    const duration = Date.now() - start;
+    console.log(`✅ Purchase order deleted in ${duration}ms`);
+    
+    res.json({ 
+      message: 'Purchase order deleted',
+      id: req.params.id,
+      duration: `${duration}ms`
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    const duration = Date.now() - start;
+    console.error(`❌ Failed to delete purchase order after ${duration}ms:`, err.message);
+    res.status(500).json({ 
+      error: err.message,
+      duration: `${duration}ms`
+    });
   }
 });
 
@@ -2875,12 +2938,31 @@ app.patch('/api/sales-orders/:id', requireAdmin, async (req, res) => {
 
 // DELETE /api/sales-orders/:id (admin only)
 app.delete('/api/sales-orders/:id', requireAdmin, async (req, res) => {
+  const start = Date.now();
   try {
-    await query('DELETE FROM sales_orders WHERE id = $1', [req.params.id]);
-    res.json({ message: 'Sales order deleted' });
+    console.log(`🗑️  Deleting sales order ${req.params.id}`);
+    
+    const result = await query('DELETE FROM sales_orders WHERE id = $1', [req.params.id]);
+    
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Sales order not found' });
+    }
+    
+    const duration = Date.now() - start;
+    console.log(`✅ Sales order deleted in ${duration}ms`);
+    
+    res.json({ 
+      message: 'Sales order deleted',
+      id: req.params.id,
+      duration: `${duration}ms`
+    });
   } catch (err) {
-    console.error('Sales order deletion error:', err);
-    res.status(500).json({ error: err.message });
+    const duration = Date.now() - start;
+    console.error(`❌ Failed to delete sales order after ${duration}ms:`, err.message);
+    res.status(500).json({ 
+      error: err.message,
+      duration: `${duration}ms`
+    });
   }
 });
 
@@ -3721,25 +3803,7 @@ app.get('/api/admin/employees', requireAdmin, async (req, res) => {
 app.put('/api/admin/employees/:id/review', requireAdmin, async (req, res) => {
   try {
     const { status, reviewed_by } = req.body;
-<<<<<<< HEAD
-    
-    // First, ensure approved_by column can store text
-    try {
-      await query('ALTER TABLE employee_accounts ALTER COLUMN approved_by TYPE TEXT');
-    } catch (err) {
-      // Column might already be TEXT or doesn't exist, continue
-    }
-    
-    const result = await query(
-      `UPDATE employee_accounts
-       SET status=$1, approved_by=$2,
-           approved_at=NOW()
-       WHERE id=$3 RETURNING *`,
-      [status, reviewed_by, req.params.id]
-    );
-    res.json(result.rows[0]);
-=======
-    console.log(`🔍 Employee review request: ID=${req.params.id}, status=${status}, reviewed_by=${reviewed_by}`);
+console.log(`🔍 Employee review request: ID=${req.params.id}, status=${status}, reviewed_by=${reviewed_by}`);
     
     // Mock response if database not available
     if (!process.env.DATABASE_URL) {
@@ -3806,8 +3870,6 @@ app.put('/api/admin/employees/:id/review', requireAdmin, async (req, res) => {
       console.log(`✅ Employee review completed: ${result.rows[0].full_name} -> ${status} by ID ${reviewerId}`);
       res.json(result.rows[0]);
     }
-    
->>>>>>> a835e9e11e6d3fa778414ba04afb5a92895f710a
   } catch (err) {
     console.error('❌ Employee review error:', err);
     res.status(500).json({ error: err.message });

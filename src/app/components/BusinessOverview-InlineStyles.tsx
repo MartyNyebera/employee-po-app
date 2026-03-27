@@ -238,11 +238,13 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 border: '1px solid #d1d5db',
                 borderRadius: '8px',
                 fontSize: '14px',
-                fontFamily: 'Inter, sans-serif'
+                fontFamily: 'Inter, sans-serif',
+                color: '#000000',
+                backgroundColor: '#ffffff'
               }}
             >
               {timePeriodOptions.map(option => (
-                <option key={option.value} value={option.value}>
+                <option key={option.value} value={option.value} style={{ color: '#000000', backgroundColor: '#ffffff' }}>
                   {option.label}
                 </option>
               ))}
@@ -724,134 +726,6 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
           Expenses vs Revenue Trend
         </h2>
         <ProperLineChart data={chartData} />
-      </div>
-
-      {/* ACTION BUTTONS */}
-      <div style={{
-        background: '#f9fafb',
-        border: '1px solid #e5e7eb',
-        borderRadius: '16px',
-        padding: '24px',
-        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)'
-      }}>
-        <div style={{ 
-          display: 'grid', 
-          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
-          gap: '16px',
-          marginBottom: '16px'
-        }}>
-          <button style={{
-            backgroundColor: '#10b981',
-            color: 'white',
-            padding: '12px 16px',
-            borderRadius: '8px',
-            border: 'none',
-            fontSize: '14px',
-            fontWeight: '500',
-            fontFamily: 'Inter, sans-serif',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '8px'
-          }}
-          onClick={handleNewSalesOrder}>
-            <Plus style={{ width: '16px', height: '16px' }} />
-            New Sales Order
-          </button>
-          <button style={{
-            backgroundColor: '#f97316',
-            color: 'white',
-            padding: '12px 16px',
-            borderRadius: '8px',
-            border: 'none',
-            fontSize: '14px',
-            fontWeight: '500',
-            fontFamily: 'Inter, sans-serif',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '8px'
-          }}
-          onClick={handleNewPurchaseOrder}>
-            <Plus style={{ width: '16px', height: '16px' }} />
-            New Purchase Order
-          </button>
-          <button style={{
-            backgroundColor: '#7c3aed',
-            color: 'white',
-            padding: '12px 16px',
-            borderRadius: '8px',
-            border: 'none',
-            fontSize: '14px',
-            fontWeight: '500',
-            fontFamily: 'Inter, sans-serif',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '8px'
-          }}
-          onClick={handleAddInventory}>
-            <Plus style={{ width: '16px', height: '16px' }} />
-            Add Inventory
-          </button>
-        </div>
-        
-        <div style={{ 
-          display: 'grid', 
-          gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', 
-          gap: '16px',
-          marginBottom: '16px'
-        }}>
-          <button style={{
-            backgroundColor: '#f3f4f6',
-            color: '#374151',
-            padding: '12px 16px',
-            borderRadius: '8px',
-            border: '1px solid #e5e7eb',
-            fontSize: '14px',
-            fontWeight: '500',
-            fontFamily: 'Inter, sans-serif',
-            cursor: 'pointer'
-          }}
-          onClick={handleViewAllOrders}>
-            View All Orders
-          </button>
-          <button style={{
-            backgroundColor: '#f3f4f6',
-            color: '#374151',
-            padding: '12px 16px',
-            borderRadius: '8px',
-            border: '1px solid #e5e7eb',
-            fontSize: '14px',
-            fontWeight: '500',
-            fontFamily: 'Inter, sans-serif',
-            cursor: 'pointer'
-          }}
-          onClick={handleViewAnalytics}>
-            View Analytics
-          </button>
-        </div>
-        
-        <div>
-          <button style={{
-            backgroundColor: '#f3f4f6',
-            color: '#374151',
-            padding: '12px 16px',
-            borderRadius: '8px',
-            border: '1px solid #e5e7eb',
-            fontSize: '14px',
-            fontWeight: '500',
-            fontFamily: 'Inter, sans-serif',
-            cursor: 'pointer',
-            width: '100%'
-          }}
-          onClick={handleDownloadReport}>
-            Download Report
-          </button>
-        </div>
       </div>
 
     </div>

@@ -9,15 +9,15 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
-    port: 3004,
+    port: 3001,
     proxy: {
       '/api': {
-        target: 'http://localhost:3001',
+        target: 'http://localhost:3000',
         changeOrigin: true,
       },
     },
     hmr: {
-      port: 3000,
+      port: 3001,
     },
   },
   build: {

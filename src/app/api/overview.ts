@@ -2,6 +2,11 @@
 
 import { fetchApi } from './client';
 
+// Helper function to check if order is PAID (case-insensitive)
+const isOrderPaid = (order: any): boolean => {
+  return order.status?.toString().trim().toUpperCase() === 'PAID';
+};
+
 export interface OverviewMetrics {
   expenses: number;
   revenue: number;
@@ -123,9 +128,10 @@ export async function fetchOverviewMetrics(period: TimePeriod, customRange?: Dat
     const purchaseOrders = await fetchApi(`/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}&status=RECEIVED`);
     const expenses = Array.isArray(purchaseOrders) ? purchaseOrders.reduce((sum: number, po: any) => sum + (po.amount || 0), 0) : 0;
 
-    // Fetch orders with PAID status as revenue (same purchase_orders table)
-    const salesOrders = await fetchApi(`/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}&status=PAID`);
-    const revenue = Array.isArray(salesOrders) ? salesOrders.reduce((sum: number, so: any) => sum + (so.amount || 0), 0) : 0;
+    // Fetch sales orders for revenue
+    const salesOrdersData = await fetchApi(`/sales-orders?startDate=${range.startDate}&endDate=${range.endDate}`);
+    const salesOrders = Array.isArray(salesOrdersData) ? salesOrdersData.filter((so: any) => isOrderPaid(so)) : [];
+    const revenue = salesOrders.reduce((sum: number, so: any) => sum + (so.amount || 0), 0);
 
     // Calculate previous period for trend
     const previousRange = getPreviousPeriodRange(period, customRange);
@@ -136,8 +142,9 @@ export async function fetchOverviewMetrics(period: TimePeriod, customRange?: Dat
       const prevPurchaseOrders = await fetchApi(`/purchase-orders?startDate=${previousRange.startDate}&endDate=${previousRange.endDate}&status=RECEIVED`);
       previousExpenses = Array.isArray(prevPurchaseOrders) ? prevPurchaseOrders.reduce((sum: number, po: any) => sum + (po.amount || 0), 0) : 0;
 
-      const prevSalesOrders = await fetchApi(`/purchase-orders?startDate=${previousRange.startDate}&endDate=${previousRange.endDate}&status=PAID`);
-      previousRevenue = Array.isArray(prevSalesOrders) ? prevSalesOrders.reduce((sum: number, so: any) => sum + (so.amount || 0), 0) : 0;
+      const prevSalesOrdersData = await fetchApi(`/sales-orders?startDate=${previousRange.startDate}&endDate=${previousRange.endDate}`);
+      const prevSalesOrders = Array.isArray(prevSalesOrdersData) ? prevSalesOrdersData.filter((so: any) => isOrderPaid(so)) : [];
+      previousRevenue = prevSalesOrders.reduce((sum: number, so: any) => sum + (so.amount || 0), 0);
     } catch (error) {
       console.log('Could not fetch previous period data:', error);
     }
@@ -183,9 +190,9 @@ export async function fetchOrderSummary(period: TimePeriod, customRange?: DateRa
       totalAmount: poArray.filter((po: any) => po.status === 'RECEIVED').reduce((sum: number, po: any) => sum + (po.amount || 0), 0)
     };
 
-    // Fetch Sales Orders (PAID status from purchase_orders table)
-    const salesOrders = await fetchApi(`/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}&status=PAID`);
-    const soArray = Array.isArray(salesOrders) ? salesOrders : [];
+    // Fetch all Sales Orders and filter PAID ones (from purchase_orders table)
+    const allSalesOrders = await fetchApi(`/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}`);
+    const soArray = Array.isArray(allSalesOrders) ? allSalesOrders.filter((so: any) => so.orderType === 'sales' && isOrderPaid(so)) : [];
 
     const salesOrderSummary = {
       total: soArray.length,
@@ -340,19 +347,37 @@ export async function fetchChartData(period: TimePeriod, customRange?: DateRange
   const data: ChartDataPoint[] = [];
 
   try {
-    // Fetch all orders from purchase_orders table (covers both PAID revenue and RECEIVED expenses)
-    const allOrders = await fetchApi(`/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}`);
-    const poArray = Array.isArray(allOrders) ? allOrders : [];
-    const soArray = poArray; // same table: PAID = revenue, RECEIVED = expenses
-
+    // Fetch sales orders for revenue and purchase orders for expenses
+    const [salesOrdersData, purchaseOrdersData] = await Promise.all([
+      fetchApi(`/sales-orders?startDate=${range.startDate}&endDate=${range.endDate}`),
+      fetchApi(`/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}`)
+    ]);
+    const salesOrders = Array.isArray(salesOrdersData) ? salesOrdersData : [];
+    const purchaseOrders = Array.isArray(purchaseOrdersData) ? purchaseOrdersData : [];
     // DEBUG: Log API responses
     console.log('🔍 CHART API DEBUG:');
-    console.log('All orders count:', poArray.length);
-    console.log('PAID Sales Orders:', soArray.filter((so: any) => so.orderType === 'sales' && so.status === 'PAID').length);
-    console.log('RECEIVED Purchase Orders:', poArray.filter((po: any) => po.orderType !== 'sales' && po.status === 'RECEIVED').length);
+    console.log('Sales orders count:', salesOrders.length);
+    console.log('Purchase orders count:', purchaseOrders.length);
+    console.log('🔍 SALES ORDERS DATA:', JSON.stringify(salesOrders.map((order: any) => ({
+      id: order.id,
+      soNumber: order.soNumber,
+      status: order.status,
+      amount: order.amount,
+      isPaid: isOrderPaid(order)
+    })), null, 2));
+    console.log('🔍 PURCHASE ORDERS DATA:', JSON.stringify(purchaseOrders.map((order: any) => ({
+      id: order.id,
+      poNumber: order.poNumber,
+      orderType: order.orderType,
+      status: order.status,
+      amount: order.amount,
+      isReceived: order.status === 'RECEIVED'
+    })), null, 2));
+    console.log('PAID Sales Orders:', salesOrders.filter((so: any) => isOrderPaid(so)).length);
+    console.log('RECEIVED Purchase Orders:', purchaseOrders.filter((po: any) => po.status === 'RECEIVED').length);
     
-    const paidSOs = soArray.filter((so: any) => so.orderType === 'sales' && so.status === 'PAID');
-    const receivedPOs = poArray.filter((po: any) => po.orderType !== 'sales' && po.status === 'RECEIVED');
+    const paidSOs = salesOrders.filter((so: any) => isOrderPaid(so));
+    const receivedPOs = purchaseOrders.filter((po: any) => po.status === 'RECEIVED');
     
     console.log('PAID SOs total:', paidSOs.reduce((sum: number, so: any) => sum + (so.amount || 0), 0));
     console.log('RECEIVED POs total:', receivedPOs.reduce((sum: number, po: any) => sum + (po.amount || 0), 0));
@@ -383,18 +408,18 @@ export async function fetchChartData(period: TimePeriod, customRange?: DateRange
 
         // Calculate revenue and expenses for this specific day
         // Revenue: PAID Sales Orders only
-        const dayRevenue = soArray
+        const dayRevenue = salesOrders
           .filter((so: any) => {
             const soDate = so.createdDate ? so.createdDate.split('T')[0] : '';
-            return soDate === dateString && so.orderType === 'sales' && so.status === 'PAID';
+            return soDate === dateString && isOrderPaid(so);
           })
           .reduce((sum: number, so: any) => sum + (so.amount || 0), 0);
 
         // Expenses: RECEIVED Purchase Orders only
-        const dayExpenses = poArray
+        const dayExpenses = purchaseOrders
           .filter((po: any) => {
             const poDate = po.createdDate ? po.createdDate.split('T')[0] : '';
-            return poDate === dateString && po.orderType !== 'sales' && po.status === 'RECEIVED';
+            return poDate === dateString && po.status === 'RECEIVED';
           })
           .reduce((sum: number, po: any) => sum + (po.amount || 0), 0);
 
@@ -402,9 +427,9 @@ export async function fetchChartData(period: TimePeriod, customRange?: DateRange
         if (i < 5) {
           console.log(`🔍 DATE FILTER DEBUG - Day ${i}:`);
           console.log(`Date: ${dateString}`);
-          console.log(`PAID SOs on this date:`, soArray.filter((so: any) => {
+          console.log(`PAID SOs on this date:`, salesOrders.filter((so: any) => {
             const soDate = so.createdDate ? so.createdDate.split('T')[0] : '';
-            return soDate === dateString && so.orderType === 'sales' && so.status === 'PAID';
+            return soDate === dateString && isOrderPaid(so);
           }));
           console.log(`Day Revenue: ${dayRevenue}`);
           console.log(`Day Expenses: ${dayExpenses}`);
@@ -424,17 +449,17 @@ export async function fetchChartData(period: TimePeriod, customRange?: DateRange
         const monthStart = new Date(2026, i, 1).toISOString().split('T')[0];
         const monthEnd = new Date(2026, i + 1, 0).toISOString().split('T')[0];
 
-        const monthRevenue = soArray
+        const monthRevenue = salesOrders
           .filter((so: any) => {
             const soDate = so.createdDate ? so.createdDate.split('T')[0] : '';
-            return soDate >= monthStart && soDate <= monthEnd && so.orderType === 'sales' && so.status === 'PAID';
+            return soDate >= monthStart && soDate <= monthEnd && isOrderPaid(so);
           })
           .reduce((sum: number, so: any) => sum + (so.amount || 0), 0);
 
-        const monthExpenses = poArray
+        const monthExpenses = purchaseOrders
           .filter((po: any) => {
             const poDate = po.createdDate ? po.createdDate.split('T')[0] : '';
-            return poDate >= monthStart && poDate <= monthEnd && po.orderType !== 'sales' && po.status === 'RECEIVED';
+            return poDate >= monthStart && poDate <= monthEnd && po.status === 'RECEIVED';
           })
           .reduce((sum: number, po: any) => sum + (po.amount || 0), 0);
 

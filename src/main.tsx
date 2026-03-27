@@ -1,8 +1,9 @@
 import React from 'react';
-import ReactDOM from 'react-dom/client';
+import { createRoot } from 'react-dom/client';
 import './styles/professional-design-complete.css';
 import "./styles/index.css";
 import App from './app/App';
+import { Toaster } from './app/components/ui/sonner';
 
 // Temporarily disable service worker to prevent CSS loading issues
 // if ('serviceWorker' in navigator) {
@@ -42,4 +43,9 @@ import App from './app/App';
 //   );
 // }
 
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <App />
+    <Toaster />
+  </React.StrictMode>
+);

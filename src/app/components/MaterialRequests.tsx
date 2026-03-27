@@ -37,15 +37,8 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
   const fetchRequests = async () => {
     try {
       setLoading(true);
-      console.log('Fetching material requests...');
       const data = await fetchApi('/material-requests');
-      console.log('Raw API response:', data);
-      console.log('Type of data:', typeof data);
-      console.log('Is array:', Array.isArray(data));
-      
-      // Ensure data is an array
       const requestsArray = Array.isArray(data) ? data : [];
-      console.log('Setting requests:', requestsArray);
       setRequests(requestsArray);
     } catch (error) {
       console.error('Error fetching material requests:', error);
@@ -75,7 +68,7 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
       const auth = getStoredAuth();
       const adminId = auth?.user?.id ? parseInt(auth.user.id) : 1; // Fallback to ID 1
       
-      await fetchApi(`/api/material-requests/${requestId}/review`, {
+      await fetchApi(`/material-requests/${requestId}/review`, {
         method: 'PUT',
         body: JSON.stringify({
           status,

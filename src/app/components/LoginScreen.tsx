@@ -99,7 +99,7 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
                     onChange={(e) => setEmail(e.target.value)}
                     onFocus={() => setFocusedField('email')}
                     onBlur={() => setFocusedField(null)}
-                    className={`border-slate-200 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 transition-all duration-200 pr-10 ${
+                    className={`border-slate-200 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 transition-all duration-200 pr-10 !text-black placeholder:!text-slate-400 bg-white ${
                       focusedField === 'email' ? 'shadow-lg shadow-amber-500/10' : ''
                     }`}
                     required
@@ -122,7 +122,7 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
                     onChange={(e) => setPassword(e.target.value)}
                     onFocus={() => setFocusedField('password')}
                     onBlur={() => setFocusedField(null)}
-                    className={`border-slate-200 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 transition-all duration-200 pr-10 ${
+                    className={`border-slate-200 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 transition-all duration-200 pr-10 !text-black placeholder:!text-slate-400 bg-white ${
                       focusedField === 'password' ? 'shadow-lg shadow-amber-500/10' : ''
                     }`}
                     required

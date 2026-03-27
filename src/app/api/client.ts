@@ -204,7 +204,8 @@ export async function updateAsset(
 }
 
 export async function fetchPurchaseOrders(): Promise<(PurchaseOrder & { orderType?: string })[]> {
-  const data = await fetchApi<{ id: string; poNumber: string; client: string; description: string; amount: number; status: string; createdDate: string; deliveryDate: string; assignedAssets: string[]; orderType?: string }[]>('/purchase-orders');
+  const timestamp = Date.now(); // Cache-busting
+  const data = await fetchApi<{ id: string; poNumber: string; client: string; description: string; amount: number; status: string; createdDate: string; deliveryDate: string; assignedAssets: string[]; orderType?: string }[]>(`/purchase-orders?_t=${timestamp}`);
   return data.map((po) => ({
     id: po.id,
     poNumber: po.poNumber,
@@ -294,6 +295,31 @@ export async function updatePurchaseOrder(id: string, updates: { status?: string
 export async function deletePurchaseOrder(id: string): Promise<void> {
   await fetchApi(`/purchase-orders/${id}`, {
     method: 'DELETE',
+  });
+}
+
+export async function deleteSalesOrder(id: string): Promise<void> {
+  await fetchApi(`/sales-orders/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function fetchSalesOrders(): Promise<any[]> {
+  const timestamp = Date.now(); // Cache-busting
+  return fetchApi(`/sales-orders?_t=${timestamp}`);
+}
+
+export async function createSalesOrder(data: any): Promise<any> {
+  return fetchApi('/sales-orders', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateSalesOrder(id: string, data: any): Promise<any> {
+  return fetchApi(`/sales-orders/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
   });
 }
 

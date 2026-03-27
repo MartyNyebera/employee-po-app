@@ -21,14 +21,6 @@ export default function App() {
   useEffect(() => {
     console.log('[App] Checking stored auth...');
     
-    // Check if this is a fresh session (PWA restart)
-    const sessionStart = sessionStorage.getItem('sessionStart');
-    if (!sessionStart) {
-      console.log('[App] Fresh session detected - clearing auth');
-      clearStoredAuth();
-      sessionStorage.setItem('sessionStart', Date.now().toString());
-    }
-    
     const auth = getStoredAuth();
     console.log('[App] Stored auth:', auth);
     

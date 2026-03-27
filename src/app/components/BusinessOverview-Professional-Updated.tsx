@@ -1,37 +1,19 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { 
-  TrendingUp, 
-  TrendingDown, 
   ShoppingCart, 
   FileText, 
   Package, 
   AlertTriangle,
   Plus,
   Download,
-  BarChart3,
   ArrowUpRight,
-  ArrowDownRight,
-  Calendar,
-  Truck,
-  DollarSign,
-  TrendingDown as TrendingDownIcon,
-  Users,
-  Activity,
-  Target
+  ArrowDownRight
 } from 'lucide-react';
 import { ProperLineChart } from './ProperLineChart';
 import { 
-  fetchOverviewMetrics, 
-  fetchOrderSummary, 
-  fetchInventorySummary, 
-  fetchChartData,
-  type TimePeriod,
-  type DateRange,
-  type OverviewMetrics,
-  type OrderSummary,
-  type InventorySummary,
-  type ChartDataPoint
-} from '../api/overview';
+  fetchSalesOrders,
+  fetchPurchaseOrders
+} from '../api/client';
 import {
   ProfessionalCard,
   ProfessionalButton,
@@ -41,57 +23,150 @@ import {
   ProfessionalProgress
 } from './ProfessionalUI';
 
+// Helper function to check if order is PAID (case-insensitive)
+const isOrderPaid = (order: any): boolean => {
+  return order.status?.toString().trim().toUpperCase() === 'PAID';
+};
+
+interface PurchaseOrderData {
+  id: string;
+  poNumber: string;
+  client: string;
+  description: string;
+  amount: number;
+  status: 'pending' | 'approved' | 'in-progress' | 'PAID' | 'completed';
+  createdDate: string;
+  deliveryDate: string;
+  assignedAssets: string[];
+  orderType?: string;
+}
+
+interface SalesOrder {
+  id: string;
+  soNumber: string;
+  client: string;
+  description: string;
+  amount: number;
+  status: 'pending' | 'approved' | 'in-progress' | 'PAID' | 'completed';
+  createdDate: string;
+  deliveryDate: string;
+  assignedAssets: string[];
+}
+
 interface BusinessOverviewProps {
   isAdmin: boolean;
 }
 
 export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
   const [loading, setLoading] = useState(true);
-  const [timePeriod, setTimePeriod] = useState<TimePeriod>('this-month');
-  const [customRange, setCustomRange] = useState<DateRange | undefined>();
-  const [metrics, setMetrics] = useState<OverviewMetrics | null>(null);
-  const [orderSummary, setOrderSummary] = useState<OrderSummary | null>(null);
-  const [inventorySummary, setInventorySummary] = useState<InventorySummary | null>(null);
-  const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
+  const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderData[]>([]);
+  const [chartData, setChartData] = useState<any[]>([]);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // Load all data
-  const loadData = async () => {
-    setLoading(true);
+  const loadData = useCallback(async () => {
     try {
-      const [metricsData, ordersData, inventoryData, chartDataResult] = await Promise.all([
-        fetchOverviewMetrics(timePeriod, customRange),
-        fetchOrderSummary(timePeriod, customRange),
-        fetchInventorySummary(),
-        fetchChartData(timePeriod, customRange)
+      setLoading(true);
+      const [salesData, purchaseData] = await Promise.all([
+        fetchSalesOrders(),
+        fetchPurchaseOrders()
       ]);
-
-      setMetrics(metricsData);
-      setOrderSummary(ordersData);
-      setInventorySummary(inventoryData);
-      setChartData(chartDataResult);
+      setSalesOrders([...salesData]);
+      setPurchaseOrders([...purchaseData]);
+      const newChartData = [
+        { name: 'Revenue', value: salesData.reduce((sum: number, order: any) => sum + order.amount, 0) },
+        { name: 'Expenses', value: purchaseData.reduce((sum: number, order: any) => sum + order.amount, 0) }
+      ];
+      setChartData(newChartData);
     } catch (error) {
-      console.error('Failed to load overview data:', error);
+      console.error('BusinessOverview load error:', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadData();
-  }, [timePeriod, customRange]);
+  }, []);
 
   // Listen for order updates and refresh data
   useEffect(() => {
-    const handleOrdersUpdated = () => {
-      console.log('🔄 Orders updated - refreshing Overview data');
+    const handleOrderUpdate = () => {
+      setRefreshKey(prev => prev + 1);
       loadData();
     };
 
-    window.addEventListener('ordersUpdated', handleOrdersUpdated);
-    return () => window.removeEventListener('ordersUpdated', handleOrdersUpdated);
-  }, []);
+    const handleOrderCreated = () => {
+      setRefreshKey(prev => prev + 1);
+      loadData();
+    };
 
-  // Format currency
+    const handleOrderDeleted = () => {
+      setRefreshKey(prev => prev + 1);
+      loadData();
+    };
+
+    // Add listeners
+    window.addEventListener('salesOrderUpdated', handleOrderUpdate);
+    window.addEventListener('salesOrderCreated', handleOrderCreated);
+    window.addEventListener('salesOrderDeleted', handleOrderDeleted);
+
+    // Cleanup
+    return () => {
+      window.removeEventListener('salesOrderUpdated', handleOrderUpdate);
+      window.removeEventListener('salesOrderCreated', handleOrderCreated);
+      window.removeEventListener('salesOrderDeleted', handleOrderDeleted);
+    };
+  }, [loadData]); // ✅ ADD loadData as dependency
+
+  const metrics = useMemo(() => {
+    const paidOrders = salesOrders.filter(isOrderPaid);
+    const paidRevenue = paidOrders.reduce((sum, order) => sum + order.amount, 0);
+    const totalRevenue = salesOrders.reduce((sum, order) => sum + order.amount, 0);
+    const totalExpenses = purchaseOrders.reduce((sum, order) => sum + order.amount, 0);
+    const paidNetProfit = paidRevenue - totalExpenses;
+    return {
+      totalRevenue,
+      paidRevenue,
+      totalExpenses,
+      netProfit: totalRevenue - totalExpenses,
+      paidNetProfit,
+      profitMargin: paidRevenue > 0 ? ((paidNetProfit / paidRevenue) * 100) : 0
+    };
+  }, [salesOrders, purchaseOrders]);
+
+  const orderSummary = useMemo(() => ({
+    purchaseOrderTotal: purchaseOrders.length,
+    purchaseOrderReceived: purchaseOrders.filter(o => o.status === 'completed' || (o.status as string) === 'RECEIVED').length,
+    purchaseOrderPending: purchaseOrders.filter(o => o.status === 'pending' || o.status === 'approved').length,
+    purchaseOrderOverdue: 0,
+    purchaseOrderAmount: purchaseOrders.reduce((s, o) => s + o.amount, 0),
+    salesOrderTotal: salesOrders.length,
+    salesOrderPaid: salesOrders.filter(isOrderPaid).length,
+    salesOrderPending: salesOrders.filter(o => o.status === 'pending' || o.status === 'approved').length,
+    salesOrderOverdue: 0,
+    salesOrderAmount: salesOrders.reduce((s, o) => s + o.amount, 0),
+    miscTotal: 0,
+    miscCompleted: 0,
+    miscPending: 0,
+    miscCancelled: 0,
+    miscAmount: 0,
+    pendingApprovalPO: purchaseOrders.filter(o => o.status === 'pending').length,
+    pendingApprovalSO: salesOrders.filter(o => o.status === 'pending').length,
+    pendingApprovalMisc: 0,
+  }), [salesOrders, purchaseOrders]);
+
+  const inventorySummary = useMemo(() => ({
+    totalItems: 0,
+    activeItems: 0,
+    inactiveItems: 0,
+    inStock: 0,
+    lowStock: 0,
+    outOfStock: 0,
+    lowStockItems: [] as { id: string; name: string; quantity: number }[],
+  }), []);
+
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-PH', {
       style: 'currency',
@@ -107,12 +182,6 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
   };
 
   // Time period options
-  const timePeriodOptions = [
-    { value: 'this-month', label: 'This Month' },
-    { value: 'last-30-days', label: 'Last 30 Days' },
-    { value: 'year-to-date', label: 'Year to Date' },
-    { value: 'custom', label: 'Custom Range' }
-  ];
 
   if (loading) {
     return (
@@ -154,20 +223,13 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
         </div>
         
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <Calendar className="w-5 h-5 text-gray-400" />
-            <select
-              value={timePeriod}
-              onChange={(e) => setTimePeriod(e.target.value as TimePeriod)}
-              className="px-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-            >
-              {timePeriodOptions.map(option => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
+          <button 
+            onClick={loadData}
+            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
+          >
+            <ArrowUpRight className="w-4 h-4" />
+            Refresh
+          </button>
           
           <button className="btn-outline">
             <Download className="w-4 h-4 mr-2" />
@@ -183,23 +245,16 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
         <div className="metric-card">
           <div className="metric-header">
             <div className="metric-label">
-              <h6 className="metric-title">Revenue (SO)</h6>
-              <p className="metric-description">Paid Sales Orders</p>
+              <h6 className="metric-title">Revenue (PAID)</h6>
+              <p className="metric-description">Paid Sales Orders Only</p>
             </div>
-            {(metrics?.revenueTrend || 0) >= 0 ? (
-              <div className="metric-trend up">
-                <ArrowUpRight className="w-4 h-4" />
-                <span>{Math.abs(metrics?.revenueTrend || 0)}%</span>
-              </div>
-            ) : (
-              <div className="metric-trend down">
-                <ArrowDownRight className="w-4 h-4" />
-                <span>{Math.abs(metrics?.revenueTrend || 0)}%</span>
-              </div>
-            )}
+            <div className="metric-trend up">
+              <ArrowUpRight className="w-4 h-4" />
+              <span>{salesOrders.filter(isOrderPaid).length} Paid</span>
+            </div>
           </div>
-          <p className="metric-value">{formatCurrency(metrics?.revenue || 0)}</p>
-          <p className="metric-change">Difference</p>
+          <p className="metric-value">{formatCurrency(metrics.paidRevenue)}</p>
+          <p className="metric-change">From {salesOrders.filter(isOrderPaid).length} PAID orders</p>
         </div>
 
         {/* Expenses Card */}
@@ -209,20 +264,13 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
               <h6 className="metric-title">Expenses (PO)</h6>
               <p className="metric-description">Received Purchase Orders</p>
             </div>
-            {(metrics?.expensesTrend || 0) >= 0 ? (
-              <div className="metric-trend down">
-                <ArrowUpRight className="w-4 h-4" />
-                <span>{Math.abs(metrics?.expensesTrend || 0)}%</span>
-              </div>
-            ) : (
-              <div className="metric-trend up">
-                <ArrowDownRight className="w-4 h-4" />
-                <span>{Math.abs(metrics?.expensesTrend || 0)}%</span>
-              </div>
-            )}
+            <div className="metric-trend down">
+              <ArrowUpRight className="w-4 h-4" />
+              <span>Live</span>
+            </div>
           </div>
-          <p className="metric-value">{formatCurrency(metrics?.expenses || 0)}</p>
-          <p className="metric-change">Difference</p>
+          <p className="metric-value">{formatCurrency(metrics.totalExpenses)}</p>
+          <p className="metric-change">From Purchase Orders</p>
         </div>
 
         {/* Net Profit Card */}
@@ -230,17 +278,17 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
           <div className="metric-header">
             <div className="metric-label">
               <h6 className="metric-title">Net Profit</h6>
-              <p className="metric-description">Difference</p>
+              <p className="metric-description">Paid Revenue - Expenses</p>
             </div>
             <div className="metric-trend up">
               <ArrowUpRight className="w-4 h-4" />
-              <span>12.5%</span>
+              <span>Live</span>
             </div>
           </div>
-          <p className="metric-value" style={{ color: '#10b981' }}>
-            {formatCurrency((metrics?.revenue || 0) - (metrics?.expenses || 0))}
+          <p className="metric-value" style={{ color: metrics.paidNetProfit >= 0 ? '#10b981' : '#ef4444' }}>
+            {formatCurrency(metrics.paidNetProfit)}
           </p>
-          <p className="metric-change">Revenue - Expenses</p>
+          <p className="metric-change">Real-time Calculation</p>
         </div>
 
         {/* Profit Margin Card */}
@@ -252,13 +300,13 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
             </div>
             <div className="metric-trend up">
               <ArrowUpRight className="w-4 h-4" />
-              <span>8.3%</span>
+              <span>Live</span>
             </div>
           </div>
           <p className="metric-value">
-            {metrics?.revenue ? formatPercentage(((metrics.revenue - (metrics.expenses || 0)) / metrics.revenue) * 100) : '0%'}
+            {formatPercentage(metrics.paidRevenue > 0 ? ((metrics.paidNetProfit / metrics.paidRevenue) * 100) : 0)}
           </p>
-          <p className="metric-change">(Net Profit / Revenue) × 100</p>
+          <p className="metric-change">(Paid Net Profit / Paid Revenue) × 100</p>
         </div>
 
       </div>

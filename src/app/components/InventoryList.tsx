@@ -5,6 +5,7 @@ import { Badge } from './ui/badge';
 import { Input } from './ui/input';
 import { Package, Plus, Search, Filter, ArrowUpDown, Eye } from 'lucide-react';
 import { toast } from 'sonner';
+import { fetchApi } from '../api/client';
 import { CreateInventoryItemModal } from './CreateInventoryItemModal';
 import { EditInventoryItemModal } from './EditInventoryItemModal';
 
@@ -45,8 +46,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
 
   const fetchInventory = async () => {
     try {
-      const response = await fetch('/api/inventory');
-      const data = await response.json();
+      const data = await fetchApi<any[]>('/inventory');
       
       // Transform API data to match component interface
       const transformedData = data.map((item: any) => ({
@@ -114,7 +114,6 @@ useEffect(() => {
   // Real-time refresh - listen for inventory updates
   useEffect(() => {
     const handleInventoryUpdated = () => {
-      console.log('🔄 Inventory updated - refreshing list');
       fetchInventory();
     };
 

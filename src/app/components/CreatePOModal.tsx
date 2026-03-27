@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { createPurchaseOrder } from '../api/client';
+import { fetchApi, createPurchaseOrder, createSalesOrder } from '../api/client';
 import { Button } from './ui/button';
 import { X, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -66,8 +66,7 @@ export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
     const generateSONumber = async () => {
       try {
         const currentYear = new Date().getFullYear();
-        const response = await fetch('/api/purchase-orders');
-        const orders = await response.json();
+        const orders = await fetchApi<any[]>('/purchase-orders') || [];
         const lastSO = orders
           .filter((order: any) => order.poNumber.startsWith(`KTCI-SO-${currentYear}-`))
           .sort((a: any, b: any) => b.poNumber.localeCompare(a.poNumber))[0];
@@ -188,32 +187,23 @@ export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
       }));
       
       const soData = {
-        poNumber: form.soNumber,
-        poDate: form.soDate,
+        soNumber: form.soNumber,
+        client: form.customerName,
+        description: `${form.customerAddress}\n\nContact: ${form.customerContact}\n\nPrepared By: ${form.preparedBy}\n\nReviewed By: ${form.reviewedBy}\n\nLine Items: ${JSON.stringify(lineItems)}`,
+        amount: calculateTotal(),
         deliveryDate: form.deliveryDate,
-        poType: form.soType,
-        paymentTerms: form.paymentTerms,
-        termsAndConditions: form.termsAndConditions,
-        preparedBy: form.preparedBy,
-        reviewedBy: form.reviewedBy,
-        customerName: form.customerName,
-        customerAddress: form.customerAddress,
-        customerContact: form.customerContact,
-        lineItems: legacyLineItems,
-        subTotal: calculateSubTotal(),
-        otherCharges: form.ewt,
-        vatAmount: form.vatAmount,
-        totalAmount: calculateTotal(),
-        createdDate: new Date().toISOString().split('T')[0],
-        status: 'pending', // Sales Order starts as pending
-        orderType: 'sales', // Distinguish from Purchase Orders
+        assignedAssets: [],
+        createdDate: new Date().toISOString().split('T')[0]
       };
 
-      await createPurchaseOrder(soData);
+      await createSalesOrder(soData);
       toast.success('Sales Order created successfully!');
       onCreated();
       
-      // Trigger Overview refresh
+      // Dispatch events to notify other components
+      window.dispatchEvent(new CustomEvent('salesOrderUpdated', { 
+        detail: { action: 'created' } 
+      }));
       window.dispatchEvent(new CustomEvent('ordersUpdated'));
     } catch (err: any) {
       toast.error('Failed to create Sales Order: ' + err.message);

@@ -1,0 +1,565 @@
+import { useState, useEffect } from 'react';
+import { UserCheck, X, Check, Search, RefreshCw, Mail, Phone, Calendar, User, Shield, Building2, AlertTriangle, Clock } from 'lucide-react';
+import { fetchAdminRequests, approveAdminRequest, rejectAdminRequest } from '../api/client';
+import { toast } from 'sonner';
+
+interface AdminApprovalRequest {
+  id: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  department: string;
+  position: string;
+  requested_at: string;
+  status: 'pending' | 'approved' | 'rejected';
+  reviewed_by?: string;
+  reviewed_at?: string;
+  admin_notes?: string;
+}
+
+interface AdminRequestsProps {
+  onApprove?: (id: string) => void;
+  onReject?: (id: string) => void;
+  userName?: string;
+}
+
+export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsProps) {
+  const [adminRequests, setAdminRequests] = useState<AdminApprovalRequest[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [processingId, setProcessingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    fetchAdminRequests()
+      .then(setAdminRequests)
+      .catch(() => toast.error('Failed to load admin requests'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleApprove = async (id: string) => {
+    setProcessingId(id);
+    try {
+      await approveAdminRequest(id, userName || 'Admin');
+      toast.success('Admin request approved');
+      setAdminRequests(prev => prev.filter(r => r.id !== id));
+      onApprove?.(id);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to approve admin request');
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleReject = async (id: string) => {
+    setProcessingId(id);
+    try {
+      await rejectAdminRequest(id, userName || 'Admin');
+      toast.success('Admin request rejected');
+      setAdminRequests(prev => prev.filter(r => r.id !== id));
+      onReject?.(id);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to reject admin request');
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const filteredRequests = adminRequests.filter(request =>
+    request.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    request.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    request.department.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const formatDate = (dateStr: string) => {
+    if (!dateStr) return 'N/A';
+    return new Date(dateStr).toLocaleDateString('en-PH', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
+  };
+
+  if (loading) {
+    return (
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: '400px',
+        flexDirection: 'column',
+        gap: '16px'
+      }}>
+        <div style={{
+          width: '40px',
+          height: '40px',
+          borderRadius: '50%',
+          border: '4px solid #e5e7eb',
+          borderTopColor: '#3b82f6',
+          animation: 'spin 1s linear infinite'
+        }} />
+        <div style={{
+          fontSize: '16px',
+          fontWeight: '500',
+          color: '#6b7280',
+          fontFamily: 'Inter, sans-serif'
+        }}>
+          Loading admin requests...
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      padding: '32px',
+      fontFamily: 'Inter, sans-serif',
+      backgroundColor: '#ffffff',
+      minHeight: '100vh'
+    }}>
+      {/* HEADER */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: '32px'
+      }}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '16px'
+        }}>
+          <div style={{
+            width: '48px',
+            height: '48px',
+            borderRadius: '12px',
+            backgroundColor: '#dc2626',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 4px 6px -1px rgba(220, 38, 38, 0.3)'
+          }}>
+            <Building2 style={{ width: '24px', height: '24px', color: 'white' }} />
+          </div>
+          <div>
+            <h1 style={{
+              fontSize: '28px',
+              fontWeight: '700',
+              color: '#111827',
+              margin: '0 0 8px 0',
+              fontFamily: 'Plus Jakarta Sans, Inter, sans-serif'
+            }}>
+              Admin Request Approvals
+            </h1>
+            <p style={{
+              fontSize: '14px',
+              color: '6b7280',
+              margin: '0',
+              fontFamily: 'Inter, sans-serif'
+            }}>
+              Review and approve admin account requests
+            </p>
+          </div>
+        </div>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px'
+        }}>
+          <div style={{
+            fontSize: '14px',
+            color: '#6b7280',
+            fontFamily: 'Inter, sans-serif'
+          }}>
+            {adminRequests.length} pending
+          </div>
+          <button
+            onClick={() => {
+              setLoading(true);
+              fetchAdminRequests()
+                .then(setAdminRequests)
+                .catch(() => toast.error('Failed to refresh'))
+                .finally(() => setLoading(false));
+            }}
+            style={{
+              backgroundColor: 'white',
+              color: '#374151',
+              padding: '12px 20px',
+              borderRadius: '8px',
+              border: '1px solid #e5e7eb',
+              fontSize: '14px',
+              fontWeight: '500',
+              fontFamily: 'Inter, sans-serif',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              transition: 'all 0.2s ease'
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.backgroundColor = '#f9fafb';
+              e.currentTarget.style.borderColor = '#d1d5db';
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.backgroundColor = 'white';
+              e.currentTarget.style.borderColor = '#e5e7eb';
+            }}
+          >
+            <RefreshCw style={{ width: '16px', height: '16px', color: '#6b7280' }} />
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {/* METRIC CARDS */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+        gap: '20px',
+        marginBottom: '32px'
+      }}>
+        <div style={{
+          background: '#ffffff',
+          border: '1px solid #e5e7eb',
+          borderRadius: '16px',
+          padding: '24px',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+          transition: 'all 0.2s ease'
+        }}
+        onMouseOver={(e) => {
+          e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)';
+          e.currentTarget.style.transform = 'translateY(-2px)';
+        }}
+        onMouseOut={(e) => {
+          e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)';
+          e.currentTarget.style.transform = 'translateY(0)';
+        }}
+        >
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: '12px'
+          }}>
+            <div style={{
+              width: '48px',
+              height: '48px',
+              borderRadius: '12px',
+              backgroundColor: '#fef2f2',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <Building2 style={{ width: '24px', height: '24px', color: '#dc2626' }} />
+            </div>
+          </div>
+          <h3 style={{
+            fontSize: '32px',
+            fontWeight: '700',
+            color: '#111827',
+            margin: '0 0 8px 0',
+            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+          }}>
+            {adminRequests.length}
+          </h3>
+          <p style={{
+            fontSize: '14px',
+            fontWeight: '500',
+            color: '#6b7280',
+            margin: '0',
+            fontFamily: 'Inter, sans-serif'
+          }}>
+            Pending Requests
+          </p>
+        </div>
+      </div>
+
+      {/* SEARCH BAR */}
+      <div style={{
+        background: '#ffffff',
+        border: '1px solid #e5e7eb',
+        borderRadius: '16px',
+        padding: '24px',
+        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+        marginBottom: '32px'
+      }}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          flex: 1,
+          padding: '12px 16px',
+          borderRadius: '8px',
+          border: '1px solid #e5e7eb',
+          backgroundColor: '#f9fafb'
+        }}>
+          <Search style={{ width: '16px', height: '16px', color: '#6b7280' }} />
+          <input
+            type="text"
+            placeholder="Search by name, email, or department..."
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            style={{
+              width: '100%',
+              border: 'none',
+              outline: 'none',
+              fontSize: '14px',
+              fontFamily: 'Inter, sans-serif',
+              backgroundColor: 'transparent',
+              color: '#111827'
+            }}
+          />
+        </div>
+      </div>
+
+      {/* ADMIN REQUESTS LIST */}
+      {filteredRequests.length === 0 ? (
+        <div style={{
+          background: '#ffffff',
+          border: '1px solid #e5e7eb',
+          borderRadius: '16px',
+          padding: '48px',
+          textAlign: 'center',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+        }}>
+          <AlertTriangle style={{ 
+            width: '64px', 
+            height: '64px', 
+            color: '#d1d5db',
+            marginBottom: '16px',
+            margin: '0 auto 16px'
+          }} />
+          <h3 style={{
+            fontSize: '20px',
+            fontWeight: '600',
+            color: '#374151',
+            margin: '0 0 8px 0',
+            fontFamily: 'Inter, sans-serif'
+          }}>
+            No Pending Admin Requests
+          </h3>
+          <p style={{
+            fontSize: '14px',
+            color: '#6b7280',
+            margin: '0',
+            fontFamily: 'Inter, sans-serif'
+          }}>
+            All admin requests have been reviewed
+          </p>
+        </div>
+      ) : (
+        <div style={{
+          display: 'grid',
+          gap: '20px'
+        }}>
+          {filteredRequests.map((request) => (
+            <div
+              key={request.id}
+              style={{
+                background: '#ffffff',
+                border: '1px solid #e5e7eb',
+                borderRadius: '16px',
+                padding: '24px',
+                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+                transition: 'all 0.2s ease'
+              }}
+              onMouseOver={(e) => {
+                e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0.05)';
+                e.currentTarget.style.transform = 'translateY(-2px)';
+              }}
+              onMouseOut={(e) => {
+                e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0.06)';
+                e.currentTarget.style.transform = 'translateY(0)';
+              }}
+            >
+              <div style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                justifyContent: 'space-between',
+                gap: '24px'
+              }}>
+                <div style={{
+                  flex: 1
+                }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '16px',
+                    marginBottom: '16px'
+                  }}>
+                    <div style={{
+                      width: '40px',
+                      height: '40px',
+                      borderRadius: '8px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      backgroundColor: '#fef2f2'
+                    }}>
+                      <Building2 style={{ width: '20px', height: '20px', color: '#dc2626' }} />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <h3 style={{
+                        fontSize: '18px',
+                        fontWeight: '600',
+                        color: '#111827',
+                        margin: '0 0 4px 0',
+                        fontFamily: 'Inter, sans-serif'
+                      }}>
+                        {request.full_name}
+                      </h3>
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        marginBottom: '8px'
+                      }}>
+                        <div style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          padding: '4px 12px',
+                          borderRadius: '12px',
+                          fontSize: '12px',
+                          fontWeight: '500',
+                          color: '#dc2626',
+                          backgroundColor: '#fffbeb',
+                          border: '1px solid #fecaca',
+                          fontFamily: 'Inter, sans-serif'
+                        }}>
+                          <Shield style={{ width: '12px', height: '12px' }} />
+                          Pending
+                        </div>
+                      </div>
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(2, 1fr)',
+                        gap: '12px',
+                        marginBottom: '12px'
+                      }}>
+                        <div style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px'
+                        }}>
+                          <Mail style={{ width: '14px', height: '14px', color: '#6b7280' }} />
+                          <span style={{
+                            fontSize: '14px',
+                            color: '#6b7280',
+                            fontFamily: 'Inter, sans-serif'
+                          }}>
+                            {request.email}
+                          </span>
+                        </div>
+                        <div style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px'
+                        }}>
+                          <Phone style={{ width: '14px', height: '14px', color: '#6b7280' }} />
+                          <span style={{
+                            fontSize: '14px',
+                            color: '#6b7280',
+                            fontFamily: 'Inter, sans-serif'
+                          }}>
+                            {request.phone}
+                          </span>
+                        </div>
+                        <div style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px'
+                        }}>
+                          <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px'
+                          }}>
+                            <Shield style={{ width: '14px', height: '14px', color: '#6b7280' }} />
+                            <span style={{
+                              fontSize: '14px',
+                              color: '#6b7280',
+                              fontFamily: 'Inter, sans-serif'
+                            }}>
+                              {request.department}
+                            </span>
+                          </div>
+                        </div>
+                        <div style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px'
+                        }}>
+                          <Calendar style={{ width: '14px', height: '14px', color: '#6b7280' }} />
+                          <span style={{
+                            fontSize: '14px',
+                            color: '#6b7280',
+                            fontFamily: 'Inter, sans-serif'
+                          }}>
+                            {formatDate(request.requested_at)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{
+                    display: 'flex',
+                    gap: '8px',
+                    alignItems: 'center'
+                  }}>
+                    <button
+                      onClick={() => handleApprove(request.id)}
+                      disabled={processingId === request.id}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: '8px',
+                        border: 'none',
+                        backgroundColor: '#059669',
+                        color: 'white',
+                        fontSize: '12px',
+                        fontWeight: '500',
+                        fontFamily: 'Inter, sans-serif',
+                        cursor: processingId === request.id ? 'not-allowed' : 'pointer',
+                        opacity: processingId === request.id ? 0.5 : 1,
+                        transition: 'all 0.2s ease',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}
+                    >
+                      <Check style={{ width: '14px', height: '14px' }} />
+                      {processingId === request.id ? 'Processing...' : 'Approve'}
+                    </button>
+                    <button
+                      onClick={() => handleReject(request.id)}
+                      disabled={processingId === request.id}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: '8px',
+                        border: 'none',
+                        backgroundColor: '#dc2626',
+                        color: 'white',
+                        fontSize: '12px',
+                        fontWeight: '500',
+                        fontFamily: 'Inter, sans-serif',
+                        cursor: processingId === request.id ? 'not-allowed' : 'pointer',
+                        opacity: processingId === request.id ? 0.5 : 1,
+                        transition: 'all 0.2s ease',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}
+                    >
+                      <X style={{ width: '14px', height: '14px' }} />
+                      {processingId === request.id ? 'Processing...' : 'Reject'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

@@ -5,7 +5,7 @@ import { Badge } from './ui/badge';
 import { Input } from './ui/input';
 import { FileText, Plus, ShoppingCart, Package, Edit, Trash2, Filter, Printer, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { updatePurchaseOrder, deletePurchaseOrder } from '../api/client';
+import { fetchApi, updatePurchaseOrder, deletePurchaseOrder } from '../api/client';
 import { CreatePurchaseOrderModal } from './CreatePurchaseOrderModal';
 
 interface PurchaseOrder {
@@ -39,40 +39,28 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
   });
 
   const fetchPurchaseOrders = async () => {
-  try {
-    const response = await fetch('/api/purchase-orders');
-    const data = await response.json();
-    
-    // Filter out Sales Order data - only show Purchase Orders
-    console.log('PO tab raw data from API:', data.map((d: any) => ({ id: d.id, poNumber: d.poNumber, orderType: d.orderType, status: d.status })));
-    const poData = data.filter((item: any) => {
-      const isSalesOrder = item.orderType === 'sales';
-      const isPurchaseOrder = item.orderType === null || item.orderType === undefined || item.orderType !== 'sales';
-      console.log(`Item ${item.poNumber}: orderType="${item.orderType}" isSalesOrder=${isSalesOrder} isPurchaseOrder=${isPurchaseOrder} → ${isSalesOrder ? 'EXCLUDED' : 'INCLUDED'}`);
-      return isPurchaseOrder;
-    });
-    
-    // Transform API data to match component interface
-    const transformedData = poData.map((po: any) => ({
-      id: po.id,
-      poNumber: po.poNumber || po.po_number,
-      client: po.client,
-      description: po.description || '',
-      amount: parseFloat(po.amount) || 0,
-      status: po.status || 'pending',
-      createdDate: po.createdDate || po.created_date,
-      deliveryDate: po.deliveryDate || po.delivery_date,
-      assignedAssets: po.assignedAssets || []
-    }));
-    
-    setPurchaseOrders(transformedData);
-  } catch (error) {
-    console.error('Error fetching purchase orders:', error);
-    toast.error('Failed to load purchase orders');
-  } finally {
-    setLoading(false);
-  }
-};
+    try {
+      const data = await fetchApi<any[]>('/purchase-orders');
+      const poData = (data || []).filter((item: any) => item.orderType !== 'sales');
+      const transformedData = poData.map((po: any) => ({
+        id: po.id,
+        poNumber: po.poNumber || po.po_number,
+        client: po.client,
+        description: po.description || '',
+        amount: parseFloat(po.amount) || 0,
+        status: po.status || 'pending',
+        createdDate: po.createdDate || po.created_date,
+        deliveryDate: po.deliveryDate || po.delivery_date,
+        assignedAssets: po.assignedAssets || []
+      }));
+      setPurchaseOrders(transformedData);
+    } catch (error) {
+      console.error('Error fetching purchase orders:', error);
+      toast.error('Failed to load purchase orders');
+    } finally {
+      setLoading(false);
+    }
+  };
 
 const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-PH', {
@@ -582,7 +570,6 @@ useEffect(() => {
   // Real-time refresh - listen for order updates
   useEffect(() => {
     const handleOrdersUpdated = () => {
-      console.log('🔄 Purchase Orders updated - refreshing list');
       fetchPurchaseOrders();
     };
 

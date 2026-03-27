@@ -70,12 +70,12 @@
       })();
     </script>
 
-    <script type="module" src="/src/app/index.tsx"></script>
+    <script type="module" src="/src/main.tsx"></script>
   </head>
   <body>
     <div id="root"></div>
     
-    <!-- Service Worker Registration & Cache Clearing -->
+    <!-- Service Worker Registration & Cache Clearing - DISABLED -->
     <script>
       // Clear all caches on load
       if ('caches' in window) {
@@ -86,18 +86,29 @@
         });
       }
       
-      // Register Service Worker for PWA functionality
+      // UNREGISTER any existing Service Workers to fix fetch errors
       if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js')
-            .then(registration => {
-              console.log('Service Worker registered successfully:', registration);
-            })
-            .catch(error => {
-              console.log('Service Worker registration failed:', error);
+        navigator.serviceWorker.getRegistrations().then(function(registrations) {
+          for(let registration of registrations) {
+            registration.unregister().then(function(boolean) {
+              console.log('Service Worker unregistered:', boolean);
             });
+          }
         });
       }
+      
+      // DISABLED: Service Worker registration causing fetch errors
+      // if ('serviceWorker' in navigator) {
+      //   window.addEventListener('load', () => {
+      //     navigator.serviceWorker.register('/sw.js')
+      //       .then(registration => {
+      //         console.log('Service Worker registered successfully:', registration);
+      //       })
+      //       .catch(error => {
+      //         console.log('Service Worker registration failed:', error);
+      //       });
+      //   });
+      // }
     </script>
   </body>
 </html>

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { createPurchaseOrder } from '../api/client';
+import { fetchApi, createPurchaseOrder } from '../api/client';
 import { Button } from './ui/button';
 import { X, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -59,8 +59,7 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
     const generatePONumber = async () => {
       try {
         const currentYear = new Date().getFullYear();
-        const response = await fetch('/api/purchase-orders');
-        const orders = await response.json();
+        const orders = await fetchApi<any[]>('/purchase-orders') || [];
         const poOrders = orders.filter((o: any) => o.orderType !== 'sales');
         const lastPO = poOrders
           .filter((o: any) => o.poNumber && o.poNumber.startsWith(`KTCI-PO-${currentYear}-`))

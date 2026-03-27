@@ -8,6 +8,24 @@
 body {
   overflow-x: hidden; /* Prevent horizontal scroll */
   min-height: 100vh;
+  color: #000000 !important; /* Force black text for visibility */
+  background-color: #ffffff !important; /* Force white background */
+}
+
+/* Ensure all text elements are visible */
+h1, h2, h3, h4, h5, h6, p, span, div, label, button, input, select, textarea {
+  color: inherit !important;
+}
+
+/* Override any white text that might be invisible */
+.text-white, [class*="text-white"] {
+  color: #000000 !important;
+}
+
+/* Ensure inputs have visible text */
+input, select, textarea {
+  color: #000000 !important;
+  background-color: #ffffff !important;
 }
 
 :root {
