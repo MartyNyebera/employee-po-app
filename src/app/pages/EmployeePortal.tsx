@@ -1,35 +1,5 @@
 import { useState, useEffect } from 'react';
-import { 
-  Package, ClipboardList, Bell, LogOut, Plus, Clock, CheckCircle, 
-  XCircle, Search, Filter, Menu, X, User, ChevronDown, 
-  AlertCircle, TrendingUp, Archive, RefreshCw, Trash2, Edit2,
-  Eye, Calendar, Tag, BarChart3, Wifi, WifiOff
-} from 'lucide-react';
-import { fetchApi } from '../api/client';
-import { MobileCard } from '../components/MobileCard';
-import { MobileButton } from '../components/MobileButton';
-import { MobileInput } from '../components/MobileInput';
-import { MobileSelect } from '../components/MobileSelect';
-import { EmptyState } from '../components/EmptyState';
-import { MobileBottomNav } from '../components/MobileBottomNav';
-import { MobileTextarea } from '../components/MobileTextarea';
-
-// Employee-specific fetch function
-const fetchEmployeeApi = async (path: string, options?: RequestInit) => {
-  const token = localStorage.getItem('employee_token');
-  const headers = { 
-    'Content-Type': 'application/json',
-    ...(token && { Authorization: `Bearer ${token}` }),
-    ...options?.headers 
-  } as Record<string, string>;
-  
-  const res = await fetch(`/api${path}`, { ...options, headers });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-  return res.json();
-};
+import { Package, ClipboardList, Bell, LogOut, Plus, Menu, X, User, Wifi, WifiOff, AlertCircle } from 'lucide-react';
 
 export type EmployeeView = 'inventory' | 'requests' | 'history' | 'notifications';
 
@@ -40,10 +10,15 @@ interface InventoryItem {
   quantity: number;
   unit: string;
   status: 'in-stock' | 'low-stock' | 'out-of-stock';
-  description?: string;
-  category?: string;
-  lastUpdated?: string;
-  requestedCount?: number;
+}
+
+interface RequestForm {
+  item_name: string;
+  item_code: string;
+  quantity_requested: string;
+  unit: string;
+  purpose: string;
+  urgency: 'low' | 'normal' | 'high';
 }
 
 interface MaterialRequest {
@@ -68,133 +43,152 @@ interface Notification {
   created_at: string;
 }
 
-interface RequestForm {
-  item_name: string;
-  item_code: string;
-  quantity_requested: string;
-  unit: string;
-  purpose: string;
-  urgency: 'low' | 'normal' | 'high';
-}
-
 export function EmployeePortal() {
   const [view, setView] = useState<EmployeeView>('inventory');
-  const [employee, setEmployee] = useState<any>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'online' | 'offline'>('online');
+  const [unreadCount, setUnreadCount] = useState(3);
+
+  // Request management state
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [requests, setRequests] = useState<MaterialRequest[]>([]);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showRequestModal, setShowRequestModal] = useState(false);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [filterStatus, setFilterStatus] = useState<string>('all');
-  const [sortBy, setSortBy] = useState<string>('newest');
-  const [showFilters, setShowFilters] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState<'online' | 'offline'>('online');
+  const [employee, setEmployee] = useState<any>(null);
 
   const [requestForm, setRequestForm] = useState<RequestForm>({
     item_name: '',
     item_code: '',
-    quantity_requested: '1',
-    unit: 'pcs',
+    quantity_requested: '',
+    unit: '',
     purpose: '',
-    urgency: 'normal'
+    urgency: 'normal',
   });
 
-  const [formErrors, setFormErrors] = useState<Partial<RequestForm>>({});
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
-  // API Functions
-  const fetchInventoryData = async () => {
-    try {
-      const data = await fetchEmployeeApi('/inventory');
-      
-      // Transform database data to match interface
-      const transformedData: InventoryItem[] = (Array.isArray(data) ? data : []).map((item: any) => ({
-        id: item.id,
-        itemName: item.itemName,
-        itemCode: item.itemCode,
-        quantity: item.quantity,
-        unit: item.unit,
-        status: item.quantity > 20 ? 'in-stock' : item.quantity > 0 ? 'low-stock' : 'out-of-stock',
-        description: item.description,
-        category: item.location || 'General',
-        lastUpdated: new Date().toLocaleDateString(),
-        requestedCount: 0 // TODO: Add request count from material_requests table
-      }));
-      
-      setInventory(transformedData);
-    } catch (error) {
-            setInventory([]);
+  // Employee-specific fetch function
+  const fetchEmployeeApi = async (path: string, options?: RequestInit) => {
+    const token = localStorage.getItem('employee_token');
+    const headers = { 
+      'Content-Type': 'application/json',
+      ...(token && { Authorization: `Bearer ${token}` }),
+      ...options?.headers 
+    } as Record<string, string>;
+    
+    const res = await fetch(`/api${path}`, { ...options, headers });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return res.json();
+  };
+
+  // Helper functions
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'pending': return 'bg-yellow-50 text-yellow-700 border-yellow-200';
+      case 'approved': return 'bg-green-50 text-green-700 border-green-200';
+      case 'rejected': return 'bg-red-50 text-red-700 border-red-200';
+      case 'completed': return 'bg-blue-50 text-blue-700 border-blue-200';
+      default: return 'bg-gray-50 text-gray-700 border-gray-200';
     }
   };
 
-  const fetchNotifications = async () => {
-    try {
-      if (!employee) return;
-      
-      const data = await fetchEmployeeApi(`/employee/${employee.id}/notifications`);
-      
-      // Transform database data to match interface
-      const transformedData: Notification[] = (Array.isArray(data) ? data : []).map((notif: any) => ({
-        id: notif.id,
-        title: notif.title,
-        message: notif.message,
-        type: notif.type,
-        is_read: notif.is_read,
-        created_at: notif.created_at
-      }));
-      
-      setNotifications(transformedData);
-      setUnreadCount(transformedData.filter(n => !n.is_read).length);
-    } catch (error) {
-      setNotifications([]);
-    }
-  };
-
-  const fetchUserRequests = async () => {
-    try {
-      if (!employee) return;
-      
-      const data = await fetchEmployeeApi(`/material-requests/employee/${employee.id}`);
-      
-      // Transform database data to match interface
-      const transformedData: MaterialRequest[] = (Array.isArray(data) ? data : []).map((req: any) => ({
-        id: req.id,
-        item_name: req.item_name,
-        item_code: req.item_code,
-        quantity_requested: req.quantity_requested.toString(),
-        unit: req.unit,
-        purpose: req.purpose,
-        urgency: req.urgency,
-        status: req.status,
-        created_at: req.created_at,
-        employee_name: req.employee_name
-      }));
-      
-      setRequests(transformedData);
-    } catch (error) {
-      setRequests([]);
-    }
-  };
-
-  useEffect(() => {
-    const stored = localStorage.getItem('employee_session');
-    if (!stored) {
-      window.location.href = '/employee/login';
+  const handleSubmitRequest = async () => {
+    // Validate form
+    const errors: Record<string, string> = {};
+    if (!requestForm.item_name.trim()) errors.item_name = 'Item name is required';
+    if (!requestForm.quantity_requested.trim()) errors.quantity_requested = 'Quantity is required';
+    if (!requestForm.unit.trim()) errors.unit = 'Unit is required';
+    if (!requestForm.purpose.trim()) errors.purpose = 'Purpose is required';
+    
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
       return;
     }
     
-    const session = JSON.parse(stored);
-    setEmployee(session);
+    setIsSubmitting(true);
+    setFormErrors({});
     
-    // Fetch real data from API
-    fetchInventoryData();
-    setIsLoading(false);
+    try {
+      // Debug: Log employee data
+      console.log('Employee data:', employee);
+      console.log('Employee name:', employee?.full_name);
+      
+      const requestData = {
+        ...requestForm,
+        employee_id: employee?.id || 1,
+        employee_name: employee?.full_name || employee?.email || 'Unknown Employee'
+      };
+      
+      // Debug: Log request data
+      console.log('Request data:', requestData);
+      
+      const result = await fetchEmployeeApi('/material-requests', {
+        method: 'POST',
+        body: JSON.stringify(requestData)
+      });
+      
+      setRequests(prev => [result, ...prev]);
+      setRequestForm({
+        item_name: '',
+        item_code: '',
+        quantity_requested: '',
+        unit: '',
+        purpose: '',
+        urgency: 'normal',
+      });
+      setShowRequestModal(false);
+      setView('history');
+      
+      // Show success message
+      alert('Material request submitted successfully!');
+    } catch (error) {
+      console.error('Failed to submit request:', error);
+      alert('Failed to submit request. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
-    // Check connection status
+  const handleLogout = () => {
+    localStorage.removeItem('employee_token');
+    window.location.href = '/employee/login';
+  };
+
+  // Data fetching
+  useEffect(() => {
+    const loadData = async () => {
+      setIsLoading(true);
+      try {
+        const [inventoryData, requestsData] = await Promise.all([
+          fetchEmployeeApi('/inventory'),
+          fetchEmployeeApi(`/material-requests/employee/${employee?.id || 1}`)
+        ]);
+        
+        setInventory(inventoryData || []);
+        setRequests(requestsData || []);
+      } catch (error) {
+        console.error('Failed to load data:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    const employeeData = localStorage.getItem('employee_session');
+    if (employeeData) {
+      setEmployee(JSON.parse(employeeData));
+    }
+
+    loadData();
+  }, []);
+
+  // Connection status monitoring
+  useEffect(() => {
     const checkConnection = () => {
       setConnectionStatus(navigator.onLine ? 'online' : 'offline');
     };
@@ -208,817 +202,572 @@ export function EmployeePortal() {
     };
   }, []);
 
-  // Fetch notifications and requests when employee is set
-  useEffect(() => {
-    if (employee) {
-      fetchNotifications();
-      fetchUserRequests();
-    }
-  }, [employee]);
-
-  const validateForm = (): boolean => {
-    const errors: Partial<RequestForm> = {};
-    
-    if (!requestForm.item_name.trim()) {
-      errors.item_name = 'Item name is required';
-    }
-    
-        
-        
-    if (parseInt(requestForm.quantity_requested) < 1) {
-      errors.quantity_requested = 'Quantity must be at least 1';
-    }
-    
-    if (!requestForm.purpose.trim()) {
-      errors.purpose = 'Purpose is required';
-    }
-    
-    setFormErrors(errors);
-    return Object.keys(errors).length === 0;
-  };
-
-  const handleSubmitRequest = async () => {
-    if (!validateForm() || !employee) return;
-    
-    setIsSubmitting(true);
-    try {
-      // Real API call with authentication
-      await fetchEmployeeApi('/material-requests', {
-        method: 'POST',
-        body: JSON.stringify({
-          item_name: requestForm.item_name,
-          item_code: requestForm.item_code,
-          quantity_requested: parseInt(requestForm.quantity_requested),
-          unit: requestForm.unit,
-          purpose: requestForm.purpose,
-          urgency: requestForm.urgency,
-          employee_id: employee.id,
-          employee_name: employee.full_name
-        })
-      });
-      
-      // Refresh requests list
-      await fetchUserRequests();
-      
-      setShowRequestModal(false);
-      setRequestForm({
-        item_name: '',
-        item_code: '',
-        quantity_requested: '1',
-        unit: 'pcs',
-        purpose: '',
-        urgency: 'normal'
-      });
-      setFormErrors({});
-      
-      // Show success message
-      alert('Request submitted successfully!');
-    } catch (error) {
-      alert('Failed to submit request');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem('employee_session');
-    localStorage.removeItem('employee_token');
-    window.location.href = '/employee/login';
-  };
-
-  const getStatusColor = (status: string) => {
-    switch(status) {
-      case 'approved': 
-        return 'bg-green-100 text-green-700 border-green-200';
-      case 'rejected': 
-        return 'bg-red-100 text-red-700 border-red-200';
-      case 'completed':
-        return 'bg-blue-100 text-blue-700 border-blue-200';
-      default: 
-        return 'bg-yellow-100 text-yellow-700 border-yellow-200';
-    }
-  };
-
-  const getNotificationIcon = (type: string) => {
-    switch(type) {
-      case 'request_approved': return CheckCircle;
-      case 'request_rejected': return XCircle;
-      case 'new_inventory': return Package;
-      case 'system_alert': return AlertCircle;
-      default: return Bell;
-    }
-  };
-
-  const getNotificationColor = (type: string) => {
-    switch(type) {
-      case 'request_approved': return 'text-green-600';
-      case 'request_rejected': return 'text-red-600';
-      case 'new_inventory': return 'text-blue-600';
-      case 'system_alert': return 'text-amber-600';
-      default: return 'text-slate-600';
-    }
-  };
-
+  // Filter inventory
   const filteredInventory = inventory.filter(item =>
-    item.itemName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    item.itemCode?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const sortedInventory = [...filteredInventory].sort((a, b) => {
-    switch(sortBy) {
-      case 'name': return a.itemName.localeCompare(b.itemName);
-      case 'quantity': return b.quantity - a.quantity;
-      case 'requested': return (b.requestedCount || 0) - (a.requestedCount || 0);
-      default: return 0;
-    }
-  });
-
-  const filteredRequests = requests.filter(request => 
-    filterStatus === 'all' || request.status === filterStatus
-  );
-
-  const groupedNotifications = notifications.reduce((groups, notification) => {
-    const date = new Date(notification.created_at).toDateString();
-    if (!groups[date]) groups[date] = [];
-    groups[date].push(notification);
-    return groups;
-  }, {} as Record<string, Notification[]>);
-
-  const SkeletonLoader = () => (
-    <div className="space-y-4">
-      {[...Array(3)].map((_, i) => (
-        <div key={i} className="bg-white rounded-xl border border-slate-200 p-4 animate-pulse">
-          <div className="flex justify-between items-start mb-2">
-            <div className="flex-1">
-              <div className="h-5 bg-slate-200 rounded w-3/4 mb-2"></div>
-              <div className="h-4 bg-slate-200 rounded w-1/2"></div>
-            </div>
-            <div className="h-6 bg-slate-200 rounded w-16"></div>
-          </div>
-          <div className="h-4 bg-slate-200 rounded w-full mb-3"></div>
-          <div className="flex justify-between items-center">
-            <div className="h-4 bg-slate-200 rounded w-20"></div>
-            <div className="h-8 bg-slate-200 rounded w-20"></div>
-          </div>
-        </div>
-      ))}
-    </div>
+    item.itemName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    item.itemCode.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Header */}
-      <header className="bg-slate-900 text-white px-4 py-3 mobile:px-3 sticky top-0 z-50 shadow-lg sm:px-6 sm:py-4">
-        <div className="flex items-center justify-between">
+    <div className="min-h-screen bg-slate-50 flex">
+      {/* Sidebar */}
+      <div className={`bg-white border-r border-gray-200 transition-all duration-300 ${mobileMenuOpen ? 'w-64' : 'w-20'} flex flex-col`}>
+        {/* Logo */}
+        <div className="p-4 border-b border-gray-200">
           <div className="flex items-center gap-3">
-            {/* Mobile menu button */}
-            <button
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="lg:hidden p-3 rounded-lg hover:bg-slate-700 transition-colors"
-              style={{ minHeight: '44px', minWidth: '44px' }}
-            >
-              {mobileMenuOpen ? <X className="size-5" /> : <Menu className="size-5" />}
-            </button>
-            
-            <div>
-              <p className="text-xs text-slate-400 font-medium mobile:text-xs sm:text-sm">KIMOEL EMPLOYEE PORTAL</p>
-              <p className="font-semibold text-sm mobile:text-sm sm:text-base">{employee?.full_name}</p>
-            </div>
-          </div>
-          
-          <div className="flex items-center gap-3">
-            {/* Connection status */}
-            <div className="hidden sm:flex items-center gap-1 text-xs">
-              {connectionStatus === 'online' ? (
-                <>
-                  <Wifi className="size-3 text-green-400" />
-                  <span className="text-green-400">Online</span>
-                </>
-              ) : (
-                <>
-                  <WifiOff className="size-3 text-red-400" />
-                  <span className="text-red-400">Offline</span>
-                </>
-              )}
-            </div>
-            
-            {/* User menu */}
-            <div className="relative">
-              <button 
-                onClick={handleLogout}
-                className="flex items-center gap-2 p-3 rounded-lg hover:bg-slate-700 transition-colors"
-                style={{ minHeight: '44px', minWidth: '44px' }}
-              >
-                <div className="w-6 h-6 bg-slate-600 rounded-full flex items-center justify-center">
-                  <User className="size-3" />
-                </div>
-                <ChevronDown className="size-4 hidden sm:block" />
-              </button>
-            </div>
-            
-            {/* Logout button */}
-            <button
-              onClick={handleLogout}
-              className="p-2 rounded-lg hover:bg-slate-700 transition-colors"
-              title="Logout"
-            >
-              <LogOut className="size-5" />
-            </button>
+            <img
+              src="/kimoel-logo.png"
+              alt="KIMOEL"
+              className="h-8 w-auto object-contain"
+            />
+            {mobileMenuOpen && (
+              <span style={{
+                fontSize: '18px',
+                fontWeight: '600',
+                color: '#111827',
+                fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+              }}>
+                EMPLOYEE
+              </span>
+            )}
           </div>
         </div>
-      </header>
 
-      {/* Mobile Navigation Menu */}
-      {mobileMenuOpen && (
-        <div className="lg:hidden bg-white border-b border-slate-200 shadow-lg">
-          <nav className="px-4 py-2">
-            {[
-              { id: 'inventory', label: 'Inventory', icon: Package },
-              { id: 'requests', label: 'New Request', icon: Plus },
-              { id: 'history', label: 'My Requests', icon: ClipboardList },
-              { id: 'notifications', label: 'Notifications', icon: Bell, badge: unreadCount },
-            ].map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => {
-                  setView(tab.id as EmployeeView);
-                  setMobileMenuOpen(false);
-                }}
-                className={`w-full flex items-center gap-3 px-3 py-3 text-sm font-medium rounded-lg transition-colors relative ${
-                  view === tab.id
-                    ? 'bg-blue-50 text-blue-600 border-l-4 border-blue-600'
-                    : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                <tab.icon className="size-5" />
-                <span>{tab.label}</span>
-                {tab.badge && tab.badge > 0 && (
-                  <span className="ml-auto bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                    {tab.badge}
+        {/* Navigation */}
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+          {/* Inventory */}
+          <button
+            onClick={() => setView('inventory')}
+            className={`w-full text-left rounded-lg transition-all duration-200 ${
+              view === 'inventory' 
+                ? 'bg-blue-50 border border-blue-200' 
+                : 'hover:bg-gray-50 border border-transparent'
+            }`}
+            style={{
+              padding: '12px 16px',
+              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <Package 
+                style={{
+                  width: '18px',
+                  height: '18px',
+                  color: view === 'inventory' ? '#2563eb' : '#6b7280'
+                }} 
+              />
+              {mobileMenuOpen && (
+                <span style={{
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: view === 'inventory' ? '#2563eb' : '#111827'
+                }}>
+                  Inventory
+                </span>
+              )}
+            </div>
+          </button>
+
+          {/* New Request */}
+          <button
+            onClick={() => setView('requests')}
+            className={`w-full text-left rounded-lg transition-all duration-200 ${
+              view === 'requests' 
+                ? 'bg-blue-50 border border-blue-200' 
+                : 'hover:bg-gray-50 border border-transparent'
+            }`}
+            style={{
+              padding: '12px 16px',
+              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <Plus 
+                style={{
+                  width: '18px',
+                  height: '18px',
+                  color: view === 'requests' ? '#2563eb' : '#6b7280'
+                }} 
+              />
+              {mobileMenuOpen && (
+                <span style={{
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: view === 'requests' ? '#2563eb' : '#111827'
+                }}>
+                  New Request
+                </span>
+              )}
+            </div>
+          </button>
+
+          {/* My Requests */}
+          <button
+            onClick={() => setView('history')}
+            className={`w-full text-left rounded-lg transition-all duration-200 ${
+              view === 'history' 
+                ? 'bg-blue-50 border border-blue-200' 
+                : 'hover:bg-gray-50 border border-transparent'
+            }`}
+            style={{
+              padding: '12px 16px',
+              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <ClipboardList 
+                style={{
+                  width: '18px',
+                  height: '18px',
+                  color: view === 'history' ? '#2563eb' : '#6b7280'
+                }} 
+              />
+              {mobileMenuOpen && (
+                <span style={{
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: view === 'history' ? '#2563eb' : '#111827'
+                }}>
+                  My Requests
+                </span>
+              )}
+            </div>
+          </button>
+
+          {/* Notifications */}
+          <button
+            onClick={() => setView('notifications')}
+            className={`w-full text-left rounded-lg transition-all duration-200 ${
+              view === 'notifications' 
+                ? 'bg-blue-50 border border-blue-200' 
+                : 'hover:bg-gray-50 border border-transparent'
+            }`}
+            style={{
+              padding: '12px 16px',
+              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <Bell 
+                  style={{
+                    width: '18px',
+                    height: '18px',
+                    color: view === 'notifications' ? '#2563eb' : '#6b7280'
+                  }} 
+                />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center" style={{ fontSize: '10px' }}>
+                    {unreadCount > 9 ? '9+' : unreadCount}
                   </span>
                 )}
-              </button>
-            ))}
-          </nav>
-        </div>
-      )}
-
-      {/* Desktop Navigation Tabs */}
-      <div className="hidden lg:block bg-white border-b border-slate-200">
-        <div className="px-4 flex gap-1 overflow-x-auto">
-          {[
-            { id: 'inventory', label: 'Inventory', icon: Package },
-            { id: 'requests', label: 'New Request', icon: Plus },
-            { id: 'history', label: 'My Requests', icon: ClipboardList },
-            { id: 'notifications', label: 'Notifications', icon: Bell, badge: unreadCount },
-          ].map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setView(tab.id as EmployeeView)}
-              className={`flex items-center gap-2 px-4 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors relative ${
-                view === tab.id
-                  ? 'border-blue-600 text-blue-600 bg-blue-50'
-                  : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
-              }`}
-            >
-              <tab.icon className="size-4" />
-              <span>{tab.label}</span>
-              {tab.badge && tab.badge > 0 && (
-                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                  {tab.badge}
+              </div>
+              {mobileMenuOpen && (
+                <span style={{
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: view === 'notifications' ? '#2563eb' : '#111827'
+                }}>
+                  Notifications
                 </span>
               )}
-            </button>
-          ))}
-        </div>
-      </div>
+            </div>
+          </button>
+        </nav>
 
-      {/* Mobile Bottom Navigation */}
-      <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 z-40">
-        <div className="flex justify-around py-2">
-          {[
-            { id: 'inventory', label: 'Inventory', icon: Package },
-            { id: 'requests', label: 'Request', icon: Plus },
-            { id: 'history', label: 'History', icon: ClipboardList },
-            { id: 'notifications', label: 'Alerts', icon: Bell, badge: unreadCount },
-          ].map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setView(tab.id as EmployeeView)}
-              className={`flex flex-col items-center gap-1 p-2 min-w-0 transition-colors relative ${
-                view === tab.id
-                  ? 'text-blue-600'
-                  : 'text-slate-500'
-              }`}
-            >
-              <tab.icon className="size-5" />
-              <span className="text-xs">{tab.label}</span>
-              {tab.badge && tab.badge > 0 && (
-                <span className="absolute top-1 right-2 bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
-                  {tab.badge}
+        {/* User Section */}
+        <div className="border-t border-gray-200 p-3">
+          {/* User Info */}
+          <div className="flex items-center gap-3 p-2">
+            <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
+              <User style={{ width: '16px', height: '16px', color: 'white' }} />
+            </div>
+            {mobileMenuOpen && (
+              <span style={{
+                fontSize: '14px',
+                fontWeight: '400',
+                color: '#6b7280',
+                fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+              }}>
+                John Doe
+              </span>
+            )}
+          </div>
+          
+          {/* Connection Status */}
+          <div className="flex items-center gap-2 p-2">
+            {connectionStatus === 'online' ? (
+              <>
+                <Wifi style={{ width: '14px', height: '14px', color: '#10b981' }} />
+                {mobileMenuOpen && (
+                  <span style={{
+                    fontSize: '12px',
+                    color: '#10b981',
+                    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+                  }}>
+                    Online
+                  </span>
+                )}
+              </>
+            ) : (
+              <>
+                <WifiOff style={{ width: '14px', height: '14px', color: '#ef4444' }} />
+                {mobileMenuOpen && (
+                  <span style={{
+                    fontSize: '12px',
+                    color: '#ef4444',
+                    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+                  }}>
+                    Offline
+                  </span>
+                )}
+              </>
+            )}
+          </div>
+          
+          {/* Logout Button */}
+          <button
+            onClick={handleLogout}
+            className="w-full text-left rounded-lg transition-all duration-200 hover:bg-gray-50 border border-transparent"
+            style={{
+              padding: '12px 16px',
+              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <LogOut 
+                style={{
+                  width: '18px',
+                  height: '18px',
+                  color: '#6b7280'
+                }} 
+              />
+              {mobileMenuOpen && (
+                <span style={{
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: '#111827'
+                }}>
+                  Logout
                 </span>
               )}
-            </button>
-          ))}
+            </div>
+          </button>
         </div>
       </div>
 
       {/* Main Content */}
-      <main className="px-4 py-6 pb-20 mobile:px-3 mobile:py-4 mobile:pb-20 sm:px-6 sm:py-8 sm:pb-8 lg:px-8 lg:py-6 lg:pb-8">
-        <div className="max-w-7xl mx-auto">
-          
-          {/* INVENTORY VIEW */}
-          {view === 'inventory' && (
-            <div className="space-y-6">
-              {/* Search and Filter Bar */}
-              <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
-                <div className="flex flex-col sm:flex-row gap-4">
-                  {/* Search */}
-                  <div className="flex-1 relative">
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 size-4 text-slate-400" />
-                    <input
-                      type="text"
-                      placeholder="Search inventory..."
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      value={searchTerm}
-                      onChange={e => setSearchTerm(e.target.value)}
-                    />
-                  </div>
-                  
-                  {/* Filter Button */}
-                  <button
-                    onClick={() => setShowFilters(!showFilters)}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"
-                  >
-                    <Filter className="size-4" />
-                    <span className="hidden sm:inline">Filters</span>
-                  </button>
-                  
-                  {/* Sort Dropdown */}
-                  <select
-                    value={sortBy}
-                    onChange={e => setSortBy(e.target.value)}
-                    className="px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="newest">Newest First</option>
-                    <option value="name">Name A-Z</option>
-                    <option value="quantity">High Quantity</option>
-                    <option value="requested">Most Requested</option>
-                  </select>
-                </div>
-                
-                {/* Expanded Filters */}
-                {showFilters && (
-                  <div className="mt-4 pt-4 border-t border-slate-200">
-                    <div className="flex flex-wrap gap-2">
-                      {['all', 'in-stock', 'low-stock', 'out-of-stock'].map(status => (
-                        <button
-                          key={status}
-                          onClick={() => setFilterStatus(status)}
-                          className={`px-3 py-1.5 text-xs font-medium rounded-full border transition-colors ${
-                            filterStatus === status
-                              ? 'bg-blue-100 text-blue-700 border-blue-200'
-                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                          }`}
-                        >
-                          {status === 'all' ? 'All Items' : status.replace('-', ' ')}
-                        </button>
-                      ))}
+      <div className="flex-1 flex flex-col">
+        {/* Header */}
+        <header className="bg-white border-b border-slate-200 px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
+              >
+                {mobileMenuOpen ? <X className="size-5" /> : <Menu className="size-5" />}
+              </button>
+              <h1 className="text-4xl font-black text-black tracking-tight">Employee Portal</h1>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-slate-700">
+                {new Date().toLocaleDateString()}
+              </span>
+            </div>
+          </div>
+        </header>
+
+        {/* Content Area */}
+        <div className="flex-1 overflow-auto p-6">
+          <div className="max-w-7xl mx-auto">
+            
+            {/* INVENTORY VIEW */}
+            {view === 'inventory' && (
+              <div className="space-y-6">
+                {/* Search and Filter Bar */}
+                <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+                  <div className="flex flex-col sm:flex-row gap-4">
+                    {/* Search */}
+                    <div className="flex-1 relative">
+                      <div className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400">
+                        <svg className="size-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="Search inventory..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
                     </div>
+                  </div>
+                </div>
+
+                {/* Inventory Grid */}
+                {filteredInventory.length === 0 ? (
+                  <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
+                    <Package className="size-12 text-slate-300 mx-auto mb-4" />
+                    <h3 className="text-lg font-semibold text-slate-700 mb-2">No items found</h3>
+                    <p className="text-slate-500">Try adjusting your search criteria</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    {filteredInventory.map(item => (
+                      <div key={item.id} className="bg-white rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+                        <div className="p-4">
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="flex-1">
+                              <h3 className="font-semibold text-slate-900 text-base mb-1">{item.itemName}</h3>
+                              <p className="text-sm text-slate-500">Code: {item.itemCode}</p>
+                            </div>
+                            <span className={`px-2 py-1 text-xs font-medium rounded-full border ${
+                              item.status === 'in-stock' ? 'bg-green-50 text-green-600 border-green-200' :
+                              item.status === 'low-stock' ? 'bg-yellow-50 text-yellow-600 border-yellow-200' :
+                              item.status === 'out-of-stock' ? 'bg-red-50 text-red-600 border-red-200' :
+                              'bg-gray-50 text-gray-600 border-gray-200'
+                            }`}>
+                              {item.status ? item.status.replace('-', ' ') : 'Unknown'}
+                            </span>
+                          </div>
+                          
+                          <div className="flex items-center justify-between mb-3">
+                            <span className="text-2xl font-bold text-slate-900">{item.quantity}</span>
+                            <span className="text-sm text-slate-500">{item.unit}</span>
+                          </div>
+                          
+                          <button
+                            onClick={() => {
+                              setSelectedItem(item);
+                              setRequestForm({
+                                item_name: item.itemName,
+                                item_code: item.itemCode,
+                                quantity_requested: '',
+                                unit: item.unit,
+                                purpose: '',
+                                urgency: 'normal',
+                              });
+                              setShowRequestModal(true);
+                            }}
+                            className="w-full bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                          >
+                            Request Item
+                          </button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
+            )}
 
-              {/* Inventory Grid */}
-              {isLoading ? (
-                <SkeletonLoader />
-              ) : sortedInventory.length === 0 ? (
-                <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
-                  <Package className="size-12 text-slate-300 mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold text-slate-700 mb-2">No items found</h3>
-                  <p className="text-slate-500">Try adjusting your search or filters</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 mobile:grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mobile:gap-4">
-                  {sortedInventory.map(item => (
-                    <MobileCard key={item.id}>
-                      {/* Status Badge */}
-                      <div className="p-4 pb-0">
-                        <div className="flex justify-between items-start mb-3">
-                          <div className="flex-1">
-                            <h3 className="font-semibold text-slate-900 text-base mb-1">{item.itemName}</h3>
-                            <p className="text-sm text-slate-500">{item.itemCode}</p>
-                          </div>
-                          <span className={`px-2 py-1 text-xs font-medium rounded-full border ${
-                            item.status === 'in-stock' 
-                              ? 'bg-green-100 text-green-700 border-green-200'
-                              : item.status === 'low-stock'
-                              ? 'bg-yellow-100 text-yellow-700 border-yellow-200'
-                              : 'bg-red-100 text-red-700 border-red-200'
-                          }`}>
-                            {item.status.replace('-', ' ')}
-                          </span>
-                        </div>
-                        
-                        {item.description && (
-                          <p className="text-sm text-slate-600 mb-3 line-clamp-2">{item.description}</p>
-                        )}
-                        
-                        {/* Item Details */}
-                        <div className="grid grid-cols-2 gap-3 mb-4">
-                          <div className="bg-slate-50 rounded-lg p-3">
-                            <p className="text-xs text-slate-500 mb-1">Quantity</p>
-                            <p className="font-semibold text-slate-900">{item.quantity} {item.unit}</p>
-                          </div>
-                          <div className="bg-slate-50 rounded-lg p-3">
-                            <p className="text-xs text-slate-500 mb-1">Requested</p>
-                            <p className="font-semibold text-slate-900">{item.requestedCount || 0} times</p>
-                          </div>
-                        </div>
-                        
-                        {/* Action Button */}
-                        <button
-                          onClick={() => {
-                            setSelectedItem(item);
-                            setRequestForm(f => ({
-                              ...f,
-                              item_name: item.itemName,
-                              item_code: item.itemCode,
-                              unit: item.unit
-                            }));
-                            setShowRequestModal(true);
-                          }}
-                          disabled={item.status === 'out-of-stock'}
-                          className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg font-medium text-sm transition-colors ${
-                            item.status === 'out-of-stock'
-                              ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                              : 'bg-blue-600 text-white hover:bg-blue-700 active:scale-95'
-                          }`}
-                        >
-                          <Plus className="size-4" />
-                          {item.status === 'out-of-stock' ? 'Out of Stock' : 'Request Item'}
-                        </button>
-                      </div>
-                      
-                      {/* Footer */}
-                      <div className="px-4 py-3 bg-slate-50 border-t border-slate-200">
-                        <div className="flex items-center justify-between text-xs text-slate-500">
-                          <span>Category: {item.category || 'General'}</span>
-                          <span>Updated: {item.lastUpdated || 'N/A'}</span>
-                        </div>
-                      </div>
-                    </MobileCard>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* NEW REQUEST FORM */}
-          {view === 'requests' && (
-            <div className="max-w-2xl mx-auto">
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
-                <div className="p-6 border-b border-slate-200">
-                  <h2 className="text-xl font-bold text-slate-900">Submit Material Request</h2>
-                  <p className="text-sm text-slate-600 mt-1">Fill out the form below to request materials</p>
-                </div>
-                
-                <form onSubmit={e => { e.preventDefault(); handleSubmitRequest(); }} className="p-6 space-y-6">
-                  {/* Item Name */}
-                  <MobileInput
-                    label="Item Name"
-                    required
-                    type="text"
-                    placeholder="Enter item name"
-                    value={requestForm.item_name}
-                    onChange={value => setRequestForm(f => ({ ...f, item_name: value }))}
-                    error={formErrors.item_name}
-                  />
-
-                  {/* Item Code */}
-                  <MobileInput
-                    label="Item Code"
-                    type="text"
-                    placeholder="Optional item code"
-                    value={requestForm.item_code}
-                    onChange={value => setRequestForm(f => ({ ...f, item_code: value }))}
-                  />
-
-                  {/* Quantity and Unit */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <MobileInput
-                      label="Quantity"
-                      required
-                      type="number"
-                      placeholder="1"
-                      min="1"
-                      value={requestForm.quantity_requested}
-                      onChange={value => setRequestForm(f => ({ ...f, quantity_requested: value }))}
-                      error={formErrors.quantity_requested}
-                    />
-                    
-                    <MobileSelect
-                      label="Unit"
-                      required
-                      value={requestForm.unit}
-                      onChange={value => setRequestForm(f => ({ ...f, unit: value }))}
-                      options={[
-                        { value: 'pcs', label: 'Pieces' },
-                        { value: 'kg', label: 'Kilograms' },
-                        { value: 'm', label: 'Meters' },
-                        { value: 'l', label: 'Liters' },
-                        { value: 'box', label: 'Box' },
-                        { value: 'set', label: 'Set' }
-                      ]}
-                    />
-                  </div>
-
-                  {/* Purpose */}
-                  <MobileTextarea
-                    label="Purpose"
-                    required
-                    placeholder="Describe the purpose of this request"
-                    value={requestForm.purpose}
-                    onChange={value => setRequestForm(f => ({ ...f, purpose: value }))}
-                    error={formErrors.purpose}
-                  />
-
-                  {/* Urgency */}
-                  <MobileSelect
-                    label="Urgency"
-                    value={requestForm.urgency}
-                    onChange={value => setRequestForm(f => ({ ...f, urgency: value as any }))}
-                    options={[
-                      { value: 'low', label: 'Low Priority' },
-                      { value: 'normal', label: 'Normal' },
-                      { value: 'high', label: 'High Priority' }
-                    ]}
-                  />
-
-                  {/* Action Buttons */}
-                  <div className="flex gap-3 pt-4">
-                    <MobileButton
-                      variant="secondary"
-                      onClick={() => {
-                        setRequestForm({
-                          item_name: '',
-                          item_code: '',
-                          quantity_requested: '1',
-                          unit: 'pcs',
-                          purpose: '',
-                          urgency: 'normal'
-                        });
-                        setFormErrors({});
-                      }}
-                    >
-                      Clear
-                    </MobileButton>
-                    <MobileButton
-                      variant="primary"
-                      type="submit"
-                      loading={isSubmitting}
-                      disabled={isSubmitting}
-                    >
-                      {isSubmitting ? 'Submitting...' : 'Submit Request'}
-                    </MobileButton>
-                  </div>
-                </form>
-              </div>
-            </div>
-          )}
-
-          {/* MY REQUESTS */}
-          {view === 'history' && (
-            <div className="space-y-6">
-              {/* Filter and Search Bar */}
-              <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
-                <div className="flex flex-col sm:flex-row gap-4">
-                  <div className="flex-1 relative">
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 size-4 text-slate-400" />
-                    <input
-                      type="text"
-                      placeholder="Search requests..."
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
+            {/* NEW REQUEST FORM */}
+            {view === 'requests' && (
+              <div className="max-w-2xl mx-auto">
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
+                  <div className="p-6 border-b border-slate-200">
+                    <h2 className="text-xl font-bold text-slate-900 mb-2">New Material Request</h2>
+                    <p className="text-slate-600">Submit a request for materials or supplies</p>
                   </div>
                   
-                  <select className="px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <option value="all">All Status</option>
-                    <option value="pending">Pending</option>
-                    <option value="approved">Approved</option>
-                    <option value="rejected">Rejected</option>
-                    <option value="completed">Completed</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Requests List */}
-              {filteredRequests.length === 0 ? (
-                <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
-                  <ClipboardList className="size-12 text-slate-300 mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold text-slate-700 mb-2">No requests yet</h3>
-                  <p className="text-slate-500 mb-4">Submit your first material request to get started</p>
-                  <button
-                    onClick={() => setView('requests')}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
-                  >
-                    Create Request
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {filteredRequests.map(request => (
-                    <MobileCard key={request.id}>
-                      <div className="p-4">
-                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-4">
-                          <div className="flex-1">
-                            <h3 className="font-semibold text-slate-900 text-base mb-1">{request.item_name}</h3>
-                            <p className="text-sm text-slate-500">
-                              {request.quantity_requested} {request.unit} • Code: {request.item_code || 'N/A'}
-                            </p>
-                          </div>
-                          <span className={`px-3 py-1 text-xs font-medium rounded-full border ${getStatusColor(request.status)}`}>
-                            {request.status.replace('-', ' ')}
-                          </span>
+                  <div className="p-6">
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-2">Item Name</label>
+                        <input
+                          type="text"
+                          placeholder="Enter item name"
+                          value={requestForm.item_name}
+                          onChange={(e) => setRequestForm({...requestForm, item_name: e.target.value})}
+                          className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        {formErrors.item_name && (
+                          <p className="text-red-500 text-xs mt-1">{formErrors.item_name}</p>
+                        )}
+                      </div>
+                      
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-2">Item Code</label>
+                          <input
+                            type="text"
+                            placeholder="Item code (optional)"
+                            value={requestForm.item_code}
+                            onChange={(e) => setRequestForm({...requestForm, item_code: e.target.value})}
+                            className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
                         </div>
                         
-                        <p className="text-sm text-slate-600 mb-4">{request.purpose}</p>
-                        
-                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                          <div className="flex items-center gap-4 text-xs text-slate-500">
-                            <div className="flex items-center gap-1">
-                              <Calendar className="size-3" />
-                              <span>{new Date(request.created_at).toLocaleDateString()}</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <Tag className="size-3" />
-                              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                                request.urgency === 'high' ? 'bg-red-100 text-red-700' :
-                                request.urgency === 'normal' ? 'bg-blue-100 text-blue-700' :
-                                'bg-green-100 text-green-700'
-                              }`}>
-                                {request.urgency}
-                              </span>
-                            </div>
-                          </div>
-                          
-                          <div className="flex gap-2">
-                            {request.status === 'pending' && (
-                              <button className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">
-                                Cancel
-                              </button>
-                            )}
-                            {request.status === 'rejected' && (
-                              <button className="px-3 py-1.5 text-xs font-medium text-blue-600 hover:text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors">
-                                Resubmit
-                              </button>
-                            )}
-                            <button className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">
-                              View Details
-                            </button>
-                          </div>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-2">Quantity</label>
+                          <input
+                            type="text"
+                            placeholder="Quantity"
+                            value={requestForm.quantity_requested}
+                            onChange={(e) => setRequestForm({...requestForm, quantity_requested: e.target.value})}
+                            className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                          {formErrors.quantity_requested && (
+                            <p className="text-red-500 text-xs mt-1">{formErrors.quantity_requested}</p>
+                          )}
                         </div>
                       </div>
-                    </MobileCard>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* NOTIFICATIONS */}
-          {view === 'notifications' && (
-            <div className="space-y-6">
-              {/* Header with Actions */}
-              <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-semibold text-slate-900">Notifications</h2>
-                  <div className="flex gap-2">
-                    <button className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">
-                      Mark All Read
-                    </button>
-                    <button className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">
-                      Clear All
-                    </button>
+                      
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-2">Unit</label>
+                          <select
+                            value={requestForm.unit}
+                            onChange={(e) => setRequestForm({...requestForm, unit: e.target.value})}
+                            className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="">Select unit</option>
+                            <option value="pcs">Pieces</option>
+                            <option value="kg">Kilograms</option>
+                            <option value="liters">Liters</option>
+                            <option value="meters">Meters</option>
+                            <option value="boxes">Boxes</option>
+                            <option value="sets">Sets</option>
+                          </select>
+                          {formErrors.unit && (
+                            <p className="text-red-500 text-xs mt-1">{formErrors.unit}</p>
+                          )}
+                        </div>
+                        
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-2">Urgency</label>
+                          <select
+                            value={requestForm.urgency}
+                            onChange={(e) => setRequestForm({...requestForm, urgency: e.target.value as 'low' | 'normal' | 'high'})}
+                            className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="low">Low</option>
+                            <option value="normal">Normal</option>
+                            <option value="high">High</option>
+                          </select>
+                        </div>
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-2">Purpose</label>
+                        <textarea
+                          placeholder="Describe the purpose of this request..."
+                          value={requestForm.purpose}
+                          onChange={(e) => setRequestForm({...requestForm, purpose: e.target.value})}
+                          rows={3}
+                          className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        {formErrors.purpose && (
+                          <p className="text-red-500 text-xs mt-1">{formErrors.purpose}</p>
+                        )}
+                      </div>
+                      
+                      <div className="flex gap-3">
+                        <button
+                          onClick={() => setView('inventory')}
+                          className="flex-1 px-4 py-2.5 bg-white border border-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleSubmitRequest}
+                          disabled={isSubmitting}
+                          className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
+                        >
+                          {isSubmitting ? 'Submitting...' : 'Submit Request'}
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
+            )}
 
-              {/* Notifications List */}
-              {Object.keys(groupedNotifications).length === 0 ? (
-                <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
-                  <Bell className="size-12 text-slate-300 mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold text-slate-700 mb-2">No notifications yet</h3>
-                  <p className="text-slate-500">You're all caught up! Check back later for updates.</p>
+            {/* MY REQUESTS */}
+            {view === 'history' && (
+              <div className="space-y-6">
+                <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-lg font-semibold text-slate-900">My Material Requests</h2>
+                    <span className="text-sm text-slate-500">{requests.length} requests</span>
+                  </div>
                 </div>
-              ) : (
-                <div className="space-y-6">
-                  {Object.entries(groupedNotifications).map(([date, dayNotifications]) => (
-                    <div key={date}>
-                      <h3 className="text-sm font-medium text-slate-500 mb-3 px-1">
-                        {date === new Date().toDateString() ? 'Today' : 
-                         date === new Date(Date.now() - 86400000).toDateString() ? 'Yesterday' : 
-                         date}
-                      </h3>
-                      
-                      <div className="space-y-3">
-                        {dayNotifications.map(notification => {
-                          const Icon = getNotificationIcon(notification.type);
-                          return (
-                            <div
-                              key={notification.id}
-                              className={`bg-white rounded-xl border p-4 shadow-sm hover:shadow-md transition-all cursor-pointer ${
-                                !notification.is_read ? 'border-blue-200 bg-blue-50' : 'border-slate-200'
-                              }`}
-                            >
-                              <div className="flex gap-4">
-                                <div className={`p-2 rounded-lg ${
-                                  !notification.is_read ? 'bg-blue-100' : 'bg-slate-100'
-                                }`}>
-                                  <Icon className={`size-5 ${getNotificationColor(notification.type)}`} />
-                                </div>
-                                
-                                <div className="flex-1 min-w-0">
-                                  <h4 className="font-semibold text-slate-900 text-sm mb-1">{notification.title}</h4>
-                                  <p className="text-sm text-slate-600 mb-2">{notification.message}</p>
-                                  <p className="text-xs text-slate-500">
-                                    {new Date(notification.created_at).toLocaleTimeString()}
-                                  </p>
-                                </div>
-                                
-                                {!notification.is_read && (
-                                  <div className="w-2 h-2 bg-blue-600 rounded-full flex-shrink-0 mt-2"></div>
-                                )}
+
+                {requests.length === 0 ? (
+                  <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
+                    <ClipboardList className="size-12 text-slate-300 mx-auto mb-4" />
+                    <h3 className="text-lg font-semibold text-slate-700 mb-2">No requests yet</h3>
+                    <p className="text-slate-500 mb-4">Submit your first material request to get started</p>
+                    <button
+                      onClick={() => setView('requests')}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                    >
+                      Create Request
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {requests.map(request => (
+                      <div key={request.id} className="bg-white rounded-xl border border-slate-200 shadow-sm">
+                        <div className="p-4">
+                          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-4">
+                            <div className="flex-1">
+                              <h3 className="font-semibold text-slate-900 text-base mb-1">{request.item_name}</h3>
+                              <p className="text-sm text-slate-500">
+                                {request.quantity_requested} {request.unit} • Code: {request.item_code || 'N/A'}
+                              </p>
+                            </div>
+                            <span className={`px-3 py-1 text-xs font-medium rounded-full border ${getStatusColor(request.status)}`}>
+                              {request.status.replace('-', ' ')}
+                            </span>
+                          </div>
+                          
+                          <p className="text-sm text-slate-600 mb-4">{request.purpose}</p>
+                          
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                            <div className="flex items-center gap-4 text-xs text-slate-500">
+                              <div className="flex items-center gap-1">
+                                <svg className="size-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                </svg>
+                                {new Date(request.created_at).toLocaleDateString()}
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <User className="size-3" />
+                                {request.employee_name}
                               </div>
                             </div>
-                          );
-                        })}
+                            
+                            {request.urgency === 'high' && (
+                              <div className="flex items-center gap-1 text-red-500">
+                                <AlertCircle className="size-4" />
+                                <span className="text-xs font-medium">High Priority</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </main>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
-      {/* Request Modal */}
-      {showRequestModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl max-w-md w-full p-6">
-            <h3 className="text-lg font-semibold text-slate-900 mb-4">Quick Request</h3>
-            <p className="text-sm text-slate-600 mb-4">
-              Requesting: {selectedItem?.itemName}
-            </p>
-            
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Quantity</label>
-                <input
-                  type="text"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
-                  value={requestForm.quantity_requested}
-                  onChange={e => setRequestForm(f => ({ ...f, quantity_requested: e.target.value }))}
-                />
+            {/* NOTIFICATIONS */}
+            {view === 'notifications' && (
+              <div className="space-y-6">
+                <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
+                  <Bell className="size-12 text-slate-300 mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold text-slate-700 mb-2">Notifications</h3>
+                  <p className="text-slate-500">Notifications coming soon</p>
+                </div>
               </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Purpose</label>
-                <textarea
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm resize-none"
-                  rows={3}
-                  placeholder="Why do you need this item?"
-                  value={requestForm.purpose}
-                  onChange={e => setRequestForm(f => ({ ...f, purpose: e.target.value }))}
-                />
-              </div>
-            </div>
-            
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => setShowRequestModal(false)}
-                className="flex-1 px-4 py-2 border border-slate-200 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSubmitRequest}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
-              >
-                Submit
-              </button>
-            </div>
+            )}
           </div>
         </div>
-      )}
-
-      {/* Mobile Bottom Navigation */}
-      <MobileBottomNav 
-        view={view} 
-        setView={setView} 
-        unreadCount={unreadCount} 
-      />
+      </div>
     </div>
   );
 }

@@ -3710,7 +3710,30 @@ app.put('/api/material-requests/:id/review', async (req, res) => {
   }
 });
 
-
+// Delete material request
+app.delete('/api/material-requests/:id', async (req, res) => {
+  try {
+    const material_request_id = req.params.id;
+    
+    // Check if request exists
+    const existingRequest = await query(
+      'SELECT * FROM material_requests WHERE id = $1',
+      [material_request_id]
+    );
+    
+    if (existingRequest.rows.length === 0) {
+      return res.status(404).json({ error: 'Material request not found' });
+    }
+    
+    // Delete the request
+    await query('DELETE FROM material_requests WHERE id = $1', [material_request_id]);
+    
+    res.json({ message: 'Material request deleted successfully' });
+  } catch (err) {
+    console.error('Error deleting material request:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // --- DRIVER DELIVERY ENDPOINTS ---
 
