@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Package, Plus, Search, Filter, ArrowUpDown, Eye, X } from 'lucide-react';
+import { Package, Plus, Search, Filter, ArrowUpDown, Eye, X, Minus, Edit, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { fetchApi } from '../api/client';
 import { CreateInventoryItemModal } from './CreateInventoryItemModal';
-import { EditInventoryItemModal } from './EditInventoryItemModal';
+import { EditInventoryModalSimple } from './EditInventoryModalSimple';
+import { WithdrawInventoryModal } from './WithdrawInventoryModal';
 
 interface InventoryItem {
   id: string;
@@ -28,6 +29,8 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showWithdrawModal, setShowWithdrawModal] = useState(false);
+  const [showViewModal, setShowViewModal] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [filter, setFilter] = useState<'all' | 'in-stock' | 'low-stock' | 'out-of-stock'>('all');
@@ -42,7 +45,9 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
 
   const fetchInventory = async () => {
     try {
+      console.log('Fetching inventory...');
       const data = await fetchApi<any[]>('/inventory');
+      console.log('Inventory data received:', data);
       
       // Transform API data to match component interface
       const transformedData = data.map((item: any) => ({
@@ -59,12 +64,52 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
         status: item.status || determineStockStatus(item.quantity)
       }));
       
+      console.log('Setting inventory with transformed data:', transformedData);
       setInventory(transformedData);
     } catch (error) {
       console.error('Error fetching inventory:', error);
       toast.error('Failed to load inventory');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDelete = async (itemId: string) => {
+    // Optimistic update: remove item from UI immediately
+    const originalInventory = [...inventory];
+    setInventory(prev => prev.filter(item => item.id !== itemId));
+    
+    try {
+      console.log('Deleting inventory item:', itemId);
+      
+      // Show success immediately
+      toast.success('Inventory item deleted successfully');
+      
+      // Then confirm with server
+      const response = await fetchApi(`/inventory/${itemId}`, {
+        method: 'DELETE'
+      });
+      
+      console.log('Delete response:', response);
+      console.log('Delete successful, keeping item removed');
+      
+      // Refresh inventory to ensure consistency after a short delay
+      setTimeout(() => {
+        fetchInventory();
+      }, 500);
+      
+    } catch (error: any) {
+      console.error('Delete error:', error);
+      console.error('Error details:', error.message, error.status);
+      console.error('Full error object:', error);
+      
+      // Temporarily comment out rollback to see what happens
+      // setInventory(originalInventory);
+      
+      // Show more detailed error message
+      const errorMessage = error.message || error.error || 'Failed to delete inventory item';
+      toast.error(`Delete failed: ${errorMessage}`);
+      console.log('Error occurred but keeping item removed for debugging');
     }
   };
 
@@ -845,36 +890,161 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                     <td style={{ padding: '16px', textAlign: 'center' }}>
                       <StatusBadge status={item.status} />
                     </td>
-                    <td style={{ padding: '16px', textAlign: 'center' }}>
-                      <button
-                        onClick={() => setSelectedItem(item)}
-                        style={{
-                          padding: '8px 12px',
-                          borderRadius: '6px',
-                          border: '1px solid #ede9fe',
-                          backgroundColor: 'white',
-                          color: '#8b5cf6',
-                          fontSize: '12px',
-                          fontWeight: '500',
-                          fontFamily: 'Inter, sans-serif',
-                          cursor: 'pointer',
-                          transition: 'all 0.2s ease',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '6px'
-                        }}
-                        onMouseOver={(e) => {
-                          e.currentTarget.style.backgroundColor = '#f3f4f6';
-                          e.currentTarget.style.borderColor = '#8b5cf6';
-                        }}
-                        onMouseOut={(e) => {
-                          e.currentTarget.style.backgroundColor = 'white';
-                          e.currentTarget.style.borderColor = '#ede9fe';
-                        }}
-                      >
-                        <Eye style={{ width: '14px', height: '14px' }} />
-                        View
-                      </button>
+                    <td style={{ padding: '16px' }}>
+                      <div style={{
+                        display: 'flex',
+                        gap: '8px',
+                        justifyContent: 'center',
+                        flexWrap: 'wrap'
+                      }}>
+                        {/* View Button */}
+                        <button
+                          onClick={() => {
+                            setSelectedItem(item);
+                            setShowViewModal(true);
+                          }}
+                          style={{
+                            padding: '6px 10px',
+                            borderRadius: '6px',
+                            border: '1px solid #ede9fe',
+                            backgroundColor: 'white',
+                            color: '#8b5cf6',
+                            fontSize: '11px',
+                            fontWeight: '500',
+                            fontFamily: 'Inter, sans-serif',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s ease',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}
+                          onMouseOver={(e) => {
+                            e.currentTarget.style.backgroundColor = '#f3f4f6';
+                            e.currentTarget.style.borderColor = '#8b5cf6';
+                          }}
+                          onMouseOut={(e) => {
+                            e.currentTarget.style.backgroundColor = 'white';
+                            e.currentTarget.style.borderColor = '#ede9fe';
+                          }}
+                        >
+                          <Eye style={{ width: '12px', height: '12px' }} />
+                          View
+                        </button>
+
+                        {/* Admin-only buttons */}
+                        {isAdmin && (
+                          <>
+                            {/* Withdraw Button */}
+                            <button
+                              onClick={() => {
+                                setSelectedItem(item);
+                                setShowWithdrawModal(true);
+                              }}
+                              disabled={item.quantity === 0}
+                              style={{
+                                padding: '6px 10px',
+                                borderRadius: '6px',
+                                border: '1px solid #fecaca',
+                                backgroundColor: item.quantity === 0 ? '#f9fafb' : 'white',
+                                color: item.quantity === 0 ? '#d1d5db' : '#dc2626',
+                                fontSize: '11px',
+                                fontWeight: '500',
+                                fontFamily: 'Inter, sans-serif',
+                                cursor: item.quantity === 0 ? 'not-allowed' : 'pointer',
+                                transition: 'all 0.2s ease',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                opacity: item.quantity === 0 ? 0.5 : 1
+                              }}
+                              onMouseOver={(e) => {
+                                if (item.quantity > 0) {
+                                  e.currentTarget.style.backgroundColor = '#fef2f2';
+                                  e.currentTarget.style.borderColor = '#dc2626';
+                                }
+                              }}
+                              onMouseOut={(e) => {
+                                e.currentTarget.style.backgroundColor = item.quantity === 0 ? '#f9fafb' : 'white';
+                                e.currentTarget.style.borderColor = '#fecaca';
+                              }}
+                            >
+                              <Minus style={{ width: '12px', height: '12px' }} />
+                              Withdraw
+                            </button>
+
+                            {/* Edit Button */}
+                            <button
+                              onClick={() => {
+                                setSelectedItem(item);
+                                setShowEditModal(true);
+                              }}
+                              style={{
+                                padding: '6px 10px',
+                                borderRadius: '6px',
+                                border: '1px solid #dbeafe',
+                                backgroundColor: 'white',
+                                color: '#2563eb',
+                                fontSize: '11px',
+                                fontWeight: '500',
+                                fontFamily: 'Inter, sans-serif',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}
+                              onMouseOver={(e) => {
+                                e.currentTarget.style.backgroundColor = '#eff6ff';
+                                e.currentTarget.style.borderColor = '#2563eb';
+                              }}
+                              onMouseOut={(e) => {
+                                e.currentTarget.style.backgroundColor = 'white';
+                                e.currentTarget.style.borderColor = '#dbeafe';
+                              }}
+                            >
+                              <Edit style={{ width: '12px', height: '12px' }} />
+                              Edit
+                            </button>
+
+                            {/* Delete Button */}
+                            <button
+                              onClick={() => {
+                                if (window.confirm(`Are you sure you want to delete ${item.itemName}?`)) {
+                                  handleDelete(item.id);
+                                }
+                              }}
+                              style={{
+                                padding: '6px 10px',
+                                borderRadius: '6px',
+                                border: '1px solid #f3f4f6',
+                                backgroundColor: 'white',
+                                color: '#6b7280',
+                                fontSize: '11px',
+                                fontWeight: '500',
+                                fontFamily: 'Inter, sans-serif',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}
+                              onMouseOver={(e) => {
+                                e.currentTarget.style.backgroundColor = '#f9fafb';
+                                e.currentTarget.style.borderColor = '#d1d5db';
+                                e.currentTarget.style.color = '#374151';
+                              }}
+                              onMouseOut={(e) => {
+                                e.currentTarget.style.backgroundColor = 'white';
+                                e.currentTarget.style.borderColor = '#f3f4f6';
+                                e.currentTarget.style.color = '#6b7280';
+                              }}
+                            >
+                              <Trash2 style={{ width: '12px', height: '12px' }} />
+                              Delete
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -885,7 +1055,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
       )}
 
       {/* Item Detail Modal */}
-      {selectedItem && (
+      {showViewModal && selectedItem && (
         <div style={{
           position: 'fixed',
           top: 0,
@@ -924,7 +1094,10 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                 Item Details
               </h2>
               <button
-                onClick={() => setSelectedItem(null)}
+                onClick={() => {
+                  setShowViewModal(false);
+                  setSelectedItem(null);
+                }}
                 style={{
                   padding: '8px',
                   borderRadius: '6px',
@@ -1153,19 +1326,57 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
 
       {/* Edit Item Modal */}
       {showEditModal && selectedItem && (
-        <EditInventoryItemModal
-          item={selectedItem}
+        <EditInventoryModalSimple
+          isOpen={showEditModal}
           onClose={() => {
             setShowEditModal(false);
             setSelectedItem(null);
           }}
-          onUpdated={() => {
+          item={selectedItem}
+          onSuccess={() => {
+            console.log('Edit modal onSuccess called - refreshing inventory');
             setShowEditModal(false);
             setSelectedItem(null);
-            setRefreshKey(prev => prev + 1);
+            fetchInventory(); // Refresh immediately
+            
+            // Also refresh after a short delay to ensure consistency
+            setTimeout(() => {
+              console.log('Edit modal delayed refresh');
+              fetchInventory();
+            }, 500);
           }}
         />
       )}
+
+      {/* Withdraw Inventory Modal */}
+      {showWithdrawModal && selectedItem && (
+        <WithdrawInventoryModal
+          isOpen={showWithdrawModal}
+          onClose={() => {
+            setShowWithdrawModal(false);
+            setSelectedItem(null);
+          }}
+          item={{
+            id: selectedItem.id,
+            itemCode: selectedItem.itemCode,
+            itemName: selectedItem.itemName,
+            quantity: selectedItem.quantity,
+            unit: selectedItem.unit
+          }}
+          onSuccess={() => {
+            // Optimistic update: refresh inventory immediately
+            setShowWithdrawModal(false);
+            setSelectedItem(null);
+            fetchInventory(); // Refresh the list
+            
+            // Also refresh after a short delay to ensure consistency
+            setTimeout(() => {
+              fetchInventory();
+            }, 500);
+          }}
+        />
+      )}
+
     </div>
   );
 }

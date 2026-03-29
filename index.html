@@ -4,13 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="theme-color" content="#0f172a" />
-    <meta name="description" content="Kimoel Tracking System - Fleet tracking and purchase order management" />
+    <meta name="description" content="Kimoel Employee Portal - Inventory management and material requests" />
     
     <!-- PWA Meta Tags -->
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Kimoel Tracking" />
+    <meta name="apple-mobile-web-app-title" content="Kimoel Employee" />
+    
+    <!-- Additional PWA Meta Tags -->
+    <meta name="application-name" content="Kimoel Employee Portal" />
+    <meta name="msapplication-TileColor" content="#0f172a" />
+    <meta name="msapplication-config" content="/browserconfig.xml" />
     
     <!-- Manifest -->
     <link rel="manifest" href="/manifest.json" />
@@ -75,40 +80,51 @@
   <body>
     <div id="root"></div>
     
-    <!-- Service Worker Registration & Cache Clearing - DISABLED -->
+    <!-- Service Worker Registration for PWA -->
     <script>
-      // Clear all caches on load
-      if ('caches' in window) {
-        caches.keys().then(cacheNames => {
-          cacheNames.forEach(cacheName => {
-            caches.delete(cacheName);
-          });
-        });
-      }
-      
-      // UNREGISTER any existing Service Workers to fix fetch errors
+      // Register Service Worker for PWA functionality
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(function(registrations) {
-          for(let registration of registrations) {
-            registration.unregister().then(function(boolean) {
-              console.log('Service Worker unregistered:', boolean);
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then(registration => {
+              console.log('Service Worker registered successfully:', registration);
+              
+              // Check for updates periodically
+              setInterval(() => {
+                registration.update();
+              }, 60 * 60 * 1000); // Check every hour
+            })
+            .catch(error => {
+              console.log('Service Worker registration failed:', error);
             });
+        });
+        
+        // Listen for service worker messages
+        navigator.serviceWorker.addEventListener('message', event => {
+          if (event.data && event.data.type === 'RELOAD_PAGE') {
+            window.location.reload();
           }
         });
       }
       
-      // DISABLED: Service Worker registration causing fetch errors
-      // if ('serviceWorker' in navigator) {
-      //   window.addEventListener('load', () => {
-      //     navigator.serviceWorker.register('/sw.js')
-      //       .then(registration => {
-      //         console.log('Service Worker registered successfully:', registration);
-      //       })
-      //       .catch(error => {
-      //         console.log('Service Worker registration failed:', error);
-      //       });
-      //   });
-      // }
+      // PWA Install Prompt
+      let deferredPrompt;
+      window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferredPrompt = e;
+        
+        // Show install button or banner
+        console.log('PWA install prompt ready');
+        
+        // You can dispatch a custom event to show install UI
+        window.dispatchEvent(new CustomEvent('pwa-install-prompt', { detail: e }));
+      });
+      
+      // Handle app installed event
+      window.addEventListener('appinstalled', () => {
+        console.log('PWA was installed');
+        deferredPrompt = null;
+      });
     </script>
   </body>
 </html>

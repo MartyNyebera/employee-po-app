@@ -1,7 +1,7 @@
 {
-  "name": "Kimoel Tracking System",
+  "name": "Kimoel Employee Portal",
   "short_name": "Kimoel",
-  "description": "Fleet tracking and purchase order management",
+  "description": "Employee portal for inventory management and material requests",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f8fafc",
@@ -47,10 +47,34 @@
   "screenshots": [],
   "shortcuts": [
     {
-      "name": "Dashboard",
-      "short_name": "Dashboard",
-      "description": "Open main dashboard",
-      "url": "/",
+      "name": "Employee Portal",
+      "short_name": "Employee",
+      "description": "Open employee portal",
+      "url": "/employee",
+      "icons": [
+        {
+          "src": "/kimoel-logo.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Inventory",
+      "short_name": "Inventory",
+      "description": "View inventory items",
+      "url": "/employee?view=inventory",
+      "icons": [
+        {
+          "src": "/kimoel-logo.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Request Material",
+      "short_name": "Request",
+      "description": "Submit material request",
+      "url": "/employee?view=requests",
       "icons": [
         {
           "src": "/kimoel-logo.png",

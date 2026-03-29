@@ -234,7 +234,7 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex">
+    <div className="admin-portal min-h-screen bg-slate-50 flex">
       {/* Sidebar */}
       <div className={`bg-white border-r border-gray-200 transition-all duration-300 ${menuOpen ? 'w-64' : 'w-20'} flex flex-col`}>
         {/* Logo */}
@@ -359,6 +359,105 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
             </div>
           </button>
 
+          {/* Request Order */}
+          <button
+            onClick={() => setCurrentView('request-form')}
+            className={`w-full text-left rounded-lg transition-all duration-200 ${
+              currentView === 'request-form' 
+                ? 'bg-blue-50 border border-blue-200' 
+                : 'hover:bg-gray-50 border border-transparent'
+            }`}
+            style={{
+              padding: '12px 16px',
+              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <ShoppingCart 
+                style={{
+                  width: '18px',
+                  height: '18px',
+                  color: currentView === 'request-form' ? '#2563eb' : '#6b7280'
+                }} 
+              />
+              {menuOpen && (
+                <span style={{
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: currentView === 'request-form' ? '#2563eb' : '#111827'
+                }}>
+                  Request Order
+                </span>
+              )}
+            </div>
+          </button>
+
+          {/* Inventory Management */}
+          <button
+            onClick={() => setCurrentView('inventory')}
+            className={`w-full text-left rounded-lg transition-all duration-200 ${
+              currentView === 'inventory' 
+                ? 'bg-blue-50 border border-blue-200' 
+                : 'hover:bg-gray-50 border border-transparent'
+            }`}
+            style={{
+              padding: '12px 16px',
+              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <Package 
+                style={{
+                  width: '18px',
+                  height: '18px',
+                  color: currentView === 'inventory' ? '#2563eb' : '#6b7280'
+                }} 
+              />
+              {menuOpen && (
+                <span style={{
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: currentView === 'inventory' ? '#2563eb' : '#111827'
+                }}>
+                  Inventory Management
+                </span>
+              )}
+            </div>
+          </button>
+
+          {/* Miscellaneous */}
+          <button
+            onClick={() => setCurrentView('miscellaneous')}
+            className={`w-full text-left rounded-lg transition-all duration-200 ${
+              currentView === 'miscellaneous' 
+                ? 'bg-blue-50 border border-blue-200' 
+                : 'hover:bg-gray-50 border border-transparent'
+            }`}
+            style={{
+              padding: '12px 16px',
+              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <Wrench 
+                style={{
+                  width: '18px',
+                  height: '18px',
+                  color: currentView === 'miscellaneous' ? '#2563eb' : '#6b7280'
+                }} 
+              />
+              {menuOpen && (
+                <span style={{
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: currentView === 'miscellaneous' ? '#2563eb' : '#111827'
+                }}>
+                  Miscellaneous
+                </span>
+              )}
+            </div>
+          </button>
+
           {/* Fleet */}
           <button
             onClick={() => setCurrentView('fleet')}
@@ -420,39 +519,6 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
                   color: currentView === 'gps' ? '#2563eb' : '#111827'
                 }}>
                   GPS Tracking
-                </span>
-              )}
-            </div>
-          </button>
-
-          {/* Miscellaneous */}
-          <button
-            onClick={() => setCurrentView('miscellaneous')}
-            className={`w-full text-left rounded-lg transition-all duration-200 ${
-              currentView === 'miscellaneous' 
-                ? 'bg-blue-50 border border-blue-200' 
-                : 'hover:bg-gray-50 border border-transparent'
-            }`}
-            style={{
-              padding: '12px 16px',
-              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <Wrench 
-                style={{
-                  width: '18px',
-                  height: '18px',
-                  color: currentView === 'miscellaneous' ? '#2563eb' : '#6b7280'
-                }} 
-              />
-              {menuOpen && (
-                <span style={{
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  color: currentView === 'miscellaneous' ? '#2563eb' : '#111827'
-                }}>
-                  Miscellaneous
                 </span>
               )}
             </div>
@@ -559,38 +625,6 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
             </div>
           </button>
 
-          {/* Request Form */}
-          <button
-            onClick={() => setCurrentView('request-form')}
-            className={`w-full text-left rounded-lg transition-all duration-200 ${
-              currentView === 'request-form' 
-                ? 'bg-blue-50 border border-blue-200' 
-                : 'hover:bg-gray-50 border border-transparent'
-            }`}
-            style={{
-              padding: '12px 16px',
-              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <ShoppingCart 
-                style={{
-                  width: '18px',
-                  height: '18px',
-                  color: currentView === 'request-form' ? '#2563eb' : '#6b7280'
-                }} 
-              />
-              {menuOpen && (
-                <span style={{
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  color: currentView === 'request-form' ? '#2563eb' : '#111827'
-                }}>
-                  Request Form
-                </span>
-              )}
-            </div>
-          </button>
         </nav>
 
         {/* User Menu */}

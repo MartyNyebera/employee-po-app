@@ -87,208 +87,172 @@ html {
 }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif !important;
-  font-size: 14px;
-  font-weight: 400;
-  line-height: 1.6;
-  color: var(--color-neutral-700);
-  background-color: var(--color-neutral-50);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   margin: 0 !important;
   padding: 0 !important;
 }
 
-/* ===== CONTAINER FIXES ===== */
-.space-y-6 {
+.admin-portal {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.6;
+  color: #000000;
+  background-color: #ffffff;
+}
+
+/* ===== CONTAINER FIXES (scoped to admin portal only) ===== */
+.admin-portal .space-y-6 {
   display: flex !important;
   flex-direction: column !important;
   gap: var(--spacing-2xl) !important;
 }
 
-.p-6 {
+.admin-portal .p-6 {
   padding: var(--spacing-2xl) !important;
 }
 
-.flex {
+.admin-portal .flex {
   display: flex !important;
 }
 
-.flex-col {
+.admin-portal .flex-col {
   flex-direction: column !important;
 }
 
-.items-center {
+.admin-portal .items-center {
   align-items: center !important;
 }
 
-.justify-between {
+.admin-portal .justify-between {
   justify-content: space-between !important;
 }
 
-.gap-4 {
+.admin-portal .gap-4 {
   gap: var(--spacing-lg) !important;
 }
 
-.gap-3 {
+.admin-portal .gap-3 {
   gap: var(--spacing-md) !important;
 }
 
-.gap-2 {
+.admin-portal .gap-2 {
   gap: var(--spacing-sm) !important;
 }
 
-.gap-6 {
+.admin-portal .gap-6 {
   gap: var(--spacing-xl) !important;
 }
 
-/* ===== TEXT STYLES ===== */
-.text-3xl {
+/* ===== TEXT STYLES (scoped to admin portal only) ===== */
+.admin-portal .text-3xl {
   font-size: 32px !important;
   font-weight: 700 !important;
   line-height: 1.2 !important;
 }
 
-.font-bold {
+.admin-portal .font-bold {
   font-weight: 700 !important;
 }
 
-.tracking-tight {
+.admin-portal .tracking-tight {
   letter-spacing: -0.025em !important;
 }
 
-.text-gray-900 {
-  color: var(--color-neutral-900) !important;
+.admin-portal .text-gray-900 {
+  color: #000000 !important;
 }
 
-.text-gray-600 {
-  color: var(--color-neutral-600) !important;
+.admin-portal .text-gray-600 {
+  color: #000000 !important;
 }
 
-.text-gray-400 {
-  color: var(--color-neutral-400) !important;
+.admin-portal .text-gray-400 {
+  color: #000000 !important;
 }
 
-.mt-1 {
+.admin-portal .mt-1 {
   margin-top: var(--spacing-xs) !important;
 }
 
-/* ===== FORM STYLES ===== */
-.px-4 {
+/* ===== FORM STYLES (scoped to admin portal only) ===== */
+.admin-portal .px-4 {
   padding-left: var(--spacing-lg) !important;
   padding-right: var(--spacing-lg) !important;
 }
 
-.py-2 {
+.admin-portal .py-2 {
   padding-top: var(--spacing-sm) !important;
   padding-bottom: var(--spacing-sm) !important;
 }
 
-.border {
+.admin-portal .border {
   border: 1px solid var(--color-neutral-200) !important;
 }
 
-.border-gray-300 {
+.admin-portal .border-gray-300 {
   border-color: var(--color-neutral-300) !important;
 }
 
-.rounded-lg {
+.admin-portal .rounded-lg {
   border-radius: var(--radius-lg) !important;
 }
 
-.text-sm {
+.admin-portal .text-sm {
   font-size: 14px !important;
 }
 
-.focus\:outline-none:focus {
+.admin-portal .focus\:outline-none:focus {
   outline: none !important;
 }
 
-.focus\:ring-2:focus {
+.admin-portal .focus\:ring-2:focus {
   box-shadow: 0 0 0 2px var(--color-primary) !important;
 }
 
-.focus\:border-transparent:focus {
+.admin-portal .focus\:border-transparent:focus {
   border-color: transparent !important;
 }
 
-.focus\:ring-green-500:focus {
+.admin-portal .focus\:ring-green-500:focus {
   box-shadow: 0 0 0 2px var(--color-primary) !important;
 }
 
-.w-5 {
+.admin-portal .w-5 {
   width: 20px !important;
 }
 
-.h-5 {
+.admin-portal .h-5 {
   height: 20px !important;
 }
 
-.mr-2 {
+.admin-portal .mr-2 {
   margin-right: var(--spacing-sm) !important;
 }
 
-.inline {
+.admin-portal .inline {
   display: inline !important;
 }
 
-/* ===== TYPOGRAPHY ===== */
-h1, h2, h3, h4, h5, h6 {
+/* ===== TYPOGRAPHY (scoped to admin portal only) ===== */
+.admin-portal h1, .admin-portal h2, .admin-portal h3,
+.admin-portal h4, .admin-portal h5, .admin-portal h6 {
   font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
   font-weight: 700;
   line-height: 1.2;
-  color: var(--color-neutral-900);
+  color: #000000;
   margin: 0;
   padding: 0;
 }
 
-h1 {
-  font-size: 32px;
-  letter-spacing: -0.5px;
-}
-
-h2 {
-  font-size: 24px;
-  letter-spacing: -0.25px;
-}
-
-h3 {
-  font-size: 20px;
-}
-
-h4 {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-h5 {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-h6 {
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-p {
-  margin: 0;
-  padding: 0;
-}
-
-/* ===== LINKS ===== */
-a {
-  color: var(--color-secondary);
-  text-decoration: none;
-  transition: color var(--transition-base);
-}
-
-a:hover {
-  color: #1d4ed8;
-  text-decoration: underline;
-}
+.admin-portal h1 { font-size: 32px; letter-spacing: -0.5px; color: #000000 !important; }
+.admin-portal h2 { font-size: 24px; letter-spacing: -0.25px; }
+.admin-portal h3 { font-size: 20px; }
+.admin-portal h4 { font-size: 16px; font-weight: 600; }
+.admin-portal h5 { font-size: 14px; font-weight: 600; }
+.admin-portal h6 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+.admin-portal p { margin: 0; padding: 0; }
 
 /* ===== PROFESSIONAL CARD COMPONENT ===== */
 .professional-card {
@@ -410,7 +374,7 @@ a:hover {
 .metric-title {
   font-size: 13px !important;
   font-weight: 600 !important;
-  color: var(--color-neutral-600) !important;
+  color: #000000 !important;
   text-transform: uppercase !important;
   letter-spacing: 0.5px !important;
   margin: 0 !important;
@@ -419,7 +383,7 @@ a:hover {
 .metric-description {
   font-size: 12px !important;
   font-weight: 400 !important;
-  color: var(--color-neutral-500) !important;
+  color: #000000 !important;
   margin: 0 !important;
 }
 
@@ -431,6 +395,7 @@ a:hover {
   border-radius: var(--radius-md) !important;
   font-size: 12px !important;
   font-weight: 600 !important;
+  color: #000000 !important;
 }
 
 .metric-trend.up {
@@ -451,7 +416,7 @@ a:hover {
 .metric-value {
   font-size: 32px !important;
   font-weight: 700 !important;
-  color: var(--color-neutral-900) !important;
+  color: #000000 !important;
   line-height: 1.2 !important;
   margin: 0 !important;
   margin-bottom: var(--spacing-sm) !important;
@@ -461,12 +426,12 @@ a:hover {
 .metric-change {
   font-size: 13px !important;
   font-weight: 500 !important;
-  color: var(--color-neutral-600) !important;
+  color: #000000 !important;
   margin: 0 !important;
 }
 
-/* ===== BUTTONS ===== */
-button, .button {
+/* ===== BUTTONS (scoped to admin portal only) ===== */
+.admin-portal button, .admin-portal .button {
   font-family: 'Inter', sans-serif !important;
   font-size: 14px !important;
   font-weight: 500 !important;
@@ -478,66 +443,66 @@ button, .button {
 }
 
 /* Primary Button */
-.btn-primary, button[class*="primary"] {
+.admin-portal .btn-primary, .admin-portal button[class*="primary"] {
   background-color: var(--color-primary) !important;
   color: white !important;
   padding: 10px 16px !important;
 }
 
-.btn-primary:hover, button[class*="primary"]:hover {
+.admin-portal .btn-primary:hover, .admin-portal button[class*="primary"]:hover {
   background-color: var(--color-primary-dark) !important;
   box-shadow: var(--shadow-md) !important;
 }
 
-.btn-primary:active, button[class*="primary"]:active {
+.admin-portal .btn-primary:active, .admin-portal button[class*="primary"]:active {
   transform: scale(0.98) !important;
 }
 
 /* Secondary Button */
-.btn-secondary, button[class*="secondary"] {
+.admin-portal .btn-secondary, .admin-portal button[class*="secondary"] {
   background-color: var(--color-neutral-100) !important;
-  color: var(--color-neutral-700) !important;
+  color: #000000 !important;
   border: 1px solid var(--color-neutral-200) !important;
   padding: 10px 16px !important;
 }
 
-.btn-secondary:hover, button[class*="secondary"]:hover {
+.admin-portal .btn-secondary:hover, .admin-portal button[class*="secondary"]:hover {
   background-color: var(--color-neutral-50) !important;
   border-color: var(--color-neutral-300) !important;
 }
 
 /* Outline Button */
-.btn-outline, button[class*="outline"] {
+.admin-portal .btn-outline, .admin-portal button[class*="outline"] {
   background-color: transparent !important;
   color: var(--color-secondary) !important;
   border: 1px solid var(--color-secondary) !important;
   padding: 10px 16px !important;
 }
 
-.btn-outline:hover, button[class*="outline"]:hover {
+.admin-portal .btn-outline:hover, .admin-portal button[class*="outline"]:hover {
   background-color: #eff6ff !important;
 }
 
-/* ===== INPUTS & FORMS ===== */
-input, textarea, select {
+/* ===== INPUTS & FORMS (scoped to admin portal only) ===== */
+.admin-portal input, .admin-portal textarea, .admin-portal select {
   font-family: 'Inter', sans-serif !important;
   font-size: 14px !important;
   padding: 10px 12px !important;
   border: 1px solid var(--color-neutral-200) !important;
   border-radius: var(--radius-lg) !important;
   background-color: white !important;
-  color: var(--color-neutral-900) !important;
+  color: #000000 !important;
   transition: all var(--transition-fast) !important;
 }
 
-input:focus, textarea:focus, select:focus {
+.admin-portal input:focus, .admin-portal textarea:focus, .admin-portal select:focus {
   outline: none !important;
   border-color: var(--color-secondary) !important;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1) !important;
 }
 
-input::placeholder, textarea::placeholder {
-  color: var(--color-neutral-400) !important;
+.admin-portal input::placeholder, .admin-portal textarea::placeholder {
+  color: #000000 !important;
 }
 
 /* ===== BADGES & TAGS ===== */
@@ -606,7 +571,7 @@ input::placeholder, textarea::placeholder {
 .chart-title {
   font-size: 18px !important;
   font-weight: 600 !important;
-  color: var(--color-neutral-900) !important;
+  color: #000000 !important;
   margin-bottom: var(--spacing-lg) !important;
 }
 
@@ -622,7 +587,7 @@ input::placeholder, textarea::placeholder {
   align-items: center !important;
   gap: var(--spacing-sm) !important;
   font-size: 13px !important;
-  color: var(--color-neutral-600) !important;
+  color: #000000 !important;
 }
 
 .chart-legend-dot {
@@ -659,28 +624,28 @@ input::placeholder, textarea::placeholder {
   }
 }
 
-/* ===== FIX LAYOUT ISSUES ===== */
-.space-y-6 > * + * {
+/* ===== FIX LAYOUT ISSUES (scoped to admin portal only) ===== */
+.admin-portal .space-y-6 > * + * {
   margin-top: var(--spacing-2xl) !important;
 }
 
-.gap-6 {
+.admin-portal .gap-6 {
   gap: var(--spacing-xl) !important;
 }
 
-.grid {
+.admin-portal .grid {
   display: grid !important;
 }
 
-.grid-cols-1 {
+.admin-portal .grid-cols-1 {
   grid-template-columns: repeat(1, minmax(0, 1fr)) !important;
 }
 
-.grid-cols-2 {
+.admin-portal .grid-cols-2 {
   grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
 }
 
-.grid-cols-4 {
+.admin-portal .grid-cols-4 {
   grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
 }
 

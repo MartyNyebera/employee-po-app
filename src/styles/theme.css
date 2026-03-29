@@ -6,21 +6,13 @@
 }
 
 body {
-  overflow-x: hidden; /* Prevent horizontal scroll */
+  overflow-x: hidden;
   min-height: 100vh;
-  color: #000000 !important; /* Force black text for visibility */
-  background-color: #ffffff !important; /* Force white background */
 }
 
-/* Ensure all text elements are visible */
-h1, h2, h3, h4, h5, h6, p, span, div, label, button, input, select, textarea {
-  color: inherit !important;
-}
+/* Text elements inherit color naturally - no override needed */
 
-/* Override any white text that might be invisible */
-.text-white, [class*="text-white"] {
-  color: #000000 !important;
-}
+/* text-white is intentional - do not override */
 
 /* Ensure inputs have visible text */
 input, select, textarea {
@@ -87,10 +79,7 @@ input, select, textarea {
   background: linear-gradient(135deg, #1e293b 0%, #334155 50%, #475569 100%);
 }
 
-/* Smooth Transitions */
-* {
-  transition: all 0.15s ease-in-out;
-}
+/* Smooth Transitions - scoped to specific elements only */
 
 /* Beautiful Cards */
 .card-elevated {

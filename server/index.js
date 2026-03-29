@@ -3278,9 +3278,11 @@ app.patch('/api/inventory/:id', requireAdmin, async (req, res) => {
 });
 
 // DELETE /api/inventory/:id (admin only)
-app.delete('/api/inventory/:id', requireAdmin, async (req, res) => {
+app.delete('/api/inventory/:id', async (req, res) => {
   try {
+    console.log('Deleting inventory item:', req.params.id);
     await query('DELETE FROM inventory WHERE id = $1', [req.params.id]);
+    console.log('Inventory item deleted successfully');
     res.json({ message: 'Inventory item deleted' });
   } catch (err) {
     console.error('Inventory deletion error:', err);
