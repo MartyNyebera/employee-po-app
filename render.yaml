@@ -1,0 +1,37 @@
+services:
+  # Backend API Server
+  - type: web
+    name: employee-po-api
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run server
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        value: ${DATABASE_URL}
+      - key: JWT_SECRET
+        value: ${JWT_SECRET}
+      - key: SUPER_ADMIN_OWNER_EMAIL
+        value: ${SUPER_ADMIN_OWNER_EMAIL}
+      - key: SUPER_ADMIN_OWNER_NAME
+        value: ${SUPER_ADMIN_OWNER_NAME}
+      - key: SUPER_ADMIN_OWNER_PASSWORD
+        value: ${SUPER_ADMIN_OWNER_PASSWORD}
+
+  # Frontend React App
+  - type: web
+    name: employee-po-frontend
+    env: static
+    plan: free
+    buildCommand: npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: REACT_APP_API_URL
+        value: https://employee-po-api.onrender.com
+
+databases:
+  - name: employee-po-db
+    plan: free
+    ipAllowList: []
