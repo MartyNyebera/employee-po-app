@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Truck, MapPin, Package, 
-  MessageSquare, LogOut, Send,
-  Image, Paperclip, CheckCircle } from 'lucide-react';
+import { Truck, MapPin, MessageSquare, LogOut, Send,
+  Paperclip, CheckCircle, Navigation, NavigationOff, Gauge } from 'lucide-react';
 
 // Driver-specific fetch function
 const fetchDriverApi = async (path: string, options?: RequestInit) => {
@@ -20,7 +19,7 @@ const fetchDriverApi = async (path: string, options?: RequestInit) => {
   return res.json();
 };
 
-type DriverView = 'deliveries' | 'chat';
+type DriverView = 'deliveries' | 'tracking' | 'chat';
 
 const DELIVERY_STATUSES = [
   { key: 'Picked Up', label: 'Pick Up', 
@@ -36,17 +35,15 @@ const DELIVERY_STATUSES = [
 ];
 
 export function DriverPortal() {
-  const [view, setView] = useState
-    <DriverView>('deliveries');
+  const [view, setView] = useState<DriverView>('deliveries');
   const [driver, setDriver] = useState<any>(null);
-  const [deliveries, setDeliveries] = useState
-    <any[]>([]);
-  const [messages, setMessages] = useState
-    <any[]>([]);
+  const [assignedVehicle, setAssignedVehicle] = useState<any>(null);
+  const [deliveries, setDeliveries] = useState<any[]>([]);
+  const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [gpsActive, setGpsActive] = useState(false);
-  const [unreadMessages, setUnreadMessages] = 
-    useState(0);
+  const [unreadMessages, setUnreadMessages] = useState(0);
+  const [currentSpeed, setCurrentSpeed] = useState<number | null>(null);
   const gpsIntervalRef = useRef<any>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -63,15 +60,21 @@ export function DriverPortal() {
     setDriver(session);
     loadDeliveries(session.id);
     loadMessages(session.id);
-    startGPS(session);
-    
+    loadAssignedVehicle(session.id);
+
     // Poll messages every 10 seconds
     const msgInterval = setInterval(() => {
       loadMessages(session.id);
     }, 10000);
 
+    // Poll vehicle ODO every 30 seconds
+    const odoInterval = setInterval(() => {
+      loadAssignedVehicle(session.id);
+    }, 30000);
+
     return () => {
       clearInterval(msgInterval);
+      clearInterval(odoInterval);
       if (gpsIntervalRef.current) {
         clearInterval(gpsIntervalRef.current);
       }
@@ -84,14 +87,23 @@ export function DriverPortal() {
     );
   }, [messages]);
 
+  const loadAssignedVehicle = async (driverId: number) => {
+    try {
+      const data = await fetchDriverApi(`/driver/${driverId}/vehicle`);
+      setAssignedVehicle(data);
+    } catch { setAssignedVehicle(null); }
+  };
+
   const startGPS = (driverData: any) => {
-    if (!navigator.geolocation) return;
-    
+    if (!navigator.geolocation) {
+      alert('GPS not supported on this device');
+      return;
+    }
     setGpsActive(true);
-    
     const sendLocation = () => {
       navigator.geolocation.getCurrentPosition(
         async (pos) => {
+          setCurrentSpeed(pos.coords.speed ? Math.round(pos.coords.speed * 3.6) : 0);
           try {
             await fetchDriverApi('/driver/location', {
               method: 'POST',
@@ -108,18 +120,20 @@ export function DriverPortal() {
           } catch {}
         },
         () => {},
-        { 
-          enableHighAccuracy: false,
-          timeout: 15000,
-          maximumAge: 10000
-        }
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 }
       );
     };
-
     sendLocation();
-    gpsIntervalRef.current = setInterval(
-      sendLocation, 15000
-    );
+    gpsIntervalRef.current = setInterval(sendLocation, 15000);
+  };
+
+  const stopGPS = () => {
+    if (gpsIntervalRef.current) {
+      clearInterval(gpsIntervalRef.current);
+      gpsIntervalRef.current = null;
+    }
+    setGpsActive(false);
+    setCurrentSpeed(null);
   };
 
   const loadDeliveries = async (id: number) => {
@@ -241,24 +255,17 @@ export function DriverPortal() {
       </div>
 
       {/* Nav */}
-      <div className="bg-white border-b 
-        border-slate-200 px-4 flex">
+      <div className="bg-white border-b border-slate-200 px-4 flex">
         {[
-          { id: 'deliveries', label: 'Deliveries', 
-            icon: Truck },
-          { id: 'chat', label: 'Chat Admin', 
-            icon: MessageSquare, 
-            badge: unreadMessages },
+          { id: 'deliveries', label: 'Deliveries', icon: Truck },
+          { id: 'tracking', label: 'Tracking', icon: Navigation },
+          { id: 'chat', label: 'Chat', icon: MessageSquare, badge: unreadMessages },
         ].map(tab => (
           <button key={tab.id}
-            onClick={() => setView(
-              tab.id as DriverView
-            )}
-            className={`flex items-center gap-1.5 
-              px-4 py-3 text-sm font-medium 
-              border-b-2 transition-colors relative
-              ${view === tab.id 
-                ? 'border-blue-600 text-blue-600' 
+            onClick={() => setView(tab.id as DriverView)}
+            className={`flex items-center gap-1.5 px-3 py-3 text-sm font-medium border-b-2 transition-colors relative
+              ${view === tab.id
+                ? 'border-blue-600 text-blue-600'
                 : 'border-transparent text-slate-500'
               }`}
           >
@@ -278,6 +285,90 @@ export function DriverPortal() {
 
       {/* Content */}
       <div className="flex-1 overflow-auto">
+
+        {/* TRACKING VIEW */}
+        {view === 'tracking' && (
+          <div className="p-4 space-y-4">
+            {/* Vehicle Info Card */}
+            <div className="bg-white rounded-xl border border-slate-200 p-4">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
+                  <Truck className="size-5 text-blue-600" />
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500">Assigned Vehicle</p>
+                  {assignedVehicle ? (
+                    <>
+                      <p className="font-bold text-slate-900">{assignedVehicle.unit_name}</p>
+                      <p className="text-xs text-slate-500">{assignedVehicle.plate_number}</p>
+                    </>
+                  ) : (
+                    <p className="text-sm text-slate-400 italic">No vehicle assigned yet</p>
+                  )}
+                </div>
+              </div>
+              {assignedVehicle && (
+                <div className="bg-slate-50 rounded-lg p-3 flex items-center gap-3">
+                  <Gauge className="size-5 text-slate-500" />
+                  <div>
+                    <p className="text-xs text-slate-500">Current Odometer</p>
+                    <p className="text-lg font-bold text-slate-900">
+                      {parseFloat(assignedVehicle.current_odometer || 0).toLocaleString('en-PH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* GPS Control Card */}
+            <div className="bg-white rounded-xl border border-slate-200 p-4">
+              <p className="text-sm font-semibold text-slate-700 mb-3">GPS Tracking</p>
+              {gpsActive ? (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 p-3 bg-green-50 rounded-lg">
+                    <div className="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse" />
+                    <span className="text-sm font-medium text-green-700">Tracking Active</span>
+                    {currentSpeed !== null && (
+                      <span className="ml-auto text-sm font-bold text-green-700">{currentSpeed} km/h</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-400 text-center">Sending location every 15 seconds</p>
+                  <button
+                    onClick={stopGPS}
+                    className="w-full py-3 bg-red-600 text-white font-semibold rounded-xl flex items-center justify-center gap-2"
+                  >
+                    <NavigationOff className="size-5" />
+                    Stop Tracking
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 p-3 bg-slate-50 rounded-lg">
+                    <div className="w-2.5 h-2.5 bg-slate-400 rounded-full" />
+                    <span className="text-sm text-slate-500">Tracking Inactive</span>
+                  </div>
+                  {!assignedVehicle && (
+                    <p className="text-xs text-amber-600 bg-amber-50 p-2 rounded-lg">⚠️ No vehicle assigned. Ask your admin to assign you a vehicle first.</p>
+                  )}
+                  <button
+                    onClick={() => driver && startGPS(driver)}
+                    className="w-full py-3 bg-blue-600 text-white font-semibold rounded-xl flex items-center justify-center gap-2"
+                  >
+                    <Navigation className="size-5" />
+                    Start Tracking
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Info */}
+            <div className="bg-blue-50 rounded-xl p-4">
+              <p className="text-xs font-semibold text-blue-800 mb-1">How it works</p>
+              <p className="text-xs text-blue-700">Your GPS location is sent to admin every 15 seconds. Distance is automatically calculated and added to your vehicle's odometer.</p>
+            </div>
+          </div>
+        )}
+
 
         {/* DELIVERIES VIEW */}
         {view === 'deliveries' && (

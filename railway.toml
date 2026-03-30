@@ -1,0 +1,37 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+healthcheckPath = "/api/health"
+healthcheckTimeout = 100
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+[services]
+[services.web]
+name = "employee-po-app"
+
+[services.web.environment]
+NODE_ENV = "production"
+PORT = "3000"
+
+[[services.web.ports]]
+port = 3000
+handler = "http"
+
+[services.web.concurrency]
+type = "connections"
+hardLimit = 25
+softLimit = 20
+
+[services.web.resources]
+memory = "256Mi"
+cpu = "500m"
+
+[[services]]
+name = "database"
+type = "psql"
+
+[services.database]
+databaseName = "fleet_manager"
+databaseUser = "postgres"

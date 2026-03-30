@@ -1272,24 +1272,67 @@ app.get('/api/admin/migrate-approval-columns', async (req, res) => {
 
 // --- DRIVER GPS ENDPOINTS (No Auth Required) ---
 
-// Send driver GPS location
+// Haversine distance in meters
+function haversineMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const φ1 = lat1 * Math.PI / 180;
+  const φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(Δφ/2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Send driver GPS location + auto-update ODO
 app.post('/api/driver/location', async (req, res) => {
   try {
-    const { 
-      driver_id, driver_name,
-      latitude, longitude, 
-      accuracy, speed, heading 
-    } = req.body;
-    
+    const { driver_id, driver_name, latitude, longitude, accuracy, speed, heading } = req.body;
+
+    // Get previous location for this driver
+    const prev = await query(
+      `SELECT latitude, longitude FROM driver_locations
+       WHERE driver_id = $1
+       ORDER BY timestamp DESC LIMIT 1`,
+      [driver_id]
+    );
+
+    // Insert new location
     await query(
       `INSERT INTO driver_locations
-       (driver_id, driver_name, latitude, longitude,
-        accuracy, speed, heading)
+       (driver_id, driver_name, latitude, longitude, accuracy, speed, heading)
        VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [driver_id, driver_name, latitude, longitude,
-       accuracy, speed, heading]
+      [driver_id, driver_name, latitude, longitude, accuracy, speed, heading]
     );
-    
+
+    // Calculate distance and update vehicle ODO if driver has a vehicle assigned
+    if (prev.rows.length > 0) {
+      const distMeters = haversineMeters(
+        parseFloat(prev.rows[0].latitude), parseFloat(prev.rows[0].longitude),
+        parseFloat(latitude), parseFloat(longitude)
+      );
+      const distKm = distMeters / 1000;
+
+      // Only count if movement is realistic (< 2km between pings to filter GPS jumps)
+      if (distKm > 0.005 && distKm < 2) {
+        const driverRow = await query(
+          `SELECT vehicle_id FROM driver_accounts WHERE id = $1`,
+          [driver_id]
+        );
+        if (driverRow.rows.length > 0 && driverRow.rows[0].vehicle_id) {
+          const vehicleId = driverRow.rows[0].vehicle_id;
+          await query(
+            `UPDATE vehicles SET current_odometer = current_odometer + $1, updated_at = NOW() WHERE id = $2`,
+            [distKm, vehicleId]
+          );
+          await query(
+            `INSERT INTO odometer_logs (id, vehicle_id, odometer, source)
+             SELECT $1, $2, current_odometer, 'gps' FROM vehicles WHERE id = $2`,
+            ['OL-GPS-' + Date.now() + '-' + driver_id, vehicleId]
+          );
+        }
+      }
+    }
+
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1300,12 +1343,70 @@ app.post('/api/driver/location', async (req, res) => {
 app.get('/api/driver/locations/live', async (req, res) => {
   try {
     const result = await query(
-      `SELECT DISTINCT ON (driver_id)
-        driver_id, driver_name, 
-        latitude, longitude, timestamp
-       FROM driver_locations
-       WHERE timestamp > NOW() - INTERVAL '30 minutes'
-       ORDER BY driver_id, timestamp DESC`
+      `SELECT DISTINCT ON (dl.driver_id)
+        dl.driver_id, dl.driver_name,
+        dl.latitude, dl.longitude, dl.speed, dl.timestamp,
+        da.vehicle_id,
+        v.unit_name as vehicle_name, v.plate_number,
+        v.current_odometer
+       FROM driver_locations dl
+       LEFT JOIN driver_accounts da ON da.id = dl.driver_id
+       LEFT JOIN vehicles v ON v.id = da.vehicle_id
+       WHERE dl.timestamp > NOW() - INTERVAL '30 minutes'
+       ORDER BY dl.driver_id, dl.timestamp DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: assign vehicle to a driver account
+app.put('/api/admin/drivers/:id/assign-vehicle', async (req, res) => {
+  try {
+    const { vehicle_id } = req.body;
+    // Ensure vehicle_id column exists
+    await query(`ALTER TABLE driver_accounts ADD COLUMN IF NOT EXISTS vehicle_id TEXT REFERENCES vehicles(id) ON DELETE SET NULL`).catch(() => {});
+    await query(
+      `UPDATE driver_accounts SET vehicle_id = $1 WHERE id = $2 RETURNING *`,
+      [vehicle_id || null, req.params.id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Driver: get assigned vehicle info
+app.get('/api/driver/:id/vehicle', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT v.id, v.unit_name, v.plate_number, v.current_odometer, v.vehicle_type
+       FROM driver_accounts da
+       LEFT JOIN vehicles v ON v.id = da.vehicle_id
+       WHERE da.id = $1`,
+      [req.params.id]
+    );
+    if (!result.rows[0] || !result.rows[0].id) {
+      return res.json(null);
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: get driver accounts with assigned vehicle info
+app.get('/api/admin/drivers/accounts', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT da.id, da.full_name, da.email, da.phone,
+        da.license_number, da.vehicle_id, da.status, da.created_at,
+        v.unit_name as vehicle_name, v.plate_number, v.current_odometer
+       FROM driver_accounts da
+       LEFT JOIN vehicles v ON v.id = da.vehicle_id
+       WHERE da.status = 'approved'
+       ORDER BY da.full_name ASC`
     );
     res.json(result.rows);
   } catch (err) {

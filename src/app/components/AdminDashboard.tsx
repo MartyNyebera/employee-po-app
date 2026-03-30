@@ -20,6 +20,7 @@ import { PMSReminders } from './PMSReminders-Professional';
 import { PurchaseOrderList } from './PurchaseOrderList-Professional-Fixed';
 import { InventoryList } from './InventoryList-Professional';
 import { DriversList } from './DriversList-Professional';
+import { DriverVehicleAssignment } from './DriverVehicleAssignment';
 import { DeliveriesList } from './DeliveriesList-Professional';
 import { MiscellaneousManagement } from './MiscellaneousManagement-Simple';
 import { 
@@ -44,7 +45,7 @@ interface AdminDashboardProps {
   onLogout: () => void;
 }
 
-type View = 'home' | 'orders' | 'transactions' | 'requests' | 'material-requests' | 'employee-approvals' | 'driver-approvals' | 'gps' | 'fleet' | 'pms' | 'purchase-orders' | 'inventory' | 'drivers' | 'deliveries' | 'miscellaneous' | 'request-form';
+type View = 'home' | 'orders' | 'transactions' | 'requests' | 'material-requests' | 'employee-approvals' | 'driver-approvals' | 'driver-vehicles' | 'gps' | 'fleet' | 'pms' | 'purchase-orders' | 'inventory' | 'drivers' | 'deliveries' | 'miscellaneous' | 'request-form';
 
 export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashboardProps) {
   // Enable auto-logout when app is closed
@@ -216,6 +217,14 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
 
     if (currentView === 'driver-approvals') {
       return <DriverApprovals onApprove={handleApproveDriver} onReject={handleRejectDriver} userName={userName} />;
+    }
+
+    if (currentView === 'driver-vehicles') {
+      return (
+        <div className="p-6">
+          <DriverVehicleAssignment />
+        </div>
+      );
     }
 
     if (currentView === 'miscellaneous') {
@@ -620,6 +629,39 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
                   color: currentView === 'driver-approvals' ? '#2563eb' : '#111827'
                 }}>
                   Driver Approvals
+                </span>
+              )}
+            </div>
+          </button>
+
+          {/* Assign Vehicles */}
+          <button
+            onClick={() => setCurrentView('driver-vehicles')}
+            className={`w-full text-left rounded-lg transition-all duration-200 ${
+              currentView === 'driver-vehicles'
+                ? 'bg-blue-50 border border-blue-200'
+                : 'hover:bg-gray-50 border border-transparent'
+            }`}
+            style={{
+              padding: '12px 16px',
+              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <Truck
+                style={{
+                  width: '18px',
+                  height: '18px',
+                  color: currentView === 'driver-vehicles' ? '#2563eb' : '#6b7280'
+                }}
+              />
+              {menuOpen && (
+                <span style={{
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: currentView === 'driver-vehicles' ? '#2563eb' : '#111827'
+                }}>
+                  Assign Vehicles
                 </span>
               )}
             </div>
