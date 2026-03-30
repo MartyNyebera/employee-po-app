@@ -65,7 +65,7 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
     window.addEventListener('navigateToView', handleNavigation as EventListener);
     return () => window.removeEventListener('navigateToView', handleNavigation as EventListener);
   }, []);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(true);
   const [adminRequests, setAdminRequests] = useState<AdminApprovalRequest[]>([]);
   const [loadingRequests, setLoadingRequests] = useState(false);
   const [pendingEmployees, setPendingEmployees] = useState<EmployeeRegistration[]>([]);
