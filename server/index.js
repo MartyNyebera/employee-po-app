@@ -482,6 +482,14 @@ async function runMigrations() {
       console.log('ℹ️ driver_accounts vehicle_id migration skipped:', err.message);
     }
 
+    // Add driver_account_id to deliveries table to link PWA drivers to SO deliveries
+    try {
+      await query(`ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS driver_account_id INTEGER REFERENCES driver_accounts(id) ON DELETE SET NULL`);
+      console.log('✅ deliveries driver_account_id column ready');
+    } catch (err) {
+      console.log('ℹ️ deliveries driver_account_id migration skipped:', err.message);
+    }
+
     console.log('✅ All migrations complete');
   } catch (err) {
     console.error('❌ Migration error:', err.message);
@@ -3848,16 +3856,35 @@ app.delete('/api/material-requests/:id', async (req, res) => {
 
 // --- DRIVER DELIVERY ENDPOINTS ---
 
-// Get deliveries for driver
+// Get deliveries for driver (SO-linked + legacy)
 app.get('/api/driver/:id/deliveries', async (req, res) => {
   try {
-    const result = await query(
-      `SELECT * FROM driver_deliveries 
+    // Main deliveries table (SO-linked, dispatched via Delivery Management)
+    const soDeliveries = await query(
+      `SELECT 
+        d.id, d.so_number as delivery_number,
+        d.customer_name, d.customer_address as delivery_address,
+        d.status, d.notes, d.delivery_date as assigned_at,
+        d.picked_up_time, d.in_transit_time, d.arrived_time, d.completed_time,
+        v.unit_name as vehicle_name, v.plate_number,
+        'so_delivery' as source
+       FROM deliveries d
+       LEFT JOIN vehicles v ON v.id = d.vehicle_id
+       WHERE d.driver_account_id = $1
+         AND d.status NOT IN ('Completed','Cancelled')
+       ORDER BY d.created_at DESC`,
+      [req.params.id]
+    );
+
+    // Legacy driver_deliveries table
+    const legacyDeliveries = await query(
+      `SELECT *, 'legacy' as source FROM driver_deliveries 
        WHERE driver_id = $1
        ORDER BY assigned_at DESC`,
       [req.params.id]
     );
-    res.json(result.rows);
+
+    res.json([...soDeliveries.rows, ...legacyDeliveries.rows]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
