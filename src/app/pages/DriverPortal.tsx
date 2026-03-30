@@ -22,16 +22,10 @@ const fetchDriverApi = async (path: string, options?: RequestInit) => {
 type DriverView = 'deliveries' | 'tracking' | 'chat';
 
 const DELIVERY_STATUSES = [
-  { key: 'Picked Up', label: 'Pick Up', 
-    color: 'bg-blue-500' },
-  { key: 'In Transit', label: 'On the Way', 
-    color: 'bg-orange-500' },
-  { key: 'Completed', label: 'Delivered', 
-    color: 'bg-green-500' },
-  { key: 'Arrived', label: 'Arrived', 
-    color: 'bg-purple-500' },
-  { key: 'Cancelled', label: 'Cancelled', 
-    color: 'bg-red-500' },
+  { key: 'Picked Up',  label: 'Picked Up',  color: 'bg-blue-500' },
+  { key: 'In Transit', label: 'In Transit', color: 'bg-orange-500' },
+  { key: 'Arrived',   label: 'Arrived',    color: 'bg-purple-500' },
+  { key: 'Completed', label: 'Completed',  color: 'bg-green-500' },
 ];
 
 export function DriverPortal() {
@@ -156,10 +150,13 @@ export function DriverPortal() {
   };
 
   const handleUpdateStatus = async (
-    deliveryId: string, status: string
+    deliveryId: string, status: string, source?: string
   ) => {
     try {
-      await fetchDriverApi(`/deliveries/${deliveryId}/status`, {
+      const endpoint = source === 'legacy'
+        ? `/driver-deliveries/${deliveryId}/status`
+        : `/deliveries/${deliveryId}/status`;
+      await fetchDriverApi(endpoint, {
         method: 'PUT',
         body: JSON.stringify({ status })
       });
@@ -382,82 +379,52 @@ export function DriverPortal() {
                 </p>
               </div>
             ) : deliveries.map(delivery => (
-              <div key={delivery.id}
-                className="bg-white rounded-xl 
-                  border border-slate-200 p-4">
-                <div className="flex justify-between 
-                  items-start mb-3">
+              <div key={delivery.id} className="bg-white rounded-xl border border-slate-200 p-4">
+                <div className="flex justify-between items-start mb-3">
                   <div>
-                    <p className="font-bold 
-                      text-slate-900">
+                    <p className="font-bold text-slate-900">
                       {delivery.delivery_number}
                     </p>
-                    <p className="text-sm 
-                      text-slate-600">
-                      {delivery.customer_name}
-                    </p>
+                    <p className="text-sm text-slate-600">{delivery.customer_name}</p>
+                    {delivery.vehicle_name && (
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        🚗 {delivery.vehicle_name} · {delivery.plate_number}
+                      </p>
+                    )}
                   </div>
-                  <span className={`text-xs px-2 
-                    py-1 rounded-full text-white
-                    font-medium
-                    ${DELIVERY_STATUSES.find(
-                      s => s.key === delivery.status
-                    )?.color || 'bg-slate-400'}`}>
-                    {DELIVERY_STATUSES.find(
-                      s => s.key === delivery.status
-                    )?.label || delivery.status}
+                  <span className={`text-xs px-2 py-1 rounded-full text-white font-medium ${
+                    DELIVERY_STATUSES.find(s => s.key === delivery.status)?.color || 'bg-slate-400'
+                  }`}>
+                    {delivery.status}
                   </span>
                 </div>
 
-                <div className="bg-slate-50 
-                  rounded-lg p-3 mb-3">
-                  <div className="flex items-start 
-                    gap-2">
-                    <MapPin className="size-4 
-                      text-slate-500 mt-0.5 
-                      flex-shrink-0" />
-                    <p className="text-sm 
-                      text-slate-700">
-                      {delivery.delivery_address}
-                    </p>
+                <div className="bg-slate-50 rounded-lg p-3 mb-3">
+                  <div className="flex items-start gap-2">
+                    <MapPin className="size-4 text-slate-500 mt-0.5 flex-shrink-0" />
+                    <p className="text-sm text-slate-700">{delivery.delivery_address}</p>
                   </div>
                 </div>
 
                 {delivery.items && (
-                  <p className="text-xs 
-                    text-slate-500 mb-3">
-                    Items: {delivery.items}
-                  </p>
+                  <p className="text-xs text-slate-500 mb-3">Items: {delivery.items}</p>
                 )}
 
                 {/* Status Update Buttons */}
                 <div className="space-y-2">
-                  <p className="text-xs font-medium 
-                    text-slate-700">
-                    Update Status:
-                  </p>
+                  <p className="text-xs font-medium text-slate-700">Update Status:</p>
                   <div className="flex flex-wrap gap-2">
                     {DELIVERY_STATUSES.map(status => (
                       <button
                         key={status.key}
-                        onClick={() => 
-                          handleUpdateStatus(
-                            delivery.id, status.key
-                          )
-                        }
-                        className={`text-xs px-3 
-                          py-1.5 rounded-lg font-medium
-                          transition-all
-                          ${delivery.status === status.key
-                            ? `${status.color} text-white` 
+                        onClick={() => handleUpdateStatus(delivery.id, status.key, delivery.source)}
+                        className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-all ${
+                          delivery.status === status.key
+                            ? `${status.color} text-white`
                             : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                          }`}
+                        }`}
                       >
-                        {delivery.status === status.key 
-                          && (
-                          <CheckCircle className="size-3 
-                            inline mr-1" />
-                        )}
+                        {delivery.status === status.key && <CheckCircle className="size-3 inline mr-1" />}
                         {status.label}
                       </button>
                     ))}

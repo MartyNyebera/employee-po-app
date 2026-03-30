@@ -3932,8 +3932,8 @@ app.post('/api/deliveries', async (req, res) => {
   }
 });
 
-// Update delivery status (driver updates)
-app.put('/api/deliveries/:id/status', async (req, res) => {
+// Update legacy driver_deliveries status (driver updates)
+app.put('/api/driver-deliveries/:id/status', async (req, res) => {
   try {
     const { status, notes } = req.body;
     
