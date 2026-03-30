@@ -474,6 +474,14 @@ async function runMigrations() {
       console.log('ℹ️ driver_accounts approved_by column migration skipped:', err.message);
     }
 
+    // Add vehicle_id FK column to driver_accounts for GPS ODO tracking
+    try {
+      await query(`ALTER TABLE driver_accounts ADD COLUMN IF NOT EXISTS vehicle_id TEXT REFERENCES vehicles(id) ON DELETE SET NULL`);
+      console.log('✅ driver_accounts vehicle_id column ready');
+    } catch (err) {
+      console.log('ℹ️ driver_accounts vehicle_id migration skipped:', err.message);
+    }
+
     console.log('✅ All migrations complete');
   } catch (err) {
     console.error('❌ Migration error:', err.message);
