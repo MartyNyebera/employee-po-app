@@ -21,6 +21,7 @@ import { PurchaseOrderList } from './PurchaseOrderList-Professional-Fixed';
 import { InventoryList } from './InventoryList-Professional';
 import { DriversList } from './DriversList-Professional';
 import { DriverVehicleAssignment } from './DriverVehicleAssignment';
+import { DeliveryManagement } from './DeliveryManagement';
 import { DeliveriesList } from './DeliveriesList-Professional';
 import { MiscellaneousManagement } from './MiscellaneousManagement-Simple';
 import { 
@@ -45,7 +46,7 @@ interface AdminDashboardProps {
   onLogout: () => void;
 }
 
-type View = 'home' | 'orders' | 'transactions' | 'requests' | 'material-requests' | 'employee-approvals' | 'driver-approvals' | 'driver-vehicles' | 'gps' | 'fleet' | 'pms' | 'purchase-orders' | 'inventory' | 'drivers' | 'deliveries' | 'miscellaneous' | 'request-form';
+type View = 'home' | 'orders' | 'transactions' | 'requests' | 'material-requests' | 'employee-approvals' | 'driver-approvals' | 'driver-vehicles' | 'delivery-management' | 'gps' | 'fleet' | 'pms' | 'purchase-orders' | 'inventory' | 'drivers' | 'deliveries' | 'miscellaneous' | 'request-form';
 
 export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashboardProps) {
   // Enable auto-logout when app is closed
@@ -223,6 +224,14 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
       return (
         <div className="p-6">
           <DriverVehicleAssignment />
+        </div>
+      );
+    }
+
+    if (currentView === 'delivery-management') {
+      return (
+        <div className="p-6">
+          <DeliveryManagement />
         </div>
       );
     }
@@ -634,11 +643,11 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
             </div>
           </button>
 
-          {/* Assign Vehicles */}
+          {/* Delivery Management */}
           <button
-            onClick={() => setCurrentView('driver-vehicles')}
+            onClick={() => setCurrentView('delivery-management')}
             className={`w-full text-left rounded-lg transition-all duration-200 ${
-              currentView === 'driver-vehicles'
+              currentView === 'delivery-management'
                 ? 'bg-blue-50 border border-blue-200'
                 : 'hover:bg-gray-50 border border-transparent'
             }`}
@@ -652,16 +661,16 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
                 style={{
                   width: '18px',
                   height: '18px',
-                  color: currentView === 'driver-vehicles' ? '#2563eb' : '#6b7280'
+                  color: currentView === 'delivery-management' ? '#2563eb' : '#6b7280'
                 }}
               />
               {menuOpen && (
                 <span style={{
                   fontSize: '14px',
                   fontWeight: '500',
-                  color: currentView === 'driver-vehicles' ? '#2563eb' : '#111827'
+                  color: currentView === 'delivery-management' ? '#2563eb' : '#111827'
                 }}>
-                  Assign Vehicles
+                  Delivery Management
                 </span>
               )}
             </div>
