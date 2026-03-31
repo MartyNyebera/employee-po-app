@@ -7,6 +7,17 @@ import { fileURLToPath } from 'url';
 import { query, testConnection, createNewTables } from './db.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Global error handlers to prevent crashes
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('🔥 Unhandled Promise Rejection:', reason);
+  // do NOT call process.exit() — let Render keep the process alive
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('🔥 Uncaught Exception:', err.message);
+  // do NOT call process.exit()
+});
+
 // Multer for file uploads
 import multer from 'multer';
 
@@ -4467,6 +4478,7 @@ const startServer = async () => {
     } catch (err) {
       console.log('❌ Database connection failed, starting server without database');
       console.log('   Error:', err.message);
+      // do NOT rethrow — let the server keep running
     }
   }
   
@@ -4479,36 +4491,41 @@ const startServer = async () => {
   // Skip HTTPS server on Render (only run locally)
   let httpsSrv = null;
   if (!process.env.RENDER && process.env.ENABLE_HTTPS === "true") {
-    const HTTPS_PORT = process.env.HTTPS_PORT || 3443;
-    const certPath = path.join(__dirname, 'cert.pem');
-    const keyPath = path.join(__dirname, 'cert.key');
-    const publicDir = path.join(__dirname, '..', 'public');
+    try {
+      const HTTPS_PORT = process.env.HTTPS_PORT || 3443;
+      const certPath = path.join(__dirname, 'cert.pem');
+      const keyPath = path.join(__dirname, 'cert.key');
+      const publicDir = path.join(__dirname, '..', 'public');
 
-    if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
-      httpsSrv = https.createServer(
-        { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) },
-        (req, res) => {
-          // Serve static files from public/
-          let filePath = path.join(publicDir, req.url === '/' ? 'tracker.html' : req.url);
-          // Strip query string
-          filePath = filePath.split('?')[0];
-          if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-            const ext = path.extname(filePath);
-            const mime = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json' }[ext] || 'text/plain';
-            res.writeHead(200, { 'Content-Type': mime });
-            fs.createReadStream(filePath).pipe(res);
-          } else {
-            // Forward API calls to the express app
-            app(req, res);
+      if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+        httpsSrv = https.createServer(
+          { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) },
+          (req, res) => {
+            // Serve static files from public/
+            let filePath = path.join(publicDir, req.url === '/' ? 'tracker.html' : req.url);
+            // Strip query string
+            filePath = filePath.split('?')[0];
+            if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+              const ext = path.extname(filePath);
+              const mime = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json' }[ext] || 'text/plain';
+              res.writeHead(200, { 'Content-Type': mime });
+              fs.createReadStream(filePath).pipe(res);
+            } else {
+              // Forward API calls to the express app
+              app(req, res);
+            }
           }
-        }
-      );
-      httpsSrv.listen(HTTPS_PORT, '0.0.0.0', () => {
-        console.log(`HTTPS server running at https://localhost:${HTTPS_PORT}`);
-        console.log(`Phone tracker: https://192.168.254.108:${HTTPS_PORT}/tracker.html`);
-      });
-    } else {
-      console.log('HTTPS certificates not found, skipping HTTPS server');
+        );
+        httpsSrv.listen(HTTPS_PORT, '0.0.0.0', () => {
+          console.log(`HTTPS server running at https://localhost:${HTTPS_PORT}`);
+          console.log(`Phone tracker: https://192.168.254.108:${HTTPS_PORT}/tracker.html`);
+        });
+      } else {
+        console.log('HTTPS certificates not found, skipping HTTPS server');
+      }
+    } catch (err) {
+      console.error('❌ HTTPS server failed to start (non-fatal):', err.message);
+      // do NOT rethrow — let the HTTP server keep running
     }
   }
 
@@ -4517,6 +4534,6 @@ const startServer = async () => {
 
 startServer().catch(err => {
   console.error('Failed to start server:', err);
-  process.exit(1);
+  // do NOT call process.exit() — let Render keep the process alive for debugging
 });
 
