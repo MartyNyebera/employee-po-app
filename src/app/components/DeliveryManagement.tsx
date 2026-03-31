@@ -334,8 +334,8 @@ export function DeliveryManagement() {
                         <label className="block text-xs font-medium text-gray-700 mb-1">
                           Driver <span className="text-gray-400">(PWA Driver Account)</span>
                         </label>
-                        <div className="relative">
-                          <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                        <div className="relative flex items-center">
+                          <User className="absolute left-3 z-10 pointer-events-none text-gray-500" />
                           <select
                             value={form.driver_account_id}
                             onChange={e => {
@@ -345,7 +345,7 @@ export function DeliveryManagement() {
                                 vehicle_id: d?.vehicle_id || form.vehicle_id,
                               });
                             }}
-                            className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full pl-10 pr-4 py-2 appearance-none text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                           >
                             <option value="">— Select Driver —</option>
                             {drivers.map(d => (
@@ -365,12 +365,12 @@ export function DeliveryManagement() {
                       {/* Vehicle Selector */}
                       <div>
                         <label className="block text-xs font-medium text-gray-700 mb-1">Vehicle</label>
-                        <div className="relative">
-                          <Truck className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                        <div className="relative flex items-center">
+                          <Truck className="absolute left-3 z-10 pointer-events-none text-gray-500" />
                           <select
                             value={form.vehicle_id}
                             onChange={e => setForm(so.id, { vehicle_id: e.target.value })}
-                            className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full pl-10 pr-4 py-2 appearance-none text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                           >
                             <option value="">— Select Vehicle —</option>
                             {vehicles.map(v => (
