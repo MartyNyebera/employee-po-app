@@ -1,66 +1,115 @@
+// ─── Static npm imports (safe — these never crash on load) ───
 import express from 'express';
 import cors from 'cors';
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-// Debug: test each import
-console.log('importing db...');
-import { query, testConnection, createNewTables } from './db.js';
-console.log('importing auth...');
-import { hashPassword, comparePassword, signToken, requireAuth, requireAdmin, requireSuperAdmin } from './auth.js';
-console.log('importing email...');
-import { sendEmailToAdminsNewRequest, sendEmailToApplicant } from './email.js';
-console.log('importing traccar...');
-import { getDevices, getDevice, createDevice, updateDevice, deleteDevice, getPositions, getPositionHistory, getGeofences, checkConnection, getTraccarWsUrl, authHeader, TRACCAR_URL } from './traccar.js';
-console.log('importing fleet...');
-import { getVehicles, getVehicle, createVehicle, updateVehicle, deleteVehicle, getOdometerLogs, logOdometer, getMaintenance, createMaintenance, getVehiclePOs, createVehiclePO, getPmsReminders } from './fleet.js';
-console.log('importing mobile-gps...');
-import mobileGPSRouter from './mobile-gps.js';
-console.log('importing seed-fleet...');
-import { seedFleet } from './seed-fleet.js';
-console.log('✅ ALL IMPORTS DONE');
+import multer from 'multer';
+import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Global error handlers to prevent crashes
+// Global error handlers — set up before anything else
 process.on('unhandledRejection', (reason, promise) => {
   console.error('🔥 Unhandled Promise Rejection:', reason);
-  // do NOT call process.exit() — let Render keep the process alive
 });
-
 process.on('uncaughtException', (err) => {
   console.error('🔥 Uncaught Exception:', err.message, err.stack);
-  // do NOT call process.exit()
 });
 
-// Multer for file uploads
-import multer from 'multer';
-
 // Setup upload directory
-const uploadDir = process.env.NODE_ENV === 'production' 
-  ? '/tmp/uploads' 
+const uploadDir = process.env.NODE_ENV === 'production'
+  ? '/tmp/uploads'
   : path.join(__dirname, '../public/uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + '-' + file.originalname);
-  }
+  destination: (req, file, cb) => { cb(null, uploadDir); },
+  filename: (req, file, cb) => { cb(null, Date.now() + '-' + file.originalname); }
 });
+const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
 
-const upload = multer({ 
-  storage,
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB
-});
-import bcrypt from 'bcrypt';
-import jwt from 'jsonwebtoken';
-import { seed } from './seed.js';
+// ─── Bootstrap: dynamic imports with individual error isolation ───
+async function bootstrap() {
+  console.log('🚀 server/index.js bootstrap starting...');
+
+  let query, testConnection, createNewTables;
+  try {
+    ({ query, testConnection, createNewTables } = await import('./db.js'));
+    console.log('✅ db.js loaded');
+  } catch (err) {
+    console.error('❌ CRASH in db.js:', err.message, err.stack);
+    process.exit(1);
+  }
+
+  let hashPassword, comparePassword, signToken, requireAuth, requireAdmin, requireSuperAdmin;
+  try {
+    ({ hashPassword, comparePassword, signToken, requireAuth, requireAdmin, requireSuperAdmin } = await import('./auth.js'));
+    console.log('✅ auth.js loaded');
+  } catch (err) {
+    console.error('❌ CRASH in auth.js:', err.message, err.stack);
+    process.exit(1);
+  }
+
+  let sendEmailToAdminsNewRequest, sendEmailToApplicant;
+  try {
+    ({ sendEmailToAdminsNewRequest, sendEmailToApplicant } = await import('./email.js'));
+    console.log('✅ email.js loaded');
+  } catch (err) {
+    console.error('❌ CRASH in email.js:', err.message, err.stack);
+    process.exit(1);
+  }
+
+  let getDevices, getDevice, createDevice, updateDevice, deleteDevice, getPositions, getPositionHistory, getGeofences, checkConnection, getTraccarWsUrl, authHeader, TRACCAR_URL;
+  try {
+    ({ getDevices, getDevice, createDevice, updateDevice, deleteDevice, getPositions, getPositionHistory, getGeofences, checkConnection, getTraccarWsUrl, authHeader, TRACCAR_URL } = await import('./traccar.js'));
+    console.log('✅ traccar.js loaded');
+  } catch (err) {
+    console.error('❌ CRASH in traccar.js:', err.message, err.stack);
+    process.exit(1);
+  }
+
+  let getVehicles, getVehicle, createVehicle, updateVehicle, deleteVehicle, getOdometerLogs, logOdometer, getMaintenance, createMaintenance, getVehiclePOs, createVehiclePO, getPmsReminders;
+  try {
+    ({ getVehicles, getVehicle, createVehicle, updateVehicle, deleteVehicle, getOdometerLogs, logOdometer, getMaintenance, createMaintenance, getVehiclePOs, createVehiclePO, getPmsReminders } = await import('./fleet.js'));
+    console.log('✅ fleet.js loaded');
+  } catch (err) {
+    console.error('❌ CRASH in fleet.js:', err.message, err.stack);
+    process.exit(1);
+  }
+
+  let mobileGPSRouter;
+  try {
+    ({ default: mobileGPSRouter } = await import('./mobile-gps.js'));
+    console.log('✅ mobile-gps.js loaded');
+  } catch (err) {
+    console.error('❌ CRASH in mobile-gps.js:', err.message, err.stack);
+    process.exit(1);
+  }
+
+  let seedFleet;
+  try {
+    ({ seedFleet } = await import('./seed-fleet.js'));
+    console.log('✅ seed-fleet.js loaded');
+  } catch (err) {
+    console.error('❌ CRASH in seed-fleet.js:', err.message, err.stack);
+    process.exit(1);
+  }
+
+  let seed;
+  try {
+    ({ seed } = await import('./seed.js'));
+    console.log('✅ seed.js loaded');
+  } catch (err) {
+    console.error('❌ CRASH in seed.js:', err.message, err.stack);
+    process.exit(1);
+  }
+
+  console.log('✅ ALL LOCAL MODULES LOADED — starting Express app');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -4526,5 +4575,12 @@ const startServer = async () => {
 startServer().catch(err => {
   console.error('Failed to start server:', err);
   // do NOT call process.exit() — let Render keep the process alive for debugging
+  });
+
+} // end bootstrap()
+
+bootstrap().catch(err => {
+  console.error('❌ FATAL bootstrap error:', err.message, err.stack);
+  process.exit(1);
 });
 
