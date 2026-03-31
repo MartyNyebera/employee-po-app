@@ -2967,8 +2967,6 @@ app.get('/api/sales-orders', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
-// POST /api/sales-orders (admin only)
 app.post('/api/sales-orders', requireAdmin, async (req, res) => {
   try {
     const { 
@@ -2980,6 +2978,10 @@ app.post('/api/sales-orders', requireAdmin, async (req, res) => {
       assignedAssets = [],
       createdDate = new Date().toISOString().split('T')[0]
     } = req.body;
+
+    // Extract customer address from description string or fall back to client name
+    const addressMatch = description && description.match(/Address:\s*([^\n]+)/);
+    const customerAddress = (addressMatch && addressMatch[1].trim()) || client || 'No address provided';
     
     const id = `SO-${Date.now()}`;
     
@@ -2992,6 +2994,11 @@ app.post('/api/sales-orders', requireAdmin, async (req, res) => {
     
     // Auto-create a delivery record linked to this sales order
     const deliveryId = `DEL-${Date.now()}`;
+    console.log(`📦 Creating delivery for SO ${soNumber}:`, {
+      customer: client,
+      address: customerAddress,
+      deliveryDate
+    });
     await query(
       `INSERT INTO deliveries 
         (id, so_number, customer_name, customer_address, delivery_date, status, created_at, updated_at)
@@ -2999,12 +3006,13 @@ app.post('/api/sales-orders', requireAdmin, async (req, res) => {
       [
         deliveryId,
         soNumber,
-        client,
-        description,      // use description as address placeholder if no address field exists yet
+        client,           // customer_name = client name
+        customerAddress,  // customer_address = extracted from description
         deliveryDate,
-        'Pending'         // matches the DEFAULT in the deliveries table schema
+        'Pending'
       ]
     );
+    console.log(`✅ Delivery ${deliveryId} created for SO ${soNumber}`);
     
     // Link the delivery ID back to the sales order
     await query(
