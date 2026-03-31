@@ -2114,8 +2114,8 @@ app.post('/api/deliveries', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'so_number, customer_name, customer_address, delivery_date are required' });
     }
 
-    // Check if delivery already exists for this SO
-    const existing = await query('SELECT id FROM deliveries WHERE so_number = $1', [so_number]);
+    // Check if delivery already exists for this SO (excluding cancelled/completed)
+    const existing = await query('SELECT id FROM deliveries WHERE so_number = $1 AND status NOT IN (\'cancelled\', \'completed\')', [so_number]);
     if (existing.rows.length > 0) {
       return res.status(400).json({ error: 'Delivery already exists for this sales order' });
     }
