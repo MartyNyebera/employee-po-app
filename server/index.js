@@ -4482,6 +4482,30 @@ const startServer = async () => {
     }
   }
   
+  // Debug routes for delivery management investigation
+  app.get('/api/debug/deliveries', async (req, res) => {
+    try {
+      const { rows } = await query(
+        'SELECT * FROM deliveries ORDER BY created_at DESC LIMIT 10'
+      );
+      res.json({ count: rows.length, rows });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/debug/sales-orders', async (req, res) => {
+    try {
+      const { rows } = await query(
+        `SELECT id, so_number, status, delivery_id, client, delivery_date 
+         FROM sales_orders ORDER BY created_at DESC LIMIT 10`
+      );
+      res.json({ count: rows.length, rows });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  
   const httpServer = app.listen(PORT, '0.0.0.0', () => {
     console.log(`API server running at http://0.0.0.0:${PORT}`);
     console.log(`Using PORT from environment: ${PORT}`);
