@@ -21,13 +21,20 @@ export default function App() {
 
   useEffect(() => {
     const auth = getStoredAuth();
+    const path = window.location.pathname;
+    const isPortalRoute = path.startsWith('/employee') || path.startsWith('/driver');
     
-    if (auth?.user) {
+    if (isPortalRoute) {
+      // Don't apply admin auth to portal routes
+      setUserRole(null);
+      setUserName('');
+      setUserIsSuperAdmin(false);
+    } else if (auth?.user) {
       setUserRole(auth.user.role);
       setUserName(auth.user.name);
       setUserIsSuperAdmin(!!auth.user.isSuperAdmin);
     } else {
-            setUserRole(null);
+      setUserRole(null);
       setUserName('');
       setUserIsSuperAdmin(false);
     }

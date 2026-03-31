@@ -32,43 +32,5 @@
     }
   ],
   "prefer_related_applications": false,
-  "screenshots": [],
-  "shortcuts": [
-    {
-      "name": "Employee Portal",
-      "short_name": "Employee",
-      "description": "Open employee portal",
-      "url": "/employee",
-      "icons": [
-        {
-          "src": "/kimoel-logo.png",
-          "sizes": "192x192"
-        }
-      ]
-    },
-    {
-      "name": "Inventory",
-      "short_name": "Inventory",
-      "description": "View inventory items",
-      "url": "/employee?view=inventory",
-      "icons": [
-        {
-          "src": "/kimoel-logo.png",
-          "sizes": "192x192"
-        }
-      ]
-    },
-    {
-      "name": "Request Material",
-      "short_name": "Request",
-      "description": "Submit material request",
-      "url": "/employee?view=requests",
-      "icons": [
-        {
-          "src": "/kimoel-logo.png",
-          "sizes": "192x192"
-        }
-      ]
-    }
-  ]
+  "screenshots": []
 }

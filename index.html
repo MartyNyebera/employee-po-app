@@ -18,9 +18,48 @@
     <meta name="msapplication-TileColor" content="#0f172a" />
     <meta name="msapplication-config" content="/browserconfig.xml" />
     
+    <!-- Apply theme before React mounts to prevent flash -->
+    <script>
+      (function() {
+        var theme = localStorage.getItem('theme') || 'light';
+        document.documentElement.classList.add(theme);
+      })();
+    </script>
+
+    <script>
+      (function() {
+        var path = window.location.pathname;
+        var manifest = '/manifest-admin.json';
+        var appleTitle = 'Kimoel Admin';
+        var themeColor = '#0f172a';
+        
+        if (path.startsWith('/employee')) {
+          manifest = '/manifest-employee.json';
+          appleTitle = 'Kimoel Employee';
+          themeColor = '#0f172a';
+        } else if (path.startsWith('/driver')) {
+          manifest = '/manifest-driver.json';
+          appleTitle = 'Kimoel Driver';
+          themeColor = '#0f172a';
+        }
+        
+        // Set correct manifest
+        document.getElementById('pwa-manifest')
+          .setAttribute('href', manifest);
+        
+        // Set correct apple title
+        document.getElementById('pwa-apple-title')
+          .setAttribute('content', appleTitle);
+        
+        // Set correct theme color
+        document.querySelector(
+          'meta[name="theme-color"]')
+          .setAttribute('content', themeColor);
+      })();
+    </script>
+
     <!-- Manifest -->
-    <link rel="manifest" href="/manifest.json" 
-    id="pwa-manifest" />
+    <link rel="manifest" id="pwa-manifest" href="" />
     
     <!-- Icons -->
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
@@ -68,46 +107,6 @@
         scrollbar-width: none;
       }
     </style>
-
-    <!-- Apply theme before React mounts to prevent flash -->
-    <script>
-      (function() {
-        var theme = localStorage.getItem('theme') || 'light';
-        document.documentElement.classList.add(theme);
-      })();
-    </script>
-
-    <script>
-      (function() {
-        var path = window.location.pathname;
-        var manifest = '/manifest-admin.json';
-        var appleTitle = 'Kimoel Admin';
-        var themeColor = '#0f172a';
-        
-        if (path.startsWith('/employee')) {
-          manifest = '/manifest-employee.json';
-          appleTitle = 'Kimoel Employee';
-          themeColor = '#0f172a';
-        } else if (path.startsWith('/driver')) {
-          manifest = '/manifest-driver.json';
-          appleTitle = 'Kimoel Driver';
-          themeColor = '#0f172a';
-        }
-        
-        // Set correct manifest
-        document.getElementById('pwa-manifest')
-          .setAttribute('href', manifest);
-        
-        // Set correct apple title
-        document.getElementById('pwa-apple-title')
-          .setAttribute('content', appleTitle);
-        
-        // Set correct theme color
-        document.querySelector(
-          'meta[name="theme-color"]')
-          .setAttribute('content', themeColor);
-      })();
-    </script>
 
     <script type="module" src="/src/main.tsx"></script>
   </head>
