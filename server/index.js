@@ -14,7 +14,7 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 process.on('uncaughtException', (err) => {
-  console.error('🔥 Uncaught Exception:', err.message);
+  console.error('🔥 Uncaught Exception:', err.message, err.stack);
   // do NOT call process.exit()
 });
 
@@ -22,7 +22,9 @@ process.on('uncaughtException', (err) => {
 import multer from 'multer';
 
 // Setup upload directory
-const uploadDir = path.join(__dirname, '../public/uploads');
+const uploadDir = process.env.NODE_ENV === 'production' 
+  ? '/tmp/uploads' 
+  : path.join(__dirname, '../public/uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
