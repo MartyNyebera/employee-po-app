@@ -2972,19 +2972,34 @@ app.post('/api/sales-orders', requireAdmin, async (req, res) => {
     
     const id = `SO-${Date.now()}`;
     
-    await query(
+    const { rows: [row] } = await query(
       `INSERT INTO sales_orders (id, so_number, client, description, amount, status, created_date, delivery_date, assigned_assets)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING *`,
       [id, soNumber, client, description, amount, 'pending', createdDate, deliveryDate, assignedAssets]
     );
     
-    const result = await query(
-      `SELECT id, so_number, client, description, amount, status, created_date, delivery_date, assigned_assets
-       FROM sales_orders WHERE id = $1`,
-      [id]
+    // Auto-create a delivery record linked to this sales order
+    const deliveryId = `DEL-${Date.now()}`;
+    await query(
+      `INSERT INTO deliveries 
+        (id, so_number, customer_name, customer_address, delivery_date, status, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
+      [
+        deliveryId,
+        soNumber,
+        client,
+        description,      // use description as address placeholder if no address field exists yet
+        deliveryDate,
+        'Pending'         // matches the DEFAULT in the deliveries table schema
+      ]
     );
     
-    const row = result.rows[0];
+    // Link the delivery ID back to the sales order
+    await query(
+      `UPDATE sales_orders SET delivery_id = $1 WHERE id = $2`,
+      [deliveryId, id]
+    );
     res.status(201).json({
       id: row.id,
       soNumber: row.so_number,
@@ -2995,6 +3010,7 @@ app.post('/api/sales-orders', requireAdmin, async (req, res) => {
       createdDate: row.created_date,
       deliveryDate: row.delivery_date,
       assignedAssets: row.assigned_assets || [],
+      deliveryId: deliveryId,   // <-- add this line
     });
   } catch (err) {
     console.error('Sales order creation error:', err);
