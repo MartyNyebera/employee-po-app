@@ -4,7 +4,23 @@ import https from 'https';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+// Debug: test each import
+console.log('importing db...');
 import { query, testConnection, createNewTables } from './db.js';
+console.log('importing auth...');
+import { hashPassword, comparePassword, signToken, requireAuth, requireAdmin, requireSuperAdmin } from './auth.js';
+console.log('importing email...');
+import { sendEmailToAdminsNewRequest, sendEmailToApplicant } from './email.js';
+console.log('importing traccar...');
+import { getDevices, getDevice, createDevice, updateDevice, deleteDevice, getPositions, getPositionHistory, getGeofences, checkConnection, getTraccarWsUrl, authHeader, TRACCAR_URL } from './traccar.js';
+console.log('importing fleet...');
+import { getVehicles, getVehicle, createVehicle, updateVehicle, deleteVehicle, getOdometerLogs, logOdometer, getMaintenance, createMaintenance, getVehiclePOs, createVehiclePO, getPmsReminders } from './fleet.js';
+console.log('importing mobile-gps...');
+import mobileGPSRouter from './mobile-gps.js';
+console.log('importing seed-fleet...');
+import { seedFleet } from './seed-fleet.js';
+console.log('✅ ALL IMPORTS DONE');
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Global error handlers to prevent crashes
@@ -45,12 +61,6 @@ const upload = multer({
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { seed } from './seed.js';
-import { hashPassword, comparePassword, signToken, requireAuth, requireAdmin, requireSuperAdmin } from './auth.js';
-import { sendEmailToAdminsNewRequest, sendEmailToApplicant } from './email.js';
-import { getDevices, getDevice, createDevice, updateDevice, deleteDevice, getPositions, getPositionHistory, getGeofences, checkConnection, getTraccarWsUrl, authHeader, TRACCAR_URL } from './traccar.js';
-import { getVehicles, getVehicle, createVehicle, updateVehicle, deleteVehicle, getOdometerLogs, logOdometer, getMaintenance, createMaintenance, getVehiclePOs, createVehiclePO, getPmsReminders } from './fleet.js';
-import mobileGPSRouter from './mobile-gps.js';
-import { seedFleet } from './seed-fleet.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
