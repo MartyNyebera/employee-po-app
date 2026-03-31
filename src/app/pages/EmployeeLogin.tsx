@@ -21,11 +21,14 @@ export function EmployeeLogin() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/employee/login', {
+      const apiBase = typeof window !== 'undefined' &&
+        window.location.hostname !== 'localhost' &&
+        window.location.hostname !== '127.0.0.1'
+        ? 'https://employee-po-system.onrender.com'
+        : '';
+      const res = await fetch(`${apiBase}/api/employee/login`, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json' 
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(loginForm)
       });
       const data = await res.json();
@@ -33,13 +36,11 @@ export function EmployeeLogin() {
         setError(data.error || 'Login failed');
         return;
       }
-      localStorage.setItem('employee_token', 
-        data.token);
-      localStorage.setItem('employee_session',
-        JSON.stringify(data.employee));
+      localStorage.setItem('employee_token', data.token);
+      localStorage.setItem('employee_session', JSON.stringify(data.employee));
       window.location.href = '/employee';
     } catch {
-      setError('Connection failed');
+      setError('Connection failed. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -67,8 +68,12 @@ export function EmployeeLogin() {
     }
     
     try {
-      const res = await fetch(
-        '/api/employee/register', {
+      const apiBase = typeof window !== 'undefined' &&
+        window.location.hostname !== 'localhost' &&
+        window.location.hostname !== '127.0.0.1'
+        ? 'https://employee-po-system.onrender.com'
+        : '';
+      const res = await fetch(`${apiBase}/api/employee/register`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json' 

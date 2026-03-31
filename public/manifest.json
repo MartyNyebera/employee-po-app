@@ -16,31 +16,19 @@
       "src": "/kimoel-logo.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
       "src": "/kimoel-logo.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "/kimoel-logo.png",
-      "sizes": "152x152",
-      "type": "image/png",
       "purpose": "any"
     },
     {
       "src": "/kimoel-logo.png",
-      "sizes": "167x167",
+      "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/kimoel-logo.png",
-      "sizes": "180x180",
-      "type": "image/png",
-      "purpose": "any"
+      "purpose": "maskable"
     }
   ],
   "prefer_related_applications": false,

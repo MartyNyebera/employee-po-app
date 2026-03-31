@@ -21,7 +21,12 @@ export function DriverLogin() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/driver/login', {
+      const apiBase = typeof window !== 'undefined' &&
+        window.location.hostname !== 'localhost' &&
+        window.location.hostname !== '127.0.0.1'
+        ? 'https://employee-po-system.onrender.com'
+        : '';
+      const res = await fetch(`${apiBase}/api/driver/login`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json' 
@@ -49,7 +54,12 @@ export function DriverLogin() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/driver/register', {
+      const apiBase = typeof window !== 'undefined' &&
+        window.location.hostname !== 'localhost' &&
+        window.location.hostname !== '127.0.0.1'
+        ? 'https://employee-po-system.onrender.com'
+        : '';
+      const res = await fetch(`${apiBase}/api/driver/register`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json' 

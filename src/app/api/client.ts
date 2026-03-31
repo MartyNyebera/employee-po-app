@@ -2,7 +2,11 @@ import type { Asset, PurchaseOrder, Transaction } from '../data/mockData';
 import { CONFIG } from '../config/environment';
 
 // Use relative path so Vite proxy handles routing correctly
-const API_BASE = '/api';
+const API_BASE = typeof window !== 'undefined' && 
+  window.location.hostname !== 'localhost' && 
+  window.location.hostname !== '127.0.0.1'
+  ? 'https://employee-po-system.onrender.com'
+  : '';
 
 const AUTH_STORAGE_KEY = 'fleet_auth';
 
