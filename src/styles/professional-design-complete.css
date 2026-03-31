@@ -721,3 +721,51 @@ body {
 .animate-fade-in {
   animation: fadeIn 0.3s ease-in !important;
 }
+
+/* ================================================= */
+/* RESPONSIVE RULES - Added Fix #6                   */
+/* ================================================= */
+
+/* Mobile: max-width 768px */
+@media (max-width: 768px) {
+  .professional-card {
+    padding: var(--spacing-lg) !important;
+  }
+
+  .professional-card:hover {
+    transform: none !important;
+  }
+
+  .metric-card {
+    padding: var(--spacing-lg) !important;
+  }
+
+  .metric-card:hover {
+    transform: none !important;
+  }
+
+  .metric-header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: var(--spacing-sm) !important;
+  }
+
+  .metric-value {
+    font-size: 24px !important;
+  }
+}
+
+/* Tablet: 768px to 1024px */
+@media (min-width: 768px) and (max-width: 1024px) {
+  .metric-value {
+    font-size: 28px !important;
+  }
+}
+
+/* Accessibility: Respect reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .animate-slide-up,
+  .animate-fade-in {
+    animation: none !important;
+  }
+}

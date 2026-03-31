@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useAutoLogout } from '../hooks/useAutoLogout';
 import { Button } from './ui/button';
 import { LogOut, Home, FileText, Receipt, Menu, X, UserPlus, Check, XCircle, MapPin, Calendar, Clock, Truck, Wrench, ShoppingCart, Package, User, UserCheck } from 'lucide-react';
+import ErrorBoundary from './ErrorBoundary';
+import { PageErrorFallback } from './PageErrorFallback';
 import { ThemeToggle } from './ThemeToggle';
 import { BusinessOverview } from './BusinessOverview-InlineStyles';
 import { AssetDetails } from './AssetDetails';
@@ -252,7 +254,8 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
   };
 
   return (
-    <div className="admin-portal min-h-screen bg-slate-50 flex">
+    <ErrorBoundary fallback={<PageErrorFallback />}>
+      <div className="admin-portal min-h-screen bg-slate-50 flex">
       {/* Sidebar */}
       <div className={`bg-white border-r border-gray-200 transition-all duration-300 ${menuOpen ? 'w-64' : 'w-20'} flex flex-col`}>
         {/* Logo */}
@@ -293,9 +296,8 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
           >
             <div className="flex items-center gap-3">
               <Home 
+                className="w-4 h-4"
                 style={{
-                  width: '18px',
-                  height: '18px',
                   color: currentView === 'home' ? '#2563eb' : '#6b7280'
                 }} 
               />
@@ -326,9 +328,8 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
           >
             <div className="flex items-center gap-3">
               <FileText 
+                className="w-4 h-4"
                 style={{
-                  width: '18px',
-                  height: '18px',
                   color: currentView === 'orders' ? '#2563eb' : '#6b7280'
                 }} 
               />
@@ -359,9 +360,8 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
           >
             <div className="flex items-center gap-3">
               <Package 
+                className="w-4 h-4"
                 style={{
-                  width: '18px',
-                  height: '18px',
                   color: currentView === 'purchase-orders' ? '#2563eb' : '#6b7280'
                 }} 
               />
@@ -392,9 +392,8 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
           >
             <div className="flex items-center gap-3">
               <ShoppingCart 
+                className="w-4 h-4"
                 style={{
-                  width: '18px',
-                  height: '18px',
                   color: currentView === 'request-form' ? '#2563eb' : '#6b7280'
                 }} 
               />
@@ -425,9 +424,8 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
           >
             <div className="flex items-center gap-3">
               <Package 
+                className="w-4 h-4"
                 style={{
-                  width: '18px',
-                  height: '18px',
                   color: currentView === 'inventory' ? '#2563eb' : '#6b7280'
                 }} 
               />
@@ -458,9 +456,8 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
           >
             <div className="flex items-center gap-3">
               <Wrench 
+                className="w-4 h-4"
                 style={{
-                  width: '18px',
-                  height: '18px',
                   color: currentView === 'miscellaneous' ? '#2563eb' : '#6b7280'
                 }} 
               />
@@ -491,9 +488,8 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
           >
             <div className="flex items-center gap-3">
               <Truck 
+                className="w-4 h-4"
                 style={{
-                  width: '18px',
-                  height: '18px',
                   color: currentView === 'fleet' ? '#2563eb' : '#6b7280'
                 }} 
               />
@@ -524,9 +520,8 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
           >
             <div className="flex items-center gap-3">
               <MapPin 
+                className="w-4 h-4"
                 style={{
-                  width: '18px',
-                  height: '18px',
                   color: currentView === 'gps' ? '#2563eb' : '#6b7280'
                 }} 
               />
@@ -558,9 +553,8 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
             >
               <div className="flex items-center gap-3">
                 <UserPlus 
+                  className="w-4 h-4"
                   style={{
-                    width: '18px',
-                    height: '18px',
                     color: currentView === 'requests' ? '#2563eb' : '#6b7280'
                   }} 
                 />
@@ -592,9 +586,8 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
           >
             <div className="flex items-center gap-3">
               <UserCheck 
+                className="w-4 h-4"
                 style={{
-                  width: '18px',
-                  height: '18px',
                   color: currentView === 'employee-approvals' ? '#2563eb' : '#6b7280'
                 }} 
               />
@@ -625,9 +618,8 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
           >
             <div className="flex items-center gap-3">
               <UserCheck 
+                className="w-4 h-4"
                 style={{
-                  width: '18px',
-                  height: '18px',
                   color: currentView === 'driver-approvals' ? '#2563eb' : '#6b7280'
                 }} 
               />
@@ -658,9 +650,8 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
           >
             <div className="flex items-center gap-3">
               <Truck
+                className="w-4 h-4"
                 style={{
-                  width: '18px',
-                  height: '18px',
                   color: currentView === 'delivery-management' ? '#2563eb' : '#6b7280'
                 }}
               />
@@ -682,9 +673,8 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
         <div className="p-3 border-t border-gray-200">
           <div className="flex items-center gap-3 p-3 mb-2">
             <User 
+              className="w-4 h-4"
               style={{
-                width: '18px',
-                height: '18px',
                 color: '#6b7280'
               }} 
             />
@@ -711,9 +701,8 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
           >
             <div className="flex items-center gap-3">
               <LogOut 
+                className="w-4 h-4"
                 style={{
-                  width: '18px',
-                  height: '18px',
                   color: '#6b7280'
                 }} 
               />
@@ -744,7 +733,7 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
               >
                 {menuOpen ? <X className="size-4" /> : <Menu className="size-4" />}
               </Button>
-              <h1 className="text-4xl font-black text-black tracking-tight">Admin Dashboard</h1>
+              <h1 className="text-2xl md:text-3xl lg:text-4xl font-black text-black tracking-tight">Admin Dashboard</h1>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold text-slate-700">
@@ -760,5 +749,6 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
         </div>
       </div>
     </div>
+    </ErrorBoundary>
   );
 }

@@ -58,8 +58,7 @@ export function UltraSimpleGPS() {
       });
 
       map.on('load', () => {
-        console.log('Map loaded');
-      });
+              });
 
       mapRef.current = map;
     } catch (err) {

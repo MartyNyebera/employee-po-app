@@ -9,8 +9,7 @@ interface DeviceWithPosition extends TraccarDevice {
 }
 
 export function WorkingLiveMap() {
-  console.log('[WorkingLiveMap] Component loading');
-  const [devices, setDevices] = useState<DeviceWithPosition[]>([]);
+    const [devices, setDevices] = useState<DeviceWithPosition[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -18,8 +17,7 @@ export function WorkingLiveMap() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        console.log('[WorkingLiveMap] Loading GPS data...');
-        setLoading(true);
+                setLoading(true);
         setError(null);
         
         // Use LocalStorage GPS system instead of Traccar
@@ -91,16 +89,11 @@ export function WorkingLiveMap() {
           }
         }
         
-        console.log('[WorkingLiveMap] Devices:', devicesData.length);
-        console.log('[WorkingLiveMap] Positions:', positionsData.length);
-        
         // Merge devices with their latest positions
         const merged = devicesData.map(device => {
           const position = positionsData.find(p => p.deviceId === device.id);
           return { ...device, position };
         });
-        
-        console.log('[WorkingLiveMap] Merged devices:', merged.length);
         setDevices(merged);
       } catch (err) {
         console.error('[WorkingLiveMap] Error loading GPS data:', err);

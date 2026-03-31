@@ -7,3 +7,5 @@ Thumbs.db
 test-login.js
 test-server-login.js
 check-users.js
+*.key
+*.pem

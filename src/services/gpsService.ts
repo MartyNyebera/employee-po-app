@@ -69,8 +69,7 @@ class GPSService {
       // Notify subscribers
       this.notifySubscribers();
 
-      console.log('GPS location saved:', location);
-      return { success: true, message: 'Location saved successfully' };
+            return { success: true, message: 'Location saved successfully' };
     } catch (error) {
       console.error('Error saving location:', error);
       return { success: false, message: 'Failed to save location' };

@@ -36,12 +36,10 @@ export function LiveMapTracker() {
   // Load MapLibre GL JS from CDN
   useEffect(() => {
     const loadMapLibre = () => {
-      console.log('Starting to load MapLibre GL JS...');
-      
+            
       // Check if already loaded
       if (window.maplibregl) {
-        console.log('MapLibre GL JS already loaded');
-        setMapLoaded(true);
+                setMapLoaded(true);
         setLoading(false);
         return;
       }
@@ -50,7 +48,9 @@ export function LiveMapTracker() {
       const cssLink = document.createElement('link');
       cssLink.rel = 'stylesheet';
       cssLink.href = 'https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css';
-      cssLink.onload = () => console.log('MapLibre CSS loaded');
+      cssLink.onload = () => {
+        // MapLibre CSS loaded
+      };
       cssLink.onerror = () => console.error('Failed to load MapLibre CSS');
       document.head.appendChild(cssLink);
 
@@ -58,8 +58,6 @@ export function LiveMapTracker() {
       const script = document.createElement('script');
       script.src = 'https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js';
       script.onload = () => {
-        console.log('MapLibre GL JS loaded successfully');
-        console.log('window.maplibregl:', window.maplibregl);
         setMapLoaded(true);
         setLoading(false);
       };

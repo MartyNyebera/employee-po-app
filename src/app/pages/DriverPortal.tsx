@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { Truck, MapPin, MessageSquare, LogOut, Send,
   Paperclip, CheckCircle, Navigation, NavigationOff, Gauge } from 'lucide-react';
+import ErrorBoundary from '../components/ErrorBoundary';
+import { PageErrorFallback } from '../components/PageErrorFallback';
 
 // Driver-specific fetch function
 const fetchDriverApi = async (path: string, options?: RequestInit) => {
@@ -11,10 +13,35 @@ const fetchDriverApi = async (path: string, options?: RequestInit) => {
     ...options?.headers 
   } as Record<string, string>;
   
-  const res = await fetch(`/api${path}`, { ...options, headers });
+  const fetchWithRetry = async (retries = 3, delay = 1000): Promise<Response> => {
+    try {
+      const res = await fetch(`/api${path}`, { ...options, headers });
+      
+      // Check if status is retryable
+      const shouldRetry = [408, 429, 500, 502, 503, 504].includes(res.status);
+      
+      if (!res.ok && shouldRetry && retries > 0) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return fetchWithRetry(retries - 1, delay * 2);
+      }
+      
+      return res;
+    } catch (error) {
+      // Network errors - retry
+      if (retries > 0) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return fetchWithRetry(retries - 1, delay * 2);
+      }
+      throw error;
+    }
+  };
+  
+  const res = await fetchWithRetry();
+  
+  // Handle non-retryable errors
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || `HTTP ${res.status}`);
+    throw new Error(`DriverPortal API request failed for ${path}: ${err.error || `HTTP ${res.status}`}`);
   }
   return res.json();
 };
@@ -38,6 +65,11 @@ export function DriverPortal() {
   const [gpsActive, setGpsActive] = useState(false);
   const [unreadMessages, setUnreadMessages] = useState(0);
   const [currentSpeed, setCurrentSpeed] = useState<number | null>(null);
+  const [isVehicleLoading, setIsVehicleLoading] = useState(false);
+  const [isDeliveriesLoading, setIsDeliveriesLoading] = useState(false);
+  const [isMessagesLoading, setIsMessagesLoading] = useState(false);
+  const [isStatusUpdating, setIsStatusUpdating] = useState<string | null>(null);
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
   const gpsIntervalRef = useRef<any>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -82,10 +114,16 @@ export function DriverPortal() {
   }, [messages]);
 
   const loadAssignedVehicle = async (driverId: number) => {
+    setIsVehicleLoading(true);
     try {
       const data = await fetchDriverApi(`/driver/${driverId}/vehicle`);
       setAssignedVehicle(data);
-    } catch { setAssignedVehicle(null); }
+    } catch (error) { 
+      console.error('Failed to load assigned vehicle:', error);
+      setAssignedVehicle(null); 
+    } finally {
+      setIsVehicleLoading(false);
+    }
   };
 
   const startGPS = (driverData: any) => {
@@ -111,7 +149,9 @@ export function DriverPortal() {
                 heading: pos.coords.heading || 0
               })
             });
-          } catch {}
+          } catch (error) {
+            console.error('Failed to send GPS location:', error);
+          }
         },
         () => {},
         { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 }
@@ -131,13 +171,20 @@ export function DriverPortal() {
   };
 
   const loadDeliveries = async (id: number) => {
+    setIsDeliveriesLoading(true);
     try {
       const data = await fetchDriverApi(`/driver/${id}/deliveries`);
       setDeliveries(data);
-    } catch { setDeliveries([]); }
+    } catch (error) { 
+      console.error('Failed to load deliveries:', error);
+      setDeliveries([]); 
+    } finally {
+      setIsDeliveriesLoading(false);
+    }
   };
 
   const loadMessages = async (id: number) => {
+    setIsMessagesLoading(true);
     try {
       const data = await fetchDriverApi(`/driver/${id}/messages`);
       setMessages(Array.isArray(data) ? data : []);
@@ -146,12 +193,18 @@ export function DriverPortal() {
           !m.is_read && m.sender_type === 'admin'
         ).length
       );
-    } catch { setMessages([]); }
+    } catch (error) { 
+      console.error('Failed to load messages:', error);
+      setMessages([]); 
+    } finally {
+      setIsMessagesLoading(false);
+    }
   };
 
   const handleUpdateStatus = async (
     deliveryId: string, status: string, source?: string
   ) => {
+    setIsStatusUpdating(deliveryId);
     try {
       const endpoint = source === 'legacy'
         ? `/driver-deliveries/${deliveryId}/status`
@@ -161,13 +214,17 @@ export function DriverPortal() {
         body: JSON.stringify({ status })
       });
       if (driver) loadDeliveries(driver.id);
-    } catch {
+    } catch (error) {
+      console.error('Failed to update delivery status:', error);
       alert('Failed to update status');
+    } finally {
+      setIsStatusUpdating(null);
     }
   };
 
   const handleSendMessage = async () => {
     if (!newMessage.trim() || !driver) return;
+    setIsSendingMessage(true);
     try {
       await fetchDriverApi('/driver/messages', {
         method: 'POST',
@@ -180,8 +237,11 @@ export function DriverPortal() {
       });
       setNewMessage('');
       loadMessages(driver.id);
-    } catch {
-      alert('Failed to send message');
+    } catch (error) {
+      console.error('Failed to send message:', error);
+      alert('Failed to send message. Please try again.');
+    } finally {
+      setIsSendingMessage(false);
     }
   };
 
@@ -220,36 +280,27 @@ export function DriverPortal() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 
-      flex flex-col">
-      {/* Header */}
-      <div className="bg-slate-900 text-white 
-        px-4 py-3 flex items-center 
-        justify-between sticky top-0 z-40">
-        <div>
-          <p className="text-xs text-slate-400">
-            KIMOEL DRIVER PORTAL
-          </p>
-          <p className="font-semibold text-sm">
-            {driver?.full_name}
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          {gpsActive && (
-            <div className="flex items-center gap-1">
-              <div className="w-2 h-2 bg-green-400 
-                rounded-full animate-pulse" />
-              <span className="text-xs 
-                text-green-400">GPS Live</span>
-            </div>
-          )}
-          <button onClick={handleLogout}
-            className="p-2 rounded-lg 
-              hover:bg-slate-700">
+    <ErrorBoundary fallback={<PageErrorFallback />}>
+      <div className="min-h-screen bg-gray-50">
+        {/* Header */}
+        <div className="bg-slate-900 text-white px-4 py-3 flex items-center justify-between sticky top-0 z-40">
+          <div>
+            <p className="text-xs text-slate-400">KIMOEL DRIVER PORTAL</p>
+            <p className="font-semibold text-sm">{driver?.full_name}</p>
+          </div>
+          <div className="flex items-center gap-3">
+            {gpsActive && (
+              <div className="flex items-center gap-1">
+                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+                <span className="text-xs text-green-400">GPS Live</span>
+              </div>
+            )}
+            <button onClick={handleLogout}
+            className="p-2 rounded-lg hover:bg-slate-700">
             <LogOut className="size-5" />
           </button>
+          </div>
         </div>
-      </div>
 
       {/* Nav */}
       <div className="bg-white border-b border-slate-200 px-4 flex">
@@ -288,32 +339,40 @@ export function DriverPortal() {
           <div className="p-4 space-y-4">
             {/* Vehicle Info Card */}
             <div className="bg-white rounded-xl border border-slate-200 p-4">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
-                  <Truck className="size-5 text-blue-600" />
+              {isVehicleLoading ? (
+                <div className="flex justify-center p-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-900" />
                 </div>
-                <div>
-                  <p className="text-xs text-slate-500">Assigned Vehicle</p>
-                  {assignedVehicle ? (
-                    <>
-                      <p className="font-bold text-slate-900">{assignedVehicle.unit_name}</p>
-                      <p className="text-xs text-slate-500">{assignedVehicle.plate_number}</p>
-                    </>
-                  ) : (
-                    <p className="text-sm text-slate-400 italic">No vehicle assigned yet</p>
-                  )}
-                </div>
-              </div>
-              {assignedVehicle && (
-                <div className="bg-slate-50 rounded-lg p-3 flex items-center gap-3">
-                  <Gauge className="size-5 text-slate-500" />
-                  <div>
-                    <p className="text-xs text-slate-500">Current Odometer</p>
-                    <p className="text-lg font-bold text-slate-900">
-                      {parseFloat(assignedVehicle.current_odometer || 0).toLocaleString('en-PH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km
-                    </p>
+              ) : (
+                <>
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
+                      <Truck className="size-5 text-blue-600" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500">Assigned Vehicle</p>
+                      {assignedVehicle ? (
+                        <>
+                          <p className="font-bold text-slate-900">{assignedVehicle.unit_name}</p>
+                          <p className="text-xs text-slate-500">{assignedVehicle.plate_number}</p>
+                        </>
+                      ) : (
+                        <p className="text-sm text-slate-400 italic">No vehicle assigned yet</p>
+                      )}
+                    </div>
                   </div>
-                </div>
+                  {assignedVehicle && (
+                    <div className="bg-slate-50 rounded-lg p-3 flex items-center gap-3">
+                      <Gauge className="size-5 text-slate-500" />
+                      <div>
+                        <p className="text-xs text-slate-500">Current Odometer</p>
+                        <p className="text-lg font-bold text-slate-900">
+                          {parseFloat(assignedVehicle.current_odometer || 0).toLocaleString('en-PH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
@@ -378,7 +437,11 @@ export function DriverPortal() {
                   No deliveries assigned yet
                 </p>
               </div>
-            ) : deliveries.map(delivery => (
+            ) : isDeliveriesLoading ? (
+    <div className="flex justify-center p-4">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-900" />
+    </div>
+  ) : deliveries.map(delivery => (
               <div key={delivery.id} className="bg-white rounded-xl border border-slate-200 p-4">
                 <div className="flex justify-between items-start mb-3">
                   <div>
@@ -402,7 +465,13 @@ export function DriverPortal() {
                 <div className="bg-slate-50 rounded-lg p-3 mb-3">
                   <div className="flex items-start gap-2">
                     <MapPin className="size-4 text-slate-500 mt-0.5 flex-shrink-0" />
-                    <p className="text-sm text-slate-700">{delivery.delivery_address}</p>
+                    <p className="text-sm text-slate-700">
+                      {delivery.delivery_address
+                        ? delivery.delivery_address
+                            .split(/Contact:|Prepared By:|Line Items:/)[0]
+                            .trim()
+                        : 'No address provided'}
+                    </p>
                   </div>
                 </div>
 
@@ -418,7 +487,9 @@ export function DriverPortal() {
                       <button
                         key={status.key}
                         onClick={() => handleUpdateStatus(delivery.id, status.key, delivery.source)}
+                        disabled={isStatusUpdating !== null}
                         className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-all ${
+                          isStatusUpdating === delivery.id ? 'opacity-50 cursor-not-allowed' :
                           delivery.status === status.key
                             ? `${status.color} text-white`
                             : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
@@ -451,14 +522,18 @@ export function DriverPortal() {
                     Say hi to your admin!
                   </p>
                 </div>
-              ) : messages.map(msg => (
+              ) : isMessagesLoading ? (
+    <div className="flex justify-center p-4">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-900" />
+    </div>
+  ) : messages.map(msg => (
                 <div key={msg.id}
                   className={`flex 
                     ${msg.sender_type === 'driver' 
                       ? 'justify-end' 
                       : 'justify-start'
                     }`}>
-                  <div className={`max-w-[80%] rounded-2xl px-4 py-2 ${
+                  <div className={`max-w-[85%] sm:max-w-[80%] rounded-2xl px-4 py-2 ${
                     msg.sender_type === 'driver'
                       ? 'bg-blue-600 text-white rounded-br-sm'
                       : 'bg-white border border-slate-200 text-slate-900 rounded-bl-sm'
@@ -545,17 +620,20 @@ export function DriverPortal() {
               />
               <button
                 onClick={handleSendMessage}
-                disabled={!newMessage.trim()}
-                className="p-2 bg-blue-600 
-                  text-white rounded-xl 
-                  disabled:opacity-50"
+                disabled={!newMessage.trim() || isSendingMessage}
+                className="p-2 bg-blue-600 text-white rounded-xl disabled:opacity-50"
               >
-                <Send className="size-5" />
+                {isSendingMessage ? (
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white" />
+                ) : (
+                  <Send className="size-5" />
+                )}
               </button>
             </div>
           </div>
         )}
       </div>
     </div>
+    </ErrorBoundary>
   );
 }

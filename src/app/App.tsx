@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import ErrorBoundary from './components/ErrorBoundary';
 import { BusinessOverview } from './components/BusinessOverview-Professional-Updated';
 import { Dashboard } from './components/Dashboard';
 import { AdminDashboard } from './components/AdminDashboard';
@@ -19,19 +20,14 @@ export default function App() {
   const [checkingAuth, setCheckingAuth] = useState(true);
 
   useEffect(() => {
-    console.log('[App] Checking stored auth...');
-    
     const auth = getStoredAuth();
-    console.log('[App] Stored auth:', auth);
     
     if (auth?.user) {
-      console.log('[App] Setting user role:', auth.user.role);
       setUserRole(auth.user.role);
       setUserName(auth.user.name);
       setUserIsSuperAdmin(!!auth.user.isSuperAdmin);
     } else {
-      console.log('[App] No auth found - showing login');
-      setUserRole(null);
+            setUserRole(null);
       setUserName('');
       setUserIsSuperAdmin(false);
     }
@@ -77,8 +73,9 @@ export default function App() {
   }
 
   return (
-    <Router>
-      <Routes>
+    <ErrorBoundary>
+      <Router>
+        <Routes>
         {/* Admin Portal Routes */}
         <Route path="/" element={
           !userRole ? (
@@ -102,5 +99,6 @@ export default function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Router>
+    </ErrorBoundary>
   );
 }

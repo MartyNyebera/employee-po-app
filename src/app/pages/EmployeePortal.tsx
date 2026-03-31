@@ -1,5 +1,7 @@
 ﻿import { useState, useEffect } from 'react';
 import { Package, ClipboardList, Bell, LogOut, Menu, X, User, Wifi, WifiOff, AlertCircle, FileText, Clock, Search } from 'lucide-react';
+import ErrorBoundary from '../components/ErrorBoundary';
+import { PageErrorFallback } from '../components/PageErrorFallback';
 
 export type EmployeeView = 'inventory' | 'requests' | 'history' | 'notifications';
 
@@ -138,10 +140,36 @@ export function EmployeePortal() {
       ...(token && { Authorization: `Bearer ${token}` }),
       ...options?.headers,
     } as Record<string, string>;
-    const res = await fetch(`/api${path}`, { ...options, headers });
+    
+    const fetchWithRetry = async (retries = 3, delay = 1000): Promise<Response> => {
+      try {
+        const res = await fetch(`/api${path}`, { ...options, headers });
+        
+        // Check if status is retryable
+        const shouldRetry = [408, 429, 500, 502, 503, 504].includes(res.status);
+        
+        if (!res.ok && shouldRetry && retries > 0) {
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return fetchWithRetry(retries - 1, delay * 2);
+        }
+        
+        return res;
+      } catch (error) {
+        // Network errors - retry
+        if (retries > 0) {
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return fetchWithRetry(retries - 1, delay * 2);
+        }
+        throw error;
+      }
+    };
+    
+    const res = await fetchWithRetry();
+    
+    // Handle non-retryable errors
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || `HTTP ${res.status}`);
+      throw new Error(`EmployeePortal API request failed for ${path}: ${err.error || `HTTP ${res.status}`}`);
     }
     return res.json();
   };
@@ -255,7 +283,8 @@ export function EmployeePortal() {
   const sidebarProps = { view, setView, setMobileMenuOpen, unreadCount, employee, connectionStatus, handleLogout };
 
   return (
-    <div className="flex h-screen bg-gray-50 overflow-hidden">
+    <ErrorBoundary fallback={<PageErrorFallback />}>
+      <div className="flex h-screen bg-gray-50 overflow-hidden">
 
       {/* Mobile overlay — sits above content, below sidebar */}
       {mobileMenuOpen && (
@@ -548,5 +577,6 @@ export function EmployeePortal() {
         </main>
       </div>
     </div>
+    </ErrorBoundary>
   );
 }

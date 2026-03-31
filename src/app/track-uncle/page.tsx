@@ -47,8 +47,7 @@ export default function TrackUnclePage() {
       setSentCount(prev => prev + 1);
       setSuccess('✅ Location sent to family!');
       setError(null);
-      console.log('Uncle location sent:', locationData);
-      
+            
       // Clear success message after 3 seconds
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {

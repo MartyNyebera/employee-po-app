@@ -5,6 +5,15 @@ import "./styles/index.css";
 import App from './app/App';
 import { Toaster } from './app/components/ui/sonner';
 
+// Unregister any existing service workers to prevent API issues
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then(registrations => {
+    registrations.forEach(registration => {
+      registration.unregister();
+          });
+  });
+}
+
 // Temporarily disable service worker to prevent CSS loading issues
 // if ('serviceWorker' in navigator) {
 //   navigator.serviceWorker.register('/sw.js')

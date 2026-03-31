@@ -124,7 +124,7 @@ export function LiveMap() {
         const ws = new WebSocket(wsUrl);
         
         ws.onopen = () => {
-          console.log('[LiveMap] WebSocket connected');
+          // WebSocket connected
         };
         
         ws.onmessage = (event) => {
@@ -148,7 +148,7 @@ export function LiveMap() {
         };
         
         ws.onclose = () => {
-          console.log('[LiveMap] WebSocket closed');
+          // WebSocket closed
         };
         
         wsRef.current = ws;

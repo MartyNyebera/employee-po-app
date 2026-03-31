@@ -3,6 +3,8 @@ import React, { Component, ErrorInfo, ReactNode } from 'react';
 
 interface Props {
   children: ReactNode;
+  fallback?: ReactNode;
+  resetKey?: any;
 }
 
 interface State {
@@ -27,8 +29,21 @@ class ErrorBoundary extends Component<Props, State> {
     // logErrorToService(error, errorInfo);
   }
 
+  componentDidUpdate(prevProps: Props) {
+    // Reset error state when resetKey changes (for route changes)
+    if (prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false, error: undefined });
+    }
+  }
+
   render() {
     if (this.state.hasError) {
+      // Use custom fallback if provided
+      if (this.props.fallback) {
+        return this.props.fallback;
+      }
+
+      // Default fallback
       return (
         <div className="min-h-screen flex items-center justify-center bg-gray-50">
           <div className="max-w-md w-full bg-white rounded-lg shadow-lg p-6">
@@ -75,3 +90,4 @@ class ErrorBoundary extends Component<Props, State> {
 }
 
 export default ErrorBoundary;
+export { ErrorBoundary };

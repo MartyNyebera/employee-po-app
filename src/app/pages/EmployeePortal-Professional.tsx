@@ -23,7 +23,32 @@ const fetchEmployeeApi = async (path: string, options?: RequestInit) => {
     ...options?.headers 
   } as Record<string, string>;
   
-  const res = await fetch(`/api${path}`, { ...options, headers });
+  const fetchWithRetry = async (retries = 3, delay = 1000): Promise<Response> => {
+    try {
+      const res = await fetch(`/api${path}`, { ...options, headers });
+      
+      // Check if status is retryable
+      const shouldRetry = [408, 429, 500, 502, 503, 504].includes(res.status);
+      
+      if (!res.ok && shouldRetry && retries > 0) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return fetchWithRetry(retries - 1, delay * 2);
+      }
+      
+      return res;
+    } catch (error) {
+      // Network errors - retry
+      if (retries > 0) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return fetchWithRetry(retries - 1, delay * 2);
+      }
+      throw error;
+    }
+  };
+  
+  const res = await fetchWithRetry();
+  
+  // Handle non-retryable errors
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || `HTTP ${res.status}`);
@@ -94,6 +119,8 @@ export function EmployeePortal() {
   const [sortBy, setSortBy] = useState<string>('newest');
   const [showFilters, setShowFilters] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'online' | 'offline'>('online');
+  const [isMarkingRead, setIsMarkingRead] = useState<number | null>(null);
+  const [isMarkingAllRead, setIsMarkingAllRead] = useState(false);
 
   const [requestForm, setRequestForm] = useState<RequestForm>({
     item_name: '',
@@ -138,22 +165,28 @@ export function EmployeePortal() {
   };
 
   const markAsRead = async (id: number) => {
+    setIsMarkingRead(id);
     try {
       await fetchEmployeeApi(`/notifications/${id}/read`, { method: 'POST' });
       setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
       setUnreadCount(prev => Math.max(0, prev - 1));
     } catch (error) {
       console.error('Failed to mark notification as read:', error);
+    } finally {
+      setIsMarkingRead(null);
     }
   };
 
   const markAllAsRead = async () => {
+    setIsMarkingAllRead(true);
     try {
       await fetchEmployeeApi('/notifications/read-all', { method: 'POST' });
       setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
       setUnreadCount(0);
     } catch (error) {
       console.error('Failed to mark all notifications as read:', error);
+    } finally {
+      setIsMarkingAllRead(false);
     }
   };
 
@@ -550,7 +583,7 @@ export function EmployeePortal() {
               >
                 {mobileMenuOpen ? <X className="size-5" /> : <Menu className="size-5" />}
               </button>
-              <h1 className="text-4xl font-black text-black tracking-tight">Employee Portal</h1>
+              <h1 className="text-2xl md:text-3xl lg:text-4xl font-black text-black tracking-tight">Employee Portal</h1>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold text-slate-700">
@@ -883,9 +916,14 @@ export function EmployeePortal() {
                       <h2 className="text-lg font-semibold text-slate-900">Notifications</h2>
                       <button
                         onClick={markAllAsRead}
-                        className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                        disabled={isMarkingAllRead}
+                        className={`text-sm font-medium transition-all ${
+                          isMarkingAllRead 
+                            ? 'text-slate-400 cursor-not-allowed' 
+                            : 'text-blue-600 hover:text-blue-700'
+                        }`}
                       >
-                        Mark all as read
+                        {isMarkingAllRead ? 'Marking...' : 'Mark all as read'}
                       </button>
                     </div>
                     
@@ -902,10 +940,16 @@ export function EmployeePortal() {
                           return (
                             <div
                               key={notification.id}
-                              className={`bg-white rounded-xl border p-4 shadow-sm hover:shadow-md transition-all cursor-pointer ${
+                              className={`bg-white rounded-xl border p-4 shadow-sm transition-all ${
+                                isMarkingRead === notification.id
+                                  ? 'opacity-50 cursor-not-allowed'
+                                  : 'hover:shadow-md cursor-pointer'
+                              } ${
                                 !notification.is_read ? 'border-blue-200 bg-blue-50' : 'border-slate-200'
                               }`}
-                              onClick={() => markAsRead(notification.id)}
+                              onClick={() => isMarkingRead === notification.id 
+                                ? null 
+                                : markAsRead(notification.id)}
                             >
                               <div className="flex gap-3">
                                 <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${
@@ -931,7 +975,7 @@ export function EmployeePortal() {
                               </div>
                             </div>
                           </div>
-                        );
+                        ));
                         })}
                       </div>
                     )}

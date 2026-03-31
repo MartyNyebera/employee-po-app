@@ -52,7 +52,7 @@ export function WorkingGPS() {
               attributes: {}
             });
           } catch (e) {
-            console.warn('Invalid phone GPS data:', e);
+            // Invalid phone GPS data
           }
         }
         
@@ -83,7 +83,7 @@ export function WorkingGPS() {
               attributes: {}
             });
           } catch (e) {
-            console.warn('Invalid laptop GPS data:', e);
+            // Invalid laptop GPS data
           }
         }
         

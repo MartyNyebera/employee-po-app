@@ -87,6 +87,7 @@ export function DeliveryManagement() {
     notes: string;
   }>>({});
   const [dispatching, setDispatching] = useState<string | null>(null);
+  const [isStatusUpdating, setIsStatusUpdating] = useState<string | null>(null);
 
   const loadAll = async () => {
     setLoading(true);
@@ -111,8 +112,13 @@ export function DeliveryManagement() {
   useEffect(() => { loadAll(); }, []);
 
   // SOs that are approved/pending but not yet dispatched to a delivery
+  const assignedSONumbers = new Set(
+    deliveries.map(d => d.so_number).filter(Boolean)
+  );
+
   const unassignedSOs = salesOrders.filter(so =>
     !so.delivery_id &&
+    !assignedSONumbers.has(so.soNumber) &&
     (so.status === 'approved' || so.status === 'pending' || so.status === 'Pending')
   );
 
@@ -161,7 +167,8 @@ export function DeliveryManagement() {
       const driver = drivers.find(d => String(d.id) === form.driver_account_id);
       const vehicle = vehicles.find(v => v.id === form.vehicle_id);
 
-      await fetchApi('/deliveries', {
+      // Create the delivery
+      const deliveryResponse = await fetchApi('/deliveries', {
         method: 'POST',
         body: JSON.stringify({
           so_number: so.soNumber,
@@ -172,6 +179,15 @@ export function DeliveryManagement() {
           customer_address: so.description || so.client,
           delivery_date: form.delivery_date,
           notes: form.notes || null,
+        }),
+      });
+
+      // Update the sales order to link it with the delivery
+      await fetchApi(`/sales-orders/${so.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          delivery_id: (deliveryResponse as any).id,
+          status: 'dispatched'
         }),
       });
 
@@ -193,6 +209,7 @@ export function DeliveryManagement() {
   };
 
   const handleUpdateStatus = async (deliveryId: string, status: string) => {
+    setIsStatusUpdating(deliveryId);
     try {
       await fetchApi(`/deliveries/${deliveryId}/status`, {
         method: 'PUT',
@@ -201,6 +218,8 @@ export function DeliveryManagement() {
       await loadAll();
     } catch (err) {
       alert('Failed to update status.');
+    } finally {
+      setIsStatusUpdating(null);
     }
   };
 
@@ -228,7 +247,7 @@ export function DeliveryManagement() {
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-gray-200">
+      <div className="flex flex-col sm:flex-row border-b border-gray-200">
         {([
           { key: 'unassigned', label: 'Needs Dispatch', count: unassignedSOs.length, color: 'text-amber-600' },
           { key: 'active', label: 'Active', count: activeDeliveries.length, color: 'text-blue-600' },
@@ -268,7 +287,7 @@ export function DeliveryManagement() {
                 {/* SO Header Row */}
                 <button
                   onClick={() => setExpandedSO(isExpanded ? null : so.id)}
-                  className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+                  className="w-full flex flex-col sm:flex-row sm:items-center sm:justify-between p-4 hover:bg-gray-50 transition-colors"
                 >
                   <div className="flex items-start gap-3 text-left">
                     <div className="w-9 h-9 rounded-lg bg-amber-50 flex items-center justify-center flex-shrink-0">
@@ -448,19 +467,33 @@ export function DeliveryManagement() {
               </div>
 
               {/* Status Update Buttons */}
-              <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-gray-100">
+              <div className="flex flex-wrap gap-1 sm:gap-2 mt-3 pt-3 border-t border-gray-100">
                 {['Assigned', 'Picked Up', 'In Transit', 'Arrived', 'Completed', 'Cancelled'].map(s => (
                   <button
                     key={s}
                     onClick={() => handleUpdateStatus(d.id, s)}
+                    disabled={isStatusUpdating === d.id}
                     className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-all ${
                       d.status === s
                         ? 'bg-blue-600 text-white'
                         : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    } ${
+                      isStatusUpdating === d.id
+                        ? 'opacity-50 cursor-not-allowed'
+                        : ''
                     }`}
                   >
-                    {d.status === s && <CheckCircle className="w-3 h-3 inline mr-1" />}
-                    {s}
+                    {isStatusUpdating === d.id ? (
+                      <>
+                        <div className="w-3 h-3 inline mr-1 animate-spin rounded-full border border-b-2 border-white" />
+                        Updating...
+                      </>
+                    ) : (
+                      <>
+                        {d.status === s && <CheckCircle className="w-3 h-3 inline mr-1" />}
+                        {s}
+                      </>
+                    )}
                   </button>
                 ))}
               </div>

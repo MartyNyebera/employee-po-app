@@ -40,15 +40,46 @@ function getAuthHeaders(): Record<string, string> {
 
 export async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const headers = { 'Content-Type': 'application/json', ...getAuthHeaders(), ...options?.headers } as Record<string, string>;
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
-  if (!res.ok) {
-    const isAuthEndpoint = path.startsWith('/auth/');
-    if (res.status === 401 && headers.Authorization && !isAuthEndpoint) {
-      clearStoredAuth();
-      window.location.reload();
+  
+  const fetchWithRetry = async (retries = 3, delay = 1000): Promise<Response> => {
+    try {
+      const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+      
+      // Handle auth errors immediately (no retry)
+      if (res.status === 401) {
+        const isAuthEndpoint = path.startsWith('/auth/');
+        if (headers.Authorization && !isAuthEndpoint) {
+          clearStoredAuth();
+          window.location.reload();
+        }
+        return res;
+      }
+      
+      // Check if status is retryable
+      const shouldRetry = [408, 429, 500, 502, 503, 504].includes(res.status);
+      
+      if (!res.ok && shouldRetry && retries > 0) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return fetchWithRetry(retries - 1, delay * 2);
+      }
+      
+      return res;
+    } catch (error) {
+      // Network errors - retry
+      if (retries > 0) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return fetchWithRetry(retries - 1, delay * 2);
+      }
+      throw error;
     }
+  };
+  
+  const res = await fetchWithRetry();
+  
+  // Handle non-retryable errors
+  if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || `HTTP ${res.status}`);
+    throw new Error(`API request failed for ${path}: ${err.error || `HTTP ${res.status}`}`);
   }
   
   // Handle empty responses (like DELETE operations)

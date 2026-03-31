@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0f172a" />
     <meta name="description" content="Kimoel Employee Portal - Inventory management and material requests" />
     
@@ -80,32 +80,32 @@
   <body>
     <div id="root"></div>
     
-    <!-- Service Worker Registration for PWA -->
+    <!-- Service Worker Registration for PWA (DISABLED) -->
     <script>
-      // Register Service Worker for PWA functionality
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js')
-            .then(registration => {
-              console.log('Service Worker registered successfully:', registration);
-              
-              // Check for updates periodically
-              setInterval(() => {
-                registration.update();
-              }, 60 * 60 * 1000); // Check every hour
-            })
-            .catch(error => {
-              console.log('Service Worker registration failed:', error);
-            });
-        });
-        
-        // Listen for service worker messages
-        navigator.serviceWorker.addEventListener('message', event => {
-          if (event.data && event.data.type === 'RELOAD_PAGE') {
-            window.location.reload();
-          }
-        });
-      }
+      // Service worker disabled to prevent API issues
+      // if ('serviceWorker' in navigator) {
+      //   window.addEventListener('load', () => {
+      //     navigator.serviceWorker.register('/sw.js')
+      //       .then(registration => {
+      //         console.log('Service Worker registered successfully:', registration);
+      //         
+      //         // Check for updates periodically
+      //         setInterval(() => {
+      //           registration.update();
+      //         }, 60 * 60 * 1000); // Check every hour
+      //       })
+      //       .catch(error => {
+      //         console.log('Service Worker registration failed:', error);
+      //       });
+      //   });
+      //   
+      //   // Listen for service worker messages
+      //   navigator.serviceWorker.addEventListener('message', event => {
+      //     if (event.data && event.data.type === 'RELOAD_PAGE') {
+      //       window.location.reload();
+      //     }
+      //   });
+      // }
       
       // PWA Install Prompt
       let deferredPrompt;

@@ -16,9 +16,7 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
-    hmr: {
-      port: 3001,
-    },
+    hmr: false,
   },
   build: {
     outDir: 'dist',

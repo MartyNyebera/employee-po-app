@@ -139,8 +139,7 @@ export default function TrackerPage() {
           setBatteryLevel(Math.round(battery.level * 100));
         });
       } catch (e) {
-        console.log('Battery API not available');
-      }
+              }
     }
   };
 
@@ -157,7 +156,7 @@ export default function TrackerPage() {
         localStorage.removeItem(`gpsOffline_${deviceId}`);
         setSendCount(c => c + 1);
       } catch (e) {
-        console.log('Offline sync failed, will retry later');
+        // Offline sync failed, will retry later
       }
     }
   };
@@ -251,10 +250,10 @@ export default function TrackerPage() {
               localStorage.removeItem(`gpsOffline_${deviceId}`);
               setSendCount(c => c + 1);
             }).catch(() => {
-              console.log('Offline sync failed, will retry later');
+              // Offline sync failed, will retry later
             });
           } catch (e) {
-            console.log('Offline sync failed, will retry later');
+            // Offline sync failed, will retry later
           }
         }
       }

@@ -14,13 +14,11 @@ const checkVersion = async () => {
     if (response.ok) {
       const currentVersion = await response.text()
       if (currentVersion.trim() !== VERSION) {
-        console.log('New version available. Refreshing...')
-        window.location.reload()
+                window.location.reload()
       }
     }
   } catch (error) {
-    console.log('Version check failed, continuing...')
-  }
+      }
 }
 
 // Check version every 30 seconds
