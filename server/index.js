@@ -519,30 +519,6 @@ async function runMigrations() {
   }
 }
 
-// Test DB connection on startup
-testConnection().then(async () => {
-  // STEP 4: VERIFY RENDER DATABASE CONNECTION
-  const dbUrl = process.env.DATABASE_URL;
-  if (dbUrl) {
-    const maskedUrl = dbUrl.replace(/\/\/([^:]+):([^@]+)@/, '//***:***@');
-    console.log('🔗 DATABASE CONNECTION VERIFIED:');
-    console.log(`  - URL: ${maskedUrl}`);
-    console.log(`  - Host: ${dbUrl.includes('@') ? dbUrl.split('@')[1].split('/')[0] : 'unknown'}`);
-    console.log(`  - Database: ${dbUrl.split('/').pop() || 'unknown'}`);
-  } else {
-    console.log('❌ DATABASE_URL NOT SET');
-  }
-
-  // Run migrations to ensure all tables exist
-  await runMigrations();
-  
-  // Ensure super admin exists after DB connection
-  const { ensureSuperAdmin } = await import('./ensure-super-admin.js');
-  await ensureSuperAdmin();
-}).catch(() => {
-  console.log('Database not ready. Start TimescaleDB/PostgreSQL and run: node server/init.js');
-});
-
 // ----- Auth (no auth required) -----
 // POST /api/auth/register
 app.post('/api/auth/register', async (req, res) => {
@@ -4476,6 +4452,30 @@ const startServer = async () => {
   const httpServer = app.listen(PORT, '0.0.0.0', () => {
     console.log(`API server running at http://0.0.0.0:${PORT}`);
     console.log(`Using PORT from environment: ${PORT}`);
+  });
+
+  // Test DB connection and run migrations AFTER port is bound
+  testConnection().then(async () => {
+    // STEP 4: VERIFY RENDER DATABASE CONNECTION
+    const dbUrl = process.env.DATABASE_URL;
+    if (dbUrl) {
+      const maskedUrl = dbUrl.replace(/\/\/([^:]+):([^@]+)@/, '//***:***@');
+      console.log('🔗 DATABASE CONNECTION VERIFIED:');
+      console.log(`  - URL: ${maskedUrl}`);
+      console.log(`  - Host: ${dbUrl.includes('@') ? dbUrl.split('@')[1].split('/')[0] : 'unknown'}`);
+      console.log(`  - Database: ${dbUrl.split('/').pop() || 'unknown'}`);
+    } else {
+      console.log('❌ DATABASE_URL NOT SET');
+    }
+
+    // Run migrations to ensure all tables exist
+    await runMigrations();
+
+    // Ensure super admin exists after DB connection
+    const { ensureSuperAdmin } = await import('./ensure-super-admin.js');
+    await ensureSuperAdmin();
+  }).catch(() => {
+    console.log('Database not ready. Start TimescaleDB/PostgreSQL and run: node server/init.js');
   });
 
   // ----- HTTPS server for phone GPS tracker (geolocation requires HTTPS) -----

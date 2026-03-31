@@ -17,7 +17,6 @@ const { Pool } = pg;
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/fleet_manager',
   max: 5,
-  min: 1,
   idleTimeoutMillis: 60000,
   connectionTimeoutMillis: 15000,
   acquireTimeoutMillis: 15000,
