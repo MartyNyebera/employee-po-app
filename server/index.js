@@ -2991,34 +2991,6 @@ app.post('/api/sales-orders', requireAdmin, async (req, res) => {
        RETURNING *`,
       [id, soNumber, client, description, amount, 'pending', createdDate, deliveryDate, assignedAssets]
     );
-    
-    // Auto-create a delivery record linked to this sales order
-    const deliveryId = `DEL-${Date.now()}`;
-    console.log(`📦 Creating delivery for SO ${soNumber}:`, {
-      customer: client,
-      address: customerAddress,
-      deliveryDate
-    });
-    await query(
-      `INSERT INTO deliveries 
-        (id, so_number, customer_name, customer_address, delivery_date, status, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
-      [
-        deliveryId,
-        soNumber,
-        client,           // customer_name = client name
-        customerAddress,  // customer_address = extracted from description
-        deliveryDate,
-        'Pending'
-      ]
-    );
-    console.log(`✅ Delivery ${deliveryId} created for SO ${soNumber}`);
-    
-    // Link the delivery ID back to the sales order
-    await query(
-      `UPDATE sales_orders SET delivery_id = $1 WHERE id = $2`,
-      [deliveryId, id]
-    );
     res.status(201).json({
       id: row.id,
       soNumber: row.so_number,
@@ -3029,7 +3001,6 @@ app.post('/api/sales-orders', requireAdmin, async (req, res) => {
       createdDate: row.created_date,
       deliveryDate: row.delivery_date,
       assignedAssets: row.assigned_assets || [],
-      deliveryId: deliveryId,   // <-- add this line
     });
   } catch (err) {
     console.error('Sales order creation error:', err);
@@ -4489,30 +4460,6 @@ const startServer = async () => {
       // do NOT rethrow — let the server keep running
     }
   }
-  
-  // Debug routes for delivery management investigation
-  app.get('/api/debug/deliveries', async (req, res) => {
-    try {
-      const { rows } = await query(
-        'SELECT * FROM deliveries ORDER BY created_at DESC LIMIT 10'
-      );
-      res.json({ count: rows.length, rows });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.get('/api/debug/sales-orders', async (req, res) => {
-    try {
-      const { rows } = await query(
-        `SELECT id, so_number, status, delivery_id, client, delivery_date 
-         FROM sales_orders ORDER BY created_at DESC LIMIT 10`
-      );
-      res.json({ count: rows.length, rows });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
   
   const httpServer = app.listen(PORT, '0.0.0.0', () => {
     console.log(`API server running at http://0.0.0.0:${PORT}`);

@@ -176,7 +176,10 @@ export function DeliveryManagement() {
           driver_id: null,
           driver_account_id: form.driver_account_id || null,
           customer_name: so.client,
-          customer_address: so.description || so.client,
+          customer_address: (() => {
+            const match = so.description && so.description.match(/Address:\s*([^\n]+)/);
+            return (match && match[1].trim()) || so.client || 'No address provided';
+          })(),
           delivery_date: form.delivery_date,
           notes: form.notes || null,
         }),
