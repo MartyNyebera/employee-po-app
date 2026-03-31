@@ -51,7 +51,7 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
       
       // Handle auth errors immediately (no retry)
       if (res.status === 401) {
-        const isAuthEndpoint = path.startsWith('/auth/');
+        const isAuthEndpoint = path.startsWith('/api/auth/');
         if (headers.Authorization && !isAuthEndpoint) {
           clearStoredAuth();
           window.location.reload();
@@ -96,7 +96,7 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
 }
 
 export async function login(email: string, password: string): Promise<{ user: AuthUser; token: string }> {
-  const data = await fetchApi<{ user: AuthUser; token: string }>('/auth/login', {
+  const data = await fetchApi<{ user: AuthUser; token: string }>('/api/auth/login', {
     method: 'POST',
     body: JSON.stringify({ email, password }),
   });
@@ -113,7 +113,7 @@ export async function register(
   name: string,
   role: 'employee' | 'admin'
 ): Promise<RegisterResult> {
-  const res = await fetch(`${API_BASE}/auth/register`, {
+  const res = await fetch(`${API_BASE}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password, name, role }),
