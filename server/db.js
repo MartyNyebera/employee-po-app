@@ -16,10 +16,16 @@ const { Pool } = pg;
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/fleet_manager',
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
+  max: 5,
+  min: 1,
+  idleTimeoutMillis: 60000,
+  connectionTimeoutMillis: 15000,
+  acquireTimeoutMillis: 15000,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+});
+
+pool.on('error', (err) => {
+  console.error('Unexpected error on idle client', err.message);
 });
 
 export async function query(text, params) {
