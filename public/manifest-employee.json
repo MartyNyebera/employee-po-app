@@ -1,0 +1,32 @@
+{
+  "name": "Kimoel Employee Portal",
+  "short_name": "KM Employee",
+  "description": "Employee portal for inventory and material requests",
+  "start_url": "/employee/login",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#0f172a",
+  "orientation": "portrait",
+  "scope": "/employee",
+  "icons": [
+    {
+      "src": "/kimoel-logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/kimoel-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/kimoel-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "prefer_related_applications": false
+}

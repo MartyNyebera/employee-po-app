@@ -1,0 +1,32 @@
+{
+  "name": "Kimoel Driver Portal",
+  "short_name": "KM Driver",
+  "description": "Driver portal for delivery management",
+  "start_url": "/driver/login",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#0f172a",
+  "orientation": "portrait",
+  "scope": "/driver",
+  "icons": [
+    {
+      "src": "/kimoel-logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/kimoel-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/kimoel-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "prefer_related_applications": false
+}

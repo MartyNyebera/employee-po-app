@@ -10,7 +10,8 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Kimoel Employee" />
+    <meta name="apple-mobile-web-app-title" 
+    content="Kimoel" id="pwa-apple-title" />
     
     <!-- Additional PWA Meta Tags -->
     <meta name="application-name" content="Kimoel Employee Portal" />
@@ -18,7 +19,8 @@
     <meta name="msapplication-config" content="/browserconfig.xml" />
     
     <!-- Manifest -->
-    <link rel="manifest" href="/manifest.json" />
+    <link rel="manifest" href="/manifest.json" 
+    id="pwa-manifest" />
     
     <!-- Icons -->
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
@@ -72,6 +74,38 @@
       (function() {
         var theme = localStorage.getItem('theme') || 'light';
         document.documentElement.classList.add(theme);
+      })();
+    </script>
+
+    <script>
+      (function() {
+        var path = window.location.pathname;
+        var manifest = '/manifest-admin.json';
+        var appleTitle = 'Kimoel Admin';
+        var themeColor = '#0f172a';
+        
+        if (path.startsWith('/employee')) {
+          manifest = '/manifest-employee.json';
+          appleTitle = 'Kimoel Employee';
+          themeColor = '#0f172a';
+        } else if (path.startsWith('/driver')) {
+          manifest = '/manifest-driver.json';
+          appleTitle = 'Kimoel Driver';
+          themeColor = '#0f172a';
+        }
+        
+        // Set correct manifest
+        document.getElementById('pwa-manifest')
+          .setAttribute('href', manifest);
+        
+        // Set correct apple title
+        document.getElementById('pwa-apple-title')
+          .setAttribute('content', appleTitle);
+        
+        // Set correct theme color
+        document.querySelector(
+          'meta[name="theme-color"]')
+          .setAttribute('content', themeColor);
       })();
     </script>
 
