@@ -35,7 +35,6 @@ export function LiveVehicleMap() {
   const mapRef = useRef<HTMLDivElement>(null);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [mapInitialized, setMapInitialized] = useState(false);
 
   // Real GPS tracking from server API
   useEffect(() => {
@@ -422,19 +421,17 @@ export function LiveVehicleMap() {
           `;
         }).join('');
         
-        // Only reload iframe if map is not initialized yet
-        if (!mapInitialized && mapContainer) {
-          mapContainer.innerHTML = `
-            <div style="width: 100%; height: 100%; position: relative;">
-              <iframe 
-                src="https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${centerLat},${centerLng}" 
-                style="width: 100%; height: 100%; border: 0;"
-                title="Live Vehicle Map"
-              />
-              
-              <!-- Animated Vehicle Markers -->
-              ${vehicleMarkers}
-            
+        mapContainer.innerHTML = `
+          <div style="width: 100%; height: 100%; position: relative;">
+            <iframe
+              src="https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${centerLat},${centerLng}"
+              style="width: 100%; height: 100%; border: 0;"
+              title="Live Vehicle Map"
+            />
+
+            <!-- Animated Vehicle Markers -->
+            ${vehicleMarkers}
+
             <!-- Map Controls and Info -->
             <div style="position: absolute; top: 10px; right: 10px; background: rgba(255,255,255,0.95); padding: 10px 14px; border-radius: 8px; font-size: 11px; z-index: 1000; box-shadow: 0 2px 8px rgba(0,0,0,0.15);">
               <div style="font-weight: bold; color: #333; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
@@ -447,7 +444,7 @@ export function LiveVehicleMap() {
                 Last: ${lastUpdated.toLocaleTimeString()}
               </div>
             </div>
-            
+
             <!-- Speed Legend -->
             <div style="position: absolute; bottom: 10px; left: 10px; background: rgba(255,255,255,0.95); padding: 8px 12px; border-radius: 6px; font-size: 10px; z-index: 1000; box-shadow: 0 2px 8px rgba(0,0,0,0.15);">
               <div style="font-weight: bold; color: #333; margin-bottom: 4px;">Speed Status</div>
@@ -460,7 +457,7 @@ export function LiveVehicleMap() {
                 <span>Stopped (0 km/h)</span>
               </div>
             </div>
-            
+
             <!-- CSS Animations -->
             <style>
               @keyframes vehicleMove {
@@ -481,15 +478,7 @@ export function LiveVehicleMap() {
               }
             </style>
           </div>
-          `;
-          setMapInitialized(true);
-        } else if (mapContainer) {
-          // Only update markers if map is already initialized
-          const markersContainer = mapContainer.querySelector('[style*="position: absolute"]');
-          if (markersContainer) {
-            markersContainer.innerHTML = vehicleMarkers;
-          }
-        }
+        `;
       }
     };
 
