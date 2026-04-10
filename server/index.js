@@ -63,7 +63,7 @@ app.use((req, res, next) => {
     "default-src 'self'; " +
     "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com; " +
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://unpkg.com; " +
-    "img-src 'self' data: blob:; " +
+    "img-src 'self' data: blob: https://*.tile.openstreetmap.org; " +
     "connect-src 'self' ws: wss: http://localhost:3000 https://localhost:3000; " +
     "font-src 'self' https://fonts.gstatic.com; " +
     "object-src 'none'; " +
