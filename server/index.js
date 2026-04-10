@@ -68,7 +68,7 @@ app.use((req, res, next) => {
     "font-src 'self' https://fonts.gstatic.com; " +
     "object-src 'none'; " +
     "media-src 'self'; " +
-    "frame-src 'none';"
+    "frame-src 'self' https://www.openstreetmap.org;"
   );
   next();
 });
