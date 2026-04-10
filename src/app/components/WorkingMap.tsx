@@ -163,34 +163,24 @@ export function WorkingMap() {
   useEffect(() => {
     const fetchDevices = async () => {
       try {
-        const res = await fetch('/api/phone-location/devices');
+        const res = await fetch('/api/driver/locations/live');
         if (!res.ok) throw new Error('fetch failed');
         const data = await res.json();
         setConnectionOk(true);
         setLastUpdated(new Date().toLocaleTimeString());
 
-        if (data.devices && data.devices.length > 0) {
-          const mapped: GPSDevice[] = data.devices.map((d: any, i: number) => ({
+        if (data && data.length > 0) {
+          const mapped: GPSDevice[] = data.map((d: any, i: number) => ({
             id: i + 1,
-            name: d.deviceId,
-            deviceId: d.deviceId,
-            lat: d.lat,
-            lng: d.lng,
-            speed: d.speed ?? null,
-            heading: d.heading ?? null,
-            accuracy: d.accuracy ?? null,
-            timestamp: d.timestamp,
-            lastSeen: d.lastSeen || d.timestamp,
-            vehicle_id: d.vehicle_id,
-            vehicle_name: d.vehicle_name,
-            plate_number: d.plate_number,
-            driver_name: d.driver_name,
-            driver_contact: d.driver_contact,
-            delivery_id: d.delivery_id,
-            so_number: d.so_number,
-            customer_name: d.customer_name,
-            customer_address: d.customer_address,
-            delivery_status: d.delivery_status,
+            name: d.driver_name || `Driver ${d.driver_id}`,
+            deviceId: `DRIVER${d.driver_id}`,
+            lat: parseFloat(d.latitude),
+            lng: parseFloat(d.longitude),
+            speed: d.speed ? parseFloat(d.speed) * 3.6 : null, // Convert m/s to km/h
+            heading: d.heading ? parseFloat(d.heading) : null,
+            accuracy: d.accuracy ? parseFloat(d.accuracy) : null,
+            timestamp: Date.now(),
+            lastSeen: Date.now(),
           }));
           setDevices(mapped);
         } else {
