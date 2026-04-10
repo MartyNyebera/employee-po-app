@@ -35,10 +35,11 @@ export function LiveVehicleMap() {
   const mapRef = useRef<HTMLDivElement>(null);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [mapInitialized, setMapInitialized] = useState(false);
 
   // Real GPS tracking from server API
   useEffect(() => {
-    let timeoutId: NodeJS.Timeout;
+    let timeoutId: ReturnType<typeof setTimeout>;
     
     const fetchDriverLocations = async () => {
       try {
@@ -312,9 +313,9 @@ export function LiveVehicleMap() {
         const centerLat = (Math.min(...lats) + Math.max(...lats)) / 2;
         const centerLng = (Math.min(...lngs) + Math.max(...lngs)) / 2;
         
-        // Calculate bounds for map view
-        const latDiff = Math.max(...lats) - Math.min(...lats) || 0.1;
-        const lngDiff = Math.max(...lngs) - Math.min(...lngs) || 0.1;
+        // Calculate bounds for map view with better defaults
+        const latDiff = Math.max(...lats) - Math.min(...lats) || 0.01; // Reduced from 0.1 to 0.01
+        const lngDiff = Math.max(...lngs) - Math.min(...lngs) || 0.01; // Reduced from 0.1 to 0.01
         const bbox = `${centerLng - lngDiff/2},${centerLat - latDiff/2},${centerLng + lngDiff/2},${centerLat + latDiff/2}`;
         
         // Calculate relative positions for vehicle markers on map
@@ -421,16 +422,18 @@ export function LiveVehicleMap() {
           `;
         }).join('');
         
-        mapContainer.innerHTML = `
-          <div style="width: 100%; height: 100%; position: relative;">
-            <iframe 
-              src="https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${centerLat},${centerLng}" 
-              style="width: 100%; height: 100%; border: 0;"
-              title="Live Vehicle Map"
-            />
-            
-            <!-- Animated Vehicle Markers -->
-            ${vehicleMarkers}
+        // Only reload iframe if map is not initialized yet
+        if (!mapInitialized && mapContainer) {
+          mapContainer.innerHTML = `
+            <div style="width: 100%; height: 100%; position: relative;">
+              <iframe 
+                src="https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${centerLat},${centerLng}" 
+                style="width: 100%; height: 100%; border: 0;"
+                title="Live Vehicle Map"
+              />
+              
+              <!-- Animated Vehicle Markers -->
+              ${vehicleMarkers}
             
             <!-- Map Controls and Info -->
             <div style="position: absolute; top: 10px; right: 10px; background: rgba(255,255,255,0.95); padding: 10px 14px; border-radius: 8px; font-size: 11px; z-index: 1000; box-shadow: 0 2px 8px rgba(0,0,0,0.15);">
@@ -478,7 +481,15 @@ export function LiveVehicleMap() {
               }
             </style>
           </div>
-        `;
+          `;
+          setMapInitialized(true);
+        } else if (mapContainer) {
+          // Only update markers if map is already initialized
+          const markersContainer = mapContainer.querySelector('[style*="position: absolute"]');
+          if (markersContainer) {
+            markersContainer.innerHTML = vehicleMarkers;
+          }
+        }
       }
     };
 
