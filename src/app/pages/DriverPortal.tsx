@@ -158,7 +158,7 @@ export function DriverPortal() {
       );
     };
     sendLocation();
-    gpsIntervalRef.current = setInterval(sendLocation, 15000);
+    gpsIntervalRef.current = setInterval(sendLocation, 1000);
   };
 
   const stopGPS = () => {

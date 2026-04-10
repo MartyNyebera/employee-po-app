@@ -84,12 +84,12 @@ export function LiveVehicleMap() {
               deviceId: driver.driver_id,
               latitude: lat,
               longitude: lng,
-              speed: Math.random() * 60, // Mock speed for demo
-              course: Math.random() * 360, // Mock direction for demo
+              speed: driver.speed || 0, // Use actual GPS speed
+              course: driver.heading || 0, // Use actual GPS heading
               altitude: 0,
-              accuracy: 10,
-              fixTime: new Date().toISOString(),
-              deviceTime: new Date().toISOString(),
+              accuracy: driver.accuracy || 10,
+              fixTime: driver.timestamp || new Date().toISOString(),
+              deviceTime: driver.timestamp || new Date().toISOString(),
               serverTime: new Date().toISOString(),
               attributes: {}
             }
