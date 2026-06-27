@@ -96,17 +96,20 @@ app.use((req, res, next) => {
     return next();
   }
 
-  // Cache fleet/vehicle data for 60 seconds
-  if (req.path.includes('/fleet') || 
+  // Fleet/vehicle data: never cache — user-edited CRUD must reflect changes
+  // immediately (was max-age=60, which showed stale data after add/edit/delete).
+  if (req.path.includes('/fleet') ||
       req.path.includes('/vehicle')) {
-    res.setHeader('Cache-Control', 
-      'private, max-age=60, stale-while-revalidate=30');
+    res.setHeader('Cache-Control',
+      'no-store, no-cache, must-revalidate');
     return next();
   }
 
-  // Cache general data (orders, inventory) for 30 seconds
-  res.setHeader('Cache-Control', 
-    'private, max-age=30, stale-while-revalidate=15');
+  // General business data (orders, sales orders, inventory, transactions): never
+  // cache. These are CRUD lists; HTTP caching made adds/deletes not show up on
+  // reload for ~30s (was max-age=30, stale-while-revalidate=15).
+  res.setHeader('Cache-Control',
+    'no-store, no-cache, must-revalidate');
   next();
 });
 
@@ -172,23 +175,7 @@ app.get('/health/env', (req, res) => {
   res.json(envStatus);
 });
 
-// Super admin status check (protected)
-app.get('/health/super-admin-status', async (req, res) => {
-  try {
-    const result = await query('SELECT email, is_super_admin FROM users WHERE is_super_admin = true');
-    const superAdmins = result.rows.map(row => ({
-      email: row.email,
-      is_super_admin: row.is_super_admin
-    }));
-    
-    res.json({
-      count: superAdmins.length,
-      admins: superAdmins
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to check admin status' });
-  }
-});
+// [removed] GET /health/super-admin-status — publicly leaked super-admin emails (security fix)
 
 // Email test endpoint (protected)
 app.post('/health/test-email', async (req, res) => {
@@ -211,104 +198,11 @@ app.post('/health/test-email', async (req, res) => {
   }
 });
 
-// Protected auth debug endpoint (admin only)
-app.get('/health/auth-debug', async (req, res) => {
-  try {
-    const { query } = await import('./db.js');
-    const email = req.query.email;
-    
-    if (!email) {
-      return res.status(400).json({ error: 'Email parameter required' });
-    }
-    
-    const result = await query(
-      'SELECT email, name, role, is_super_admin, created_at FROM users WHERE LOWER(email) = LOWER($1)',
-      [email]
-    );
-    
-    if (result.rows.length === 0) {
-      return res.json({
-        email: email.toLowerCase(),
-        exists: false,
-        message: 'User not found in database'
-      });
-    }
-    
-    const user = result.rows[0];
-    res.json({
-      email: user.email,
-      exists: true,
-      name: user.name,
-      role: user.role,
-      is_super_admin: user.is_super_admin,
-      created_at: user.created_at,
-      can_login: true // Super admins can always login
-    });
-  } catch (error) {
-    console.error('Auth debug endpoint failed:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
+// [removed] GET /health/auth-debug — allowed account enumeration by email (security fix)
 
-// Debug endpoint to check all users (temporary - remove after use)
-app.get('/debug/users', async (req, res) => {
-  try {
-    const { query } = await import('./db.js');
-    const result = await query('SELECT id, email, name, role, is_super_admin, created_at FROM users ORDER BY created_at DESC');
-    
-    res.json({
-      count: result.rows.length,
-      users: result.rows.map(row => ({
-        id: row.id,
-        email: row.email,
-        name: row.name,
-        role: row.role,
-        is_super_admin: row.is_super_admin,
-        created_at: row.created_at
-      }))
-    });
-  } catch (error) {
-    console.error('Debug users endpoint failed:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
+// [removed] GET /debug/users — publicly dumped every user account (security fix)
 
-// Emergency admin creation (temporary - remove after use)
-app.post('/emergency-create-admin', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password required' });
-    }
-    
-    const { query } = await import('./db.js');
-    const { hashPassword } = await import('./auth.js');
-    
-    // Check if user exists
-    const existingUser = await query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
-    
-    if (existingUser.rows.length > 0) {
-      // Update to super admin
-      await query('UPDATE users SET is_super_admin = true, updated_at = NOW() WHERE LOWER(email) = LOWER($1)', [email]);
-      res.json({ message: 'User updated to super admin', email: email.toLowerCase() });
-    } else {
-      // Create new super admin
-      const hashedPassword = await hashPassword(password);
-      const adminId = `emergency-admin-${Date.now()}`;
-      
-      await query(`
-        INSERT INTO users (id, email, name, password_hash, role, is_super_admin, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, 'admin', true, NOW(), NOW())
-      `, [adminId, email.toLowerCase(), 'Emergency Admin', hashedPassword]);
-      
-      res.json({ message: 'Super admin created', email: email.toLowerCase() });
-    }
-  } catch (error) {
-    console.error('Emergency admin creation failed:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
+// [removed] POST /emergency-create-admin — let anyone create/upgrade a super-admin with no auth (security fix)
 
 // Auto-migration: create new tables if they don't exist
 async function runMigrations() {

@@ -107,12 +107,9 @@ export function MiscellaneousManagement() {
       });
 
       // Trigger Business Overview refresh
-      console.log('🔄 Dispatching ordersUpdated event from Miscellaneous create');
       window.dispatchEvent(new CustomEvent('ordersUpdated'));
-      
-      // Also try direct refresh
-      console.log('🔄 Triggering direct refresh');
-      window.location.reload();
+      // NOTE: no window.location.reload() — fetchExpenses() above already refreshes
+      // the list. A reload reset the SPA and bounced the user back to the dashboard.
     } catch (error) {
       console.error('Error saving miscellaneous expense:', error);
       toast.error('Failed to save miscellaneous expense');
@@ -131,12 +128,9 @@ export function MiscellaneousManagement() {
       await fetchExpenses();
       
       // Trigger Business Overview refresh
-      console.log('🔄 Dispatching ordersUpdated event from Miscellaneous delete');
       window.dispatchEvent(new CustomEvent('ordersUpdated'));
-      
-      // Also try direct refresh
-      console.log('🔄 Triggering direct refresh');
-      window.location.reload();
+      // NOTE: no window.location.reload() — fetchExpenses() above already refreshes
+      // the list. A reload reset the SPA and bounced the user to the dashboard.
     } catch (error) {
       console.error('Error deleting miscellaneous expense:', error);
       toast.error('Failed to delete miscellaneous expense');
