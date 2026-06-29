@@ -43,7 +43,8 @@ const upload = multer({
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { seed } from './seed.js';
-import { hashPassword, comparePassword, signToken, requireAuth, requireAdmin, requireSuperAdmin } from './auth.js';
+import { hashPassword, comparePassword, signToken, requireAuth, requireAdmin, requireSuperAdmin, requireRole, effectiveRole } from './auth.js';
+import { createSalesOrder, createPurchaseOrder } from './order-service.js';
 import { sendEmailToAdminsNewRequest, sendEmailToApplicant } from './email.js';
 import { getDevices, getDevice, createDevice, updateDevice, deleteDevice, getPositions, getPositionHistory, getGeofences, checkConnection, getTraccarWsUrl, authHeader, TRACCAR_URL } from './traccar.js';
 import { getVehicles, getVehicle, createVehicle, updateVehicle, deleteVehicle, getOdometerLogs, logOdometer, getMaintenance, createMaintenance, getVehiclePOs, createVehiclePO, getPmsReminders } from './fleet.js';
@@ -395,6 +396,179 @@ async function runMigrations() {
       console.log('ℹ️ deliveries driver_account_id migration skipped:', err.message);
     }
 
+    // ============================================================
+    // CRM + Sales Pipeline + Role-based views — additive only.
+    // (Suppliers, Customers, Inquiries/Quotations,
+    //  Work Schedule, plus links onto existing tables.)
+    // ============================================================
+
+    // Suppliers directory
+    await query(`
+      CREATE TABLE IF NOT EXISTS suppliers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        type TEXT CHECK (type IN ('Electrical parts','Mechanical parts','Both','Fabrication (subcon)','Raw materials')),
+        products_supplied TEXT,
+        contact_person TEXT,
+        phone TEXT,
+        email TEXT,
+        location TEXT,
+        payment_terms TEXT,
+        price_level TEXT CHECK (price_level IN ('Cheap','Average','Expensive')),
+        reliability TEXT CHECK (reliability IN ('Excellent','Good','OK','Poor')),
+        last_ordered DATE,
+        notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    console.log('✅ suppliers table ready');
+
+    // Customers directory (light CRM)
+    await query(`
+      CREATE TABLE IF NOT EXISTS customers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        type TEXT CHECK (type IN ('Contractor','Builder','Factory','Distributor','Maintenance','Other')),
+        contact_person TEXT,
+        phone TEXT,
+        email TEXT,
+        location TEXT,
+        what_they_buy TEXT,
+        source TEXT CHECK (source IN ('Referral','Facebook','Marketplace','Ad','Walk-in','Website','Existing contact')),
+        status TEXT CHECK (status IN ('Lead','Active','Repeat','Inactive')),
+        last_contact DATE,
+        notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    console.log('✅ customers table ready');
+
+    // Inquiries / Quotations (sales pipeline; captures both supplier + client quotes)
+    await query(`
+      CREATE TABLE IF NOT EXISTS inquiries (
+        id TEXT PRIMARY KEY,
+        inquiry_date DATE NOT NULL,
+        customer_id TEXT REFERENCES customers(id) ON DELETE SET NULL,
+        customer_name TEXT,
+        contact TEXT,
+        what_they_want TEXT,
+        line TEXT,
+        source TEXT CHECK (source IN ('Referral','Facebook','Marketplace','Ad','Walk-in','Website','Existing contact')),
+        status TEXT CHECK (status IN ('New','Quoted','Won','Lost','Follow-up')) DEFAULT 'New',
+        quote_amount NUMERIC(12,2),
+        supplier_id TEXT REFERENCES suppliers(id) ON DELETE SET NULL,
+        supplier_name TEXT,
+        supplier_quote_amount NUMERIC(12,2),
+        follow_up_date DATE,
+        sales_order_id TEXT,
+        purchase_order_id TEXT,
+        notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    console.log('✅ inquiries table ready');
+
+    // Product Lines module removed — drop its table if present (FK was product_lines -> suppliers,
+    // so this does NOT affect the suppliers table or any supplier data).
+    try {
+      await query('DROP TABLE IF EXISTS product_lines');
+      console.log('🗑️  product_lines table dropped (module removed)');
+    } catch (err) {
+      console.log('ℹ️ product_lines drop skipped:', err.message);
+    }
+
+    // Work Schedule (scope of works / Gantt)
+    await query(`
+      CREATE TABLE IF NOT EXISTS work_schedule (
+        id TEXT PRIMARY KEY,
+        phase TEXT,
+        scope TEXT NOT NULL,
+        responsible TEXT,
+        start_week INT,
+        duration_weeks INT,
+        status TEXT CHECK (status IN ('Not started','In progress','Done')) DEFAULT 'Not started',
+        sort_order INT,
+        notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    console.log('✅ work_schedule table ready');
+
+    // operational_costs — referenced by /api/dashboard/financial-summary but was never created
+    await query(`
+      CREATE TABLE IF NOT EXISTS operational_costs (
+        id SERIAL PRIMARY KEY,
+        cost_type TEXT NOT NULL,
+        amount NUMERIC(12,2) NOT NULL,
+        description TEXT,
+        cost_date DATE,
+        related_vehicle_id TEXT,
+        related_employee_id TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    console.log('✅ operational_costs table ready');
+
+    // Nullable links from existing tables to the new directories (non-breaking)
+    try {
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_id TEXT REFERENCES suppliers(id) ON DELETE SET NULL`);
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS inquiry_id TEXT`);
+      await query(`ALTER TABLE inventory ADD COLUMN IF NOT EXISTS supplier_id TEXT REFERENCES suppliers(id) ON DELETE SET NULL`);
+      await query(`ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS customer_id TEXT REFERENCES customers(id) ON DELETE SET NULL`);
+      await query(`ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS line TEXT`);
+      await query(`ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS source TEXT`);
+      await query(`ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS inquiry_id TEXT`);
+      await query(`ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS cost_amount NUMERIC(12,2)`);
+      console.log('✅ CRM link columns ready (purchase_orders / inventory / sales_orders)');
+    } catch (err) {
+      console.log('ℹ️ CRM link columns skipped:', err.message);
+    }
+
+    // Editable PDF header fields on orders (non-breaking; printed templates read these first)
+    try {
+      for (const t of ['sales_orders', 'purchase_orders']) {
+        await query(`ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS doc_date DATE`);
+        await query(`ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS prepared_by TEXT`);
+        await query(`ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS reviewed_by TEXT`);
+        await query(`ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS payment_terms TEXT`);
+        await query(`ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS terms_and_conditions TEXT`);
+      }
+      await query(`ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS customer_address TEXT`);
+      await query(`ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS customer_contact TEXT`);
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_address TEXT`);
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_contact TEXT`);
+      // Backfill existing orders so old/pre-change records show proper header values too
+      for (const t of ['sales_orders', 'purchase_orders']) {
+        await query(`UPDATE ${t} SET prepared_by = 'Kim Karen D. Tagle' WHERE prepared_by IS NULL OR btrim(prepared_by) = ''`);
+        await query(`UPDATE ${t} SET doc_date = created_date WHERE doc_date IS NULL`);
+        await query(`UPDATE ${t} SET payment_terms = '30 days from receipt/acceptance' WHERE payment_terms IS NULL OR btrim(payment_terms) = ''`);
+      }
+      console.log('✅ PDF header columns ready + backfilled (sales_orders / purchase_orders)');
+    } catch (err) {
+      console.log('ℹ️ PDF header columns skipped:', err.message);
+    }
+
+    // Extend allowed user roles for role-based dashboards (additive; existing rows unaffected)
+    try {
+      await query(`ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check`);
+      await query(`ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('employee','admin','bookkeeper','purchasing','office_admin'))`);
+      console.log('✅ users role constraint extended (bookkeeper, purchasing, office_admin)');
+    } catch (err) {
+      console.log('ℹ️ users role constraint update skipped:', err.message);
+    }
+
+    // Soft-disable flag for staff accounts (additive)
+    try {
+      await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true`);
+      console.log('✅ users is_active column ready');
+    } catch (err) {
+      console.log('ℹ️ users is_active column skipped:', err.message);
+    }
+
     console.log('✅ All migrations complete');
   } catch (err) {
     console.error('❌ Migration error:', err.message);
@@ -552,12 +726,18 @@ app.post('/api/auth/login', async (req, res) => {
     
     if (!passwordMatch) {
       console.log(`❌ WRONG_PASSWORD: ${email.toLowerCase()}`);
-      return res.status(401).json({ 
+      return res.status(401).json({
         error: 'Password incorrect',
         reason: 'WRONG_PASSWORD'
       });
     }
-    
+
+    // Block deactivated staff accounts (is_active added by CRM migration; null/undefined = active)
+    if (user.is_active === false) {
+      console.log(`❌ ACCOUNT_DEACTIVATED: ${email.toLowerCase()}`);
+      return res.status(403).json({ error: 'This account has been deactivated', reason: 'ACCOUNT_DEACTIVATED' });
+    }
+
     console.log(`✅ Login successful for: ${email.toLowerCase()}`);
     const isSuperAdmin = !!user.is_super_admin;
     const token = signToken({
@@ -730,7 +910,8 @@ app.get('/api/purchase-orders', async (req, res) => {
       params.push(status);
     }
     const result = await query(
-      `SELECT id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets, order_type
+      `SELECT id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets, order_type,
+              doc_date, prepared_by, reviewed_by, supplier_address, supplier_contact, payment_terms, terms_and_conditions
        FROM purchase_orders ${whereClause} ORDER BY created_date DESC`,
       params
     );
@@ -745,6 +926,13 @@ app.get('/api/purchase-orders', async (req, res) => {
       deliveryDate: row.delivery_date,
       assignedAssets: row.assigned_assets || [],
       orderType: row.order_type,
+      docDate: row.doc_date,
+      preparedBy: row.prepared_by,
+      reviewedBy: row.reviewed_by,
+      supplierAddress: row.supplier_address,
+      supplierContact: row.supplier_contact,
+      paymentTerms: row.payment_terms,
+      termsAndConditions: row.terms_and_conditions,
     })));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -766,7 +954,8 @@ app.get('/api/sales-orders', async (req, res) => {
       params.push(status);
     }
     const result = await query(
-      `SELECT id, so_number, client, description, amount, status, created_date, delivery_date, assigned_assets
+      `SELECT id, so_number, client, customer_id, description, amount, cost_amount, line, source, inquiry_id, status, created_date, delivery_date, assigned_assets,
+              doc_date, prepared_by, reviewed_by, customer_address, customer_contact, payment_terms, terms_and_conditions
        FROM sales_orders ${whereClause} ORDER BY created_date DESC`,
       params
     );
@@ -774,8 +963,20 @@ app.get('/api/sales-orders', async (req, res) => {
       id: row.id,
       soNumber: row.so_number,
       client: row.client,
+      customerId: row.customer_id,
+      docDate: row.doc_date,
+      preparedBy: row.prepared_by,
+      reviewedBy: row.reviewed_by,
+      customerAddress: row.customer_address,
+      customerContact: row.customer_contact,
+      paymentTerms: row.payment_terms,
+      termsAndConditions: row.terms_and_conditions,
       description: row.description,
       amount: parseFloat(row.amount),
+      costAmount: row.cost_amount === null ? null : parseFloat(row.cost_amount),
+      line: row.line,
+      source: row.source,
+      inquiryId: row.inquiry_id,
       status: row.status,
       createdDate: row.created_date,
       deliveryDate: row.delivery_date,
@@ -789,7 +990,7 @@ app.get('/api/sales-orders', async (req, res) => {
 app.get('/api/inventory', async (req, res) => {
   try {
     const result = await query(
-      `SELECT id, item_code, item_name, description, quantity, unit, reorder_level, unit_cost, location, supplier
+      `SELECT id, item_code, item_name, description, quantity, unit, reorder_level, unit_cost, location, supplier, supplier_id
        FROM inventory ORDER BY item_name ASC`
     );
     res.json(result.rows.map(row => ({
@@ -804,6 +1005,7 @@ app.get('/api/inventory', async (req, res) => {
       totalCost: parseFloat(row.quantity) * parseFloat(row.unit_cost),
       location: row.location,
       supplier: row.supplier,
+      supplierId: row.supplier_id,
     })));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2112,7 +2314,7 @@ app.get('/api/deliveries/driver/:driverId', async (req, res) => {
 // ----- Inventory Reservation API -----
 
 // PUT /api/inventory/:id/reserve
-app.put('/api/inventory/:id/reserve', requireAdmin, async (req, res) => {
+app.put('/api/inventory/:id/reserve', requireRole(['admin','purchasing','office_admin']), async (req, res) => {
   try {
     const { quantity } = req.body;
     const item = await query('SELECT quantity, reserved_quantity, in_transit_quantity FROM inventory WHERE id=$1', [req.params.id]);
@@ -2127,7 +2329,7 @@ app.put('/api/inventory/:id/reserve', requireAdmin, async (req, res) => {
 });
 
 // PUT /api/inventory/:id/unreserve
-app.put('/api/inventory/:id/unreserve', requireAdmin, async (req, res) => {
+app.put('/api/inventory/:id/unreserve', requireRole(['admin','purchasing','office_admin']), async (req, res) => {
   try {
     const { quantity } = req.body;
     await query('UPDATE inventory SET reserved_quantity = GREATEST(0, COALESCE(reserved_quantity,0) - $1), updated_at=NOW() WHERE id=$2', [quantity, req.params.id]);
@@ -2138,7 +2340,7 @@ app.put('/api/inventory/:id/unreserve', requireAdmin, async (req, res) => {
 });
 
 // PUT /api/inventory/:id/deduct
-app.put('/api/inventory/:id/deduct', requireAdmin, async (req, res) => {
+app.put('/api/inventory/:id/deduct', requireRole(['admin','purchasing','office_admin']), async (req, res) => {
   try {
     const { quantity } = req.body;
     await query(
@@ -2505,7 +2707,8 @@ app.get('/api/purchase-orders', async (req, res) => {
     }
 
     const result = await query(
-      `SELECT id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets, order_type
+      `SELECT id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets, order_type,
+              doc_date, prepared_by, reviewed_by, supplier_address, supplier_contact, payment_terms, terms_and_conditions
        FROM purchase_orders ${whereClause} ORDER BY created_date DESC`,
       params
     );
@@ -2520,6 +2723,13 @@ app.get('/api/purchase-orders', async (req, res) => {
       deliveryDate: row.delivery_date,
       assignedAssets: row.assigned_assets || [],
       orderType: row.order_type,
+      docDate: row.doc_date,
+      preparedBy: row.prepared_by,
+      reviewedBy: row.reviewed_by,
+      supplierAddress: row.supplier_address,
+      supplierContact: row.supplier_contact,
+      paymentTerms: row.payment_terms,
+      termsAndConditions: row.terms_and_conditions,
     }));
     res.json(orders);
   } catch (err) {
@@ -2529,7 +2739,7 @@ app.get('/api/purchase-orders', async (req, res) => {
 });
 
 // POST /api/purchase-orders (admin only)
-app.post('/api/purchase-orders', requireAdmin, async (req, res) => {
+app.post('/api/purchase-orders', requireRole(['admin','purchasing','office_admin']), async (req, res) => {
   try {
     const { 
       client, 
@@ -2591,12 +2801,16 @@ Total Amount: ${totalAmount || amount}
 Terms & Conditions: ${termsAndConditions || 'Standard terms apply'}`;
     
     await query(
-      `INSERT INTO purchase_orders (id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets, order_type)
-       VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9)`,
-      [id, poNumber, client || customerName, extendedDescription, amount || totalAmount, finalCreatedDate, deliveryDate, assignedAssets, orderType || null]
+      `INSERT INTO purchase_orders (id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets, order_type,
+        doc_date, prepared_by, reviewed_by, supplier_address, supplier_contact, payment_terms, terms_and_conditions)
+       VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+      [id, poNumber, client || customerName, extendedDescription, amount || totalAmount, finalCreatedDate, deliveryDate, assignedAssets, orderType || null,
+       poDate || finalCreatedDate, preparedBy || 'Kim Karen D. Tagle', reviewedBy || null, customerAddress || null, customerContact || null,
+       paymentTerms || '30 days from receipt/acceptance', termsAndConditions || null]
     );
     const result = await query(
-      `SELECT id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets, order_type
+      `SELECT id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets, order_type,
+              doc_date, prepared_by, reviewed_by, supplier_address, supplier_contact, payment_terms, terms_and_conditions
        FROM purchase_orders WHERE id = $1`,
       [id]
     );
@@ -2612,6 +2826,13 @@ Terms & Conditions: ${termsAndConditions || 'Standard terms apply'}`;
       deliveryDate: row.delivery_date,
       assignedAssets: row.assigned_assets || [],
       orderType: row.order_type,
+      docDate: row.doc_date,
+      preparedBy: row.prepared_by,
+      reviewedBy: row.reviewed_by,
+      supplierAddress: row.supplier_address,
+      supplierContact: row.supplier_contact,
+      paymentTerms: row.payment_terms,
+      termsAndConditions: row.terms_and_conditions,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2629,7 +2850,7 @@ app.delete('/api/purchase-orders', requireAdmin, async (req, res) => {
 });
 
 // DELETE /api/purchase-orders/:id (admin only)
-app.delete('/api/purchase-orders/:id', requireAdmin, async (req, res) => {
+app.delete('/api/purchase-orders/:id', requireRole(['admin','purchasing','office_admin']), async (req, res) => {
   const start = Date.now();
   try {
     console.log(`🗑️  Deleting purchase order ${req.params.id}`);
@@ -2659,19 +2880,31 @@ app.delete('/api/purchase-orders/:id', requireAdmin, async (req, res) => {
 });
 
 // PATCH /api/purchase-orders/:id (admin only)
-app.patch('/api/purchase-orders/:id', requireAdmin, async (req, res) => {
+app.patch('/api/purchase-orders/:id', requireRole(['admin','purchasing','office_admin']), async (req, res) => {
   try {
-    const { status, description } = req.body;
+    const cols = {
+      status: req.body.status,
+      description: req.body.description,
+      client: req.body.client,
+      amount: req.body.amount,
+      delivery_date: req.body.deliveryDate,
+      // editable PDF header fields
+      doc_date: req.body.docDate,
+      prepared_by: req.body.preparedBy,
+      reviewed_by: req.body.reviewedBy,
+      supplier_address: req.body.supplierAddress,
+      supplier_contact: req.body.supplierContact,
+      payment_terms: req.body.paymentTerms,
+      terms_and_conditions: req.body.termsAndConditions,
+    };
     const updates = [];
     const values = [];
     let i = 1;
-    if (status !== undefined) {
-      updates.push(`status = $${i++}`);
-      values.push(status);
-    }
-    if (description !== undefined) {
-      updates.push(`description = $${i++}`);
-      values.push(description);
+    for (const [k, v] of Object.entries(cols)) {
+      if (v !== undefined) {
+        updates.push(`${k} = $${i++}`);
+        values.push(v === '' ? null : v);
+      }
     }
     if (updates.length === 0) {
       return res.status(400).json({ error: 'No fields to update' });
@@ -2679,11 +2912,12 @@ app.patch('/api/purchase-orders/:id', requireAdmin, async (req, res) => {
     updates.push('updated_at = NOW()');
     values.push(req.params.id);
     await query(
-      `UPDATE purchase_orders SET ${updates.join(', ')} WHERE id = $${i}`,
+      `UPDATE purchase_orders SET ${updates.join(', ')} WHERE id = $${values.length}`,
       values
     );
     const result = await query(
-      `SELECT id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets
+      `SELECT id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets, order_type,
+              doc_date, prepared_by, reviewed_by, supplier_address, supplier_contact, payment_terms, terms_and_conditions
        FROM purchase_orders WHERE id = $1`,
       [req.params.id]
     );
@@ -2699,6 +2933,14 @@ app.patch('/api/purchase-orders/:id', requireAdmin, async (req, res) => {
       createdDate: row.created_date,
       deliveryDate: row.delivery_date,
       assignedAssets: row.assigned_assets || [],
+      orderType: row.order_type,
+      docDate: row.doc_date,
+      preparedBy: row.prepared_by,
+      reviewedBy: row.reviewed_by,
+      supplierAddress: row.supplier_address,
+      supplierContact: row.supplier_contact,
+      paymentTerms: row.payment_terms,
+      termsAndConditions: row.terms_and_conditions,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2863,34 +3105,59 @@ app.get('/api/sales-orders', async (req, res) => {
 });
 app.post('/api/sales-orders', requireAdmin, async (req, res) => {
   try {
-    const { 
-      soNumber, 
-      client, 
-      description, 
-      amount, 
-      deliveryDate, 
+    const {
+      soNumber,
+      client,
+      description,
+      amount,
+      deliveryDate,
       assignedAssets = [],
-      createdDate = new Date().toISOString().split('T')[0]
+      createdDate = new Date().toISOString().split('T')[0],
+      // CRM / trading additions (all optional, nullable)
+      customerId,
+      line,
+      source,
+      costAmount,
+      inquiryId,
+      // editable PDF header fields
+      docDate,
+      preparedBy,
+      reviewedBy,
+      customerAddress,
+      customerContact,
+      paymentTerms,
+      termsAndConditions,
     } = req.body;
 
-    // Extract customer address from description string or fall back to client name
-    const addressMatch = description && description.match(/Address:\s*([^\n]+)/);
-    const customerAddress = (addressMatch && addressMatch[1].trim()) || client || 'No address provided';
-    
-    const id = `SO-${Date.now()}`;
-    
-    const { rows: [row] } = await query(
-      `INSERT INTO sales_orders (id, so_number, client, description, amount, status, created_date, delivery_date, assigned_assets)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       RETURNING *`,
-      [id, soNumber, client, description, amount, 'pending', createdDate, deliveryDate, assignedAssets]
-    );
+    const row = await createSalesOrder({
+      soNumber, client, customerId: customerId || null, description,
+      amount, deliveryDate, createdDate, assignedAssets,
+      line: line || null, source: source || null,
+      inquiryId: inquiryId || null, costAmount: (costAmount === undefined || costAmount === '') ? null : costAmount,
+      docDate: docDate || null, preparedBy: preparedBy || undefined, reviewedBy: reviewedBy || null,
+      customerAddress: customerAddress || null, customerContact: customerContact || null,
+      paymentTerms: paymentTerms || undefined, termsAndConditions: termsAndConditions || null,
+      status: 'pending',
+    });
+
     res.status(201).json({
       id: row.id,
       soNumber: row.so_number,
       client: row.client,
+      customerId: row.customer_id,
       description: row.description,
       amount: parseFloat(row.amount),
+      costAmount: row.cost_amount === null ? null : parseFloat(row.cost_amount),
+      line: row.line,
+      source: row.source,
+      inquiryId: row.inquiry_id,
+      docDate: row.doc_date,
+      preparedBy: row.prepared_by,
+      reviewedBy: row.reviewed_by,
+      customerAddress: row.customer_address,
+      customerContact: row.customer_contact,
+      paymentTerms: row.payment_terms,
+      termsAndConditions: row.terms_and_conditions,
       status: row.status,
       createdDate: row.created_date,
       deliveryDate: row.delivery_date,
@@ -2903,7 +3170,7 @@ app.post('/api/sales-orders', requireAdmin, async (req, res) => {
 });
 
 // GET /api/miscellaneous-expenses (admin only)
-app.get('/api/miscellaneous-expenses', requireAdmin, async (req, res) => {
+app.get('/api/miscellaneous-expenses', requireRole(['admin','bookkeeper','office_admin']), async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
     let whereClause = '';
@@ -2943,7 +3210,7 @@ app.get('/api/miscellaneous-expenses', requireAdmin, async (req, res) => {
 });
 
 // POST /api/miscellaneous-expenses (admin only)
-app.post('/api/miscellaneous-expenses', requireAdmin, async (req, res) => {
+app.post('/api/miscellaneous-expenses', requireRole(['admin','bookkeeper','office_admin']), async (req, res) => {
   try {
     const { description, amount, category, expense_date, created_by } = req.body;
     
@@ -2979,7 +3246,7 @@ app.post('/api/miscellaneous-expenses', requireAdmin, async (req, res) => {
 });
 
 // PATCH /api/miscellaneous-expenses/:id (admin only)
-app.patch('/api/miscellaneous-expenses/:id', requireAdmin, async (req, res) => {
+app.patch('/api/miscellaneous-expenses/:id', requireRole(['admin','bookkeeper','office_admin']), async (req, res) => {
   try {
     const { description, amount, category, expense_date } = req.body;
     const updates = [];
@@ -3041,7 +3308,7 @@ app.patch('/api/miscellaneous-expenses/:id', requireAdmin, async (req, res) => {
 });
 
 // DELETE /api/miscellaneous-expenses/:id (admin only)
-app.delete('/api/miscellaneous-expenses/:id', requireAdmin, async (req, res) => {
+app.delete('/api/miscellaneous-expenses/:id', requireRole(['admin','bookkeeper','office_admin']), async (req, res) => {
   try {
     await query('DELETE FROM miscellaneous_expenses WHERE id = $1', [req.params.id]);
     res.status(204).send();
@@ -3055,48 +3322,76 @@ app.delete('/api/miscellaneous-expenses/:id', requireAdmin, async (req, res) => 
 app.patch('/api/sales-orders/:id', requireAdmin, async (req, res) => {
   try {
     const { status, description } = req.body;
+    // Editable pricing/CRM fields (Phase 7e): owner sets the client price on the SO itself.
+    const cols = {
+      status, description,
+      amount: req.body.amount,
+      cost_amount: req.body.costAmount,
+      customer_id: req.body.customerId,
+      line: req.body.line,
+      source: req.body.source,
+      delivery_date: req.body.deliveryDate,
+      // editable PDF header fields
+      doc_date: req.body.docDate,
+      prepared_by: req.body.preparedBy,
+      reviewed_by: req.body.reviewedBy,
+      customer_address: req.body.customerAddress,
+      customer_contact: req.body.customerContact,
+      payment_terms: req.body.paymentTerms,
+      terms_and_conditions: req.body.termsAndConditions,
+    };
     const updates = [];
     const values = [];
     let i = 1;
-    
-    if (status !== undefined) {
-      updates.push(`status = $${i++}`);
-      values.push(status);
+
+    for (const [k, v] of Object.entries(cols)) {
+      if (v !== undefined) {
+        updates.push(`${k} = $${i++}`);
+        values.push(v === '' ? null : v);
+      }
     }
-    if (description !== undefined) {
-      updates.push(`description = $${i++}`);
-      values.push(description);
-    }
-    
+
     if (updates.length === 0) {
       return res.status(400).json({ error: 'No fields to update' });
     }
-    
+
     updates.push('updated_at = NOW()');
     values.push(req.params.id);
-    
+
     await query(
       `UPDATE sales_orders SET ${updates.join(', ')} WHERE id = $${values.length}`,
       values
     );
-    
+
     const result = await query(
-      `SELECT id, so_number, client, description, amount, status, created_date, delivery_date, assigned_assets
+      `SELECT id, so_number, client, customer_id, description, amount, cost_amount, line, source, status, created_date, delivery_date, assigned_assets,
+              doc_date, prepared_by, reviewed_by, customer_address, customer_contact, payment_terms, terms_and_conditions
        FROM sales_orders WHERE id = $1`,
       [req.params.id]
     );
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Sales order not found' });
     }
-    
+
     const row = result.rows[0];
     res.json({
       id: row.id,
       soNumber: row.so_number,
       client: row.client,
+      customerId: row.customer_id,
       description: row.description,
       amount: parseFloat(row.amount),
+      costAmount: row.cost_amount === null ? null : parseFloat(row.cost_amount),
+      line: row.line,
+      source: row.source,
+      docDate: row.doc_date,
+      preparedBy: row.prepared_by,
+      reviewedBy: row.reviewed_by,
+      customerAddress: row.customer_address,
+      customerContact: row.customer_contact,
+      paymentTerms: row.payment_terms,
+      termsAndConditions: row.terms_and_conditions,
       status: row.status,
       createdDate: row.created_date,
       deliveryDate: row.delivery_date,
@@ -3170,7 +3465,7 @@ app.get('/api/inventory', async (req, res) => {
 });
 
 // POST /api/inventory (admin only)
-app.post('/api/inventory', requireAdmin, async (req, res) => {
+app.post('/api/inventory', requireRole(['admin','purchasing','office_admin']), async (req, res) => {
   try {
     const { 
       itemCode, 
@@ -3218,7 +3513,7 @@ app.post('/api/inventory', requireAdmin, async (req, res) => {
 });
 
 // PATCH /api/inventory/:id (admin only)
-app.patch('/api/inventory/:id', requireAdmin, async (req, res) => {
+app.patch('/api/inventory/:id', requireRole(['admin','purchasing','office_admin']), async (req, res) => {
   try {
     const { itemName, description, quantity, unit, reorderLevel, unitCost, location, supplier } = req.body;
     const updates = [];
@@ -3357,7 +3652,7 @@ app.get('/api/miscellaneous', async (req, res) => {
 });
 
 // POST /api/miscellaneous (admin only)
-app.post('/api/miscellaneous', requireAdmin, async (req, res) => {
+app.post('/api/miscellaneous', requireRole(['admin','bookkeeper','office_admin']), async (req, res) => {
   try {
     const { 
       description, 
@@ -3400,7 +3695,7 @@ app.post('/api/miscellaneous', requireAdmin, async (req, res) => {
 });
 
 // PATCH /api/miscellaneous/:id (admin only)
-app.patch('/api/miscellaneous/:id', requireAdmin, async (req, res) => {
+app.patch('/api/miscellaneous/:id', requireRole(['admin','bookkeeper','office_admin']), async (req, res) => {
   try {
     const { description, amount, status, transactionDate, category, notes } = req.body;
     const updates = [];
@@ -3471,7 +3766,7 @@ app.patch('/api/miscellaneous/:id', requireAdmin, async (req, res) => {
 });
 
 // DELETE /api/miscellaneous/:id (admin only)
-app.delete('/api/miscellaneous/:id', requireAdmin, async (req, res) => {
+app.delete('/api/miscellaneous/:id', requireRole(['admin','bookkeeper','office_admin']), async (req, res) => {
   try {
     await query('DELETE FROM miscellaneous WHERE id = $1', [req.params.id]);
     res.json({ message: 'Miscellaneous entry deleted' });
@@ -4338,6 +4633,376 @@ if (process.env.NODE_ENV === 'production') {
     });
   }
 }
+
+// ================================================================
+// CRM + Sales Pipeline + Role-based modules
+// (Suppliers, Customers, Inquiries/Quotations,
+//  Work Schedule, Staff Accounts). All under the global requireAuth
+//  registered earlier; writes gated per the permissions matrix.
+// ================================================================
+
+// ---------- helpers ----------
+const newId = (prefix) => `${prefix}-${Date.now()}-${Math.floor((Date.now() % 1000))}`;
+const orNull = (v) => (v === undefined || v === '' ? null : v);
+
+// camelCase <-> snake_case row mappers
+function mapSupplier(r) {
+  return r && {
+    id: r.id, name: r.name, type: r.type, productsSupplied: r.products_supplied,
+    contactPerson: r.contact_person, phone: r.phone, email: r.email, location: r.location,
+    paymentTerms: r.payment_terms, priceLevel: r.price_level, reliability: r.reliability,
+    lastOrdered: r.last_ordered, notes: r.notes, createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+function mapCustomer(r) {
+  return r && {
+    id: r.id, name: r.name, type: r.type, contactPerson: r.contact_person, phone: r.phone,
+    email: r.email, location: r.location, whatTheyBuy: r.what_they_buy, source: r.source,
+    status: r.status, lastContact: r.last_contact, notes: r.notes,
+    createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+function mapInquiry(r) {
+  if (!r) return r;
+  const quote = r.quote_amount === null ? null : parseFloat(r.quote_amount);
+  const supQuote = r.supplier_quote_amount === null ? null : parseFloat(r.supplier_quote_amount);
+  return {
+    id: r.id, inquiryDate: r.inquiry_date, customerId: r.customer_id, customerName: r.customer_name,
+    contact: r.contact, whatTheyWant: r.what_they_want, line: r.line, source: r.source, status: r.status,
+    quoteAmount: quote, supplierId: r.supplier_id, supplierName: r.supplier_name,
+    supplierQuoteAmount: supQuote,
+    margin: (quote !== null && supQuote !== null) ? quote - supQuote : null,
+    followUpDate: r.follow_up_date, salesOrderId: r.sales_order_id, purchaseOrderId: r.purchase_order_id,
+    notes: r.notes, createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+function mapWork(r) {
+  return r && {
+    id: r.id, phase: r.phase, scope: r.scope, responsible: r.responsible,
+    startWeek: r.start_week, durationWeeks: r.duration_weeks, status: r.status,
+    sortOrder: r.sort_order, notes: r.notes, createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+
+// =========================== SUPPLIERS ===========================
+// Read: any authenticated user that can see the module (UI gates visibility). Writes: owner/admin/purchasing.
+app.get('/api/suppliers', async (req, res) => {
+  try {
+    const { search, type } = req.query;
+    const where = ['1=1']; const params = []; let i = 1;
+    if (search) { where.push(`(LOWER(name) LIKE $${i} OR LOWER(COALESCE(contact_person,'')) LIKE $${i} OR LOWER(COALESCE(products_supplied,'')) LIKE $${i})`); params.push(`%${String(search).toLowerCase()}%`); i++; }
+    if (type) { where.push(`type = $${i++}`); params.push(type); }
+    const r = await query(`SELECT * FROM suppliers WHERE ${where.join(' AND ')} ORDER BY name ASC`, params);
+    res.json(r.rows.map(mapSupplier));
+  } catch (err) { console.error('suppliers list error:', err); res.status(500).json({ error: err.message }); }
+});
+app.get('/api/suppliers/:id', async (req, res) => {
+  try {
+    const r = await query('SELECT * FROM suppliers WHERE id = $1', [req.params.id]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Supplier not found' });
+    res.json(mapSupplier(r.rows[0]));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.post('/api/suppliers', requireRole(['owner','admin','purchasing','office_admin']), async (req, res) => {
+  try {
+    const b = req.body; const id = newId('SUP');
+    const r = await query(
+      `INSERT INTO suppliers (id,name,type,products_supplied,contact_person,phone,email,location,payment_terms,price_level,reliability,last_ordered,notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+      [id, b.name, orNull(b.type), orNull(b.productsSupplied), orNull(b.contactPerson), orNull(b.phone), orNull(b.email), orNull(b.location), orNull(b.paymentTerms), orNull(b.priceLevel), orNull(b.reliability), orNull(b.lastOrdered), orNull(b.notes)]
+    );
+    res.status(201).json(mapSupplier(r.rows[0]));
+  } catch (err) { console.error('supplier create error:', err); res.status(500).json({ error: err.message }); }
+});
+app.patch('/api/suppliers/:id', requireRole(['owner','admin','purchasing','office_admin']), async (req, res) => {
+  try {
+    const b = req.body;
+    const cols = { name:b.name, type:b.type, products_supplied:b.productsSupplied, contact_person:b.contactPerson, phone:b.phone, email:b.email, location:b.location, payment_terms:b.paymentTerms, price_level:b.priceLevel, reliability:b.reliability, last_ordered:b.lastOrdered, notes:b.notes };
+    const sets = []; const params = []; let i = 1;
+    for (const [k, v] of Object.entries(cols)) { if (v !== undefined) { sets.push(`${k} = $${i++}`); params.push(orNull(v)); } }
+    if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
+    sets.push('updated_at = NOW()'); params.push(req.params.id);
+    const r = await query(`UPDATE suppliers SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`, params);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Supplier not found' });
+    res.json(mapSupplier(r.rows[0]));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.delete('/api/suppliers/:id', requireRole(['owner','admin','purchasing','office_admin']), async (req, res) => {
+  try {
+    const r = await query('DELETE FROM suppliers WHERE id = $1', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Supplier not found' });
+    res.json({ message: 'Supplier deleted', id: req.params.id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// =========================== CUSTOMERS ===========================
+// Writes: owner/admin (bookkeeper view-only, purchasing hidden).
+app.get('/api/customers', async (req, res) => {
+  try {
+    const { search, status, type } = req.query;
+    const where = ['1=1']; const params = []; let i = 1;
+    if (search) { where.push(`(LOWER(name) LIKE $${i} OR LOWER(COALESCE(contact_person,'')) LIKE $${i})`); params.push(`%${String(search).toLowerCase()}%`); i++; }
+    if (status) { where.push(`status = $${i++}`); params.push(status); }
+    if (type) { where.push(`type = $${i++}`); params.push(type); }
+    const r = await query(`SELECT * FROM customers WHERE ${where.join(' AND ')} ORDER BY name ASC`, params);
+    res.json(r.rows.map(mapCustomer));
+  } catch (err) { console.error('customers list error:', err); res.status(500).json({ error: err.message }); }
+});
+app.get('/api/customers/:id', async (req, res) => {
+  try {
+    const r = await query('SELECT * FROM customers WHERE id = $1', [req.params.id]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Customer not found' });
+    res.json(mapCustomer(r.rows[0]));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.post('/api/customers', requireRole(['owner','admin']), async (req, res) => {
+  try {
+    const b = req.body; const id = newId('CUS');
+    const r = await query(
+      `INSERT INTO customers (id,name,type,contact_person,phone,email,location,what_they_buy,source,status,last_contact,notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      [id, b.name, orNull(b.type), orNull(b.contactPerson), orNull(b.phone), orNull(b.email), orNull(b.location), orNull(b.whatTheyBuy), orNull(b.source), orNull(b.status), orNull(b.lastContact), orNull(b.notes)]
+    );
+    res.status(201).json(mapCustomer(r.rows[0]));
+  } catch (err) { console.error('customer create error:', err); res.status(500).json({ error: err.message }); }
+});
+app.patch('/api/customers/:id', requireRole(['owner','admin']), async (req, res) => {
+  try {
+    const b = req.body;
+    const cols = { name:b.name, type:b.type, contact_person:b.contactPerson, phone:b.phone, email:b.email, location:b.location, what_they_buy:b.whatTheyBuy, source:b.source, status:b.status, last_contact:b.lastContact, notes:b.notes };
+    const sets = []; const params = []; let i = 1;
+    for (const [k, v] of Object.entries(cols)) { if (v !== undefined) { sets.push(`${k} = $${i++}`); params.push(orNull(v)); } }
+    if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
+    sets.push('updated_at = NOW()'); params.push(req.params.id);
+    const r = await query(`UPDATE customers SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`, params);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Customer not found' });
+    res.json(mapCustomer(r.rows[0]));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.delete('/api/customers/:id', requireRole(['owner','admin']), async (req, res) => {
+  try {
+    const r = await query('DELETE FROM customers WHERE id = $1', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Customer not found' });
+    res.json({ message: 'Customer deleted', id: req.params.id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ====================== INQUIRIES / QUOTATIONS ======================
+// Writes: owner/admin/purchasing.
+app.get('/api/inquiries', async (req, res) => {
+  try {
+    const { search, status, source } = req.query;
+    const where = ['1=1']; const params = []; let i = 1;
+    if (search) { where.push(`(LOWER(COALESCE(customer_name,'')) LIKE $${i} OR LOWER(COALESCE(what_they_want,'')) LIKE $${i} OR LOWER(COALESCE(supplier_name,'')) LIKE $${i})`); params.push(`%${String(search).toLowerCase()}%`); i++; }
+    if (status) { where.push(`status = $${i++}`); params.push(status); }
+    if (source) { where.push(`source = $${i++}`); params.push(source); }
+    const r = await query(`SELECT * FROM inquiries WHERE ${where.join(' AND ')} ORDER BY inquiry_date DESC, created_at DESC`, params);
+    res.json(r.rows.map(mapInquiry));
+  } catch (err) { console.error('inquiries list error:', err); res.status(500).json({ error: err.message }); }
+});
+app.get('/api/inquiries/:id', async (req, res) => {
+  try {
+    const r = await query('SELECT * FROM inquiries WHERE id = $1', [req.params.id]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Inquiry not found' });
+    res.json(mapInquiry(r.rows[0]));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.post('/api/inquiries', requireRole(['owner','admin','purchasing','office_admin']), async (req, res) => {
+  try {
+    const b = req.body; const id = newId('INQ');
+    const r = await query(
+      `INSERT INTO inquiries (id,inquiry_date,customer_id,customer_name,contact,what_they_want,line,source,status,quote_amount,supplier_id,supplier_name,supplier_quote_amount,follow_up_date,notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+      [id, b.inquiryDate || new Date().toISOString().split('T')[0], orNull(b.customerId), orNull(b.customerName), orNull(b.contact), orNull(b.whatTheyWant), orNull(b.line), orNull(b.source), orNull(b.status) || 'New', orNull(b.quoteAmount), orNull(b.supplierId), orNull(b.supplierName), orNull(b.supplierQuoteAmount), orNull(b.followUpDate), orNull(b.notes)]
+    );
+    res.status(201).json(mapInquiry(r.rows[0]));
+  } catch (err) { console.error('inquiry create error:', err); res.status(500).json({ error: err.message }); }
+});
+app.patch('/api/inquiries/:id', requireRole(['owner','admin','purchasing','office_admin']), async (req, res) => {
+  try {
+    const b = req.body;
+    const cols = { inquiry_date:b.inquiryDate, customer_id:b.customerId, customer_name:b.customerName, contact:b.contact, what_they_want:b.whatTheyWant, line:b.line, source:b.source, status:b.status, quote_amount:b.quoteAmount, supplier_id:b.supplierId, supplier_name:b.supplierName, supplier_quote_amount:b.supplierQuoteAmount, follow_up_date:b.followUpDate, notes:b.notes };
+    const sets = []; const params = []; let i = 1;
+    for (const [k, v] of Object.entries(cols)) { if (v !== undefined) { sets.push(`${k} = $${i++}`); params.push(orNull(v)); } }
+    if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
+    sets.push('updated_at = NOW()'); params.push(req.params.id);
+    const r = await query(`UPDATE inquiries SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`, params);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Inquiry not found' });
+    res.json(mapInquiry(r.rows[0]));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.delete('/api/inquiries/:id', requireRole(['owner','admin','purchasing','office_admin']), async (req, res) => {
+  try {
+    const r = await query('DELETE FROM inquiries WHERE id = $1', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Inquiry not found' });
+    res.json({ message: 'Inquiry deleted', id: req.params.id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Convert a won quotation -> Sales Order (client) + optional Purchase Order (supplier).
+// raisePurchaseOrder (bool) controls the buying side. Cost (supplier quote) is stored on the
+// SO as cost_amount for per-order margin; the raised PO is the cost on the financial dashboard.
+app.post('/api/inquiries/:id/convert', requireRole(['owner','admin','purchasing','office_admin']), async (req, res) => {
+  try {
+    const { raisePurchaseOrder = true } = req.body || {};
+    const inqRes = await query('SELECT * FROM inquiries WHERE id = $1', [req.params.id]);
+    const inq = inqRes.rows[0];
+    if (!inq) return res.status(404).json({ error: 'Inquiry not found' });
+    if (inq.sales_order_id) return res.status(400).json({ error: 'Inquiry already converted', salesOrderId: inq.sales_order_id });
+
+    // Resolve client name + address/contact for the SO (customer record wins, else free-text)
+    let clientName = inq.customer_name;
+    let customerAddress = null, customerContact = null;
+    if (inq.customer_id) {
+      const c = await query('SELECT name, location, contact_person, phone FROM customers WHERE id = $1', [inq.customer_id]);
+      if (c.rows[0]) {
+        clientName = c.rows[0].name;
+        customerAddress = c.rows[0].location || null;
+        customerContact = c.rows[0].phone || c.rows[0].contact_person || null;
+      }
+    }
+    clientName = clientName || 'Walk-in customer';
+
+    // PDF header fields pre-filled on conversion (all editable afterward):
+    // doc_date = today, prepared_by = default 'Kim Karen D. Tagle', payment terms default — handled by createSalesOrder/createPurchaseOrder.
+    const so = await createSalesOrder({
+      client: clientName,
+      customerId: inq.customer_id || null,
+      description: inq.what_they_want || `Converted from quotation ${inq.id}`,
+      amount: inq.quote_amount || 0,
+      line: inq.line || null,
+      source: inq.source || null,
+      inquiryId: inq.id,
+      costAmount: inq.supplier_quote_amount || null,
+      customerAddress,
+      customerContact: customerContact || inq.contact || null,
+    });
+
+    // Resolve supplier name + address/contact for the PO
+    let supplierName = inq.supplier_name;
+    let supplierAddress = null, supplierContact = null;
+    if (inq.supplier_id) {
+      const s = await query('SELECT name, location, contact_person, phone FROM suppliers WHERE id = $1', [inq.supplier_id]);
+      if (s.rows[0]) {
+        supplierName = s.rows[0].name;
+        supplierAddress = s.rows[0].location || null;
+        supplierContact = s.rows[0].phone || s.rows[0].contact_person || null;
+      }
+    }
+
+    let po = null;
+    const wantPO = raisePurchaseOrder && (inq.supplier_id || inq.supplier_name) && inq.supplier_quote_amount != null;
+    if (wantPO) {
+      po = await createPurchaseOrder({
+        client: supplierName || 'Supplier',
+        description: inq.what_they_want || `Supply for quotation ${inq.id}`,
+        amount: inq.supplier_quote_amount || 0,
+        supplierId: inq.supplier_id || null,
+        inquiryId: inq.id,
+        supplierAddress,
+        supplierContact,
+      });
+    }
+
+    const upd = await query(
+      `UPDATE inquiries SET status='Won', sales_order_id=$1, purchase_order_id=$2, updated_at=NOW() WHERE id=$3 RETURNING *`,
+      [so.id, po ? po.id : inq.purchase_order_id, inq.id]
+    );
+
+    res.status(201).json({
+      message: 'Quotation converted',
+      inquiry: mapInquiry(upd.rows[0]),
+      salesOrder: { id: so.id, soNumber: so.so_number, client: so.client, amount: parseFloat(so.amount), costAmount: so.cost_amount === null ? null : parseFloat(so.cost_amount), status: so.status },
+      purchaseOrder: po ? { id: po.id, poNumber: po.po_number, client: po.client, amount: parseFloat(po.amount), status: po.status } : null,
+    });
+  } catch (err) { console.error('inquiry convert error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// ========================= WORK SCHEDULE =========================
+// Writes: owner/admin.
+app.get('/api/work-schedule', async (req, res) => {
+  try {
+    const r = await query('SELECT * FROM work_schedule ORDER BY sort_order ASC NULLS LAST, start_week ASC NULLS LAST, created_at ASC');
+    res.json(r.rows.map(mapWork));
+  } catch (err) { console.error('work-schedule list error:', err); res.status(500).json({ error: err.message }); }
+});
+app.post('/api/work-schedule', requireRole(['owner','admin']), async (req, res) => {
+  try {
+    const b = req.body; const id = newId('WS');
+    const r = await query(
+      `INSERT INTO work_schedule (id,phase,scope,responsible,start_week,duration_weeks,status,sort_order,notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [id, orNull(b.phase), b.scope, orNull(b.responsible), orNull(b.startWeek), orNull(b.durationWeeks), orNull(b.status) || 'Not started', orNull(b.sortOrder), orNull(b.notes)]
+    );
+    res.status(201).json(mapWork(r.rows[0]));
+  } catch (err) { console.error('work create error:', err); res.status(500).json({ error: err.message }); }
+});
+app.patch('/api/work-schedule/:id', requireRole(['owner','admin']), async (req, res) => {
+  try {
+    const b = req.body;
+    const cols = { phase:b.phase, scope:b.scope, responsible:b.responsible, start_week:b.startWeek, duration_weeks:b.durationWeeks, status:b.status, sort_order:b.sortOrder, notes:b.notes };
+    const sets = []; const params = []; let i = 1;
+    for (const [k, v] of Object.entries(cols)) { if (v !== undefined) { sets.push(`${k} = $${i++}`); params.push(orNull(v)); } }
+    if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
+    sets.push('updated_at = NOW()'); params.push(req.params.id);
+    const r = await query(`UPDATE work_schedule SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`, params);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Work schedule row not found' });
+    res.json(mapWork(r.rows[0]));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.delete('/api/work-schedule/:id', requireRole(['owner','admin']), async (req, res) => {
+  try {
+    const r = await query('DELETE FROM work_schedule WHERE id = $1', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Work schedule row not found' });
+    res.json({ message: 'Work schedule row deleted', id: req.params.id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ========================= STAFF ACCOUNTS =========================
+// Owner-only. Create/list/deactivate admin-login accounts (admin|bookkeeper|purchasing).
+app.get('/api/staff', requireSuperAdmin, async (req, res) => {
+  try {
+    const r = await query(`SELECT id,email,name,role,is_super_admin,is_active,created_at FROM users WHERE role IN ('admin','bookkeeper','purchasing','office_admin') ORDER BY created_at DESC`);
+    res.json(r.rows.map(u => ({ id:u.id, email:u.email, name:u.name, role:u.role, isSuperAdmin:u.is_super_admin, isActive:u.is_active, createdAt:u.created_at })));
+  } catch (err) { console.error('staff list error:', err); res.status(500).json({ error: err.message }); }
+});
+app.post('/api/staff', requireSuperAdmin, async (req, res) => {
+  try {
+    const { email, name, password, role } = req.body;
+    if (!email || !name || !password || !role) return res.status(400).json({ error: 'email, name, password, role are required' });
+    if (!['admin','bookkeeper','purchasing','office_admin'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
+    const exists = await query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+    if (exists.rows[0]) return res.status(409).json({ error: 'An account with that email already exists' });
+    const id = `staff-${Date.now()}`;
+    const hash = await hashPassword(password);
+    const r = await query(
+      `INSERT INTO users (id,email,password_hash,name,role,is_super_admin,is_active,created_at)
+       VALUES ($1,$2,$3,$4,$5,false,true,NOW()) RETURNING id,email,name,role,is_active,created_at`,
+      [id, email.toLowerCase(), hash, name, role]
+    );
+    const u = r.rows[0];
+    res.status(201).json({ id:u.id, email:u.email, name:u.name, role:u.role, isActive:u.is_active, createdAt:u.created_at });
+  } catch (err) { console.error('staff create error:', err); res.status(500).json({ error: err.message }); }
+});
+app.patch('/api/staff/:id', requireSuperAdmin, async (req, res) => {
+  try {
+    const { name, role, password, isActive } = req.body;
+    const sets = []; const params = []; let i = 1;
+    if (name !== undefined) { sets.push(`name = $${i++}`); params.push(name); }
+    if (role !== undefined) {
+      if (!['admin','bookkeeper','purchasing','office_admin'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
+      sets.push(`role = $${i++}`); params.push(role);
+    }
+    if (isActive !== undefined) { sets.push(`is_active = $${i++}`); params.push(!!isActive); }
+    if (password) { sets.push(`password_hash = $${i++}`); params.push(await hashPassword(password)); }
+    if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
+    params.push(req.params.id);
+    const r = await query(`UPDATE users SET ${sets.join(', ')} WHERE id = $${params.length} AND is_super_admin = false RETURNING id,email,name,role,is_active`, params);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Staff account not found (or is a super admin)' });
+    const u = r.rows[0];
+    res.json({ id:u.id, email:u.email, name:u.name, role:u.role, isActive:u.is_active });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 // Create new tables before starting server
 const startServer = async () => {

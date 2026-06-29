@@ -10,7 +10,7 @@ export interface AuthUser {
   id: string;
   email: string;
   name: string;
-  role: 'employee' | 'admin';
+  role: 'employee' | 'admin' | 'bookkeeper' | 'purchasing' | 'office_admin';
   isSuperAdmin?: boolean;
 }
 
@@ -312,8 +312,8 @@ export async function createPurchaseOrder(po: {
   };
 }
 
-export async function updatePurchaseOrder(id: string, updates: { status?: string; description?: string }): Promise<PurchaseOrder> {
-  const data = await fetchApi<{ id: string; poNumber: string; client: string; description: string; amount: number; status: string; createdDate: string; deliveryDate: string; assignedAssets: string[] }>(`/purchase-orders/${id}`, {
+export async function updatePurchaseOrder(id: string, updates: { status?: string; description?: string; client?: string; amount?: number; deliveryDate?: string; docDate?: string | null; preparedBy?: string | null; reviewedBy?: string | null; supplierAddress?: string | null; supplierContact?: string | null; paymentTerms?: string | null; termsAndConditions?: string | null }): Promise<PurchaseOrder> {
+  const data = await fetchApi<{ id: string; poNumber: string; client: string; description: string; amount: number; status: string; createdDate: string; deliveryDate: string; assignedAssets: string[]; docDate?: string | null; preparedBy?: string | null; reviewedBy?: string | null; supplierAddress?: string | null; supplierContact?: string | null; paymentTerms?: string | null; termsAndConditions?: string | null }>(`/purchase-orders/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(updates),
   });
@@ -327,7 +327,15 @@ export async function updatePurchaseOrder(id: string, updates: { status?: string
     createdDate: data.createdDate,
     deliveryDate: data.deliveryDate,
     assignedAssets: data.assignedAssets,
-  };
+    // editable PDF header fields — pass through so optimistic UI merge + print see new values
+    docDate: data.docDate,
+    preparedBy: data.preparedBy,
+    reviewedBy: data.reviewedBy,
+    supplierAddress: data.supplierAddress,
+    supplierContact: data.supplierContact,
+    paymentTerms: data.paymentTerms,
+    termsAndConditions: data.termsAndConditions,
+  } as PurchaseOrder;
 }
 
 export async function deletePurchaseOrder(id: string): Promise<void> {

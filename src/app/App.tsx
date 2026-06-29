@@ -11,7 +11,7 @@ import { EmployeeLogin } from './pages/EmployeeLogin';
 import { DriverPortal } from './pages/DriverPortal';
 import { DriverLogin } from './pages/DriverLogin';
 
-export type UserRole = 'employee' | 'admin' | null;
+export type UserRole = 'employee' | 'admin' | 'bookkeeper' | 'purchasing' | 'office_admin' | null;
 
 export default function App() {
   const [userRole, setUserRole] = useState<UserRole>(null);
@@ -83,7 +83,7 @@ export default function App() {
           ) : userRole === 'employee' ? (
             <Dashboard userName={userName} onLogout={handleLogout} />
           ) : (
-            <AdminDashboard userName={userName} isSuperAdmin={userIsSuperAdmin} onLogout={handleLogout} />
+            <AdminDashboard userName={userName} isSuperAdmin={userIsSuperAdmin} role={userRole as any} onLogout={handleLogout} />
           )
         } />
         

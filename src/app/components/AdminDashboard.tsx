@@ -1,7 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useAutoLogout } from '../hooks/useAutoLogout';
 import { Button } from './ui/button';
-import { LogOut, Home, FileText, Receipt, Menu, X, UserPlus, Check, XCircle, MapPin, Calendar, Clock, Truck, Wrench, ShoppingCart, Package, User, UserCheck } from 'lucide-react';
+import { LogOut, Home, FileText, Receipt, Menu, X, UserPlus, Check, XCircle, MapPin, Calendar, Clock, Truck, Wrench, ShoppingCart, Package, User, UserCheck, MessageSquare, Users, Factory, UserCog } from 'lucide-react';
+import { SuppliersList } from './crm/SuppliersList';
+import { CustomersList } from './crm/CustomersList';
+import { InquiriesList } from './crm/InquiriesList';
+import { WorkScheduleList } from './crm/WorkScheduleList';
+import { StaffAccountsList } from './crm/StaffAccountsList';
+import { canView, canManage, type Role } from '../config/permissions';
 import ErrorBoundary from './ErrorBoundary';
 import { PageErrorFallback } from './PageErrorFallback';
 import { ThemeToggle } from './ThemeToggle';
@@ -44,16 +50,43 @@ import { toast } from 'sonner';
 interface AdminDashboardProps {
   userName: string;
   isSuperAdmin?: boolean;
+  role?: Role;
   onLogout: () => void;
 }
 
-type View = 'home' | 'orders' | 'transactions' | 'requests' | 'material-requests' | 'employee-approvals' | 'driver-approvals' | 'driver-vehicles' | 'delivery-management' | 'gps' | 'fleet' | 'pms' | 'purchase-orders' | 'inventory' | 'drivers' | 'deliveries' | 'miscellaneous' | 'request-form';
+type View = 'home' | 'orders' | 'transactions' | 'requests' | 'material-requests' | 'employee-approvals' | 'driver-approvals' | 'driver-vehicles' | 'delivery-management' | 'gps' | 'fleet' | 'pms' | 'purchase-orders' | 'inventory' | 'drivers' | 'deliveries' | 'miscellaneous' | 'request-form' | 'suppliers' | 'customers' | 'inquiries' | 'work-schedule' | 'staff';
 
-export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashboardProps) {
+// Sidebar entries, in display order. Visibility + write access come from MODULE_ACCESS.
+const NAV_ITEMS: { view: View; label: string; icon: any; module: string }[] = [
+  { view: 'home', label: 'Dashboard', icon: Home, module: 'home' },
+  { view: 'orders', label: 'Sales Orders', icon: FileText, module: 'orders' },
+  { view: 'purchase-orders', label: 'Purchase Orders', icon: Package, module: 'purchase-orders' },
+  { view: 'inquiries', label: 'Inquiries / Quotations', icon: MessageSquare, module: 'inquiries' },
+  { view: 'customers', label: 'Customers', icon: Users, module: 'customers' },
+  { view: 'suppliers', label: 'Suppliers', icon: Factory, module: 'suppliers' },
+  { view: 'request-form', label: 'Request Order', icon: ShoppingCart, module: 'request-form' },
+  { view: 'inventory', label: 'Inventory Management', icon: Package, module: 'inventory' },
+  { view: 'miscellaneous', label: 'Miscellaneous', icon: Wrench, module: 'miscellaneous' },
+  { view: 'work-schedule', label: 'Work Schedule', icon: Calendar, module: 'work-schedule' },
+  { view: 'fleet', label: 'Fleet', icon: Truck, module: 'fleet' },
+  { view: 'gps', label: 'GPS Tracking', icon: MapPin, module: 'gps' },
+  { view: 'delivery-management', label: 'Delivery Management', icon: Truck, module: 'delivery-management' },
+  { view: 'employee-approvals', label: 'Employee Approvals', icon: UserCheck, module: 'employee-approvals' },
+  { view: 'driver-approvals', label: 'Driver Approvals', icon: UserCheck, module: 'driver-approvals' },
+  { view: 'staff', label: 'Staff Accounts', icon: UserCog, module: 'staff' },
+  { view: 'requests', label: 'Admin Requests', icon: UserPlus, module: 'requests' },
+];
+
+export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogout }: AdminDashboardProps) {
   // Enable auto-logout when app is closed
   useAutoLogout();
-  
-  const [currentView, setCurrentView] = useState<View>('home');
+
+  // Effective role drives module visibility. Super admin = owner; default to admin for safety.
+  const role: Role = isSuperAdmin ? 'owner' : (roleProp || 'admin');
+  const visibleNav = NAV_ITEMS.filter(item => canView(role, item.module));
+  const firstAllowedView: View = (visibleNav[0]?.view) || 'home';
+
+  const [currentView, setCurrentView] = useState<View>(firstAllowedView);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
 
@@ -166,12 +199,24 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
   };
 
   const renderContent = () => {
-    if (currentView === 'home') {
-      return <BusinessOverview isAdmin={true} />;
+    // Role guard: never render a module this role can't see (e.g. via stale state).
+    if (!canView(role, currentView)) {
+      return <div style={{ padding: '40px', color: '#6b7280' }}>You don't have access to this section.</div>;
     }
-    
+
+    // New CRM / pipeline / planning modules
+    if (currentView === 'suppliers') return <SuppliersList isAdmin={canManage(role, 'suppliers')} />;
+    if (currentView === 'customers') return <CustomersList isAdmin={canManage(role, 'customers')} />;
+    if (currentView === 'inquiries') return <InquiriesList isAdmin={canManage(role, 'inquiries')} />;
+    if (currentView === 'work-schedule') return <WorkScheduleList isAdmin={canManage(role, 'work-schedule')} />;
+    if (currentView === 'staff') return <StaffAccountsList />;
+
+    if (currentView === 'home') {
+      return <BusinessOverview isAdmin={canManage(role, 'home')} />;
+    }
+
     if (currentView === 'orders') {
-      return <SalesOrdersList isAdmin={true} />;
+      return <SalesOrdersList isAdmin={canManage(role, 'orders')} />;
     }
     
     if (currentView === 'transactions') {
@@ -194,11 +239,11 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
     }
 
     if (currentView === 'purchase-orders') {
-      return <PurchaseOrderList isAdmin={true} />;
+      return <PurchaseOrderList isAdmin={canManage(role, 'purchase-orders')} />;
     }
 
     if (currentView === 'inventory') {
-      return <InventoryList isAdmin={true} />;
+      return <InventoryList isAdmin={canManage(role, 'inventory')} />;
     }
 
     if (currentView === 'material-requests') {
@@ -280,392 +325,34 @@ export function AdminDashboard({ userName, isSuperAdmin, onLogout }: AdminDashbo
 
         {/* Navigation */}
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          {/* Dashboard */}
-          <button
-            onClick={() => setCurrentView('home')}
-            className={`w-full text-left rounded-lg transition-all duration-200 ${
-              currentView === 'home' 
-                ? 'bg-blue-50 border border-blue-200' 
-                : 'hover:bg-gray-50 border border-transparent'
-            }`}
-            style={{
-              padding: '12px 16px',
-              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <Home 
-                className="w-4 h-4"
+          {visibleNav.map((item) => {
+            const Icon = item.icon;
+            const active = currentView === item.view;
+            return (
+              <button
+                key={item.view}
+                onClick={() => setCurrentView(item.view)}
+                className={`w-full text-left rounded-lg transition-all duration-200 ${
+                  active
+                    ? 'bg-blue-50 border border-blue-200'
+                    : 'hover:bg-gray-50 border border-transparent'
+                }`}
                 style={{
-                  color: currentView === 'home' ? '#2563eb' : '#6b7280'
-                }} 
-              />
-              {menuOpen && (
-                <span style={{
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  color: currentView === 'home' ? '#2563eb' : '#111827'
-                }}>
-                  Dashboard
-                </span>
-              )}
-            </div>
-          </button>
-
-          {/* Orders */}
-          <button
-            onClick={() => setCurrentView('orders')}
-            className={`w-full text-left rounded-lg transition-all duration-200 ${
-              currentView === 'orders' 
-                ? 'bg-blue-50 border border-blue-200' 
-                : 'hover:bg-gray-50 border border-transparent'
-            }`}
-            style={{
-              padding: '12px 16px',
-              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <FileText 
-                className="w-4 h-4"
-                style={{
-                  color: currentView === 'orders' ? '#2563eb' : '#6b7280'
-                }} 
-              />
-              {menuOpen && (
-                <span style={{
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  color: currentView === 'orders' ? '#2563eb' : '#111827'
-                }}>
-                  Sales Orders
-                </span>
-              )}
-            </div>
-          </button>
-
-          {/* Purchase Orders */}
-          <button
-            onClick={() => setCurrentView('purchase-orders')}
-            className={`w-full text-left rounded-lg transition-all duration-200 ${
-              currentView === 'purchase-orders' 
-                ? 'bg-blue-50 border border-blue-200' 
-                : 'hover:bg-gray-50 border border-transparent'
-            }`}
-            style={{
-              padding: '12px 16px',
-              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <Package 
-                className="w-4 h-4"
-                style={{
-                  color: currentView === 'purchase-orders' ? '#2563eb' : '#6b7280'
-                }} 
-              />
-              {menuOpen && (
-                <span style={{
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  color: currentView === 'purchase-orders' ? '#2563eb' : '#111827'
-                }}>
-                  Purchase Orders
-                </span>
-              )}
-            </div>
-          </button>
-
-          {/* Request Order */}
-          <button
-            onClick={() => setCurrentView('request-form')}
-            className={`w-full text-left rounded-lg transition-all duration-200 ${
-              currentView === 'request-form' 
-                ? 'bg-blue-50 border border-blue-200' 
-                : 'hover:bg-gray-50 border border-transparent'
-            }`}
-            style={{
-              padding: '12px 16px',
-              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <ShoppingCart 
-                className="w-4 h-4"
-                style={{
-                  color: currentView === 'request-form' ? '#2563eb' : '#6b7280'
-                }} 
-              />
-              {menuOpen && (
-                <span style={{
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  color: currentView === 'request-form' ? '#2563eb' : '#111827'
-                }}>
-                  Request Order
-                </span>
-              )}
-            </div>
-          </button>
-
-          {/* Inventory Management */}
-          <button
-            onClick={() => setCurrentView('inventory')}
-            className={`w-full text-left rounded-lg transition-all duration-200 ${
-              currentView === 'inventory' 
-                ? 'bg-blue-50 border border-blue-200' 
-                : 'hover:bg-gray-50 border border-transparent'
-            }`}
-            style={{
-              padding: '12px 16px',
-              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <Package 
-                className="w-4 h-4"
-                style={{
-                  color: currentView === 'inventory' ? '#2563eb' : '#6b7280'
-                }} 
-              />
-              {menuOpen && (
-                <span style={{
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  color: currentView === 'inventory' ? '#2563eb' : '#111827'
-                }}>
-                  Inventory Management
-                </span>
-              )}
-            </div>
-          </button>
-
-          {/* Miscellaneous */}
-          <button
-            onClick={() => setCurrentView('miscellaneous')}
-            className={`w-full text-left rounded-lg transition-all duration-200 ${
-              currentView === 'miscellaneous' 
-                ? 'bg-blue-50 border border-blue-200' 
-                : 'hover:bg-gray-50 border border-transparent'
-            }`}
-            style={{
-              padding: '12px 16px',
-              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <Wrench 
-                className="w-4 h-4"
-                style={{
-                  color: currentView === 'miscellaneous' ? '#2563eb' : '#6b7280'
-                }} 
-              />
-              {menuOpen && (
-                <span style={{
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  color: currentView === 'miscellaneous' ? '#2563eb' : '#111827'
-                }}>
-                  Miscellaneous
-                </span>
-              )}
-            </div>
-          </button>
-
-          {/* Fleet */}
-          <button
-            onClick={() => setCurrentView('fleet')}
-            className={`w-full text-left rounded-lg transition-all duration-200 ${
-              currentView === 'fleet' 
-                ? 'bg-blue-50 border border-blue-200' 
-                : 'hover:bg-gray-50 border border-transparent'
-            }`}
-            style={{
-              padding: '12px 16px',
-              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <Truck 
-                className="w-4 h-4"
-                style={{
-                  color: currentView === 'fleet' ? '#2563eb' : '#6b7280'
-                }} 
-              />
-              {menuOpen && (
-                <span style={{
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  color: currentView === 'fleet' ? '#2563eb' : '#111827'
-                }}>
-                  Fleet
-                </span>
-              )}
-            </div>
-          </button>
-
-          {/* GPS Tracking */}
-          <button
-            onClick={() => setCurrentView('gps')}
-            className={`w-full text-left rounded-lg transition-all duration-200 ${
-              currentView === 'gps' 
-                ? 'bg-blue-50 border border-blue-200' 
-                : 'hover:bg-gray-50 border border-transparent'
-            }`}
-            style={{
-              padding: '12px 16px',
-              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <MapPin 
-                className="w-4 h-4"
-                style={{
-                  color: currentView === 'gps' ? '#2563eb' : '#6b7280'
-                }} 
-              />
-              {menuOpen && (
-                <span style={{
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  color: currentView === 'gps' ? '#2563eb' : '#111827'
-                }}>
-                  GPS Tracking
-                </span>
-              )}
-            </div>
-          </button>
-
-          {/* Admin Requests */}
-          {isSuperAdmin && (
-            <button
-              onClick={() => setCurrentView('requests')}
-              className={`w-full text-left rounded-lg transition-all duration-200 ${
-                currentView === 'requests' 
-                  ? 'bg-blue-50 border border-blue-200' 
-                  : 'hover:bg-gray-50 border border-transparent'
-              }`}
-              style={{
-                padding: '12px 16px',
-                fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-              }}
-            >
-              <div className="flex items-center gap-3">
-                <UserPlus 
-                  className="w-4 h-4"
-                  style={{
-                    color: currentView === 'requests' ? '#2563eb' : '#6b7280'
-                  }} 
-                />
-                {menuOpen && (
-                  <span style={{
-                    fontSize: '14px',
-                    fontWeight: '500',
-                    color: currentView === 'requests' ? '#2563eb' : '#111827'
-                  }}>
-                    Admin Requests
-                  </span>
-                )}
-              </div>
-            </button>
-          )}
-
-          {/* Employee Approvals */}
-          <button
-            onClick={() => setCurrentView('employee-approvals')}
-            className={`w-full text-left rounded-lg transition-all duration-200 ${
-              currentView === 'employee-approvals' 
-                ? 'bg-blue-50 border border-blue-200' 
-                : 'hover:bg-gray-50 border border-transparent'
-            }`}
-            style={{
-              padding: '12px 16px',
-              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <UserCheck 
-                className="w-4 h-4"
-                style={{
-                  color: currentView === 'employee-approvals' ? '#2563eb' : '#6b7280'
-                }} 
-              />
-              {menuOpen && (
-                <span style={{
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  color: currentView === 'employee-approvals' ? '#2563eb' : '#111827'
-                }}>
-                  Employee Approvals
-                </span>
-              )}
-            </div>
-          </button>
-
-          {/* Driver Approvals */}
-          <button
-            onClick={() => setCurrentView('driver-approvals')}
-            className={`w-full text-left rounded-lg transition-all duration-200 ${
-              currentView === 'driver-approvals' 
-                ? 'bg-blue-50 border border-blue-200' 
-                : 'hover:bg-gray-50 border border-transparent'
-            }`}
-            style={{
-              padding: '12px 16px',
-              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <UserCheck 
-                className="w-4 h-4"
-                style={{
-                  color: currentView === 'driver-approvals' ? '#2563eb' : '#6b7280'
-                }} 
-              />
-              {menuOpen && (
-                <span style={{
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  color: currentView === 'driver-approvals' ? '#2563eb' : '#111827'
-                }}>
-                  Driver Approvals
-                </span>
-              )}
-            </div>
-          </button>
-
-          {/* Delivery Management */}
-          <button
-            onClick={() => setCurrentView('delivery-management')}
-            className={`w-full text-left rounded-lg transition-all duration-200 ${
-              currentView === 'delivery-management'
-                ? 'bg-blue-50 border border-blue-200'
-                : 'hover:bg-gray-50 border border-transparent'
-            }`}
-            style={{
-              padding: '12px 16px',
-              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <Truck
-                className="w-4 h-4"
-                style={{
-                  color: currentView === 'delivery-management' ? '#2563eb' : '#6b7280'
+                  padding: '12px 16px',
+                  fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
                 }}
-              />
-              {menuOpen && (
-                <span style={{
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  color: currentView === 'delivery-management' ? '#2563eb' : '#111827'
-                }}>
-                  Delivery Management
-                </span>
-              )}
-            </div>
-          </button>
-
+              >
+                <div className="flex items-center gap-3">
+                  <Icon className="w-4 h-4" style={{ color: active ? '#2563eb' : '#6b7280' }} />
+                  {menuOpen && (
+                    <span style={{ fontSize: '14px', fontWeight: '500', color: active ? '#2563eb' : '#111827' }}>
+                      {item.label}
+                    </span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
         </nav>
 
         {/* User Menu */}

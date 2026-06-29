@@ -171,6 +171,26 @@ async function seed() {
   }
   console.log('  - Super admins seeded (developer + owner). Change default passwords!');
 
+  // Combined-role test login (office_admin = bookkeeper ∪ purchasing). Not a super admin.
+  // Ensure the role CHECK constraint allows office_admin even if the server's boot-time
+  // migration (server/index.js) hasn't run yet — keeps `npm run seed` self-sufficient.
+  await query(`ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check`);
+  await query(`ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('employee','admin','bookkeeper','purchasing','office_admin'))`);
+  const officeAdminPwHash = await hashPassword(
+    process.env.OFFICE_ADMIN_PASSWORD || 'OfficeAdmin123!'
+  );
+  await query(
+    `INSERT INTO users (id, email, password_hash, name, role, is_super_admin, is_active)
+     VALUES ('staff-office-admin', 'office.admin@kimoel.local', $1, 'Office Admin (Test)', 'office_admin', false, true)
+     ON CONFLICT (email) DO UPDATE SET
+       password_hash = EXCLUDED.password_hash,
+       name = EXCLUDED.name,
+       role = 'office_admin',
+       is_active = true`,
+    [officeAdminPwHash]
+  );
+  console.log('  - Office Admin test account seeded (office.admin@kimoel.local).');
+
   console.log('Seed complete.');
 }
 

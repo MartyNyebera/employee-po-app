@@ -44,6 +44,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
     vatAmount: 0,
     totalAmount: 0,
     termsAndConditions: '',
+    docDate: '',
   });
 
   const fetchPurchaseOrders = async (trackPoId?: string) => {
@@ -63,7 +64,15 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
         status: po.status || 'pending',
         createdDate: po.createdDate || po.created_date,
         deliveryDate: po.deliveryDate || po.delivery_date,
-        assignedAssets: po.assignedAssets || []
+        assignedAssets: po.assignedAssets || [],
+        // editable PDF header fields — keep them on the row so edit + print read real values
+        docDate: po.docDate || po.doc_date,
+        preparedBy: po.preparedBy ?? po.prepared_by,
+        reviewedBy: po.reviewedBy ?? po.reviewed_by,
+        supplierAddress: po.supplierAddress ?? po.supplier_address,
+        supplierContact: po.supplierContact ?? po.supplier_contact,
+        paymentTerms: po.paymentTerms ?? po.payment_terms,
+        termsAndConditions: po.termsAndConditions ?? po.terms_and_conditions,
       }));
       
       console.log('Transformed data:', transformedData);
@@ -238,18 +247,20 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
     setEditForm({
       status: po.status,
       description: description,
-      customerAddress: customerAddress,
-      customerContact: customerContact,
-      preparedBy: preparedBy,
-      reviewedBy: reviewedBy,
+      // prefer the real columns; fall back to values parsed from the old description
+      customerAddress: (po as any).supplierAddress || customerAddress,
+      customerContact: (po as any).supplierContact || customerContact,
+      preparedBy: (po as any).preparedBy || preparedBy,
+      reviewedBy: (po as any).reviewedBy || reviewedBy,
       poType: poType,
-      paymentTerms: paymentTerms,
+      paymentTerms: (po as any).paymentTerms || paymentTerms,
       lineItems: lineItems,
       subTotal: subTotal,
       otherCharges: otherCharges,
       vatAmount: vatAmount,
       totalAmount: totalAmount,
-      termsAndConditions: termsAndConditions,
+      termsAndConditions: (po as any).termsAndConditions || termsAndConditions,
+      docDate: ((po as any).docDate || (po as any).createdDate || '').slice(0, 10),
     });
     setIsEditing(true);
   };
@@ -263,9 +274,28 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
     
     try {
       // Only update backend - UI is already updated by dropdown onChange
-      const updated = await updatePurchaseOrder(selectedPO.id, { status: newStatus, description: editForm.description });
+      const updated = await updatePurchaseOrder(selectedPO.id, {
+        status: newStatus,
+        description: editForm.description,
+        // editable PDF header fields (real columns)
+        docDate: editForm.docDate || null,
+        preparedBy: editForm.preparedBy || null,
+        reviewedBy: editForm.reviewedBy || null,
+        supplierAddress: editForm.customerAddress || null,
+        supplierContact: editForm.customerContact || null,
+        paymentTerms: editForm.paymentTerms || null,
+        termsAndConditions: editForm.termsAndConditions || null,
+      });
       console.log('Backend updated:', updated);
-      
+
+      // Merge the saved row back into the visible list so the UI reflects the edit
+      if (updated && (updated as any).id) {
+        setPurchaseOrders(prev => prev.map(p =>
+          p.id === poId ? { ...p, ...(updated as any) } : p
+        ));
+        setSelectedPO(prev => (prev ? { ...prev, ...(updated as any) } : prev));
+      }
+
       setIsEditing(false);
       toast.success('Purchase order updated successfully');
       
@@ -310,10 +340,10 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
     let lineItems = [];
     let supplierData = {
       name: po.client,
-      address: '[Supplier Address]',
-      contact: '[Supplier Contact]',
-      preparedBy: '[Prepared By]',
-      reviewedBy: '[Reviewed By]',
+      address: '',
+      contact: '',
+      preparedBy: 'Kim Karen D. Tagle',
+      reviewedBy: '',
     };
 
     try {
@@ -337,6 +367,15 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
       }
       if (po.description.includes('Reviewed By:')) {
         supplierData.reviewedBy = po.description.split('Reviewed By:')[1].split('\n')[0].trim();
+      }
+      // Prefer real columns over anything parsed from the description (converted/new orders)
+      if ((po as any).supplierAddress) supplierData.address = (po as any).supplierAddress;
+      if ((po as any).supplierContact) supplierData.contact = (po as any).supplierContact;
+      if ((po as any).preparedBy) supplierData.preparedBy = (po as any).preparedBy;
+      if ((po as any).reviewedBy) supplierData.reviewedBy = (po as any).reviewedBy;
+      // Never leave Prepared By blank — always default to the standard name
+      if (!supplierData.preparedBy || !supplierData.preparedBy.trim()) {
+        supplierData.preparedBy = 'Kim Karen D. Tagle';
       }
     } catch (error) {
       console.error('Error parsing PO description:', error);
@@ -364,6 +403,21 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
         amount: po.amount
       }];
     }
+
+    // Editable PDF header values — prefer the order's real columns, else fall back to defaults.
+    const poDocDate = (po as any).docDate || po.createdDate;
+    const poPaymentTerms = (po as any).paymentTerms || '30 days from receipt/acceptance';
+    const PO_DEFAULT_TC = [
+      'Prices quoted are firm and valid for 30 days from PO date.',
+      'Delivery shall be made to the specified address within the agreed timeframe.',
+      'Materials shall conform to specifications and quality standards.',
+      'Payment shall be made within 30 days from receipt and acceptance of materials.',
+      'This PO is governed by the laws of the Republic of the Philippines.',
+    ];
+    const poTcLines = ((po as any).termsAndConditions
+      ? String((po as any).termsAndConditions).split('\n').map((l: string) => l.replace(/^\s*\d+\.\s*/, '').trim()).filter(Boolean)
+      : PO_DEFAULT_TC);
+    const poTcHtml = poTcLines.map((l: string, i: number) => `${i + 1}. ${l}`).join('<br>');
 
     const printContent = `
       <!DOCTYPE html>
@@ -601,7 +655,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
           </div>
           <div class="info-box">
             <div class="info-content">
-              <strong>PO Date:</strong> ${formatDate(po.createdDate)}<br>
+              <strong>PO Date:</strong> ${formatDate(poDocDate)}<br>
               <strong>PO Number:</strong> ${po.poNumber}<br>
               <strong>Page:</strong> 1 of 1<br>
               <strong>PO TYPE:</strong> Domestic Foreign<br>
@@ -612,7 +666,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
         
         <!-- PAYMENT TERMS -->
         <div class="payment-terms">
-          PAYMENT TERMS: 30 days from receipt/acceptance
+          PAYMENT TERMS: ${poPaymentTerms}
         </div>
         
         <!-- LINE ITEMS TABLE -->
@@ -666,11 +720,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
         <!-- TERMS & CONDITIONS -->
         <div class="terms-section">
           <strong>TERMS & CONDITIONS:</strong><br>
-          1. Prices quoted are firm and valid for 30 days from PO date.<br>
-          2. Delivery shall be made to the specified address within the agreed timeframe.<br>
-          3. Materials shall conform to specifications and quality standards.<br>
-          4. Payment shall be made within 30 days from receipt and acceptance of materials.<br>
-          5. This PO is governed by the laws of the Republic of the Philippines.
+          ${poTcHtml}
         </div>
         
         <!-- SIGNATURE SECTION -->
@@ -680,12 +730,12 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
             <div class="signature-box">
               <div class="signature-title">Prepared By:</div>
               <div class="signature-line"></div>
-              <div class="signature-name">Name: ${supplierData.preparedBy}</div>
+              <div class="signature-name">${supplierData.preparedBy}</div>
             </div>
             <div class="signature-box">
               <div class="signature-title">Reviewed By:</div>
               <div class="signature-line"></div>
-              <div class="signature-name">Name: ${supplierData.reviewedBy}</div>
+              <div class="signature-name">${supplierData.reviewedBy}</div>
             </div>
             <div class="signature-box">
               <div class="signature-title">Approved By:</div>
@@ -1453,14 +1503,18 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
             borderRadius: '16px',
             boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
             width: '100%',
-            maxWidth: '500px'
+            maxWidth: '500px',
+            maxHeight: 'calc(100vh - 32px)',
+            display: 'flex',
+            flexDirection: 'column'
           }}>
             <div style={{
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
               padding: '24px',
-              borderBottom: '1px solid #e5e7eb'
+              borderBottom: '1px solid #e5e7eb',
+              flexShrink: 0
             }}>
               <h2 style={{
                 fontSize: '20px',
@@ -1492,7 +1546,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
               </button>
             </div>
 
-            <form onSubmit={(e) => { e.preventDefault(); handleSaveEdit(); }} style={{ padding: '24px' }}>
+            <form onSubmit={(e) => { e.preventDefault(); handleSaveEdit(); }} style={{ padding: '24px', overflowY: 'auto', flex: 1, minHeight: 0 }}>
               <div style={{
                 display: 'flex',
                 flexDirection: 'column',
@@ -1632,6 +1686,41 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                       transition: 'all 0.2s ease'
                     }}
                   />
+                </div>
+
+                {/* Document / PDF header fields */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '6px', fontFamily: 'Inter, sans-serif' }}>Document date</label>
+                    <input type="date" value={editForm.docDate} onChange={e => setEditForm({ ...editForm, docDate: e.target.value })}
+                      style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', fontFamily: 'Inter, sans-serif', backgroundColor: 'white' }} />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '6px', fontFamily: 'Inter, sans-serif' }}>Prepared By</label>
+                    <input type="text" value={editForm.preparedBy} onChange={e => setEditForm({ ...editForm, preparedBy: e.target.value })} placeholder="Kim Karen D. Tagle"
+                      style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', fontFamily: 'Inter, sans-serif', backgroundColor: 'white' }} />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '6px', fontFamily: 'Inter, sans-serif' }}>Supplier address</label>
+                  <textarea value={editForm.customerAddress} onChange={e => setEditForm({ ...editForm, customerAddress: e.target.value })} rows={2}
+                    style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', fontFamily: 'Inter, sans-serif', backgroundColor: 'white', resize: 'vertical' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '6px', fontFamily: 'Inter, sans-serif' }}>Supplier contact</label>
+                  <input type="text" value={editForm.customerContact} onChange={e => setEditForm({ ...editForm, customerContact: e.target.value })}
+                    style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', fontFamily: 'Inter, sans-serif', backgroundColor: 'white' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '6px', fontFamily: 'Inter, sans-serif' }}>Payment terms</label>
+                  <input type="text" value={editForm.paymentTerms} onChange={e => setEditForm({ ...editForm, paymentTerms: e.target.value })} placeholder="30 days from receipt/acceptance"
+                    style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', fontFamily: 'Inter, sans-serif', backgroundColor: 'white' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '6px', fontFamily: 'Inter, sans-serif' }}>Terms &amp; conditions</label>
+                  <textarea value={editForm.termsAndConditions} onChange={e => setEditForm({ ...editForm, termsAndConditions: e.target.value })} rows={3} placeholder="One per line; leave blank to use the standard terms"
+                    style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', fontFamily: 'Inter, sans-serif', backgroundColor: 'white', resize: 'vertical' }} />
                 </div>
               </div>
 

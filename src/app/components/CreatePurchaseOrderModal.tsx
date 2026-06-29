@@ -38,7 +38,7 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
     poType: 'domestic' as 'domestic' | 'foreign',
     paymentTerms: '30 days from receipt/acceptance',
     termsAndConditions: `1. Prices quoted are firm and valid for 30 days from PO date.\n2. Delivery shall be made to the specified address within the agreed timeframe.\n3. Materials shall conform to specifications and quality standards.\n4. Payment shall be made within 30 days from receipt and acceptance of materials.\n5. This PO is governed by the laws of the Republic of the Philippines.`,
-    preparedBy: '',
+    preparedBy: 'Kim Karen D. Tagle',
     reviewedBy: '',
     vendorName: '',
     vendorAddress: '',

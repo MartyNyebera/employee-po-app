@@ -65,3 +65,23 @@ export function requireSuperAdmin(req, res, next) {
   }
   next();
 }
+
+// Effective role for the role-based dashboards: a super admin is treated as "owner",
+// otherwise the stored role ('admin' | 'bookkeeper' | 'purchasing' | 'employee').
+export function effectiveRole(user) {
+  if (!user) return null;
+  if (user.isSuperAdmin) return 'owner';
+  return user.role || null;
+}
+
+// Gate a route to a set of effective roles, e.g. requireRole(['owner','admin','purchasing']).
+// 'admin' in the allow-list always also admits the owner (super admin).
+export function requireRole(allowed) {
+  const allow = new Set(allowed);
+  if (allow.has('admin')) allow.add('owner'); // owner can do anything an admin can
+  return function (req, res, next) {
+    const role = effectiveRole(req.user);
+    if (role && allow.has(role)) return next();
+    return res.status(403).json({ error: 'Forbidden', requiredRole: allowed });
+  };
+}

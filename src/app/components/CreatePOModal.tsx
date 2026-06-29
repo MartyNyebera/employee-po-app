@@ -27,7 +27,7 @@ export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
     soType: 'domestic' as 'domestic' | 'foreign',
     paymentTerms: '30 days from receipt/acceptance',
     termsAndConditions: `1. Prices quoted are firm and valid for 30 days from SO date.\n2. Delivery shall be made to the specified address within the agreed timeframe.\n3. Materials shall conform to specifications and quality standards.\n4. Payment shall be made within 30 days from receipt and acceptance of materials.\n5. This SO is governed by the laws of the Republic of the Philippines.`,
-    preparedBy: '',
+    preparedBy: 'Kim Karen D. Tagle',
     reviewedBy: '',
     customerName: '',
     customerAddress: '',
@@ -35,7 +35,31 @@ export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
     ewt: 0,
     vatType: 'vatable' as 'vatable' | 'non-vatable',
     vatAmount: 0,
+    // CRM / trading details (match converted sales orders)
+    customerId: '',
+    line: '',
+    source: '',
+    costAmount: '' as number | string,
   });
+
+  const [customers, setCustomers] = useState<Array<{ id: string; name: string; location?: string; contactPerson?: string; phone?: string }>>([]);
+  useEffect(() => {
+    fetchApi<any[]>('/customers').then(setCustomers).catch(() => setCustomers([]));
+  }, []);
+
+  const SO_LINES = ['Sheet metal (panels)', 'Sheet metal (branded)', 'Trading (electrical)', 'Trading (mechanical)', 'Fabrication (subcon)'];
+  const SO_SOURCES = ['Referral', 'Facebook', 'Marketplace', 'Ad', 'Walk-in', 'Website', 'Existing contact'];
+
+  const pickCustomer = (id: string) => {
+    const c = customers.find(x => x.id === id);
+    setForm(f => ({
+      ...f,
+      customerId: id,
+      customerName: c ? c.name : f.customerName,
+      customerAddress: c && c.location ? c.location : f.customerAddress,
+      customerContact: c && (c.phone || c.contactPerson) ? (c.phone || c.contactPerson || '') : f.customerContact,
+    }));
+  };
 
   const [lineItems, setLineItems] = useState<LineItem[]>([
     {
@@ -189,6 +213,18 @@ export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
       const soData = {
         soNumber: form.soNumber,
         client: form.customerName,
+        customerId: form.customerId || null,
+        line: form.line || null,
+        source: form.source || null,
+        costAmount: form.costAmount === '' ? null : Number(form.costAmount),
+        // editable PDF header fields (real columns now)
+        docDate: form.soDate || new Date().toISOString().split('T')[0],
+        preparedBy: form.preparedBy || 'Kim Karen D. Tagle',
+        reviewedBy: form.reviewedBy || null,
+        customerAddress: form.customerAddress || null,
+        customerContact: form.customerContact || null,
+        paymentTerms: form.paymentTerms || null,
+        termsAndConditions: form.termsAndConditions || null,
         description: `Address: ${form.customerAddress}\n\nContact: ${form.customerContact}\n\nPrepared By: ${form.preparedBy}\n\nReviewed By: ${form.reviewedBy}\n\nLine Items: ${JSON.stringify(lineItems)}`,
         amount: calculateTotal(),
         deliveryDate: form.deliveryDate,
@@ -266,6 +302,21 @@ export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
           <div className="border border-slate-200 rounded-lg p-4">
             <h3 className="font-bold text-slate-900 mb-3">CUSTOMER INFORMATION</h3>
             <div className="grid grid-cols-1 gap-4">
+              {customers.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Existing customer
+                  </label>
+                  <select
+                    value={form.customerId}
+                    onChange={e => pickCustomer(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">— pick a customer, or type below —</option>
+                    {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
                   Customer Name <span className="text-red-500">*</span>
@@ -303,6 +354,46 @@ export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
                   placeholder="Customer phone or email"
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
+              </div>
+            </div>
+          </div>
+
+          {/* B2. TRADING DETAILS SECTION (line / source / cost — matches converted SOs) */}
+          <div className="border border-slate-200 rounded-lg p-4">
+            <h3 className="font-bold text-slate-900 mb-3">TRADING DETAILS</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Trading line</label>
+                <select
+                  value={form.line}
+                  onChange={e => setForm(f => ({ ...f, line: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">— select line —</option>
+                  {SO_LINES.map(l => <option key={l} value={l}>{l}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Lead source</label>
+                <select
+                  value={form.source}
+                  onChange={e => setForm(f => ({ ...f, source: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">— select source —</option>
+                  {SO_SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div className="col-span-2">
+                <label className="block text-sm font-medium text-slate-700 mb-1">Cost / COGS (supplier cost, ₱)</label>
+                <input
+                  type="number"
+                  value={form.costAmount}
+                  onChange={e => setForm(f => ({ ...f, costAmount: e.target.value }))}
+                  placeholder="What this sale costs us (optional)"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-xs text-slate-500 mt-1">Used for margin. Selling price comes from the line items below.</p>
               </div>
             </div>
           </div>

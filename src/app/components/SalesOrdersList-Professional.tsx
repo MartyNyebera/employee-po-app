@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { fetchPurchaseOrders, createPurchaseOrder, updatePurchaseOrder, deletePurchaseOrder, deleteSalesOrder, fetchSalesOrders, createSalesOrder, updateSalesOrder } from '../api/client';
+import { fetchPurchaseOrders, createPurchaseOrder, updatePurchaseOrder, deletePurchaseOrder, deleteSalesOrder, fetchSalesOrders, createSalesOrder, updateSalesOrder, fetchApi } from '../api/client';
 import { fetchVehicles, type Vehicle } from '../api/fleet';
 import { CreateSOModal } from './CreatePOModal';
 import { FileText, Plus, DollarSign, Calendar, Building2, Truck, Edit, Filter, Printer, Trash2, X, Search, Check, Package } from 'lucide-react';
@@ -68,7 +68,25 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
     customerContact: '',
     preparedBy: '',
     reviewedBy: '',
+    // CRM / trading details
+    customerId: '',
+    amount: '' as number | string,
+    costAmount: '' as number | string,
+    line: '',
+    source: '',
+    // editable PDF header fields
+    docDate: '',
+    paymentTerms: '',
+    termsAndConditions: '',
   });
+
+  const [customers, setCustomers] = useState<Array<{ id: string; name: string; location?: string; contactPerson?: string; phone?: string }>>([]);
+  useEffect(() => {
+    fetchApi<any[]>('/customers').then(setCustomers).catch(() => setCustomers([]));
+  }, []);
+
+  const SO_LINES = ['Sheet metal (panels)', 'Sheet metal (branded)', 'Trading (electrical)', 'Trading (mechanical)', 'Fabrication (subcon)'];
+  const SO_SOURCES = ['Referral', 'Facebook', 'Marketplace', 'Ad', 'Walk-in', 'Website', 'Existing contact'];
 
   useEffect(() => {
     const loadData = async () => {
@@ -269,10 +287,19 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
       status: po.status,
       description: description || '',
       customerName: customerName,
-      customerAddress: customerAddress,
-      customerContact: customerContact,
-      preparedBy: preparedBy,
-      reviewedBy: reviewedBy,
+      // prefer the real columns; fall back to values parsed out of the old description
+      customerAddress: (po as any).customerAddress || customerAddress,
+      customerContact: (po as any).customerContact || customerContact,
+      preparedBy: (po as any).preparedBy || preparedBy,
+      reviewedBy: (po as any).reviewedBy || reviewedBy,
+      customerId: (po as any).customerId || '',
+      amount: (po as any).amount ?? '',
+      costAmount: (po as any).costAmount ?? '',
+      line: (po as any).line || '',
+      source: (po as any).source || '',
+      docDate: ((po as any).docDate || (po as any).createdDate || '').slice(0, 10),
+      paymentTerms: (po as any).paymentTerms || '',
+      termsAndConditions: (po as any).termsAndConditions || '',
     });
     setIsEditing(true);
   };
@@ -290,10 +317,23 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
       }
       
       // Update backend first
-      const updated = await updateSalesOrder(selectedPO.id, { 
-        status: editForm.status, 
+      const updated = await updateSalesOrder(selectedPO.id, {
+        status: editForm.status,
         description: newDescription,
-        client: editForm.customerName
+        client: editForm.customerName,
+        customerId: editForm.customerId || null,
+        amount: editForm.amount === '' ? undefined : Number(editForm.amount),
+        costAmount: editForm.costAmount === '' ? null : Number(editForm.costAmount),
+        line: editForm.line || null,
+        source: editForm.source || null,
+        // editable PDF header fields
+        docDate: editForm.docDate || null,
+        preparedBy: editForm.preparedBy || null,
+        reviewedBy: editForm.reviewedBy || null,
+        customerAddress: editForm.customerAddress || null,
+        customerContact: editForm.customerContact || null,
+        paymentTerms: editForm.paymentTerms || null,
+        termsAndConditions: editForm.termsAndConditions || null,
       });
       
       console.log('🔧 Updated Sales Order response:', updated);
@@ -378,9 +418,9 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
     let customerData = {
       name: po.client,
       address: '',
-      contact: '[Customer Contact]',
-      preparedBy: '[Prepared By]',
-      reviewedBy: '[Reviewed By]',
+      contact: '',
+      preparedBy: 'Kim Karen D. Tagle',
+      reviewedBy: '',
     };
 
     try {
@@ -404,6 +444,15 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
       }
       if (po.description.includes('Reviewed By:')) {
         customerData.reviewedBy = po.description.split('Reviewed By:')[1].split('\n')[0].trim();
+      }
+      // Prefer real columns over anything parsed from the description (converted/new orders)
+      if ((po as any).customerAddress) customerData.address = (po as any).customerAddress;
+      if ((po as any).customerContact) customerData.contact = (po as any).customerContact;
+      if ((po as any).preparedBy) customerData.preparedBy = (po as any).preparedBy;
+      if ((po as any).reviewedBy) customerData.reviewedBy = (po as any).reviewedBy;
+      // Never leave Prepared By blank — always default to the standard name
+      if (!customerData.preparedBy || !customerData.preparedBy.trim()) {
+        customerData.preparedBy = 'Kim Karen D. Tagle';
       }
     } catch (error) {
       console.error('Error parsing SO description:', error);
@@ -431,6 +480,21 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
         amount: po.amount
       }];
     }
+
+    // Editable PDF header values — prefer the order's real columns, else fall back to defaults.
+    const soDocDate = (po as any).docDate || po.createdDate;
+    const soPaymentTerms = (po as any).paymentTerms || '30 days from receipt/acceptance';
+    const DEFAULT_TC = [
+      'Prices quoted are firm and valid for 30 days from SO date.',
+      'Delivery shall be made to the specified address within the agreed timeframe.',
+      'Materials shall conform to specifications and quality standards.',
+      'Payment shall be made within 30 days from receipt and acceptance of materials.',
+      'This SO is governed by the laws of the Republic of the Philippines.',
+    ];
+    const tcLines = ((po as any).termsAndConditions
+      ? String((po as any).termsAndConditions).split('\n').map((l: string) => l.replace(/^\s*\d+\.\s*/, '').trim()).filter(Boolean)
+      : DEFAULT_TC);
+    const tcHtml = tcLines.map((l: string, i: number) => `${i + 1}. ${l}`).join('<br>');
 
     const printContent = `
       <!DOCTYPE html>
@@ -668,7 +732,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
           </div>
           <div class="info-box">
             <div class="info-content">
-              <strong>SO Date:</strong> ${formatDate(po.createdDate)}<br>
+              <strong>SO Date:</strong> ${formatDate(soDocDate)}<br>
               <strong>SO Number:</strong> ${po.soNumber}<br>
               <strong>Page:</strong> 1 of 1<br>
               <strong>SO TYPE:</strong> ☑ Domestic ☐ Foreign<br>
@@ -679,7 +743,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
         
         <!-- PAYMENT TERMS -->
         <div class="payment-terms">
-          PAYMENT TERMS: 30 days from receipt/acceptance
+          PAYMENT TERMS: ${soPaymentTerms}
         </div>
         
         <!-- LINE ITEMS TABLE -->
@@ -733,11 +797,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
         <!-- TERMS & CONDITIONS -->
         <div class="terms-section">
           <strong>TERMS & CONDITIONS:</strong><br>
-          1. Prices quoted are firm and valid for 30 days from SO date.<br>
-          2. Delivery shall be made to the specified address within the agreed timeframe.<br>
-          3. Materials shall conform to specifications and quality standards.<br>
-          4. Payment shall be made within 30 days from receipt and acceptance of materials.<br>
-          5. This SO is governed by the laws of the Republic of the Philippines.
+          ${tcHtml}
         </div>
         
         <!-- SIGNATURE SECTION -->
@@ -747,12 +807,12 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
             <div class="signature-box">
               <div class="signature-title">Prepared By:</div>
               <div class="signature-line"></div>
-              <div class="signature-name">Name: ${customerData.preparedBy}</div>
+              <div class="signature-name">${customerData.preparedBy}</div>
             </div>
             <div class="signature-box">
               <div class="signature-title">Reviewed By:</div>
               <div class="signature-line"></div>
-              <div class="signature-name">Name: ${customerData.reviewedBy}</div>
+              <div class="signature-name">${customerData.reviewedBy}</div>
             </div>
             <div class="signature-box">
               <div class="signature-title">Approved By:</div>
@@ -1558,14 +1618,18 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
             borderRadius: '16px',
             boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
             width: '100%',
-            maxWidth: '500px'
+            maxWidth: '500px',
+            maxHeight: 'calc(100vh - 32px)',
+            display: 'flex',
+            flexDirection: 'column'
           }}>
             <div style={{
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
               padding: '24px',
-              borderBottom: '1px solid #e5e7eb'
+              borderBottom: '1px solid #e5e7eb',
+              flexShrink: 0
             }}>
               <h2 style={{
                 fontSize: '20px',
@@ -1591,7 +1655,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
               </button>
             </div>
 
-            <form onSubmit={(e) => { e.preventDefault(); handleSaveEdit(); }} style={{ padding: '24px' }}>
+            <form onSubmit={(e) => { e.preventDefault(); handleSaveEdit(); }} style={{ padding: '24px', overflowY: 'auto', flex: 1, minHeight: 0 }}>
               <div style={{
                 display: 'flex',
                 flexDirection: 'column',
@@ -1710,6 +1774,120 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
                       transition: 'all 0.2s ease'
                     }}
                   />
+                </div>
+
+                {customers.length > 0 && (
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '6px', fontFamily: 'Inter, sans-serif' }}>
+                      Link to customer
+                    </label>
+                    <select
+                      value={editForm.customerId}
+                      onChange={e => {
+                        const c = customers.find(x => x.id === e.target.value);
+                        setEditForm({ ...editForm, customerId: e.target.value, customerName: c ? c.name : editForm.customerName });
+                      }}
+                      style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', fontFamily: 'Inter, sans-serif', backgroundColor: 'white', cursor: 'pointer' }}
+                    >
+                      <option value="">— not linked —</option>
+                      {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+                )}
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '6px', fontFamily: 'Inter, sans-serif' }}>
+                      Selling price (₱)
+                    </label>
+                    <input
+                      type="number"
+                      value={editForm.amount}
+                      onChange={e => setEditForm({ ...editForm, amount: e.target.value })}
+                      placeholder="Client price"
+                      style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', fontFamily: 'Inter, sans-serif', backgroundColor: 'white' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '6px', fontFamily: 'Inter, sans-serif' }}>
+                      Cost / COGS (₱)
+                    </label>
+                    <input
+                      type="number"
+                      value={editForm.costAmount}
+                      onChange={e => setEditForm({ ...editForm, costAmount: e.target.value })}
+                      placeholder="Supplier cost"
+                      style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', fontFamily: 'Inter, sans-serif', backgroundColor: 'white' }}
+                    />
+                  </div>
+                </div>
+                {editForm.amount !== '' && editForm.costAmount !== '' && (
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: (Number(editForm.amount) - Number(editForm.costAmount)) >= 0 ? '#059669' : '#dc2626', marginTop: '-6px' }}>
+                    Margin: ₱{(Number(editForm.amount) - Number(editForm.costAmount)).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                  </div>
+                )}
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '6px', fontFamily: 'Inter, sans-serif' }}>
+                      Trading line
+                    </label>
+                    <select
+                      value={editForm.line}
+                      onChange={e => setEditForm({ ...editForm, line: e.target.value })}
+                      style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', fontFamily: 'Inter, sans-serif', backgroundColor: 'white', cursor: 'pointer' }}
+                    >
+                      <option value="">— select line —</option>
+                      {SO_LINES.map(l => <option key={l} value={l}>{l}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '6px', fontFamily: 'Inter, sans-serif' }}>
+                      Lead source
+                    </label>
+                    <select
+                      value={editForm.source}
+                      onChange={e => setEditForm({ ...editForm, source: e.target.value })}
+                      style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', fontFamily: 'Inter, sans-serif', backgroundColor: 'white', cursor: 'pointer' }}
+                    >
+                      <option value="">— select source —</option>
+                      {SO_SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Document / PDF header fields */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '6px', fontFamily: 'Inter, sans-serif' }}>
+                      Document date
+                    </label>
+                    <input type="date" value={editForm.docDate} onChange={e => setEditForm({ ...editForm, docDate: e.target.value })}
+                      style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', fontFamily: 'Inter, sans-serif', backgroundColor: 'white' }} />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '6px', fontFamily: 'Inter, sans-serif' }}>
+                      Prepared By
+                    </label>
+                    <input type="text" value={editForm.preparedBy} onChange={e => setEditForm({ ...editForm, preparedBy: e.target.value })} placeholder="Kim Karen D. Tagle"
+                      style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', fontFamily: 'Inter, sans-serif', backgroundColor: 'white' }} />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '6px', fontFamily: 'Inter, sans-serif' }}>
+                    Payment terms
+                  </label>
+                  <input type="text" value={editForm.paymentTerms} onChange={e => setEditForm({ ...editForm, paymentTerms: e.target.value })} placeholder="30 days from receipt/acceptance"
+                    style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', fontFamily: 'Inter, sans-serif', backgroundColor: 'white' }} />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '6px', fontFamily: 'Inter, sans-serif' }}>
+                    Terms &amp; conditions
+                  </label>
+                  <textarea value={editForm.termsAndConditions} onChange={e => setEditForm({ ...editForm, termsAndConditions: e.target.value })} rows={3} placeholder="One per line; leave blank to use the standard terms"
+                    style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', fontFamily: 'Inter, sans-serif', backgroundColor: 'white', resize: 'vertical' }} />
                 </div>
 
                 <div>
