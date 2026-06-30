@@ -302,47 +302,72 @@ async function runMigrations() {
     `);
     console.log('✅ gps_locations table ready');
 
+    // Create vehicles table FIRST — drivers/deliveries below reference vehicles(id),
+    // and runMigrations() (npm run server) is the only migration that runs on Render.
+    // Without this, the drivers CREATE throws "relation vehicles does not exist" and
+    // aborts the whole migration before the CRM tables (suppliers/customers/inquiries) are made.
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS vehicles (
+          id TEXT PRIMARY KEY,
+          unit_name TEXT NOT NULL,
+          vehicle_type TEXT NOT NULL,
+          plate_number TEXT,
+          current_odometer NUMERIC(10,2) DEFAULT 0,
+          tracker_id TEXT,
+          pms_status TEXT DEFAULT 'OK',
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      console.log('✅ vehicles table ready');
+    } catch (err) { console.log('ℹ️ vehicles table skipped:', err.message); }
+
     // Create drivers table
-    await query(`
-      CREATE TABLE IF NOT EXISTS drivers (
-        id TEXT PRIMARY KEY,
-        driver_name TEXT NOT NULL,
-        contact TEXT NOT NULL,
-        email TEXT,
-        license_number TEXT NOT NULL,
-        license_expiry DATE NOT NULL,
-        assigned_vehicle_id TEXT REFERENCES vehicles(id) ON DELETE SET NULL,
-        status TEXT NOT NULL DEFAULT 'Active',
-        join_date DATE NOT NULL,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
-    console.log('✅ drivers table ready');
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS drivers (
+          id TEXT PRIMARY KEY,
+          driver_name TEXT NOT NULL,
+          contact TEXT NOT NULL,
+          email TEXT,
+          license_number TEXT NOT NULL,
+          license_expiry DATE NOT NULL,
+          assigned_vehicle_id TEXT REFERENCES vehicles(id) ON DELETE SET NULL,
+          status TEXT NOT NULL DEFAULT 'Active',
+          join_date DATE NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      console.log('✅ drivers table ready');
+    } catch (err) { console.log('ℹ️ drivers table skipped:', err.message); }
 
     // Create deliveries table
-    await query(`
-      CREATE TABLE IF NOT EXISTS deliveries (
-        id TEXT PRIMARY KEY,
-        so_number TEXT NOT NULL,
-        vehicle_id TEXT REFERENCES vehicles(id) ON DELETE SET NULL,
-        driver_id TEXT REFERENCES drivers(id) ON DELETE SET NULL,
-        customer_name TEXT NOT NULL,
-        customer_address TEXT NOT NULL,
-        delivery_date TIMESTAMPTZ NOT NULL,
-        status TEXT NOT NULL DEFAULT 'Pending',
-        assigned_time TIMESTAMPTZ,
-        picked_up_time TIMESTAMPTZ,
-        in_transit_time TIMESTAMPTZ,
-        arrived_time TIMESTAMPTZ,
-        completed_time TIMESTAMPTZ,
-        proof_of_delivery_url TEXT,
-        notes TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
-    console.log('✅ deliveries table ready');
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS deliveries (
+          id TEXT PRIMARY KEY,
+          so_number TEXT NOT NULL,
+          vehicle_id TEXT REFERENCES vehicles(id) ON DELETE SET NULL,
+          driver_id TEXT REFERENCES drivers(id) ON DELETE SET NULL,
+          customer_name TEXT NOT NULL,
+          customer_address TEXT NOT NULL,
+          delivery_date TIMESTAMPTZ NOT NULL,
+          status TEXT NOT NULL DEFAULT 'Pending',
+          assigned_time TIMESTAMPTZ,
+          picked_up_time TIMESTAMPTZ,
+          in_transit_time TIMESTAMPTZ,
+          arrived_time TIMESTAMPTZ,
+          completed_time TIMESTAMPTZ,
+          proof_of_delivery_url TEXT,
+          notes TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      console.log('✅ deliveries table ready');
+    } catch (err) { console.log('ℹ️ deliveries table skipped:', err.message); }
 
     // Add reservation columns to inventory (non-breaking)
     try {
@@ -403,73 +428,79 @@ async function runMigrations() {
     // ============================================================
 
     // Suppliers directory
-    await query(`
-      CREATE TABLE IF NOT EXISTS suppliers (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        type TEXT CHECK (type IN ('Electrical parts','Mechanical parts','Both','Fabrication (subcon)','Raw materials')),
-        products_supplied TEXT,
-        contact_person TEXT,
-        phone TEXT,
-        email TEXT,
-        location TEXT,
-        payment_terms TEXT,
-        price_level TEXT CHECK (price_level IN ('Cheap','Average','Expensive')),
-        reliability TEXT CHECK (reliability IN ('Excellent','Good','OK','Poor')),
-        last_ordered DATE,
-        notes TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
-    console.log('✅ suppliers table ready');
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS suppliers (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          type TEXT CHECK (type IN ('Electrical parts','Mechanical parts','Both','Fabrication (subcon)','Raw materials')),
+          products_supplied TEXT,
+          contact_person TEXT,
+          phone TEXT,
+          email TEXT,
+          location TEXT,
+          payment_terms TEXT,
+          price_level TEXT CHECK (price_level IN ('Cheap','Average','Expensive')),
+          reliability TEXT CHECK (reliability IN ('Excellent','Good','OK','Poor')),
+          last_ordered DATE,
+          notes TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      console.log('✅ suppliers table ready');
+    } catch (err) { console.log('ℹ️ suppliers table skipped:', err.message); }
 
     // Customers directory (light CRM)
-    await query(`
-      CREATE TABLE IF NOT EXISTS customers (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        type TEXT CHECK (type IN ('Contractor','Builder','Factory','Distributor','Maintenance','Other')),
-        contact_person TEXT,
-        phone TEXT,
-        email TEXT,
-        location TEXT,
-        what_they_buy TEXT,
-        source TEXT CHECK (source IN ('Referral','Facebook','Marketplace','Ad','Walk-in','Website','Existing contact')),
-        status TEXT CHECK (status IN ('Lead','Active','Repeat','Inactive')),
-        last_contact DATE,
-        notes TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
-    console.log('✅ customers table ready');
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS customers (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          type TEXT CHECK (type IN ('Contractor','Builder','Factory','Distributor','Maintenance','Other')),
+          contact_person TEXT,
+          phone TEXT,
+          email TEXT,
+          location TEXT,
+          what_they_buy TEXT,
+          source TEXT CHECK (source IN ('Referral','Facebook','Marketplace','Ad','Walk-in','Website','Existing contact')),
+          status TEXT CHECK (status IN ('Lead','Active','Repeat','Inactive')),
+          last_contact DATE,
+          notes TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      console.log('✅ customers table ready');
+    } catch (err) { console.log('ℹ️ customers table skipped:', err.message); }
 
     // Inquiries / Quotations (sales pipeline; captures both supplier + client quotes)
-    await query(`
-      CREATE TABLE IF NOT EXISTS inquiries (
-        id TEXT PRIMARY KEY,
-        inquiry_date DATE NOT NULL,
-        customer_id TEXT REFERENCES customers(id) ON DELETE SET NULL,
-        customer_name TEXT,
-        contact TEXT,
-        what_they_want TEXT,
-        line TEXT,
-        source TEXT CHECK (source IN ('Referral','Facebook','Marketplace','Ad','Walk-in','Website','Existing contact')),
-        status TEXT CHECK (status IN ('New','Quoted','Won','Lost','Follow-up')) DEFAULT 'New',
-        quote_amount NUMERIC(12,2),
-        supplier_id TEXT REFERENCES suppliers(id) ON DELETE SET NULL,
-        supplier_name TEXT,
-        supplier_quote_amount NUMERIC(12,2),
-        follow_up_date DATE,
-        sales_order_id TEXT,
-        purchase_order_id TEXT,
-        notes TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
-    console.log('✅ inquiries table ready');
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS inquiries (
+          id TEXT PRIMARY KEY,
+          inquiry_date DATE NOT NULL,
+          customer_id TEXT REFERENCES customers(id) ON DELETE SET NULL,
+          customer_name TEXT,
+          contact TEXT,
+          what_they_want TEXT,
+          line TEXT,
+          source TEXT CHECK (source IN ('Referral','Facebook','Marketplace','Ad','Walk-in','Website','Existing contact')),
+          status TEXT CHECK (status IN ('New','Quoted','Won','Lost','Follow-up')) DEFAULT 'New',
+          quote_amount NUMERIC(12,2),
+          supplier_id TEXT REFERENCES suppliers(id) ON DELETE SET NULL,
+          supplier_name TEXT,
+          supplier_quote_amount NUMERIC(12,2),
+          follow_up_date DATE,
+          sales_order_id TEXT,
+          purchase_order_id TEXT,
+          notes TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      console.log('✅ inquiries table ready');
+    } catch (err) { console.log('ℹ️ inquiries table skipped:', err.message); }
 
     // Product Lines module removed — drop its table if present (FK was product_lines -> suppliers,
     // so this does NOT affect the suppliers table or any supplier data).
@@ -481,37 +512,41 @@ async function runMigrations() {
     }
 
     // Work Schedule (scope of works / Gantt)
-    await query(`
-      CREATE TABLE IF NOT EXISTS work_schedule (
-        id TEXT PRIMARY KEY,
-        phase TEXT,
-        scope TEXT NOT NULL,
-        responsible TEXT,
-        start_week INT,
-        duration_weeks INT,
-        status TEXT CHECK (status IN ('Not started','In progress','Done')) DEFAULT 'Not started',
-        sort_order INT,
-        notes TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
-    console.log('✅ work_schedule table ready');
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS work_schedule (
+          id TEXT PRIMARY KEY,
+          phase TEXT,
+          scope TEXT NOT NULL,
+          responsible TEXT,
+          start_week INT,
+          duration_weeks INT,
+          status TEXT CHECK (status IN ('Not started','In progress','Done')) DEFAULT 'Not started',
+          sort_order INT,
+          notes TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      console.log('✅ work_schedule table ready');
+    } catch (err) { console.log('ℹ️ work_schedule table skipped:', err.message); }
 
     // operational_costs — referenced by /api/dashboard/financial-summary but was never created
-    await query(`
-      CREATE TABLE IF NOT EXISTS operational_costs (
-        id SERIAL PRIMARY KEY,
-        cost_type TEXT NOT NULL,
-        amount NUMERIC(12,2) NOT NULL,
-        description TEXT,
-        cost_date DATE,
-        related_vehicle_id TEXT,
-        related_employee_id TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
-    console.log('✅ operational_costs table ready');
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS operational_costs (
+          id SERIAL PRIMARY KEY,
+          cost_type TEXT NOT NULL,
+          amount NUMERIC(12,2) NOT NULL,
+          description TEXT,
+          cost_date DATE,
+          related_vehicle_id TEXT,
+          related_employee_id TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      console.log('✅ operational_costs table ready');
+    } catch (err) { console.log('ℹ️ operational_costs table skipped:', err.message); }
 
     // Nullable links from existing tables to the new directories (non-breaking)
     try {
