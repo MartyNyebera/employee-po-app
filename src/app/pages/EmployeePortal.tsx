@@ -140,23 +140,27 @@ export function EmployeePortal() {
       ...(token && { Authorization: `Bearer ${token}` }),
       ...options?.headers,
     } as Record<string, string>;
-    
+    // Only retry idempotent requests — retrying a POST (e.g. submitting a material
+    // request) that already committed but errored afterward creates duplicates.
+    const method = (options?.method || 'GET').toUpperCase();
+    const isIdempotent = method === 'GET' || method === 'HEAD';
+
     const fetchWithRetry = async (retries = 3, delay = 1000): Promise<Response> => {
       try {
         const res = await fetch(`/api${path}`, { ...options, headers });
-        
-        // Check if status is retryable
-        const shouldRetry = [408, 429, 500, 502, 503, 504].includes(res.status);
-        
+
+        // Check if status is retryable (idempotent methods only)
+        const shouldRetry = isIdempotent && [408, 429, 500, 502, 503, 504].includes(res.status);
+
         if (!res.ok && shouldRetry && retries > 0) {
           await new Promise(resolve => setTimeout(resolve, delay));
           return fetchWithRetry(retries - 1, delay * 2);
         }
-        
+
         return res;
       } catch (error) {
-        // Network errors - retry
-        if (retries > 0) {
+        // Network errors - retry idempotent requests only
+        if (isIdempotent && retries > 0) {
           await new Promise(resolve => setTimeout(resolve, delay));
           return fetchWithRetry(retries - 1, delay * 2);
         }

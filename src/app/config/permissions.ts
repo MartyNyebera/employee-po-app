@@ -31,7 +31,9 @@ const BASE_ACCESS: Record<string, Partial<Record<Role, Access>>> = {
   inventory:        { owner: 'manage', admin: 'manage', bookkeeper: 'view',   purchasing: 'manage' },
   'request-form':   { owner: 'manage', admin: 'manage', bookkeeper: 'none',   purchasing: 'manage' },
   // Planning
-  'work-schedule':  { owner: 'manage', admin: 'manage', bookkeeper: 'none',   purchasing: 'none'   },
+  'work-schedule':      { owner: 'manage', admin: 'manage', bookkeeper: 'none',   purchasing: 'none'   },
+  // Daily tasks + schedule settings write capability — mirrors work-schedule (owner/admin only)
+  'work-schedule-tasks':{ owner: 'manage', admin: 'manage', bookkeeper: 'none',   purchasing: 'none'   },
   // Fleet / ops — owner + admin only
   fleet:                { owner: 'manage', admin: 'manage' },
   pms:                  { owner: 'manage', admin: 'manage' },

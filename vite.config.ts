@@ -16,7 +16,8 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
-    hmr: false,
+    // HMR enabled so source edits live-reload the browser instantly (was disabled,
+    // which forced manual refreshes and made "my changes aren't showing" worse).
   },
   build: {
     outDir: 'dist',

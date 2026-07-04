@@ -40,11 +40,15 @@ function getAuthHeaders(): Record<string, string> {
 
 export async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const headers = { 'Content-Type': 'application/json', ...getAuthHeaders(), ...options?.headers } as Record<string, string>;
-  
+  // Only retry idempotent requests. Retrying a POST/PUT/PATCH/DELETE that already
+  // committed server-side (but errored afterward) creates duplicate records.
+  const method = (options?.method || 'GET').toUpperCase();
+  const isIdempotent = method === 'GET' || method === 'HEAD';
+
   const fetchWithRetry = async (retries = 3, delay = 1000): Promise<Response> => {
     try {
       const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
-      
+
       // Handle auth errors immediately (no retry)
       if (res.status === 401) {
         const isAuthEndpoint = path.startsWith('/auth/');
@@ -54,19 +58,19 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
         }
         return res;
       }
-      
-      // Check if status is retryable
-      const shouldRetry = [408, 429, 500, 502, 503, 504].includes(res.status);
-      
+
+      // Check if status is retryable (idempotent methods only)
+      const shouldRetry = isIdempotent && [408, 429, 500, 502, 503, 504].includes(res.status);
+
       if (!res.ok && shouldRetry && retries > 0) {
         await new Promise(resolve => setTimeout(resolve, delay));
         return fetchWithRetry(retries - 1, delay * 2);
       }
-      
+
       return res;
     } catch (error) {
-      // Network errors - retry
-      if (retries > 0) {
+      // Network errors - retry idempotent requests only
+      if (isIdempotent && retries > 0) {
         await new Promise(resolve => setTimeout(resolve, delay));
         return fetchWithRetry(retries - 1, delay * 2);
       }
@@ -242,8 +246,8 @@ export async function updateAsset(
 }
 
 export async function fetchPurchaseOrders(): Promise<(PurchaseOrder & { orderType?: string })[]> {
-  const timestamp = Date.now(); // Cache-busting
-  const data = await fetchApi<{ id: string; poNumber: string; client: string; description: string; amount: number; status: string; createdDate: string; deliveryDate: string; assignedAssets: string[]; orderType?: string }[]>(`/purchase-orders?_t=${timestamp}`);
+  // No cache-busting query param needed — the API sends Cache-Control: no-store.
+  const data = await fetchApi<{ id: string; poNumber: string; client: string; description: string; amount: number; status: string; createdDate: string; deliveryDate: string; assignedAssets: string[]; orderType?: string }[]>(`/purchase-orders`);
   return data.map((po) => ({
     id: po.id,
     poNumber: po.poNumber,
@@ -351,8 +355,8 @@ export async function deleteSalesOrder(id: string): Promise<void> {
 }
 
 export async function fetchSalesOrders(): Promise<any[]> {
-  const timestamp = Date.now(); // Cache-busting
-  return fetchApi(`/sales-orders?_t=${timestamp}`);
+  // No cache-busting query param needed — the API sends Cache-Control: no-store.
+  return fetchApi(`/sales-orders`);
 }
 
 export async function createSalesOrder(data: any): Promise<any> {
@@ -611,8 +615,83 @@ export async function deleteTraccarDevice(deviceId: number): Promise<void> {
 
 export async function fetchTraccarWsInfo(): Promise<{ wsUrl: string; authHeader: string }> {
   // Return dummy WebSocket info since we're using LocalStorage
-  return { 
-    wsUrl: '', 
-    authHeader: '' 
+  return {
+    wsUrl: '',
+    authHeader: ''
   };
+}
+
+// ─── Work Schedule: daily tasks, weekly progress, settings ─────────────────
+export interface WorkTask {
+  id: string;
+  scopeId?: string | null;
+  week: number;
+  day?: string | null;
+  task: string;
+  responsible?: string | null;
+  status?: string;
+  sortOrder?: number | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface WorkWeekProgress {
+  week: number;
+  total: number;
+  done: number;
+  pct: number;
+  status: 'Behind' | 'In progress' | 'Ahead' | 'Complete' | 'Upcoming';
+}
+
+export interface WorkProgress {
+  currentWeek: number | null;
+  autoWeek: number | null;
+  overrideWeek: number | null;
+  overallPct: number;
+  weeks: WorkWeekProgress[];
+}
+
+export interface ScheduleSettings {
+  startDate: string | null;
+  currentWeekOverride: number | null;
+  autoWeek: number | null;
+}
+
+export async function fetchWorkTasks(week?: number, scopeId?: string): Promise<WorkTask[]> {
+  const params = new URLSearchParams();
+  if (week !== undefined) params.set('week', String(week));
+  if (scopeId) params.set('scopeId', scopeId);
+  const qs = params.toString();
+  return fetchApi<WorkTask[]>(`/work-schedule/tasks${qs ? `?${qs}` : ''}`);
+}
+
+export async function createWorkTask(data: Partial<WorkTask>): Promise<WorkTask> {
+  return fetchApi<WorkTask>('/work-schedule/tasks', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function updateWorkTask(id: string, data: Partial<WorkTask>): Promise<WorkTask> {
+  return fetchApi<WorkTask>(`/work-schedule/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+}
+
+export async function deleteWorkTask(id: string): Promise<void> {
+  await fetchApi(`/work-schedule/tasks/${id}`, { method: 'DELETE' });
+}
+
+export async function fetchWorkProgress(): Promise<WorkProgress> {
+  return fetchApi<WorkProgress>('/work-schedule/progress');
+}
+
+export async function fetchScheduleSettings(): Promise<ScheduleSettings> {
+  return fetchApi<ScheduleSettings>('/work-schedule/settings');
+}
+
+// Only the keys present in `patch` are changed server-side; pass
+// currentWeekOverride: null to explicitly CLEAR the override (fall back to auto).
+export async function updateScheduleSettings(
+  patch: { startDate?: string | null; currentWeekOverride?: number | null }
+): Promise<ScheduleSettings> {
+  return fetchApi<ScheduleSettings>('/work-schedule/settings', {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
 }

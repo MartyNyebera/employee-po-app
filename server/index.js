@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import compression from 'compression';
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
@@ -55,6 +56,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
+app.use(compression()); // gzip/brotli text responses (JS/CSS/JSON) — ~3-4x smaller over the wire
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -114,23 +116,21 @@ app.use((req, res, next) => {
   next();
 });
 
-// Performance timing middleware
-app.use((req, res, next) => {
-  const start = Date.now();
-  
-  // Log when response finishes
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    console.log(`🚀 ${req.method} ${req.path} - ${res.statusCode} - ${duration}ms`);
-    
-    // Warn about slow responses
-    if (duration > 1000) {
-      console.warn(`⚠️  SLOW RESPONSE: ${req.method} ${req.path} took ${duration}ms`);
-    }
+// Performance timing middleware — dev only. In production this logged every request
+// (incl. the 1 Hz GPS pings) synchronously to stdout on the hot path.
+if (process.env.NODE_ENV !== 'production') {
+  app.use((req, res, next) => {
+    const start = Date.now();
+    res.on('finish', () => {
+      const duration = Date.now() - start;
+      console.log(`🚀 ${req.method} ${req.path} - ${res.statusCode} - ${duration}ms`);
+      if (duration > 1000) {
+        console.warn(`⚠️  SLOW RESPONSE: ${req.method} ${req.path} took ${duration}ms`);
+      }
+    });
+    next();
   });
-  
-  next();
-});
+}
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -530,6 +530,41 @@ async function runMigrations() {
       `);
       console.log('✅ work_schedule table ready');
     } catch (err) { console.log('ℹ️ work_schedule table skipped:', err.message); }
+
+    // Work Schedule per-day tasks (child of work_schedule scopes)
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS work_schedule_task (
+          id TEXT PRIMARY KEY,
+          scope_id TEXT REFERENCES work_schedule(id) ON DELETE SET NULL,
+          week INT NOT NULL,
+          day TEXT,
+          task TEXT NOT NULL,
+          responsible TEXT,
+          status TEXT CHECK (status IN ('To do','Doing','Done','Skipped')) DEFAULT 'To do',
+          sort_order INT,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      await query(`CREATE INDEX IF NOT EXISTS idx_work_schedule_task_week ON work_schedule_task(week)`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_work_schedule_task_scope_id ON work_schedule_task(scope_id)`);
+      console.log('✅ work_schedule_task table ready');
+    } catch (err) { console.log('ℹ️ work_schedule_task table skipped:', err.message); }
+
+    // schedule_settings — single-row config (start_date) to compute the current week from a real date
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS schedule_settings (
+          id TEXT PRIMARY KEY DEFAULT 'default',
+          start_date DATE,
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      await query(`ALTER TABLE schedule_settings ADD COLUMN IF NOT EXISTS current_week_override INT`);
+      await query(`INSERT INTO schedule_settings (id) VALUES ('default') ON CONFLICT (id) DO NOTHING`);
+      console.log('✅ schedule_settings table ready');
+    } catch (err) { console.log('ℹ️ schedule_settings table skipped:', err.message); }
 
     // operational_costs — referenced by /api/dashboard/financial-summary but was never created
     try {
@@ -1917,11 +1952,14 @@ app.post('/api/material-requests/:id/approve', async (req, res) => {
  */
 app.get('/api/dashboard/financial-summary', async (req, res) => {
   try {
+    // Revenue is recognized directly from sales orders past 'pending' (approved / PAID /
+    // completed). The financial_transactions REVENUE rows are only written by the unused
+    // /approve + /confirm-delivery endpoints, so reading them here always yielded ₱0.
     const revenue = await query(`
       SELECT COALESCE(SUM(amount), 0) as total
-      FROM financial_transactions
-      WHERE transaction_type = 'REVENUE' AND status = 'CONFIRMED'
-      AND DATE_TRUNC('month', transaction_date) = DATE_TRUNC('month', CURRENT_DATE)
+      FROM sales_orders
+      WHERE status IN ('approved', 'PAID', 'completed')
+      AND DATE_TRUNC('month', created_date) = DATE_TRUNC('month', CURRENT_DATE)
     `);
 
     const cogs = await query(`
@@ -2723,55 +2761,8 @@ app.patch('/api/assets/:id', requireAdmin, async (req, res) => {
   }
 });
 
-// GET /api/purchase-orders
-app.get('/api/purchase-orders', async (req, res) => {
-  try {
-    const { startDate, endDate, status } = req.query;
-    let whereClause = 'WHERE 1=1';
-    const params = [];
-    let paramIndex = 1;
-
-    if (startDate && endDate) {
-      whereClause += ` AND created_date >= $${paramIndex++} AND created_date <= $${paramIndex++}`;
-      params.push(startDate, endDate);
-    }
-
-    if (status) {
-      whereClause += ` AND status = $${paramIndex++}`;
-      params.push(status);
-    }
-
-    const result = await query(
-      `SELECT id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets, order_type,
-              doc_date, prepared_by, reviewed_by, supplier_address, supplier_contact, payment_terms, terms_and_conditions
-       FROM purchase_orders ${whereClause} ORDER BY created_date DESC`,
-      params
-    );
-    const orders = result.rows.map((row) => ({
-      id: row.id,
-      poNumber: row.po_number,
-      client: row.client,
-      description: row.description,
-      amount: parseFloat(row.amount),
-      status: row.status,
-      createdDate: row.created_date,
-      deliveryDate: row.delivery_date,
-      assignedAssets: row.assigned_assets || [],
-      orderType: row.order_type,
-      docDate: row.doc_date,
-      preparedBy: row.prepared_by,
-      reviewedBy: row.reviewed_by,
-      supplierAddress: row.supplier_address,
-      supplierContact: row.supplier_contact,
-      paymentTerms: row.payment_terms,
-      termsAndConditions: row.terms_and_conditions,
-    }));
-    res.json(orders);
-  } catch (err) {
-    console.error('Purchase orders fetch error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
+// (Removed a dead duplicate GET /api/purchase-orders — Express serves the earlier
+// registration (~line 968), so this second one was unreachable.)
 
 // POST /api/purchase-orders (admin only)
 app.post('/api/purchase-orders', requireRole(['admin','purchasing','office_admin']), async (req, res) => {
@@ -3083,61 +3074,10 @@ app.post('/api/transactions', requireAdmin, async (req, res) => {
 
 // ─── Sales Orders API ───────────────────────────────────────
 
-// GET /api/sales-orders
-app.get('/api/sales-orders', async (req, res) => {
-  try {
-    const { startDate, endDate, status } = req.query;
-    let whereClause = 'WHERE 1=1';
-    const params = [];
-    let paramIndex = 1;
-
-    if (startDate && endDate) {
-      whereClause += ` AND created_date >= $${paramIndex++} AND created_date <= $${paramIndex++}`;
-      params.push(startDate, endDate);
-    }
-
-    if (status) {
-      whereClause += ` AND status = $${paramIndex++}`;
-      params.push(status);
-    }
-
-    const result = await query(
-      `SELECT so.*, 
-              d.driver_name, d.contact as driver_contact,
-              v.unit_name as vehicle_name, v.plate_number,
-              del.status as delivery_status, del.id as delivery_id
-       FROM sales_orders so
-       LEFT JOIN drivers d ON so.driver_id = d.id
-       LEFT JOIN vehicles v ON so.vehicle_id = v.id
-       LEFT JOIN deliveries del ON so.delivery_id = del.id
-       ${whereClause} ORDER BY so.created_date DESC`,
-      params
-    );
-    
-    const orders = result.rows.map((row) => ({
-      id: row.id,
-      soNumber: row.so_number,
-      client: row.client,
-      description: row.description,
-      amount: parseFloat(row.amount),
-      status: row.status,
-      createdDate: row.created_date,
-      deliveryDate: row.delivery_date,
-      assignedAssets: row.assigned_assets || [],
-      driverName: row.driver_name,
-      driverContact: row.driver_contact,
-      vehicleName: row.vehicle_name,
-      plateNumber: row.plate_number,
-      deliveryStatus: row.delivery_status,
-      deliveryId: row.delivery_id,
-    }));
-    
-    res.json(orders);
-  } catch (err) {
-    console.error('Sales orders fetch error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
+// (Removed a dead duplicate GET /api/sales-orders — Express serves the earlier
+// registration (~line 1012), so this second one (with driver/vehicle/delivery
+// joins) was unreachable. If those enriched fields are needed later, merge the
+// join into the live handler rather than re-adding a shadow route.)
 app.post('/api/sales-orders', requireAdmin, async (req, res) => {
   try {
     const {
@@ -3470,34 +3410,8 @@ app.delete('/api/sales-orders/:id', requireAdmin, async (req, res) => {
 
 // ─── Inventory API ─────────────────────────────────────────
 
-// GET /api/inventory
-app.get('/api/inventory', async (req, res) => {
-  try {
-    const result = await query(
-      `SELECT id, item_code, item_name, description, quantity, unit, reorder_level, unit_cost, location, supplier
-       FROM inventory ORDER BY item_name ASC`
-    );
-    
-    const items = result.rows.map((row) => ({
-      id: row.id,
-      itemCode: row.item_code,
-      itemName: row.item_name,
-      description: row.description,
-      quantity: parseFloat(row.quantity),
-      unit: row.unit,
-      reorderLevel: parseFloat(row.reorder_level),
-      unitCost: parseFloat(row.unit_cost),
-      totalCost: parseFloat(row.quantity) * parseFloat(row.unit_cost),
-      location: row.location,
-      supplier: row.supplier,
-    }));
-    
-    res.json(items);
-  } catch (err) {
-    console.error('Inventory fetch error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
+// (Removed a dead duplicate GET /api/inventory — Express serves the earlier
+// registration (~line 1060), so this second one was unreachable.)
 
 // POST /api/inventory (admin only)
 app.post('/api/inventory', requireRole(['admin','purchasing','office_admin']), async (req, res) => {
@@ -3645,46 +3559,8 @@ app.delete('/api/inventory/:id', async (req, res) => {
 
 // ─── Miscellaneous API ───────────────────────────────────────
 
-// GET /api/miscellaneous
-app.get('/api/miscellaneous', async (req, res) => {
-  try {
-    const { startDate, endDate, status } = req.query;
-    let whereClause = 'WHERE 1=1';
-    const params = [];
-    let paramIndex = 1;
-
-    if (startDate && endDate) {
-      whereClause += ` AND transaction_date >= $${paramIndex++} AND transaction_date <= $${paramIndex++}`;
-      params.push(startDate, endDate);
-    }
-
-    if (status) {
-      whereClause += ` AND status = $${paramIndex++}`;
-      params.push(status);
-    }
-
-    const result = await query(
-      `SELECT id, description, amount, status, transaction_date, category, notes
-       FROM miscellaneous ${whereClause} ORDER BY transaction_date DESC`,
-      params
-    );
-    
-    const entries = result.rows.map((row) => ({
-      id: row.id,
-      description: row.description,
-      amount: parseFloat(row.amount),
-      status: row.status,
-      transactionDate: row.transaction_date,
-      category: row.category,
-      notes: row.notes,
-    }));
-    
-    res.json(entries);
-  } catch (err) {
-    console.error('Miscellaneous fetch error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
+// (Removed a dead duplicate GET /api/miscellaneous — Express serves the earlier
+// registration (~line 1085), so this second one was unreachable.)
 
 // POST /api/miscellaneous (admin only)
 app.post('/api/miscellaneous', requireRole(['admin','bookkeeper','office_admin']), async (req, res) => {
@@ -4039,7 +3915,8 @@ app.put('/api/material-requests/:id/review', async (req, res) => {
     );
     
     const request = result.rows[0];
-    
+    if (!request) return res.status(404).json({ error: 'Material request not found' });
+
     // Send notification to employee
     if (request.employee_id) {
       await query(
@@ -4388,6 +4265,9 @@ console.log(`🔍 Employee review request: ID=${req.params.id}, status=${status}
         console.log(`✅ Employee review completed: ${result.rows[0].full_name} -> ${status} by ${reviewed_by}`);
         return res.json(result.rows[0]);
       }
+      // UPDATE matched no row → the id doesn't exist. Without this the handler
+      // falls through and never responds (request hangs until proxy timeout).
+      return res.status(404).json({ error: 'Employee not found' });
     } catch (textErr) {
       // If text update fails, try with integer (old schema)
       console.log('⚠️ Text update failed, trying integer approach...');
@@ -4641,17 +4521,9 @@ if (process.env.NODE_ENV === 'production') {
       }
     }));
     
-    // Explicit assets serving (extra safety)
-    app.use("/assets", express.static(path.join(distDir, "assets"), {
-      maxAge: '1y',
-      etag: true,
-      lastModified: true
-    }));
-    
-    // Debug log for asset requests
-    app.use("/assets", (req, res, next) => {
-            next();
-    });
+    // (Removed a redundant second express.static('/assets') block and a no-op
+    // pass-through logger — the main express.static(distDir) above already serves
+    // /assets with the correct immutable cache headers.)
 
     // Version endpoint for cache busting
     app.get('/version.txt', (req, res) => {
@@ -4661,10 +4533,13 @@ if (process.env.NODE_ENV === 'production') {
       res.sendFile(path.join(process.cwd(), 'public', 'version.txt'));
     });
 
-    // SPA fallback - must be LAST
+    // SPA fallback - must be LAST. index.html must never be cached, or deep-linked
+    // routes serve a stale shell that points at an old (deleted) JS bundle.
     app.get(/.*/, (req, res) => {
-      console.log(`🔄 SPA fallback: ${req.path} -> index.html`);
-      res.sendFile(path.join(distDir, "index.html"));
+      res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.set('Pragma', 'no-cache');
+      res.set('Expires', '0');
+      res.sendFile(path.join(distDir, "index.html"), { cacheControl: false });
     });
   }
 }
@@ -4716,6 +4591,13 @@ function mapWork(r) {
     id: r.id, phase: r.phase, scope: r.scope, responsible: r.responsible,
     startWeek: r.start_week, durationWeeks: r.duration_weeks, status: r.status,
     sortOrder: r.sort_order, notes: r.notes, createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+function mapWorkTask(r) {
+  return r && {
+    id: r.id, scopeId: r.scope_id, week: r.week, day: r.day, task: r.task,
+    responsible: r.responsible, status: r.status, sortOrder: r.sort_order,
+    createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
 
@@ -4972,6 +4854,134 @@ app.post('/api/work-schedule', requireRole(['owner','admin']), async (req, res) 
     res.status(201).json(mapWork(r.rows[0]));
   } catch (err) { console.error('work create error:', err); res.status(500).json({ error: err.message }); }
 });
+// NOTE: the parametric /api/work-schedule/:id routes (PATCH scope, DELETE scope) are
+// registered further down — AFTER the literal sub-paths below (/tasks, /progress,
+// /settings) — so ':id' cannot shadow them (e.g. PATCH /work-schedule/settings must
+// not be captured as :id = 'settings').
+
+// ----- Work Schedule: per-day tasks -----
+app.get('/api/work-schedule/tasks', async (req, res) => {
+  try {
+    const { week, scopeId } = req.query;
+    const where = ['1=1']; const params = []; let i = 1;
+    if (week !== undefined) { where.push(`week = $${i++}`); params.push(week); }
+    if (scopeId !== undefined) { where.push(`scope_id = $${i++}`); params.push(scopeId); }
+    const r = await query(`SELECT * FROM work_schedule_task WHERE ${where.join(' AND ')} ORDER BY week ASC NULLS LAST, sort_order ASC NULLS LAST, created_at ASC`, params);
+    res.json(r.rows.map(mapWorkTask));
+  } catch (err) { console.error('work-schedule tasks list error:', err); res.status(500).json({ error: err.message }); }
+});
+app.post('/api/work-schedule/tasks', requireRole(['owner','admin']), async (req, res) => {
+  try {
+    const b = req.body; const id = newId('WST');
+    const r = await query(
+      `INSERT INTO work_schedule_task (id,scope_id,week,day,task,responsible,status,sort_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [id, orNull(b.scopeId), b.week, orNull(b.day), b.task, orNull(b.responsible), orNull(b.status) || 'To do', orNull(b.sortOrder)]
+    );
+    res.status(201).json(mapWorkTask(r.rows[0]));
+  } catch (err) { console.error('work task create error:', err); res.status(500).json({ error: err.message }); }
+});
+app.patch('/api/work-schedule/tasks/:id', requireRole(['owner','admin']), async (req, res) => {
+  try {
+    const b = req.body;
+    const cols = { scope_id:b.scopeId, week:b.week, day:b.day, task:b.task, responsible:b.responsible, status:b.status, sort_order:b.sortOrder };
+    const sets = []; const params = []; let i = 1;
+    for (const [k, v] of Object.entries(cols)) { if (v !== undefined) { sets.push(`${k} = $${i++}`); params.push(orNull(v)); } }
+    if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
+    sets.push('updated_at = NOW()'); params.push(req.params.id);
+    const r = await query(`UPDATE work_schedule_task SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`, params);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Work schedule task not found' });
+    res.json(mapWorkTask(r.rows[0]));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.delete('/api/work-schedule/tasks/:id', requireRole(['owner','admin']), async (req, res) => {
+  try {
+    const r = await query('DELETE FROM work_schedule_task WHERE id = $1', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Work schedule task not found' });
+    res.json({ message: 'Work schedule task deleted', id: req.params.id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ----- Work Schedule: weekly progress -----
+app.get('/api/work-schedule/progress', async (req, res) => {
+  try {
+    const agg = await query(`
+      SELECT week,
+             COUNT(*) FILTER (WHERE status <> 'Skipped') AS total,
+             COUNT(*) FILTER (WHERE status = 'Done') AS done,
+             COALESCE(COUNT(*) FILTER (WHERE status = 'Done')::numeric
+               / NULLIF(COUNT(*) FILTER (WHERE status <> 'Skipped'), 0), 0) AS pct
+      FROM work_schedule_task
+      GROUP BY week
+      ORDER BY week ASC
+    `);
+    const s = await query(`SELECT to_char(start_date,'YYYY-MM-DD') AS start_date, current_week_override FROM schedule_settings WHERE id = 'default'`);
+    const startDate = s.rows[0] ? s.rows[0].start_date : null;
+    const overrideWeek = (s.rows[0] && s.rows[0].current_week_override !== null && s.rows[0].current_week_override !== undefined)
+      ? Number(s.rows[0].current_week_override) : null;
+    let autoWeek = null;
+    if (startDate) {
+      const cw = await query(`SELECT GREATEST(1, FLOOR((CURRENT_DATE - $1::date)::numeric / 7) + 1)::int AS wk`, [startDate]);
+      autoWeek = cw.rows[0].wk;
+    }
+    // Manual override wins when set; otherwise fall back to the date-based auto week.
+    const currentWeek = overrideWeek !== null ? overrideWeek : autoWeek;
+    let totalAll = 0, doneAll = 0;
+    const weeks = agg.rows.map(row => {
+      const total = Number(row.total) || 0;
+      const done = Number(row.done) || 0;
+      const pct = Number(row.pct) || 0;
+      totalAll += total; doneAll += done;
+      let status;
+      if (pct >= 1) status = 'Complete';
+      else if (currentWeek !== null && row.week < currentWeek) status = 'Behind';
+      else if (currentWeek !== null && row.week === currentWeek) status = 'In progress';
+      else if (currentWeek !== null && row.week > currentWeek && done > 0) status = 'Ahead';
+      else status = 'Upcoming';
+      return { week: row.week, total, done, pct, status };
+    });
+    const overallPct = totalAll ? doneAll / totalAll : 0;
+    res.json({ currentWeek, autoWeek, overrideWeek, overallPct, weeks });
+  } catch (err) { console.error('work-schedule progress error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// ----- Work Schedule: settings (single-row config) -----
+async function scheduleAutoWeek(startDate) {
+  if (!startDate) return null;
+  const cw = await query(`SELECT GREATEST(1, FLOOR((CURRENT_DATE - $1::date)::numeric / 7) + 1)::int AS wk`, [startDate]);
+  return cw.rows[0].wk;
+}
+app.get('/api/work-schedule/settings', async (req, res) => {
+  try {
+    const r = await query(`SELECT to_char(start_date,'YYYY-MM-DD') AS start_date, current_week_override FROM schedule_settings WHERE id = 'default'`);
+    const startDate = r.rows[0] ? r.rows[0].start_date : null;
+    const currentWeekOverride = r.rows[0] ? r.rows[0].current_week_override : null;
+    res.json({ startDate, currentWeekOverride, autoWeek: await scheduleAutoWeek(startDate) });
+  } catch (err) { console.error('work-schedule settings error:', err); res.status(500).json({ error: err.message }); }
+});
+app.patch('/api/work-schedule/settings', requireRole(['owner','admin']), async (req, res) => {
+  try {
+    const b = req.body;
+    // Ensure the single config row exists, then update only the fields provided.
+    await query(`INSERT INTO schedule_settings (id) VALUES ('default') ON CONFLICT (id) DO NOTHING`);
+    const sets = ['updated_at = NOW()']; const params = []; let i = 1;
+    if ('startDate' in b) { sets.push(`start_date = $${i++}`); params.push(orNull(b.startDate)); }
+    if ('currentWeekOverride' in b) {
+      // Passing null (or '') explicitly CLEARS the override → falls back to auto.
+      const ov = b.currentWeekOverride;
+      sets.push(`current_week_override = $${i++}`);
+      params.push(ov === null || ov === undefined || ov === '' ? null : Number(ov));
+    }
+    await query(`UPDATE schedule_settings SET ${sets.join(', ')} WHERE id = 'default'`, params);
+    const r = await query(`SELECT to_char(start_date,'YYYY-MM-DD') AS start_date, current_week_override FROM schedule_settings WHERE id = 'default'`);
+    const startDate = r.rows[0] ? r.rows[0].start_date : null;
+    const currentWeekOverride = r.rows[0] ? r.rows[0].current_week_override : null;
+    res.json({ startDate, currentWeekOverride, autoWeek: await scheduleAutoWeek(startDate) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ----- Work Schedule: scope row update/delete (parametric :id — registered LAST so
+// it does not shadow the literal /tasks, /progress, /settings sub-paths above) -----
 app.patch('/api/work-schedule/:id', requireRole(['owner','admin']), async (req, res) => {
   try {
     const b = req.body;

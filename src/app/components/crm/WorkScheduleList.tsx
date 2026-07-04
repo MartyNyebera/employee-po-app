@@ -1,8 +1,13 @@
-import { useEffect, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Fragment, useEffect, useRef, useState } from 'react';
+import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { fetchApi } from '../../api/client';
-import { S, Modal, Field, TextInput, Select, TextArea, PrimaryBtn, GhostBtn } from './crmKit';
+import {
+  fetchApi, fetchWorkTasks, createWorkTask, updateWorkTask, deleteWorkTask,
+  fetchWorkProgress, fetchScheduleSettings, updateScheduleSettings,
+  type WorkTask, type WorkProgress,
+} from '../../api/client';
+import { S, Modal, Field, TextInput, Select, TextArea, PrimaryBtn, GhostBtn, badge } from './crmKit';
+import { Progress } from '../ui/progress';
 
 interface WorkRow { id: string; phase?: string; scope: string; responsible?: string; startWeek?: number | null; durationWeeks?: number | null; status?: string; sortOrder?: number | null; notes?: string; }
 
@@ -10,11 +15,28 @@ const STATUSES = ['Not started', 'In progress', 'Done'];
 const statusColor = (s?: string) => s === 'Done' ? '#059669' : s === 'In progress' ? '#2563eb' : '#9ca3af';
 const statusBg = (s?: string) => s === 'Done' ? '#d1fae5' : s === 'In progress' ? '#dbeafe' : '#e5e7eb';
 
+const TASK_STATUSES = ['To do', 'Doing', 'Done', 'Skipped'];
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const taskStatusColor = (s?: string) => s === 'Done' ? '#059669' : s === 'Doing' ? '#2563eb' : '#6b7280';
+const weekBadge = (s: string): { color: string; bg: string } =>
+  s === 'Behind' ? { color: '#b91c1c', bg: '#fee2e2' }
+    : s === 'In progress' ? { color: '#2563eb', bg: '#dbeafe' }
+      : (s === 'Ahead' || s === 'Complete') ? { color: '#059669', bg: '#d1fae5' }
+        : { color: '#6b7280', bg: '#e5e7eb' };
+
 export function WorkScheduleList({ isAdmin }: { isAdmin: boolean }) {
   const [rows, setRows] = useState<WorkRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<WorkRow | null>(null);
   const [showModal, setShowModal] = useState(false);
+  const [progress, setProgress] = useState<WorkProgress | null>(null);
+  const [expandedWeek, setExpandedWeek] = useState<number | null>(null);
+  const [tasks, setTasks] = useState<WorkTask[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(false);
+  const [showTaskModal, setShowTaskModal] = useState(false);
+  const [startDate, setStartDate] = useState('');
+  const [viewWeek, setViewWeek] = useState<number | 'all'>('all');
+  const initedView = useRef(false);
 
   const load = async () => {
     setLoading(true);
@@ -22,11 +44,36 @@ export function WorkScheduleList({ isAdmin }: { isAdmin: boolean }) {
     catch { toast.error('Failed to load work schedule'); }
     finally { setLoading(false); }
   };
-  useEffect(() => { load(); }, []);
+  const loadProgress = async () => {
+    try { setProgress(await fetchWorkProgress()); } catch { /* non-blocking */ }
+  };
+  const loadSettings = async () => {
+    try { const s = await fetchScheduleSettings(); setStartDate(s.startDate ? String(s.startDate).slice(0, 10) : ''); } catch { /* non-blocking */ }
+  };
+  const loadTasks = async (week: number) => {
+    setTasksLoading(true);
+    try { setTasks(await fetchWorkTasks(week)); }
+    catch { toast.error('Failed to load tasks'); }
+    finally { setTasksLoading(false); }
+  };
+  useEffect(() => { load(); loadProgress(); loadSettings(); }, []);
+  useEffect(() => { if (expandedWeek !== null) loadTasks(expandedWeek); }, [expandedWeek]);
+  // Land the Gantt view on the current week once progress first loads; user controls it after.
+  // Fall back to Week 1 (not 'all') when there's no current week, so it always opens narrow.
+  useEffect(() => {
+    if (!initedView.current && progress) {
+      initedView.current = true;
+      setViewWeek(progress.currentWeek ?? 1);
+    }
+  }, [progress]);
 
   const maxWeek = Math.max(12, ...rows.map(r => (Number(r.startWeek) || 0) + (Number(r.durationWeeks) || 0) - 1));
   const weeks = Array.from({ length: maxWeek }, (_, i) => i + 1);
   const phases = Array.from(new Set(rows.map(r => r.phase || 'Unphased')));
+  const progressByWeek = new Map((progress?.weeks || []).map(w => [w.week, w]));
+  const stripMaxWeek = Math.max(maxWeek, progress?.currentWeek || 0, ...(progress?.weeks || []).map(w => w.week));
+  const stripWeeks = Array.from({ length: stripMaxWeek }, (_, i) => i + 1);
+  const visibleWeeks = viewWeek === 'all' ? weeks : [viewWeek];
 
   const patch = async (r: WorkRow, changes: Partial<WorkRow>) => {
     const prev = rows;
@@ -42,6 +89,34 @@ export function WorkScheduleList({ isAdmin }: { isAdmin: boolean }) {
     catch { setRows(prev); toast.error('Delete failed'); }
   };
 
+  const patchTask = async (t: WorkTask, changes: Partial<WorkTask>) => {
+    const prev = tasks;
+    setTasks(tasks.map(x => x.id === t.id ? { ...x, ...changes } : x));
+    try { await updateWorkTask(t.id, changes); loadProgress(); }
+    catch { setTasks(prev); toast.error('Update failed'); }
+  };
+
+  const deleteTask = async (t: WorkTask) => {
+    if (!window.confirm(`Delete task "${t.task}"?`)) return;
+    const prev = tasks; setTasks(tasks.filter(x => x.id !== t.id));
+    try { await deleteWorkTask(t.id); toast.success('Task deleted'); loadProgress(); }
+    catch { setTasks(prev); toast.error('Delete failed'); }
+  };
+
+  const saveStartDate = async (v: string) => {
+    setStartDate(v);
+    try { await updateScheduleSettings({ startDate: v || null }); loadProgress(); toast.success('Start date updated'); }
+    catch { toast.error('Failed to update start date'); }
+  };
+
+  const setOverride = async (v: number | null) => {
+    try {
+      await updateScheduleSettings({ currentWeekOverride: v });
+      await loadProgress();
+      toast.success(v === null ? 'Reset to auto week' : `Current week set to ${v}`);
+    } catch { toast.error('Failed to update current week'); }
+  };
+
   return (
     <div style={S.page}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
@@ -49,26 +124,134 @@ export function WorkScheduleList({ isAdmin }: { isAdmin: boolean }) {
         {isAdmin && <button style={S.addBtn} onClick={() => { setEditing(null); setShowModal(true); }}><Plus size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />Add Scope</button>}
       </div>
 
-      <div style={{ display: 'flex', gap: '14px', marginBottom: '14px', fontSize: '12px', color: '#6b7280' }}>
-        {STATUSES.map(s => <span key={s} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><span style={{ width: '12px', height: '12px', borderRadius: '3px', background: statusBg(s), border: `1px solid ${statusColor(s)}` }} />{s}</span>)}
+      {progress && (
+        <div style={{ ...S.card, padding: '16px', marginBottom: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '13px', fontWeight: 700, color: '#111827' }}>Weekly progress</span>
+              <span style={{ fontSize: '12px', color: '#6b7280' }}>
+                Overall <strong style={{ color: '#111827' }}>{Math.round(progress.overallPct * 100)}%</strong>
+                {' · '}
+                {progress.overrideWeek !== null
+                  ? <><strong style={{ color: '#b45309' }}>Manual: Week {progress.overrideWeek}</strong> {progress.autoWeek !== null ? `(auto says Week ${progress.autoWeek})` : '(auto: not set)'}</>
+                  : progress.autoWeek !== null
+                    ? <strong style={{ color: '#2563eb' }}>Auto: Week {progress.autoWeek}</strong>
+                    : <span style={{ color: '#9ca3af' }}>No current week — set a start date or override</span>}
+              </span>
+            </div>
+            {isAdmin && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', fontWeight: 600, color: '#374151' }}>
+                  Schedule start date
+                  <input type="date" value={startDate} onChange={e => saveStartDate(e.target.value)} style={{ ...S.input, width: 'auto', padding: '6px 10px' }} />
+                </label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', fontWeight: 600, color: '#374151' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    Current week
+                    <select value={progress.overrideWeek ?? ''} onChange={e => setOverride(e.target.value === '' ? null : Number(e.target.value))} style={{ ...S.input, width: 'auto', padding: '6px 10px', cursor: 'pointer' }}>
+                      <option value="">Auto</option>
+                      {stripWeeks.map(w => <option key={w} value={w}>Week {w}</option>)}
+                    </select>
+                  </label>
+                  {progress.overrideWeek !== null && <button style={S.rowBtn} onClick={() => setOverride(null)}>Reset to auto</button>}
+                </div>
+              </div>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', paddingBottom: '4px' }}>
+            {stripWeeks.map(w => {
+              const wp = progressByWeek.get(w);
+              const pct = wp ? wp.pct : 0;
+              const st = wp ? wp.status : 'Upcoming';
+              const wb = weekBadge(st);
+              const isCurrent = progress.currentWeek === w;
+              const isOpen = expandedWeek === w;
+              return (
+                <button key={w} onClick={() => setExpandedWeek(isOpen ? null : w)} style={{
+                  flex: '0 0 auto', width: '134px', textAlign: 'left', cursor: 'pointer',
+                  border: isOpen ? '2px solid #2563eb' : isCurrent ? '1px solid #93c5fd' : '1px solid #e5e7eb',
+                  borderRadius: '10px', padding: '10px', background: isCurrent ? '#eff6ff' : '#fff',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#111827' }}>Week {w}</span>
+                    <span style={{ fontSize: '11px', color: '#6b7280' }}>{wp ? `${wp.done}/${wp.total}` : '0/0'}</span>
+                  </div>
+                  <Progress value={pct * 100} style={{ marginBottom: '8px' }} />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '11px', color: '#374151' }}>{Math.round(pct * 100)}%</span>
+                    {badge(st, wb.color, wb.bg)}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {expandedWeek !== null && (
+            <div style={{ marginTop: '14px', borderTop: '1px solid #e5e7eb', paddingTop: '14px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <span style={{ fontSize: '13px', fontWeight: 700, color: '#111827' }}>Daily tasks — Week {expandedWeek}</span>
+                {isAdmin && <button style={S.addBtn} onClick={() => setShowTaskModal(true)}><Plus size={14} style={{ verticalAlign: '-2px', marginRight: '6px' }} />Add task</button>}
+              </div>
+              {tasksLoading ? <div style={{ color: '#6b7280', fontSize: '13px' }}>Loading…</div>
+                : tasks.length === 0 ? <div style={{ color: '#9ca3af', fontSize: '13px' }}>No tasks for this week yet.</div>
+                  : <div style={{ overflowX: 'auto' }}>
+                      <table style={S.table}>
+                        <thead><tr>
+                          <th style={S.th}>Day</th><th style={S.th}>Task</th><th style={S.th}>Responsible</th><th style={S.th}>Status</th>{isAdmin && <th style={S.th}></th>}
+                        </tr></thead>
+                        <tbody>
+                          {tasks.map(t => (
+                            <tr key={t.id}>
+                              <td style={{ ...S.td, whiteSpace: 'nowrap' }}>{t.day || '—'}</td>
+                              <td style={{ ...S.td, fontWeight: 600, color: '#111827' }}>{t.task}</td>
+                              <td style={{ ...S.td, whiteSpace: 'nowrap' }}>{t.responsible || '—'}</td>
+                              <td style={S.td}>
+                                {isAdmin
+                                  ? <select value={t.status || 'To do'} onChange={e => patchTask(t, { status: e.target.value })} style={{ ...S.input, width: 'auto', padding: '6px 8px', cursor: 'pointer' }}>{TASK_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}</select>
+                                  : <span style={{ color: taskStatusColor(t.status) }}>{t.status}</span>}
+                              </td>
+                              {isAdmin && <td style={{ ...S.td, whiteSpace: 'nowrap' }}>
+                                <button style={{ ...S.rowBtn, color: '#b91c1c' }} onClick={() => deleteTask(t)} title="Delete task"><Trash2 size={14} style={{ verticalAlign: '-2px' }} /></button>
+                              </td>}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '14px' }}>
+        <div style={{ display: 'flex', gap: '14px', fontSize: '12px', color: '#6b7280' }}>
+          {STATUSES.map(s => <span key={s} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><span style={{ width: '12px', height: '12px', borderRadius: '3px', background: statusBg(s), border: `1px solid ${statusColor(s)}` }} />{s}</span>)}
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', fontWeight: 600, color: '#374151' }}>
+          View
+          <select value={viewWeek} onChange={e => setViewWeek(e.target.value === 'all' ? 'all' : Number(e.target.value))} style={{ ...S.input, width: 'auto', padding: '6px 10px', cursor: 'pointer' }}>
+            <option value="all">All weeks</option>
+            {stripWeeks.map(w => <option key={w} value={w}>Week {w}</option>)}
+          </select>
+        </label>
       </div>
 
       {loading ? <div style={{ color: '#6b7280' }}>Loading…</div>
         : rows.length === 0 ? <div style={S.card}><div style={{ ...S.td, color: '#9ca3af', borderBottom: 'none' }}>No scopes yet.</div></div>
         : <div style={{ ...S.card, overflowX: 'auto' }}>
-            <table style={{ ...S.table, minWidth: `${520 + maxWeek * 34}px` }}>
+            <table style={{ ...S.table, minWidth: `${520 + visibleWeeks.length * 34}px` }}>
               <thead>
                 <tr>
                   <th style={{ ...S.th, position: 'sticky', left: 0, background: '#f9fafb', minWidth: '240px' }}>Scope</th>
                   <th style={S.th}>Who</th><th style={{ ...S.th, textAlign: 'center' }}>Start</th><th style={{ ...S.th, textAlign: 'center' }}>Dur</th><th style={S.th}>Status</th>
-                  {weeks.map(w => <th key={w} style={{ ...S.th, textAlign: 'center', padding: '14px 0', width: '34px' }}>{w}</th>)}
+                  {visibleWeeks.map(w => <th key={w} style={{ ...S.th, textAlign: 'center', padding: '14px 0', width: '34px' }}>{w}</th>)}
                   {isAdmin && <th style={S.th}></th>}
                 </tr>
               </thead>
               <tbody>
                 {phases.map(phase => (
-                  <>
-                    <tr key={'ph-' + phase}><td colSpan={5 + weeks.length + (isAdmin ? 1 : 0)} style={{ padding: '10px 16px', background: '#f3f4f6', fontWeight: 700, fontSize: '12px', color: '#374151', position: 'sticky', left: 0 }}>{phase}</td></tr>
+                  <Fragment key={phase}>
+                    <tr><td colSpan={5 + visibleWeeks.length + (isAdmin ? 1 : 0)} style={{ padding: '10px 16px', background: '#f3f4f6', fontWeight: 700, fontSize: '12px', color: '#374151', position: 'sticky', left: 0 }}>{phase}</td></tr>
                     {rows.filter(r => (r.phase || 'Unphased') === phase).map(r => {
                       const start = Number(r.startWeek) || 0; const dur = Number(r.durationWeeks) || 0;
                       return (
@@ -90,7 +273,7 @@ export function WorkScheduleList({ isAdmin }: { isAdmin: boolean }) {
                               ? <select value={r.status || 'Not started'} onChange={e => patch(r, { status: e.target.value })} style={{ ...S.input, width: 'auto', padding: '6px 8px', cursor: 'pointer' }}>{STATUSES.map(s => <option key={s} value={s}>{s}</option>)}</select>
                               : <span style={{ color: statusColor(r.status) }}>{r.status}</span>}
                           </td>
-                          {weeks.map(w => {
+                          {visibleWeeks.map(w => {
                             const on = start > 0 && dur > 0 && w >= start && w <= start + dur - 1;
                             return <td key={w} style={{ padding: '4px', borderBottom: '1px solid #f3f4f6', textAlign: 'center' }}>
                               <div title={on ? `Week ${w}` : ''} style={{ height: '18px', borderRadius: '3px', background: on ? statusBg(r.status) : 'transparent', border: on ? `1px solid ${statusColor(r.status)}` : '1px solid transparent' }} />
@@ -103,13 +286,14 @@ export function WorkScheduleList({ isAdmin }: { isAdmin: boolean }) {
                         </tr>
                       );
                     })}
-                  </>
+                  </Fragment>
                 ))}
               </tbody>
             </table>
           </div>}
 
       {showModal && <WorkModal initial={editing} onClose={() => setShowModal(false)} onSaved={() => { setShowModal(false); load(); }} />}
+      {showTaskModal && expandedWeek !== null && <WorkTaskModal week={expandedWeek} scopes={rows} onClose={() => setShowTaskModal(false)} onSaved={() => { setShowTaskModal(false); loadTasks(expandedWeek); loadProgress(); }} />}
     </div>
   );
 }
@@ -144,6 +328,43 @@ function WorkModal({ initial, onClose, onSaved }: { initial: WorkRow | null; onC
       </div>
       <Field label="Status"><Select value={f.status || ''} onChange={v => set('status', v)} options={STATUSES} /></Field>
       <Field label="Notes"><TextArea value={f.notes || ''} onChange={e => set('notes', e.target.value)} /></Field>
+    </Modal>
+  );
+}
+
+function WorkTaskModal({ week, scopes, onClose, onSaved }: { week: number; scopes: WorkRow[]; onClose: () => void; onSaved: () => void }) {
+  const [f, setF] = useState<Partial<WorkTask>>({ week, day: '', task: '', responsible: '', status: 'To do', scopeId: '' });
+  const [saving, setSaving] = useState(false);
+  const set = (k: keyof WorkTask, v: any) => setF(p => ({ ...p, [k]: v }));
+
+  const save = async () => {
+    if (!f.task?.trim()) { toast.error('Task is required'); return; }
+    const weekNum = Number(f.week);
+    if (!weekNum || weekNum < 1) { toast.error('Week is required'); return; }
+    setSaving(true);
+    try {
+      await createWorkTask({ week: weekNum, day: f.day || null, task: f.task, responsible: f.responsible || null, status: f.status || 'To do', scopeId: f.scopeId || null });
+      toast.success('Task added');
+      onSaved();
+    } catch (e: any) { toast.error('Save failed: ' + e.message); } finally { setSaving(false); }
+  };
+
+  return (
+    <Modal title="Add Daily Task" onClose={onClose}
+      footer={<><GhostBtn onClick={onClose}>Cancel</GhostBtn><PrimaryBtn onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</PrimaryBtn></>}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
+        <Field label="Week *"><TextInput type="number" value={f.week ?? ''} onChange={e => set('week', e.target.value)} /></Field>
+        <Field label="Day"><Select value={f.day || ''} onChange={v => set('day', v)} options={DAYS} placeholder="Select day…" /></Field>
+      </div>
+      <Field label="Task *"><TextInput value={f.task || ''} onChange={e => set('task', e.target.value)} /></Field>
+      <Field label="Responsible"><TextInput value={f.responsible || ''} onChange={e => set('responsible', e.target.value)} /></Field>
+      <Field label="Scope">
+        <select value={f.scopeId || ''} onChange={e => set('scopeId', e.target.value)} style={{ ...S.input, appearance: 'none', cursor: 'pointer' }}>
+          <option value="">— None —</option>
+          {scopes.map(s => <option key={s.id} value={s.id}>{s.scope}</option>)}
+        </select>
+      </Field>
+      <Field label="Status"><Select value={f.status || ''} onChange={v => set('status', v)} options={TASK_STATUSES} /></Field>
     </Modal>
   );
 }
