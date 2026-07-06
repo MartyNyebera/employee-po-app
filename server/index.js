@@ -4533,14 +4533,11 @@ if (process.env.NODE_ENV === 'production') {
       res.sendFile(path.join(process.cwd(), 'public', 'version.txt'));
     });
 
-    // SPA fallback - must be LAST. index.html must never be cached, or deep-linked
-    // routes serve a stale shell that points at an old (deleted) JS bundle.
-    app.get(/.*/, (req, res) => {
-      res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.set('Pragma', 'no-cache');
-      res.set('Expires', '0');
-      res.sendFile(path.join(distDir, "index.html"), { cacheControl: false });
-    });
+    // NOTE: the SPA fallback (app.get(/.*/)) is intentionally registered at the VERY
+    // END of this file — AFTER every /api route — because Express matches routes in
+    // registration order. Registered here it would shadow the CRM / work-schedule /
+    // staff routes defined below this block, making them return index.html in
+    // production (the "failed to load" bug). See the bottom of this file.
   }
 }
 
@@ -5114,6 +5111,26 @@ const startServer = async () => {
 
   return httpServer;
 };
+
+// SPA fallback — registered LAST, after every /api route, so it only catches
+// client-side (non-API) paths in production. Registering it earlier shadowed the
+// CRM / work-schedule / staff routes, which then returned index.html and made those
+// admin pages fail to load in production while working locally (dev skips this block).
+if (process.env.NODE_ENV === 'production') {
+  const distDir = path.join(process.cwd(), 'dist');
+  app.get(/.*/, (req, res) => {
+    // Defense-in-depth: never answer an /api request with HTML. If an API route is
+    // genuinely missing, return a JSON 404 (not the SPA shell) so the client gets a
+    // real error instead of a JSON.parse crash.
+    if (req.path.startsWith('/api/')) {
+      return res.status(404).json({ error: 'Not found', path: req.path });
+    }
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    res.sendFile(path.join(distDir, 'index.html'), { cacheControl: false });
+  });
+}
 
 startServer().catch(err => {
   console.error('Failed to start server:', err);
