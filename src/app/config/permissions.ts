@@ -30,10 +30,6 @@ const BASE_ACCESS: Record<string, Partial<Record<Role, Access>>> = {
   inquiries:        { owner: 'manage', admin: 'manage', bookkeeper: 'none',   purchasing: 'manage' },
   inventory:        { owner: 'manage', admin: 'manage', bookkeeper: 'view',   purchasing: 'manage' },
   'request-form':   { owner: 'manage', admin: 'manage', bookkeeper: 'none',   purchasing: 'manage' },
-  // Planning
-  'work-schedule':      { owner: 'manage', admin: 'manage', bookkeeper: 'none',   purchasing: 'none'   },
-  // Daily tasks + schedule settings write capability — mirrors work-schedule (owner/admin only)
-  'work-schedule-tasks':{ owner: 'manage', admin: 'manage', bookkeeper: 'none',   purchasing: 'none'   },
   // Fleet / ops — owner + admin only
   fleet:                { owner: 'manage', admin: 'manage' },
   pms:                  { owner: 'manage', admin: 'manage' },
@@ -51,8 +47,8 @@ const BASE_ACCESS: Record<string, Partial<Record<Role, Access>>> = {
 };
 
 // Final matrix = BASE_ACCESS with office_admin injected as bookkeeper ∪ purchasing per
-// module. Where both source roles have no access (e.g. the owner-only `staff` screen,
-// `work-schedule`, and all fleet/ops modules), office_admin is simply not added, so it
+// module. Where both source roles have no access (e.g. the owner-only `staff` screen
+// and all fleet/ops modules), office_admin is simply not added, so it
 // can never see Staff Accounts or the Driver/fleet screens.
 export const MODULE_ACCESS: Record<string, Partial<Record<Role, Access>>> =
   Object.fromEntries(

@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useAutoLogout } from '../hooks/useAutoLogout';
 import { Button } from './ui/button';
-import { LogOut, Home, FileText, Receipt, Menu, X, UserPlus, Check, XCircle, MapPin, Calendar, Clock, Truck, Wrench, ShoppingCart, Package, User, UserCheck, MessageSquare, Users, Factory, UserCog } from 'lucide-react';
+import { LogOut, Home, FileText, Receipt, Menu, X, UserPlus, Check, XCircle, MapPin, Clock, Truck, Wrench, ShoppingCart, Package, User, UserCheck, MessageSquare, Users, Factory, UserCog } from 'lucide-react';
 import { SuppliersList } from './crm/SuppliersList';
 import { CustomersList } from './crm/CustomersList';
 import { InquiriesList } from './crm/InquiriesList';
-import { WorkScheduleList } from './crm/WorkScheduleList';
 import { StaffAccountsList } from './crm/StaffAccountsList';
 import { canView, canManage, type Role } from '../config/permissions';
 import ErrorBoundary from './ErrorBoundary';
@@ -54,7 +53,7 @@ interface AdminDashboardProps {
   onLogout: () => void;
 }
 
-type View = 'home' | 'orders' | 'transactions' | 'requests' | 'material-requests' | 'employee-approvals' | 'driver-approvals' | 'driver-vehicles' | 'delivery-management' | 'gps' | 'fleet' | 'pms' | 'purchase-orders' | 'inventory' | 'drivers' | 'deliveries' | 'miscellaneous' | 'request-form' | 'suppliers' | 'customers' | 'inquiries' | 'work-schedule' | 'staff';
+type View = 'home' | 'orders' | 'transactions' | 'requests' | 'material-requests' | 'employee-approvals' | 'driver-approvals' | 'driver-vehicles' | 'delivery-management' | 'gps' | 'fleet' | 'pms' | 'purchase-orders' | 'inventory' | 'drivers' | 'deliveries' | 'miscellaneous' | 'request-form' | 'suppliers' | 'customers' | 'inquiries' | 'staff';
 
 // Sidebar entries, in display order. Visibility + write access come from MODULE_ACCESS.
 const NAV_ITEMS: { view: View; label: string; icon: any; module: string }[] = [
@@ -67,7 +66,6 @@ const NAV_ITEMS: { view: View; label: string; icon: any; module: string }[] = [
   { view: 'request-form', label: 'Request Order', icon: ShoppingCart, module: 'request-form' },
   { view: 'inventory', label: 'Inventory Management', icon: Package, module: 'inventory' },
   { view: 'miscellaneous', label: 'Miscellaneous', icon: Wrench, module: 'miscellaneous' },
-  { view: 'work-schedule', label: 'Work Schedule', icon: Calendar, module: 'work-schedule' },
   { view: 'fleet', label: 'Fleet', icon: Truck, module: 'fleet' },
   { view: 'gps', label: 'GPS Tracking', icon: MapPin, module: 'gps' },
   { view: 'delivery-management', label: 'Delivery Management', icon: Truck, module: 'delivery-management' },
@@ -208,7 +206,6 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
     if (currentView === 'suppliers') return <SuppliersList isAdmin={canManage(role, 'suppliers')} />;
     if (currentView === 'customers') return <CustomersList isAdmin={canManage(role, 'customers')} />;
     if (currentView === 'inquiries') return <InquiriesList isAdmin={canManage(role, 'inquiries')} />;
-    if (currentView === 'work-schedule') return <WorkScheduleList isAdmin={canManage(role, 'work-schedule')} />;
     if (currentView === 'staff') return <StaffAccountsList />;
 
     if (currentView === 'home') {
