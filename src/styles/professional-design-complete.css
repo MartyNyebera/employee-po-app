@@ -11,11 +11,12 @@
 
 /* ===== CSS VARIABLES / DESIGN TOKENS ===== */
 :root {
-  /* Colors */
-  --color-primary: #10b981;
-  --color-primary-light: #d1fae5;
-  --color-primary-dark: #059669;
-  --color-secondary: #3b82f6;
+  /* Colors — single brand accent: blue #2563eb (matches Tailwind `primary` + crmKit).
+     (--color-success below stays green; green is only a semantic status colour now.) */
+  --color-primary: #2563eb;
+  --color-primary-light: #dbeafe;
+  --color-primary-dark: #1d4ed8;
+  --color-secondary: #2563eb;
   --color-neutral-50: #f9fafb;
   --color-neutral-100: #f3f4f6;
   --color-neutral-200: #e5e7eb;
@@ -61,21 +62,14 @@
   --transition-slow: 300ms ease-in-out;
 }
 
-/* ===== DARK MODE ===== */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-neutral-50: #0f172a;
-    --color-neutral-100: #1e293b;
-    --color-neutral-200: #334155;
-    --color-neutral-300: #475569;
-    --color-neutral-400: #64748b;
-    --color-neutral-500: #94a3b8;
-    --color-neutral-600: #cbd5e1;
-    --color-neutral-700: #e2e8f0;
-    --color-neutral-800: #f1f5f9;
-    --color-neutral-900: #f8fafc;
-  }
-}
+/* ===== DARK MODE =====
+   Intentionally disabled: the app ships a single, consistent LIGHT theme.
+   Previously an OS `prefers-color-scheme: dark` block re-mapped the neutral
+   tokens to dark values, but the UI hardcodes light backgrounds + dark text in
+   most places, so on a dark-mode OS panels half-flipped and text became
+   invisible. Keeping the neutral scale fixed (defined in :root above) guarantees
+   readable, consistent contrast on every machine. Do not re-add a
+   prefers-color-scheme override here without theming every surface. */
 
 /* ===== GLOBAL STYLES ===== */
 * {
@@ -160,16 +154,18 @@ body {
   letter-spacing: -0.025em !important;
 }
 
+/* Preserve the text-hierarchy instead of flattening every level to pure black,
+   otherwise headings, secondary labels and captions all render identically. */
 .admin-portal .text-gray-900 {
-  color: #000000 !important;
+  color: #111827 !important;
 }
 
 .admin-portal .text-gray-600 {
-  color: #000000 !important;
+  color: #4b5563 !important;
 }
 
 .admin-portal .text-gray-400 {
-  color: #000000 !important;
+  color: #6b7280 !important;
 }
 
 .admin-portal .mt-1 {
@@ -438,7 +434,10 @@ body {
   border-radius: var(--radius-lg) !important;
   transition: all var(--transition-fast) !important;
   cursor: pointer !important;
-  border: none !important;
+  /* Default to no border but let a component's own inline border win (e.g. ghost /
+     outline buttons whose only visible edge IS the border). `!important` here erased
+     those edges and made outline buttons vanish into the card. */
+  border: none;
   outline: none !important;
 }
 
@@ -501,8 +500,10 @@ body {
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1) !important;
 }
 
+/* Placeholders must read as muted hint text, not solid black — black made empty
+   fields indistinguishable from filled ones. */
 .admin-portal input::placeholder, .admin-portal textarea::placeholder {
-  color: #000000 !important;
+  color: #9ca3af !important;
 }
 
 /* ===== BADGES & TAGS ===== */

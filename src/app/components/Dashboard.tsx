@@ -2,7 +2,6 @@ import { useState, useRef } from 'react';
 import { useAutoLogout } from '../hooks/useAutoLogout';
 import { Button } from './ui/button';
 import { Home, Truck, Wrench, MapPin, FileText, Receipt, User, LogOut, Menu, X, ShoppingCart, Package } from 'lucide-react';
-import { ThemeToggle } from './ThemeToggle';
 import { BusinessOverview } from './BusinessOverview';
 import { AssetDetails } from './AssetDetails';
 import { PurchaseOrdersList } from './PurchaseOrdersList';
@@ -135,7 +134,6 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <ThemeToggle />
           <Button
             variant="outline"
             size="sm"
@@ -164,7 +162,7 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
                   }}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-300 relative overflow-hidden group ${
                     currentView === item.id
-                      ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg shadow-blue-500/25 border-l-4 border-l-amber-400 border border-white/10'
+                      ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg shadow-blue-500/25 border-l-4 border-l-blue-300 border border-white/10'
                       : 'text-slate-300 hover:bg-slate-900/50 hover:text-white hover:shadow-lg hover:shadow-black/20 hover:-translate-x-1 border border-transparent'
                   }`}
                 >

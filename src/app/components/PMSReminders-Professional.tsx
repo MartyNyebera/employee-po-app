@@ -48,7 +48,7 @@ export function PMSReminders({ onSelectVehicle }: PMSRemindersProps) {
           height: '40px',
           borderRadius: '50%',
           border: '4px solid #e5e7eb',
-          borderTopColor: '#3b82f6',
+          borderTopColor: '#2563eb',
           animation: 'spin 1s linear infinite'
         }} />
         <div style={{

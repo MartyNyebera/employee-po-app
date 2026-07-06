@@ -116,7 +116,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
         borderColor: '#fed7aa'
       },
       'approved': { 
-        color: '#3b82f6', 
+        color: '#2563eb', 
         bgColor: '#dbeafe', 
         borderColor: '#93c5fd'
       },
@@ -811,7 +811,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
           height: '40px',
           borderRadius: '50%',
           border: '4px solid #e5e7eb',
-          borderTopColor: '#3b82f6',
+          borderTopColor: '#2563eb',
           animation: 'spin 1s linear infinite'
         }} />
         <div style={{
@@ -849,7 +849,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
             width: '48px',
             height: '48px',
             borderRadius: '12px',
-            backgroundColor: '#3b82f6',
+            backgroundColor: '#2563eb',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -881,7 +881,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
           <button
             onClick={() => setShowCreateModal(true)}
             style={{
-              backgroundColor: '#3b82f6',
+              backgroundColor: '#2563eb',
               color: 'white',
               padding: '12px 20px',
               borderRadius: '8px',
@@ -899,7 +899,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
               e.currentTarget.style.backgroundColor = '#2563eb';
             }}
             onMouseOut={(e) => {
-              e.currentTarget.style.backgroundColor = '#3b82f6';
+              e.currentTarget.style.backgroundColor = '#2563eb';
             }}
           >
             <Plus style={{ width: '16px', height: '16px' }} />
@@ -947,7 +947,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <ShoppingCart style={{ width: '24px', height: '24px', color: '#3b82f6' }} />
+              <ShoppingCart style={{ width: '24px', height: '24px', color: '#2563eb' }} />
             </div>
           </div>
           <h3 style={{
@@ -1071,7 +1071,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <FileText style={{ width: '24px', height: '24px', color: '#3b82f6' }} />
+              <FileText style={{ width: '24px', height: '24px', color: '#2563eb' }} />
             </div>
             <div style={{
               display: 'flex',
@@ -1081,7 +1081,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
               borderRadius: '6px',
               fontSize: '12px',
               fontWeight: '600',
-              color: '#3b82f6',
+              color: '#2563eb',
               backgroundColor: '#dbeafe',
               fontFamily: 'Inter, sans-serif'
             }}>
@@ -1091,7 +1091,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
           <h3 style={{
             fontSize: '32px',
             fontWeight: '700',
-            color: '#3b82f6',
+            color: '#2563eb',
             margin: '0 0 8px 0',
             fontFamily: 'Plus Jakarta Sans, Inter, monospace'
           }}>
@@ -1215,7 +1215,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                 position: 'relative'
               }}
               onFocus={(e) => {
-                e.currentTarget.style.borderColor = '#3b82f6';
+                e.currentTarget.style.borderColor = '#2563eb';
                 e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
               }}
               onBlur={(e) => {
@@ -1245,7 +1245,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                 transition: 'all 0.2s ease'
               }}
               onFocus={(e) => {
-                e.currentTarget.style.borderColor = '#3b82f6';
+                e.currentTarget.style.borderColor = '#2563eb';
                 e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
               }}
               onBlur={(e) => {
@@ -1383,7 +1383,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                         borderRadius: '6px',
                         border: '1px solid #dbeafe',
                         backgroundColor: 'white',
-                        color: '#3b82f6',
+                        color: '#2563eb',
                         fontSize: '12px',
                         fontWeight: '500',
                         fontFamily: 'Inter, sans-serif',
@@ -1395,7 +1395,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                       }}
                       onMouseOver={(e) => {
                         e.currentTarget.style.backgroundColor = '#eff6ff';
-                        e.currentTarget.style.borderColor = '#3b82f6';
+                        e.currentTarget.style.borderColor = '#2563eb';
                       }}
                       onMouseOut={(e) => {
                         e.currentTarget.style.backgroundColor = 'white';
@@ -1412,7 +1412,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                         borderRadius: '6px',
                         border: '1px solid #dbeafe',
                         backgroundColor: 'white',
-                        color: '#3b82f6',
+                        color: '#2563eb',
                         fontSize: '12px',
                         fontWeight: '500',
                         fontFamily: 'Inter, sans-serif',
@@ -1424,7 +1424,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                       }}
                       onMouseOver={(e) => {
                         e.currentTarget.style.backgroundColor = '#eff6ff';
-                        e.currentTarget.style.borderColor = '#3b82f6';
+                        e.currentTarget.style.borderColor = '#2563eb';
                       }}
                       onMouseOut={(e) => {
                         e.currentTarget.style.backgroundColor = 'white';
@@ -1645,7 +1645,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                       transition: 'all 0.2s ease'
                     }}
                     onFocus={(e) => {
-                      e.currentTarget.style.borderColor = '#3b82f6';
+                      e.currentTarget.style.borderColor = '#2563eb';
                       e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
                     }}
                     onBlur={(e) => {
@@ -1760,7 +1760,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                     padding: '12px 20px',
                     borderRadius: '8px',
                     border: 'none',
-                    backgroundColor: '#3b82f6',
+                    backgroundColor: '#2563eb',
                     color: 'white',
                     fontSize: '14px',
                     fontWeight: '500',

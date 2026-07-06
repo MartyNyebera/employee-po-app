@@ -59,7 +59,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
       case 'fuel':
         return <Fuel style={{ width: '16px', height: '16px', color: '#d97706' }} />;
       case 'maintenance':
-        return <Wrench style={{ width: '16px', height: '16px', color: '#3b82f6' }} />;
+        return <Wrench style={{ width: '16px', height: '16px', color: '#2563eb' }} />;
       case 'parts':
         return <Package style={{ width: '16px', height: '16px', color: '#8b5cf6' }} />;
       case 'rental':
@@ -77,7 +77,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
         borderColor: '#fed7aa'
       },
       'maintenance': { 
-        color: '#3b82f6', 
+        color: '#2563eb', 
         bgColor: '#dbeafe', 
         borderColor: '#93c5fd'
       },
@@ -486,7 +486,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <Wrench style={{ width: '24px', height: '24px', color: '#3b82f6' }} />
+              <Wrench style={{ width: '24px', height: '24px', color: '#2563eb' }} />
             </div>
             <div style={{
               display: 'flex',
@@ -496,7 +496,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
               borderRadius: '6px',
               fontSize: '12px',
               fontWeight: '600',
-              color: '#3b82f6',
+              color: '#2563eb',
               backgroundColor: '#dbeafe',
               fontFamily: 'Inter, sans-serif'
             }}>
@@ -506,7 +506,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
           <h3 style={{
             fontSize: '32px',
             fontWeight: '700',
-            color: '#3b82f6',
+            color: '#2563eb',
             margin: '0 0 8px 0',
             fontFamily: 'Plus Jakarta Sans, Inter, monospace'
           }}>
@@ -850,7 +850,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
                       width: '32px',
                       height: '32px',
                       borderRadius: '6px',
-                      backgroundColor: '#3b82f6',
+                      backgroundColor: '#2563eb',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center'
@@ -861,7 +861,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
                       <div style={{
                         fontSize: '16px',
                         fontWeight: '600',
-                        color: '#3b82f6',
+                        color: '#2563eb',
                         fontFamily: 'Inter, sans-serif'
                       }}>
                         {formatDate(txn.date)}

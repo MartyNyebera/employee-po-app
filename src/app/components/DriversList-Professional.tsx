@@ -149,7 +149,7 @@ export function DriversList({ isAdmin }: { isAdmin: boolean }) {
           height: '40px',
           borderRadius: '50%',
           border: '4px solid #e5e7eb',
-          borderTopColor: '#3b82f6',
+          borderTopColor: '#2563eb',
           animation: 'spin 1s linear infinite'
         }} />
         <div style={{
@@ -187,7 +187,7 @@ export function DriversList({ isAdmin }: { isAdmin: boolean }) {
             width: '48px',
             height: '48px',
             borderRadius: '12px',
-            backgroundColor: '#3b82f6',
+            backgroundColor: '#2563eb',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -219,7 +219,7 @@ export function DriversList({ isAdmin }: { isAdmin: boolean }) {
           <button
             onClick={openCreate}
             style={{
-              backgroundColor: '#3b82f6',
+              backgroundColor: '#2563eb',
               color: 'white',
               padding: '12px 20px',
               borderRadius: '8px',
@@ -237,7 +237,7 @@ export function DriversList({ isAdmin }: { isAdmin: boolean }) {
               e.currentTarget.style.backgroundColor = '#2563eb';
             }}
             onMouseOut={(e) => {
-              e.currentTarget.style.backgroundColor = '#3b82f6';
+              e.currentTarget.style.backgroundColor = '#2563eb';
             }}
           >
             <Plus style={{ width: '16px', height: '16px' }} />
@@ -285,7 +285,7 @@ export function DriversList({ isAdmin }: { isAdmin: boolean }) {
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <UserCheck style={{ width: '24px', height: '24px', color: '#3b82f6' }} />
+              <UserCheck style={{ width: '24px', height: '24px', color: '#2563eb' }} />
             </div>
           </div>
           <h3 style={{
@@ -547,7 +547,7 @@ export function DriversList({ isAdmin }: { isAdmin: boolean }) {
                 transition: 'all 0.2s ease'
               }}
               onFocus={(e) => {
-                e.currentTarget.style.borderColor = '#3b82f6';
+                e.currentTarget.style.borderColor = '#2563eb';
                 e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
               }}
               onBlur={(e) => {
@@ -573,7 +573,7 @@ export function DriversList({ isAdmin }: { isAdmin: boolean }) {
                 transition: 'all 0.2s ease'
               }}
               onFocus={(e) => {
-                e.currentTarget.style.borderColor = '#3b82f6';
+                e.currentTarget.style.borderColor = '#2563eb';
                 e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
               }}
               onBlur={(e) => {
@@ -756,7 +756,7 @@ export function DriversList({ isAdmin }: { isAdmin: boolean }) {
                           width: '40px',
                           height: '40px',
                           borderRadius: '50%',
-                          backgroundColor: '#3b82f6',
+                          backgroundColor: '#2563eb',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
@@ -816,7 +816,7 @@ export function DriversList({ isAdmin }: { isAdmin: boolean }) {
                           color: '#374151',
                           fontFamily: 'Inter, sans-serif'
                         }}>
-                          <Car style={{ width: '14px', height: '14px', color: '#3b82f6' }} />
+                          <Car style={{ width: '14px', height: '14px', color: '#2563eb' }} />
                           <span>{d.vehicle_name}</span>
                           {d.plate_number && (
                             <span style={{
@@ -900,7 +900,7 @@ export function DriversList({ isAdmin }: { isAdmin: boolean }) {
                               borderRadius: '6px',
                               border: '1px solid #dbeafe',
                               backgroundColor: 'white',
-                              color: '#3b82f6',
+                              color: '#2563eb',
                               cursor: 'pointer',
                               transition: 'all 0.2s ease',
                               display: 'flex',
@@ -909,7 +909,7 @@ export function DriversList({ isAdmin }: { isAdmin: boolean }) {
                             }}
                             onMouseOver={(e) => {
                               e.currentTarget.style.backgroundColor = '#eff6ff';
-                              e.currentTarget.style.borderColor = '#3b82f6';
+                              e.currentTarget.style.borderColor = '#2563eb';
                             }}
                             onMouseOut={(e) => {
                               e.currentTarget.style.backgroundColor = 'white';
@@ -1066,7 +1066,7 @@ export function DriversList({ isAdmin }: { isAdmin: boolean }) {
                       transition: 'all 0.2s ease'
                     }}
                     onFocus={(e) => {
-                      e.currentTarget.style.borderColor = '#3b82f6';
+                      e.currentTarget.style.borderColor = '#2563eb';
                       e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
                     }}
                     onBlur={(e) => {
@@ -1102,7 +1102,7 @@ export function DriversList({ isAdmin }: { isAdmin: boolean }) {
                       transition: 'all 0.2s ease'
                     }}
                     onFocus={(e) => {
-                      e.currentTarget.style.borderColor = '#3b82f6';
+                      e.currentTarget.style.borderColor = '#2563eb';
                       e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
                     }}
                     onBlur={(e) => {
@@ -1138,7 +1138,7 @@ export function DriversList({ isAdmin }: { isAdmin: boolean }) {
                       transition: 'all 0.2s ease'
                     }}
                     onFocus={(e) => {
-                      e.currentTarget.style.borderColor = '#3b82f6';
+                      e.currentTarget.style.borderColor = '#2563eb';
                       e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
                     }}
                     onBlur={(e) => {
@@ -1174,7 +1174,7 @@ export function DriversList({ isAdmin }: { isAdmin: boolean }) {
                       transition: 'all 0.2s ease'
                     }}
                     onFocus={(e) => {
-                      e.currentTarget.style.borderColor = '#3b82f6';
+                      e.currentTarget.style.borderColor = '#2563eb';
                       e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
                     }}
                     onBlur={(e) => {
@@ -1209,7 +1209,7 @@ export function DriversList({ isAdmin }: { isAdmin: boolean }) {
                       transition: 'all 0.2s ease'
                     }}
                     onFocus={(e) => {
-                      e.currentTarget.style.borderColor = '#3b82f6';
+                      e.currentTarget.style.borderColor = '#2563eb';
                       e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
                     }}
                     onBlur={(e) => {
@@ -1244,7 +1244,7 @@ export function DriversList({ isAdmin }: { isAdmin: boolean }) {
                       transition: 'all 0.2s ease'
                     }}
                     onFocus={(e) => {
-                      e.currentTarget.style.borderColor = '#3b82f6';
+                      e.currentTarget.style.borderColor = '#2563eb';
                       e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
                     }}
                     onBlur={(e) => {
@@ -1280,7 +1280,7 @@ export function DriversList({ isAdmin }: { isAdmin: boolean }) {
                       transition: 'all 0.2s ease'
                     }}
                     onFocus={(e) => {
-                      e.currentTarget.style.borderColor = '#3b82f6';
+                      e.currentTarget.style.borderColor = '#2563eb';
                       e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
                     }}
                     onBlur={(e) => {
@@ -1320,7 +1320,7 @@ export function DriversList({ isAdmin }: { isAdmin: boolean }) {
                       transition: 'all 0.2s ease'
                     }}
                     onFocus={(e) => {
-                      e.currentTarget.style.borderColor = '#3b82f6';
+                      e.currentTarget.style.borderColor = '#2563eb';
                       e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
                     }}
                     onBlur={(e) => {
@@ -1376,7 +1376,7 @@ export function DriversList({ isAdmin }: { isAdmin: boolean }) {
                   padding: '12px 20px',
                   borderRadius: '8px',
                   border: 'none',
-                  backgroundColor: '#3b82f6',
+                  backgroundColor: '#2563eb',
                   color: 'white',
                   fontSize: '14px',
                   fontWeight: '500',
@@ -1392,7 +1392,7 @@ export function DriversList({ isAdmin }: { isAdmin: boolean }) {
                 }}
                 onMouseOut={(e) => {
                   if (!saving) {
-                    e.currentTarget.style.backgroundColor = '#3b82f6';
+                    e.currentTarget.style.backgroundColor = '#2563eb';
                   }
                 }}
               >

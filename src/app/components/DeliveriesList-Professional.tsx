@@ -135,13 +135,13 @@ export function DeliveriesList({ isAdmin }: { isAdmin: boolean }) {
         icon: <Clock style={{ width: '12px', height: '12px' }} /> 
       },
       'Assigned': { 
-        color: '#3b82f6', 
+        color: '#2563eb', 
         bgColor: '#dbeafe', 
         borderColor: '#93c5fd',
         icon: <Truck style={{ width: '12px', height: '12px' }} /> 
       },
       'Picked Up': { 
-        color: '#6366f1', 
+        color: '#2563eb', 
         bgColor: '#e0e7ff', 
         borderColor: '#a5b4fc',
         icon: <Truck style={{ width: '12px', height: '12px' }} /> 
@@ -453,7 +453,7 @@ export function DeliveriesList({ isAdmin }: { isAdmin: boolean }) {
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <Navigation style={{ width: '24px', height: '24px', color: '#3b82f6' }} />
+              <Navigation style={{ width: '24px', height: '24px', color: '#2563eb' }} />
             </div>
             <div style={{
               display: 'flex',
@@ -463,7 +463,7 @@ export function DeliveriesList({ isAdmin }: { isAdmin: boolean }) {
               borderRadius: '6px',
               fontSize: '12px',
               fontWeight: '600',
-              color: '#3b82f6',
+              color: '#2563eb',
               backgroundColor: '#dbeafe',
               fontFamily: 'Inter, sans-serif'
             }}>
@@ -473,7 +473,7 @@ export function DeliveriesList({ isAdmin }: { isAdmin: boolean }) {
           <h3 style={{
             fontSize: '32px',
             fontWeight: '700',
-            color: '#3b82f6',
+            color: '#2563eb',
             margin: '0 0 8px 0',
             fontFamily: 'Plus Jakarta Sans, Inter, monospace'
           }}>
@@ -863,7 +863,7 @@ export function DeliveriesList({ isAdmin }: { isAdmin: boolean }) {
                           <div style={{
                             fontSize: '14px',
                             fontWeight: '600',
-                            color: '#3b82f6',
+                            color: '#2563eb',
                             fontFamily: 'Inter, sans-serif'
                           }}>
                             {d.so_number}
@@ -988,7 +988,7 @@ export function DeliveriesList({ isAdmin }: { isAdmin: boolean }) {
                                 padding: '6px 12px',
                                 borderRadius: '6px',
                                 border: 'none',
-                                backgroundColor: '#3b82f6',
+                                backgroundColor: '#2563eb',
                                 color: 'white',
                                 fontSize: '12px',
                                 fontWeight: '500',
@@ -1004,7 +1004,7 @@ export function DeliveriesList({ isAdmin }: { isAdmin: boolean }) {
                               }}
                               onMouseOut={(e) => {
                                 if (!isUpdating) {
-                                  e.currentTarget.style.backgroundColor = '#3b82f6';
+                                  e.currentTarget.style.backgroundColor = '#2563eb';
                                 }
                               }}
                             >
@@ -1565,7 +1565,7 @@ export function DeliveriesList({ isAdmin }: { isAdmin: boolean }) {
                       padding: '8px 16px',
                       borderRadius: '8px',
                       border: 'none',
-                      backgroundColor: '#3b82f6',
+                      backgroundColor: '#2563eb',
                       color: 'white',
                       fontSize: '14px',
                       fontWeight: '500',
@@ -1581,7 +1581,7 @@ export function DeliveriesList({ isAdmin }: { isAdmin: boolean }) {
                     }}
                     onMouseOut={(e) => {
                       if (statusUpdating !== detailDelivery.id) {
-                        e.currentTarget.style.backgroundColor = '#3b82f6';
+                        e.currentTarget.style.backgroundColor = '#2563eb';
                       }
                     }}
                   >

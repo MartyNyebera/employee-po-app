@@ -1,6 +1,10 @@
 import type { Config } from 'tailwindcss'
 
 const config: Config = {
+  // Class-based (not OS-based) dark mode. With the Dark/Light toggle removed, the
+  // `.dark` class is never added, so `dark:` utilities stay dormant and the OS
+  // dark setting can no longer flip the UI into an unreadable half-dark state.
+  darkMode: 'class',
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",

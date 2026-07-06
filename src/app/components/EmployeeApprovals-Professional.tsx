@@ -93,7 +93,7 @@ export function EmployeeApprovals({ onApprove, onReject, userName }: EmployeeApp
           height: '40px',
           borderRadius: '50%',
           border: '4px solid #e5e7eb',
-          borderTopColor: '#3b82f6',
+          borderTopColor: '#2563eb',
           animation: 'spin 1s linear infinite'
         }} />
         <div style={{
@@ -131,7 +131,7 @@ export function EmployeeApprovals({ onApprove, onReject, userName }: EmployeeApp
             width: '48px',
             height: '48px',
             borderRadius: '12px',
-            backgroundColor: '#3b82f6',
+            backgroundColor: '#2563eb',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -248,7 +248,7 @@ export function EmployeeApprovals({ onApprove, onReject, userName }: EmployeeApp
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <UserCheck style={{ width: '24px', height: '24px', color: '#3b82f6' }} />
+              <UserCheck style={{ width: '24px', height: '24px', color: '#2563eb' }} />
             </div>
           </div>
           <h3 style={{
@@ -394,7 +394,7 @@ export function EmployeeApprovals({ onApprove, onReject, userName }: EmployeeApp
                       justifyContent: 'center',
                       backgroundColor: '#dbeafe'
                     }}>
-                      <User style={{ width: '20px', height: '20px', color: '#3b82f6' }} />
+                      <User style={{ width: '20px', height: '20px', color: '#2563eb' }} />
                     </div>
                     <div style={{ flex: 1 }}>
                       <h3 style={{

@@ -156,7 +156,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
         icon: <Truck style={{ width: '16px', height: '16px' }} />
       },
       'PAID': { 
-        color: '#7c3aed', 
+        color: '#2563eb', 
         bgColor: '#f5f3ff', 
         borderColor: '#ddd6fe',
         icon: <DollarSign style={{ width: '16px', height: '16px' }} />
@@ -881,7 +881,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
           height: '40px',
           borderRadius: '50%',
           border: '4px solid #e5e7eb',
-          borderTopColor: '#3b82f6',
+          borderTopColor: '#2563eb',
           animation: 'spin 1s linear infinite'
         }} />
         <div style={{
@@ -922,7 +922,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
             width: '48px',
             height: '48px',
             borderRadius: '12px',
-            backgroundColor: '#3b82f6',
+            backgroundColor: '#2563eb',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -958,7 +958,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
             <button
               onClick={() => setShowCreateModal(true)}
               style={{
-                backgroundColor: '#3b82f6',
+                backgroundColor: '#2563eb',
                 color: 'white',
                 border: 'none',
                 borderRadius: '8px',
@@ -977,7 +977,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
                 e.currentTarget.style.transform = 'translateY(-1px)';
               }}
               onMouseOut={(e) => {
-                e.currentTarget.style.backgroundColor = '#3b82f6';
+                e.currentTarget.style.backgroundColor = '#2563eb';
                 e.currentTarget.style.transform = 'translateY(0)';
               }}
             >
@@ -1057,7 +1057,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <FileText style={{ width: '24px', height: '24px', color: '#3b82f6' }} />
+              <FileText style={{ width: '24px', height: '24px', color: '#2563eb' }} />
             </div>
           </div>
           <h3 style={{
@@ -1181,7 +1181,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <FileText style={{ width: '24px', height: '24px', color: '#3b82f6' }} />
+              <FileText style={{ width: '24px', height: '24px', color: '#2563eb' }} />
             </div>
             <div style={{
               display: 'flex',
@@ -1191,7 +1191,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
               borderRadius: '6px',
               fontSize: '12px',
               fontWeight: '600',
-              color: '#3b82f6',
+              color: '#2563eb',
               backgroundColor: '#dbeafe',
               fontFamily: 'Inter, sans-serif'
             }}>
@@ -1201,7 +1201,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
           <h3 style={{
             fontSize: '32px',
             fontWeight: '700',
-            color: '#3b82f6',
+            color: '#2563eb',
             margin: '0 0 8px 0',
             fontFamily: 'Plus Jakarta Sans, Inter, monospace'
           }}>
@@ -1321,7 +1321,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
               transition: 'all 0.2s ease'
             }}
             onFocus={(e) => {
-              e.currentTarget.style.borderColor = '#3b82f6';
+              e.currentTarget.style.borderColor = '#2563eb';
               e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
             }}
             onBlur={(e) => {
@@ -1522,7 +1522,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
                         borderRadius: '6px',
                         border: '1px solid #dbeafe',
                         backgroundColor: 'white',
-                        color: '#3b82f6',
+                        color: '#2563eb',
                         fontSize: '12px',
                         fontWeight: '500',
                         fontFamily: 'Inter, sans-serif',
@@ -1543,7 +1543,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
                         borderRadius: '6px',
                         border: '1px solid #dbeafe',
                         backgroundColor: 'white',
-                        color: '#3b82f6',
+                        color: '#2563eb',
                         fontSize: '12px',
                         fontWeight: '500',
                         fontFamily: 'Inter, sans-serif',
@@ -1984,7 +1984,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
                     padding: '12px 20px',
                     borderRadius: '8px',
                     border: 'none',
-                    backgroundColor: '#3b82f6',
+                    backgroundColor: '#2563eb',
                     color: 'white',
                     fontSize: '14px',
                     fontWeight: '500',

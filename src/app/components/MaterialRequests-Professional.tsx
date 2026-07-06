@@ -531,7 +531,7 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
         icon: <XCircle style={{ width: '16px', height: '16px' }} />
       },
       'completed': { 
-        color: '#3b82f6', 
+        color: '#2563eb', 
         bgColor: '#dbeafe', 
         borderColor: '#93c5fd',
         icon: <Package style={{ width: '16px', height: '16px' }} />
@@ -554,7 +554,7 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
         borderColor: '#fecaca'
       },
       'normal': { 
-        color: '#3b82f6', 
+        color: '#2563eb', 
         bgColor: '#dbeafe', 
         borderColor: '#93c5fd'
       },

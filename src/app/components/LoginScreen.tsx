@@ -38,10 +38,13 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
 
   return (
     <>
+      {/* These overrides force text WHITE for the dark brand panel. `.text-slate-500`
+          is intentionally NOT forced here — it is also used on the white form panel
+          ("Secure login…"), where white-on-white made it invisible. The dark-panel
+          copyright below uses text-slate-400 instead. */}
       <style>{`.kimoel-title { color: white !important; }
       .text-slate-50 { color: white !important; }
       .text-slate-300 { color: white !important; }
-      .text-slate-500 { color: white !important; }
     `}</style>
     <div className="min-h-screen flex">
       {/* Left panel - brand */}
@@ -70,7 +73,7 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
             Monitor assets, manage orders, and track transactions with a single professional dashboard designed for modern fleet management.
           </p>
         </div>
-        <p className="text-slate-500 text-sm relative z-10">© Kimoel Tracking System</p>
+        <p className="text-slate-400 text-sm relative z-10">© Kimoel Tracking System</p>
       </div>
 
       {/* Right panel - form */}
@@ -94,14 +97,14 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
                     onChange={(e) => setEmail(e.target.value)}
                     onFocus={() => setFocusedField('email')}
                     onBlur={() => setFocusedField(null)}
-                    className={`border-slate-200 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 transition-all duration-200 pr-10 !text-black placeholder:!text-slate-400 bg-white ${
-                      focusedField === 'email' ? 'shadow-lg shadow-amber-500/10' : ''
+                    className={`border-slate-200 focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 transition-all duration-200 pr-10 !text-black placeholder:!text-slate-400 bg-white ${
+                      focusedField === 'email' ? 'shadow-lg shadow-blue-600/10' : ''
                     }`}
                     required
                   />
                   <div className="absolute right-3 top-1/2 -translate-y-1/2">
                     <User className={`size-4 transition-colors duration-200 ${
-                      focusedField === 'email' ? 'text-amber-500' : 'text-slate-400'
+                      focusedField === 'email' ? 'text-blue-600' : 'text-slate-400'
                     }`} />
                   </div>
                 </div>
@@ -117,8 +120,8 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
                     onChange={(e) => setPassword(e.target.value)}
                     onFocus={() => setFocusedField('password')}
                     onBlur={() => setFocusedField(null)}
-                    className={`border-slate-200 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 transition-all duration-200 pr-10 !text-black placeholder:!text-slate-400 bg-white ${
-                      focusedField === 'password' ? 'shadow-lg shadow-amber-500/10' : ''
+                    className={`border-slate-200 focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 transition-all duration-200 pr-10 !text-black placeholder:!text-slate-400 bg-white ${
+                      focusedField === 'password' ? 'shadow-lg shadow-blue-600/10' : ''
                     }`}
                     required
                   />
@@ -157,13 +160,13 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
                       type="checkbox"
                       checked={rememberMe}
                       onChange={(e) => setRememberMe(e.target.checked)}
-                      className="w-4 h-4 text-amber-500 border-slate-300 rounded focus:ring-amber-500 focus:ring-2"
+                      className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-600 focus:ring-2"
                     />
                     <span className="text-slate-600 group-hover:text-slate-800 transition-colors">Remember me</span>
                   </label>
                   <button
                     type="button"
-                    className="text-amber-600 hover:text-amber-700 font-medium transition-colors"
+                    className="text-blue-600 hover:text-blue-700 font-medium transition-colors"
                   >
                     Forgot password?
                   </button>

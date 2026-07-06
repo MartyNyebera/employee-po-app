@@ -296,7 +296,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
               transition: 'all 0.2s ease'
             }}
             onMouseOver={(e) => {
-              e.currentTarget.style.backgroundColor = '#7c3aed';
+              e.currentTarget.style.backgroundColor = '#2563eb';
             }}
             onMouseOut={(e) => {
               e.currentTarget.style.backgroundColor = '#8b5cf6';
@@ -1299,7 +1299,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                     flex: 1
                   }}
                   onMouseOver={(e) => {
-                    e.currentTarget.style.backgroundColor = '#7c3aed';
+                    e.currentTarget.style.backgroundColor = '#2563eb';
                   }}
                   onMouseOut={(e) => {
                     e.currentTarget.style.backgroundColor = '#8b5cf6';

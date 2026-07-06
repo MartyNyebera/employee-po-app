@@ -178,7 +178,7 @@ export function MiscellaneousManagement() {
         <button
           onClick={() => setShowCreateModal(true)}
           style={{
-            backgroundColor: '#3b82f6',
+            backgroundColor: '#2563eb',
             color: 'white',
             padding: '12px 20px',
             borderRadius: '8px',
@@ -226,7 +226,7 @@ export function MiscellaneousManagement() {
             <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '8px' }}>
               Average Expense
             </div>
-            <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#3b82f6' }}>
+            <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#2563eb' }}>
               {formatCurrency(filteredExpenses.length > 0 ? totalExpenses / filteredExpenses.length : 0)}
             </div>
             <div style={{ fontSize: '12px', color: '#6b7280' }}>
@@ -333,7 +333,7 @@ export function MiscellaneousManagement() {
                       fontSize: '12px',
                       fontWeight: '600',
                       backgroundColor: '#dbeafe',
-                      color: '#3b82f6'
+                      color: '#2563eb'
                     }}>
                       {expense.category}
                     </span>
@@ -351,7 +351,7 @@ export function MiscellaneousManagement() {
                           padding: '6px',
                           borderRadius: '4px',
                           border: 'none',
-                          color: '#3b82f6',
+                          color: '#2563eb',
                           cursor: 'pointer'
                         }}
                       >
@@ -543,10 +543,10 @@ export function MiscellaneousManagement() {
                       flex: 1,
                       padding: '12px 20px',
                       borderRadius: '8px',
-                      border: '1px solid #3b82f6',
+                      border: '1px solid #2563eb',
                       fontSize: '14px',
                       fontWeight: '500',
-                      backgroundColor: '#3b82f6',
+                      backgroundColor: '#2563eb',
                       color: 'white',
                       cursor: 'pointer'
                     }}

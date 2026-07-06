@@ -273,10 +273,10 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
           
           <button style={{
             padding: '8px 16px',
-            border: '1px solid #3b82f6',
+            border: '1px solid #2563eb',
             borderRadius: '8px',
             backgroundColor: 'transparent',
-            color: '#3b82f6',
+            color: '#2563eb',
             fontSize: '14px',
             fontFamily: 'Inter, sans-serif',
             cursor: 'pointer',
@@ -550,7 +550,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
             left: '0',
             right: '0',
             height: '4px',
-            background: 'linear-gradient(90deg, #3b82f6 0%, #1d4ed8 100%)'
+            background: 'linear-gradient(90deg, #2563eb 0%, #1d4ed8 100%)'
           }} />
           
           <div style={{ 
@@ -568,7 +568,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 height: '48px',
                 borderRadius: '12px',
                 background: '#dbeafe',
-                color: '#3b82f6'
+                color: '#2563eb'
               }}>
                 <Target style={{ width: '24px', height: '24px' }} />
               </div>

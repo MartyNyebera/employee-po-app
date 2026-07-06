@@ -133,7 +133,7 @@ export function FleetList({ onSelectVehicle }: FleetListProps) {
           height: '40px',
           borderRadius: '50%',
           border: '4px solid #e5e7eb',
-          borderTopColor: '#3b82f6',
+          borderTopColor: '#2563eb',
           animation: 'spin 1s linear infinite'
         }} />
         <div style={{
@@ -184,7 +184,7 @@ export function FleetList({ onSelectVehicle }: FleetListProps) {
         <button
           onClick={() => setShowAddModal(true)}
           style={{
-            backgroundColor: '#3b82f6',
+            backgroundColor: '#2563eb',
             color: 'white',
             padding: '12px 20px',
             borderRadius: '8px',
@@ -202,7 +202,7 @@ export function FleetList({ onSelectVehicle }: FleetListProps) {
             e.currentTarget.style.backgroundColor = '#2563eb';
           }}
           onMouseOut={(e) => {
-            e.currentTarget.style.backgroundColor = '#3b82f6';
+            e.currentTarget.style.backgroundColor = '#2563eb';
           }}
         >
           <Plus style={{ width: '16px', height: '16px' }} />
@@ -250,7 +250,7 @@ export function FleetList({ onSelectVehicle }: FleetListProps) {
                 alignItems: 'center',
                 justifyContent: 'center'
               }}>
-                <Truck style={{ width: '24px', height: '24px', color: '#3b82f6' }} />
+                <Truck style={{ width: '24px', height: '24px', color: '#2563eb' }} />
               </div>
             </div>
             <h3 style={{
@@ -452,7 +452,7 @@ export function FleetList({ onSelectVehicle }: FleetListProps) {
           <button
             onClick={() => setShowAddModal(true)}
             style={{
-              backgroundColor: '#3b82f6',
+              backgroundColor: '#2563eb',
               color: 'white',
               padding: '12px 20px',
               borderRadius: '8px',

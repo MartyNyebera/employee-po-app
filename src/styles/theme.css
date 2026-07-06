@@ -34,13 +34,13 @@ input, select, textarea {
   --secondary-foreground: #1e293b;
   --muted: #f1f5f9;
   --muted-foreground: #64748b;
-  --accent: #f59e0b;
+  --accent: #2563eb;
   --accent-foreground: #ffffff;
   --destructive: #dc2626;
   --destructive-foreground: #ffffff;
   --border: #e2e8f0;
   --input: #ffffff;
-  --ring: #f59e0b;
+  --ring: #2563eb;
   --radius: 0.5rem;
 }
 
@@ -57,13 +57,13 @@ input, select, textarea {
   --secondary-foreground: #f8fafc;
   --muted: #1e293b;
   --muted-foreground: #94a3b8;
-  --accent: #f59e0b;
-  --accent-foreground: #1e293b;
+  --accent: #2563eb;
+  --accent-foreground: #f8fafc;
   --destructive: #dc2626;
   --destructive-foreground: #ffffff;
   --border: #334155;
   --input: #1e293b;
-  --ring: #f59e0b;
+  --ring: #2563eb;
 }
 
 /* Beautiful Gradients */
