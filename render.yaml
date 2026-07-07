@@ -1,37 +1,41 @@
+# Single monolith web service: server/index.js serves BOTH the /api routes and the
+# built frontend (dist/) in production. This matches the live `employee-po-system`
+# service. Secrets use `sync: false` so Render prompts for them instead of storing
+# values in the repo — set them in the dashboard (never commit real secrets).
 services:
-  # Backend API Server
   - type: web
-    name: employee-po-api
+    name: employee-po-system
     env: node
     plan: free
-    buildCommand: npm install
-    startCommand: npm run server
+    buildCommand: npm install && npm run build
+    startCommand: npm run init && npm run server
+    healthCheckPath: /api/test
     envVars:
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL
-        value: ${DATABASE_URL}
+        sync: false
       - key: JWT_SECRET
-        value: ${JWT_SECRET}
+        sync: false
       - key: SUPER_ADMIN_OWNER_EMAIL
-        value: ${SUPER_ADMIN_OWNER_EMAIL}
+        sync: false
       - key: SUPER_ADMIN_OWNER_NAME
-        value: ${SUPER_ADMIN_OWNER_NAME}
+        sync: false
       - key: SUPER_ADMIN_OWNER_PASSWORD
-        value: ${SUPER_ADMIN_OWNER_PASSWORD}
-
-  # Frontend React App
-  - type: web
-    name: employee-po-frontend
-    env: static
-    plan: free
-    buildCommand: npm run build
-    staticPublishPath: dist
-    envVars:
-      - key: REACT_APP_API_URL
-        value: https://employee-po-api.onrender.com
-
-databases:
-  - name: employee-po-db
-    plan: free
-    ipAllowList: []
+        sync: false
+      - key: SUPER_ADMIN_DEVELOPER_EMAIL
+        sync: false
+      - key: SUPER_ADMIN_DEVELOPER_NAME
+        sync: false
+      - key: SUPER_ADMIN_DEVELOPER_PASSWORD
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
