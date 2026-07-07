@@ -395,6 +395,20 @@ useEffect(() => {
                 <label className="text-sm font-medium text-slate-700">Last Updated</label>
                 <p className="text-sm text-slate-900">{selectedItem.lastUpdated}</p>
               </div>
+              {isAdmin && (
+                <>
+                  <div>
+                    <label className="text-sm font-medium text-slate-700">Unit Cost</label>
+                    <p className="text-sm text-slate-900">₱{(selectedItem.unitCost || 0).toFixed(2)}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-slate-700">Total Value</label>
+                    <p className="text-sm text-slate-900">
+                      ₱{((selectedItem.quantity || 0) * (selectedItem.unitCost || 0)).toFixed(2)}
+                    </p>
+                  </div>
+                </>
+              )}
               <div className="col-span-2">
                 <label className="text-sm font-medium text-slate-700">Status</label>
                 <div className="mt-1">{getStatusBadge(selectedItem.status)}</div>
