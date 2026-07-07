@@ -5,12 +5,20 @@ import "./styles/index.css";
 import App from './app/App';
 import { Toaster } from './app/components/ui/sonner';
 
-// Unregister any existing service workers to prevent API issues
+// Unregister any legacy service worker AND purge its Cache Storage.
+// A stale caching worker from an earlier build can otherwise keep serving an
+// old app shell after a deploy. Unregistering alone leaves the cached
+// responses behind, so we also delete every Cache Storage bucket.
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(registrations => {
     registrations.forEach(registration => {
       registration.unregister();
-          });
+    });
+  });
+}
+if ('caches' in window) {
+  caches.keys().then(keys => {
+    keys.forEach(key => caches.delete(key));
   });
 }
 
