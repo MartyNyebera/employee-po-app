@@ -626,7 +626,14 @@ app.post('/api/auth/register', async (req, res) => {
     if (!emailRegex.test(String(email).trim())) {
       return res.status(400).json({ error: 'Invalid email format' });
     }
-    
+    // Self-service signup may only request a non-privileged 'employee' account or an
+    // 'admin' account (which goes through the super-admin approval queue below).
+    // Reject any other role so a caller can't self-provision purchasing/office_admin/owner.
+    const SELF_SIGNUP_ROLES = ['employee', 'admin'];
+    if (!SELF_SIGNUP_ROLES.includes(role)) {
+      return res.status(400).json({ error: 'Invalid role' });
+    }
+
     // Check if user already exists
     const existing = await query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
     if (existing.rows.length > 0) {
@@ -910,7 +917,7 @@ app.use('/api/mobile', mobileGPSRouter);
 
 // ----- Public read-only data endpoints (no auth required for Overview dashboard) -----
 
-app.get('/api/purchase-orders', async (req, res) => {
+app.get('/api/purchase-orders', requireAuth, async (req, res) => {
   try {
     const { startDate, endDate, status } = req.query;
     let whereClause = 'WHERE 1=1';
@@ -954,7 +961,7 @@ app.get('/api/purchase-orders', async (req, res) => {
   }
 });
 
-app.get('/api/sales-orders', async (req, res) => {
+app.get('/api/sales-orders', requireAuth, async (req, res) => {
   try {
     const { startDate, endDate, status } = req.query;
     let whereClause = 'WHERE 1=1';
@@ -1002,7 +1009,7 @@ app.get('/api/sales-orders', async (req, res) => {
   }
 });
 
-app.get('/api/inventory', async (req, res) => {
+app.get('/api/inventory', requireAuth, async (req, res) => {
   try {
     const result = await query(
       `SELECT id, item_code, item_name, description, quantity, unit, reorder_level, unit_cost, location, supplier, supplier_id
@@ -1027,7 +1034,7 @@ app.get('/api/inventory', async (req, res) => {
   }
 });
 
-app.get('/api/miscellaneous', async (req, res) => {
+app.get('/api/miscellaneous', requireAuth, async (req, res) => {
   try {
     const { startDate, endDate, status } = req.query;
     let whereClause = 'WHERE 1=1';
@@ -1061,7 +1068,7 @@ app.get('/api/miscellaneous', async (req, res) => {
 });
 
 // GET /api/delivery-metrics (public for overview dashboard)
-app.get('/api/delivery-metrics', async (req, res) => {
+app.get('/api/delivery-metrics', requireAuth, async (req, res) => {
   try {
     const result = await query(`
       SELECT 
@@ -1347,7 +1354,7 @@ app.post('/api/driver/login', async (req, res) => {
 // ----- MANUAL MIGRATION ENDPOINT (for production) -----
 
 // Manual database migration endpoint (public access for production fixes)
-app.post('/api/admin/migrate-approval-columns', async (req, res) => {
+app.post('/api/admin/migrate-approval-columns', requireAdmin, async (req, res) => {
   try {
     console.log('🔄 Running manual migration for approval columns...');
     
@@ -1378,7 +1385,7 @@ app.post('/api/admin/migrate-approval-columns', async (req, res) => {
 });
 
 // GET endpoint for testing migration (public access)
-app.get('/api/admin/migrate-approval-columns', async (req, res) => {
+app.get('/api/admin/migrate-approval-columns', requireAdmin, async (req, res) => {
   try {
     console.log('🔄 Running manual migration for approval columns...');
     
@@ -1478,7 +1485,7 @@ app.post('/api/driver/location', async (req, res) => {
 });
 
 // Get latest location of all active drivers (admin)
-app.get('/api/driver/locations/live', async (req, res) => {
+app.get('/api/driver/locations/live', requireAuth, async (req, res) => {
   try {
     const result = await query(
       `SELECT DISTINCT ON (dl.driver_id)
@@ -1500,7 +1507,7 @@ app.get('/api/driver/locations/live', async (req, res) => {
 });
 
 // Admin: assign vehicle to a driver account
-app.put('/api/admin/drivers/:id/assign-vehicle', async (req, res) => {
+app.put('/api/admin/drivers/:id/assign-vehicle', requireAdmin, async (req, res) => {
   try {
     const { vehicle_id } = req.body;
     // Ensure vehicle_id column exists
@@ -1516,7 +1523,7 @@ app.put('/api/admin/drivers/:id/assign-vehicle', async (req, res) => {
 });
 
 // Driver: get assigned vehicle info
-app.get('/api/driver/:id/vehicle', async (req, res) => {
+app.get('/api/driver/:id/vehicle', requireAuth, async (req, res) => {
   try {
     const result = await query(
       `SELECT v.id, v.unit_name, v.plate_number, v.current_odometer, v.vehicle_type
@@ -1535,7 +1542,7 @@ app.get('/api/driver/:id/vehicle', async (req, res) => {
 });
 
 // Admin: get driver accounts with assigned vehicle info
-app.get('/api/admin/drivers/accounts', async (req, res) => {
+app.get('/api/admin/drivers/accounts', requireAdmin, async (req, res) => {
   try {
     const result = await query(
       `SELECT da.id, da.full_name, da.email, da.phone,
