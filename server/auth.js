@@ -1,8 +1,21 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { query } from './db.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'fleet-manager-secret-change-in-production';
+// Never fall back to a publicly-known secret in production. If JWT_SECRET is unset
+// there, use a random per-process secret so tokens cannot be forged (they won't
+// survive a restart until JWT_SECRET is configured). Dev keeps a stable fallback.
+function resolveJwtSecret() {
+  if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
+  if (process.env.NODE_ENV === 'production') {
+    console.error('⚠️  JWT_SECRET is not set in production — using a random per-process secret. ' +
+      'Set JWT_SECRET in the environment to keep sessions stable across restarts.');
+    return crypto.randomBytes(48).toString('hex');
+  }
+  return 'fleet-manager-dev-secret-not-for-production';
+}
+const JWT_SECRET = resolveJwtSecret();
 const SALT_ROUNDS = 10;
 
 // Log JWT_SECRET presence on startup (safe - no value logged)
@@ -35,8 +48,9 @@ export function requireAuth(req, res, next) {
   
   
   if (!payload) {
-    // If no database, allow mock authentication for testing
-    if (!process.env.DATABASE_URL) {
+    // Mock auth for local testing only when there is no database — NEVER in
+    // production, where this would grant super-admin to every anonymous request.
+    if (!process.env.DATABASE_URL && process.env.NODE_ENV !== 'production') {
       req.user = {
         userId: 'mock-user-id',
         role: 'admin', // Default to admin for testing

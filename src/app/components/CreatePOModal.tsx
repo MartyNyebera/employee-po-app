@@ -92,8 +92,8 @@ export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
         const currentYear = new Date().getFullYear();
         const orders = await fetchApi<any[]>('/sales-orders') || [];
         const lastSO = orders
-          .filter((order: any) => order.soNumber.startsWith(`KTCI-SO-${currentYear}-`))
-          .sort((a: any, b: any) => b.soNumber.localeCompare(a.soNumber))[0];
+          .filter((order: any) => (order.soNumber || '').startsWith(`KTCI-SO-${currentYear}-`))
+          .sort((a: any, b: any) => (b.soNumber || '').localeCompare(a.soNumber || ''))[0];
         
         let counter = 1;
         if (lastSO) {
@@ -124,13 +124,16 @@ export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
 
   const calculateVATAmount = () => {
     if (form.vatType === 'vatable') {
-      return (calculateSubTotal() + form.ewt) * 0.12;
+      // VAT (12%) is charged on the vatable sale only. EWT must NOT be in the base.
+      return calculateSubTotal() * 0.12;
     }
     return 0;
   };
 
   const calculateTotal = () => {
-    return calculateSubTotal() + form.ewt + calculateVATAmount();
+    // EWT is an expanded withholding tax the customer withholds, so it REDUCES the
+    // net amount due (Total = Sub Total + VAT − EWT), it is not an added charge.
+    return calculateSubTotal() + calculateVATAmount() - form.ewt;
   };
 
   // Update VAT amount when relevant fields change

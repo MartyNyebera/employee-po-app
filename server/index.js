@@ -5,7 +5,7 @@ import https from 'https';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { query, testConnection, createNewTables } from './db.js';
+import { query, getClient, testConnection, createNewTables } from './db.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Global error handlers to prevent crashes
@@ -37,9 +37,16 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ 
+const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  // Message attachments are photos/PDFs only. Rejecting html/svg/scripts prevents
+  // an uploaded file from being served same-origin and executing as stored XSS.
+  fileFilter: (req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf'];
+    if (allowed.includes(file.mimetype)) return cb(null, true);
+    cb(new Error('Unsupported file type. Only images and PDFs are allowed.'));
+  }
 });
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
@@ -694,20 +701,7 @@ app.post('/api/auth/login', async (req, res) => {
     console.log(`📧 Email present: ${!!req.body?.email}`);
     
     const { email, password } = req.body;
-    
-    // PROVE DATABASE CONTENTS - STEP 1
-    console.log(`🔍 SEARCHING FOR EMAIL: ${email}`);
-    const allUsers = await query('SELECT id, email, role, is_super_admin FROM users');
-    console.log(`📊 TOTAL USERS IN DATABASE: ${allUsers.rows.length}`);
-    if (allUsers.rows.length === 0) {
-      console.log("🚨 PRODUCTION DATABASE HAS NO USERS");
-    } else {
-      console.log("📋 ALL USERS:");
-      allUsers.rows.forEach(user => {
-        console.log(`  - ${user.email} | role: ${user.role} | super_admin: ${user.is_super_admin}`);
-      });
-    }
-    
+
     if (!email || !password) {
       console.log('❌ MISSING_FIELDS');
       return res.status(400).json({ 
@@ -731,27 +725,16 @@ app.post('/api/auth/login', async (req, res) => {
     );
     
     const user = result.rows[0];
-    console.log("LOGIN QUERY RESULT:", user || "NO USER FOUND");
-    
+
+    // Generic response for both unknown-email and wrong-password to prevent
+    // account enumeration. Unknown email must be a 401, not a thrown 500.
     if (!user) {
-      console.log(`❌ USER_NOT_FOUND: ${email.toLowerCase()}`);
-      console.log(`🚨 AUTHENTICATION FAILED - USER DOES NOT EXIST IN DATABASE`);
-      console.log(`🔍 CHECKING IF SUPER ADMIN AUTO-CREATION RAN ON STARTUP`);
-      // Fail loudly - this should not happen after auto-creation
-      throw new Error(`CRITICAL: User ${email} not found in database after startup bootstrap`);
+      return res.status(401).json({ error: 'Invalid email or password', reason: 'INVALID_CREDENTIALS' });
     }
-    
-    console.log(`✅ User found: ${user.email}, role: ${user.role}, is_super_admin: ${user.is_super_admin}`);
-    
+
     const passwordMatch = await comparePassword(password, user.password_hash);
-    console.log(`🔐 Password comparison result: ${passwordMatch}`);
-    
     if (!passwordMatch) {
-      console.log(`❌ WRONG_PASSWORD: ${email.toLowerCase()}`);
-      return res.status(401).json({
-        error: 'Password incorrect',
-        reason: 'WRONG_PASSWORD'
-      });
+      return res.status(401).json({ error: 'Invalid email or password', reason: 'INVALID_CREDENTIALS' });
     }
 
     // Block deactivated staff accounts (is_active added by CRM migration; null/undefined = active)
@@ -1148,7 +1131,7 @@ app.post('/api/employee/register', async (req, res) => {
     }
     
     const existing = await query(
-      'SELECT id FROM employee_accounts WHERE email = $1',
+      'SELECT id FROM employee_accounts WHERE LOWER(email) = LOWER($1)',
       [email]
     );
     if (existing.rows.length > 0) {
@@ -1183,7 +1166,7 @@ app.post('/api/employee/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     const result = await query(
-      'SELECT * FROM employee_accounts WHERE email = $1',
+      'SELECT * FROM employee_accounts WHERE LOWER(email) = LOWER($1) LIMIT 1',
       [email]
     );
     
@@ -1257,7 +1240,7 @@ app.post('/api/driver/register', async (req, res) => {
     }
     
     const existing = await query(
-      'SELECT id FROM driver_accounts WHERE email = $1',
+      'SELECT id FROM driver_accounts WHERE LOWER(email) = LOWER($1)',
       [email]
     );
     if (existing.rows.length > 0) {
@@ -1292,7 +1275,7 @@ app.post('/api/driver/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     const result = await query(
-      'SELECT * FROM driver_accounts WHERE email = $1',
+      'SELECT * FROM driver_accounts WHERE LOWER(email) = LOWER($1) LIMIT 1',
       [email]
     );
     
@@ -1569,64 +1552,73 @@ app.use('/api', requireAuth);
 /**
  * FIX #1: Approve Sales Order with proper workflow
  */
-app.post('/api/sales-orders/:id/approve', async (req, res) => {
+app.post('/api/sales-orders/:id/approve', requireRole(['admin']), async (req, res) => {
   const { approver_id, approver_name, notes } = req.body;
   const sales_order_id = req.params.id;
+  const client = await getClient();
 
   try {
-    const order = await query(
-      'SELECT * FROM sales_orders WHERE id = $1',
+    await client.query('BEGIN');
+
+    // Lock the order row so two approvals can't both pass the status check and
+    // double-book revenue.
+    const order = await client.query(
+      'SELECT * FROM sales_orders WHERE id = $1 FOR UPDATE',
       [sales_order_id]
     );
 
     if (!order.rows[0]) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Sales order not found' });
     }
 
     if (order.rows[0].status !== 'pending' && order.rows[0].status !== 'in-progress') {
-      return res.status(400).json({ 
-        error: `Cannot approve order in ${order.rows[0].status} status` 
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: `Cannot approve order in ${order.rows[0].status} status`
       });
     }
 
-    await query(
-      `INSERT INTO sales_order_approvals 
+    await client.query(
+      `INSERT INTO sales_order_approvals
        (sales_order_id, approver_id, approver_name, approval_status, approval_date, approval_level)
        VALUES ($1, $2, $3, $4, NOW(), $5)`,
       [sales_order_id, approver_id, approver_name, 'APPROVED', 1]
     );
 
-    await query(
-      `UPDATE sales_orders 
-       SET status = $1, approved_date = NOW() 
+    await client.query(
+      `UPDATE sales_orders
+       SET status = $1, approved_date = NOW()
        WHERE id = $2`,
       ['PAID', sales_order_id]
     );
 
     const orderData = order.rows[0];
-    
+
     // Create revenue recognition record
-    await query(
-      `INSERT INTO revenue_recognition 
+    await client.query(
+      `INSERT INTO revenue_recognition
        (sales_order_id, order_date, approval_date, revenue_amount, recognition_status)
        VALUES ($1, $2, NOW(), $3, $4)`,
       [sales_order_id, orderData.created_date, orderData.amount, 'RECOGNIZED']
     );
-    
+
     // Create financial transaction for revenue
-    await query(
-      `INSERT INTO financial_transactions 
+    await client.query(
+      `INSERT INTO financial_transactions
        (transaction_type, related_order_id, amount, transaction_date, description, status)
        VALUES ($1, $2, $3, NOW(), $4, $5)`,
       ['REVENUE', sales_order_id, orderData.amount, `Revenue from sales order #${orderData.so_number}`, 'CONFIRMED']
     );
 
-    await query(
-      `INSERT INTO business_logic_audit_log 
+    await client.query(
+      `INSERT INTO business_logic_audit_log
        (entity_type, entity_id, action, field_name, old_value, new_value, changed_by, changed_by_name, reason)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       ['SALES_ORDER', sales_order_id, 'APPROVE', 'status', 'pending', 'approved', approver_id, approver_name, notes]
     );
+
+    await client.query('COMMIT');
 
     res.json({
       success: true,
@@ -1640,33 +1632,40 @@ app.post('/api/sales-orders/:id/approve', async (req, res) => {
     });
 
   } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
     console.error('Error approving sales order:', error);
     res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
   }
 });
 
 /**
  * FIX #2: Confirm Delivery and Trigger Revenue Recognition
  */
-app.post('/api/sales-orders/:id/confirm-delivery', async (req, res) => {
+app.post('/api/sales-orders/:id/confirm-delivery', requireRole(['admin']), async (req, res) => {
   const { driver_id, latitude, longitude, recipient_name, gps_accuracy } = req.body;
   const sales_order_id = req.params.id;
+  const client = await getClient();
 
   try {
-    const order = await query(
-      'SELECT * FROM sales_orders WHERE id = $1 AND status = $2',
+    await client.query('BEGIN');
+
+    const order = await client.query(
+      'SELECT * FROM sales_orders WHERE id = $1 AND status = $2 FOR UPDATE',
       [sales_order_id, 'approved']
     );
 
     if (!order.rows[0]) {
-      return res.status(400).json({ 
-        error: 'Sales order not found or not in approved status' 
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: 'Sales order not found or not in approved status'
       });
     }
 
-    const deliveryResult = await query(
-      `INSERT INTO delivery_confirmations 
-       (sales_order_id, driver_id, delivery_date, delivery_latitude, delivery_longitude, 
+    const deliveryResult = await client.query(
+      `INSERT INTO delivery_confirmations
+       (sales_order_id, driver_id, delivery_date, delivery_latitude, delivery_longitude,
         recipient_name, gps_accuracy, status)
        VALUES ($1, $2, NOW(), $3, $4, $5, $6, $7)
        RETURNING id`,
@@ -1675,17 +1674,17 @@ app.post('/api/sales-orders/:id/confirm-delivery', async (req, res) => {
 
     const delivery_id = deliveryResult.rows[0].id;
 
-    await query(
-      `UPDATE sales_orders 
+    await client.query(
+      `UPDATE sales_orders
        SET status = $1, delivery_date = NOW(), delivery_confirmed_by = $2, delivery_confirmed_date = NOW()
        WHERE id = $3`,
       ['completed', driver_id, sales_order_id]
     );
 
-    const revenueResult = await query(
-      `UPDATE revenue_recognition 
-       SET is_recognized = TRUE, 
-           recognition_status = $1, 
+    const revenueResult = await client.query(
+      `UPDATE revenue_recognition
+       SET is_recognized = TRUE,
+           recognition_status = $1,
            revenue_recognized_date = NOW(),
            delivery_date = NOW()
        WHERE sales_order_id = $2
@@ -1695,19 +1694,21 @@ app.post('/api/sales-orders/:id/confirm-delivery', async (req, res) => {
 
     const revenue_amount = revenueResult.rows[0]?.revenue_amount || order.rows[0].amount;
 
-    await query(
-      `INSERT INTO financial_transactions 
+    await client.query(
+      `INSERT INTO financial_transactions
        (transaction_type, related_order_id, amount, transaction_date, description, status)
        VALUES ($1, $2, $3, NOW(), $4, $5)`,
       ['REVENUE', sales_order_id, revenue_amount, `Revenue from sales order #${sales_order_id}`, 'CONFIRMED']
     );
 
-    await query(
-      `INSERT INTO business_logic_audit_log 
+    await client.query(
+      `INSERT INTO business_logic_audit_log
        (entity_type, entity_id, action, field_name, old_value, new_value, changed_by, changed_by_name, reason)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       ['SALES_ORDER', sales_order_id, 'DELIVERY_CONFIRMED', 'status', 'approved', 'completed', driver_id, 'Driver', `Delivery confirmed at ${latitude}, ${longitude}`]
     );
+
+    await client.query('COMMIT');
 
     res.json({
       success: true,
@@ -1728,19 +1729,40 @@ app.post('/api/sales-orders/:id/confirm-delivery', async (req, res) => {
     });
 
   } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
     console.error('Error confirming delivery:', error);
     res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
   }
 });
 
 /**
  * FIX #3: Deduct Inventory on Sales Order Approval
  */
-app.post('/api/sales-orders/:id/deduct-inventory', async (req, res) => {
+app.post('/api/sales-orders/:id/deduct-inventory', requireRole(['admin','purchasing','office_admin']), async (req, res) => {
   const sales_order_id = req.params.id;
+  const client = await getClient();
 
   try {
-    const items = await query(
+    await client.query('BEGIN');
+
+    // Lock the order row. Idempotency guard: if it was already deducted, do nothing
+    // so a repeated call can't double-deduct stock or double-book COGS.
+    const soRes = await client.query(
+      'SELECT is_inventory_deducted FROM sales_orders WHERE id = $1 FOR UPDATE',
+      [sales_order_id]
+    );
+    if (!soRes.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Sales order not found' });
+    }
+    if (soRes.rows[0].is_inventory_deducted) {
+      await client.query('ROLLBACK');
+      return res.json({ success: true, message: 'Inventory already deducted', data: { sales_order_id, alreadyDeducted: true } });
+    }
+
+    const items = await client.query(
       'SELECT * FROM sales_order_items WHERE sales_order_id = $1',
       [sales_order_id]
     );
@@ -1748,13 +1770,15 @@ app.post('/api/sales-orders/:id/deduct-inventory', async (req, res) => {
     let total_cogs = 0;
 
     for (const item of items.rows) {
-      const inventory = await query(
-        'SELECT * FROM inventory WHERE id = $1',
+      // FOR UPDATE serializes concurrent deductions so two callers can't both pass
+      // the stock check and oversell.
+      const inventory = await client.query(
+        'SELECT * FROM inventory WHERE id = $1 FOR UPDATE',
         [item.inventory_id]
       );
 
       if (!inventory.rows[0]) {
-        throw new Error(`Product ${item.inventory_id} not found in inventory`);
+        throw { httpStatus: 400, message: `Product ${item.inventory_id} not found in inventory` };
       }
 
       const current_stock = parseFloat(inventory.rows[0].quantity);
@@ -1762,19 +1786,18 @@ app.post('/api/sales-orders/:id/deduct-inventory', async (req, res) => {
       const item_cogs = cogs_per_unit * parseFloat(item.quantity);
 
       if (current_stock < parseFloat(item.quantity)) {
-        return res.status(400).json({
-          error: `Insufficient inventory for ${item.product_name}. Available: ${current_stock}, Required: ${item.quantity}` 
-        });
+        // Throw (not return) so the whole transaction rolls back — no partial deduct.
+        throw { httpStatus: 400, message: `Insufficient inventory for ${item.product_name}. Available: ${current_stock}, Required: ${item.quantity}` };
       }
 
-      await query(
+      await client.query(
         'UPDATE inventory SET quantity = quantity - $1 WHERE id = $2',
         [item.quantity, item.inventory_id]
       );
 
-      await query(
-        `INSERT INTO inventory_transactions 
-         (inventory_id, transaction_type, quantity_change, reference_type, reference_id, 
+      await client.query(
+        `INSERT INTO inventory_transactions
+         (inventory_id, transaction_type, quantity_change, reference_type, reference_id,
           previous_quantity, new_quantity, created_by, notes)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
@@ -1790,25 +1813,27 @@ app.post('/api/sales-orders/:id/deduct-inventory', async (req, res) => {
         ]
       );
 
-      await query(
+      await client.query(
         'UPDATE sales_order_items SET cogs_per_unit = $1, cogs_total = $2 WHERE id = $3',
         [cogs_per_unit, item_cogs, item.id]
       );
 
       total_cogs += item_cogs;
 
-      await query(
-        `INSERT INTO financial_transactions 
+      await client.query(
+        `INSERT INTO financial_transactions
          (transaction_type, related_order_id, amount, transaction_date, description, status)
          VALUES ($1, $2, $3, NOW(), $4, $5)`,
         ['COGS', sales_order_id, item_cogs, `COGS for ${item.product_name}`, 'CONFIRMED']
       );
     }
 
-    await query(
+    await client.query(
       'UPDATE sales_orders SET total_cogs = $1, is_inventory_deducted = TRUE WHERE id = $2',
       [total_cogs, sales_order_id]
     );
+
+    await client.query('COMMIT');
 
     res.json({
       success: true,
@@ -1821,30 +1846,49 @@ app.post('/api/sales-orders/:id/deduct-inventory', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error deducting inventory:', error);
-    res.status(500).json({ error: error.message });
+    await client.query('ROLLBACK').catch(() => {});
+    const status = error.httpStatus || 500;
+    if (status === 500) console.error('Error deducting inventory:', error);
+    res.status(status).json({ error: error.message });
+  } finally {
+    client.release();
   }
 });
 
 /**
  * FIX #4: Approve Material Request with Inventory Update
  */
-app.post('/api/material-requests/:id/approve', async (req, res) => {
+app.post('/api/material-requests/:id/approve', requireRole(['admin','purchasing','office_admin']), async (req, res) => {
   const { approver_id, approver_name, cogs_per_unit, inventory_id } = req.body;
   const material_request_id = req.params.id;
+  const client = await getClient();
 
   try {
-    const request = await query(
-      'SELECT * FROM material_requests WHERE id = $1',
+    await client.query('BEGIN');
+
+    // Lock the request row and guard against re-approval: if inventory was already
+    // updated for this request, re-running would add the stock a second time.
+    const request = await client.query(
+      'SELECT * FROM material_requests WHERE id = $1 FOR UPDATE',
       [material_request_id]
     );
 
     if (!request.rows[0]) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Material request not found' });
     }
 
-    await query(
-      `INSERT INTO material_request_approvals 
+    if (request.rows[0].inventory_updated === true) {
+      await client.query('ROLLBACK');
+      return res.json({
+        success: true,
+        message: 'Material request already approved',
+        data: { material_request_id, status: 'approved', alreadyApproved: true }
+      });
+    }
+
+    await client.query(
+      `INSERT INTO material_request_approvals
        (material_request_id, approver_id, approver_name, approval_status, approval_date, approval_level)
        VALUES ($1, $2, $3, $4, NOW(), $5)`,
       [material_request_id, approver_id, approver_name, 'APPROVED', 1]
@@ -1853,22 +1897,22 @@ app.post('/api/material-requests/:id/approve', async (req, res) => {
     if (inventory_id) {
       const quantity = parseFloat(request.rows[0].quantity_requested);
 
-      const inv = await query(
-        'SELECT quantity FROM inventory WHERE id = $1',
+      const inv = await client.query(
+        'SELECT quantity FROM inventory WHERE id = $1 FOR UPDATE',
         [inventory_id]
       );
 
       if (inv.rows[0]) {
         const current_stock = parseFloat(inv.rows[0].quantity);
 
-        await query(
+        await client.query(
           'UPDATE inventory SET quantity = quantity + $1, cogs_per_unit = $2, last_cogs_update = NOW() WHERE id = $3',
           [quantity, cogs_per_unit || 0, inventory_id]
         );
 
-        await query(
-          `INSERT INTO inventory_transactions 
-           (inventory_id, transaction_type, quantity_change, reference_type, reference_id, 
+        await client.query(
+          `INSERT INTO inventory_transactions
+           (inventory_id, transaction_type, quantity_change, reference_type, reference_id,
             previous_quantity, new_quantity, created_by, notes)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
           [inventory_id, 'PURCHASE', quantity, 'MATERIAL_REQUEST', material_request_id, current_stock, current_stock + quantity, approver_id, `Material request ${material_request_id}`]
@@ -1876,12 +1920,14 @@ app.post('/api/material-requests/:id/approve', async (req, res) => {
       }
     }
 
-    await query(
-      `UPDATE material_requests 
+    await client.query(
+      `UPDATE material_requests
        SET status = $1, inventory_updated = TRUE, final_approved_date = NOW(), inventory_id = $2
        WHERE id = $3`,
       ['approved', inventory_id, material_request_id]
     );
+
+    await client.query('COMMIT');
 
     res.json({
       success: true,
@@ -1894,8 +1940,11 @@ app.post('/api/material-requests/:id/approve', async (req, res) => {
     });
 
   } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
     console.error('Error approving material request:', error);
     res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
   }
 });
 
@@ -3497,7 +3546,7 @@ app.patch('/api/inventory/:id', requireRole(['admin','purchasing','office_admin'
 });
 
 // DELETE /api/inventory/:id (admin only)
-app.delete('/api/inventory/:id', async (req, res) => {
+app.delete('/api/inventory/:id', requireRole(['admin','purchasing','office_admin']), async (req, res) => {
   try {
     console.log('Deleting inventory item:', req.params.id);
     await query('DELETE FROM inventory WHERE id = $1', [req.params.id]);
@@ -3750,7 +3799,7 @@ app.get('/api/traccar/ws-info', async (req, res) => {
 */
 
 // POST /api/init - create tables and seed (convenience endpoint)
-app.post('/api/init', async (req, res) => {
+app.post('/api/init', requireRole(['admin']), async (req, res) => {
   try {
     await seed();
     res.json({ message: 'Database initialized and seeded' });
@@ -4254,7 +4303,7 @@ console.log(`🔍 Employee review request: ID=${req.params.id}, status=${status}
 });
 
 // Get all pending driver registrations
-app.get('/api/admin/drivers/pending', async (req, res) => {
+app.get('/api/admin/drivers/pending', requireAdmin, async (req, res) => {
   try {
     const result = await query(
       `SELECT id, full_name, email, phone,
@@ -4270,7 +4319,7 @@ app.get('/api/admin/drivers/pending', async (req, res) => {
 });
 
 // Get ALL drivers
-app.get('/api/admin/drivers', async (req, res) => {
+app.get('/api/admin/drivers', requireAdmin, async (req, res) => {
   try {
     const result = await query(
       `SELECT id, full_name, email, phone,
@@ -4286,7 +4335,7 @@ app.get('/api/admin/drivers', async (req, res) => {
 });
 
 // Approve or reject driver
-app.put('/api/admin/drivers/:id/review', async (req, res) => {
+app.put('/api/admin/drivers/:id/review', requireAdmin, async (req, res) => {
   try {
     const { status, reviewed_by } = req.body;
     

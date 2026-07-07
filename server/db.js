@@ -31,6 +31,12 @@ export async function query(text, params) {
   }
 }
 
+// Checkout a dedicated pooled client for a multi-statement transaction.
+// Caller MUST release() it (use try/finally) and drive BEGIN/COMMIT/ROLLBACK.
+export async function getClient() {
+  return pool.connect();
+}
+
 export async function testConnection() {
   try {
     const result = await pool.query('SELECT NOW()');

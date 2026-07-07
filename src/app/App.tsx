@@ -44,6 +44,7 @@ export default function App() {
     clearStoredAuth();
     setUserRole(null);
     setUserName('');
+    setUserIsSuperAdmin(false);
   };
 
   if (checkingAuth) {

@@ -695,7 +695,7 @@ export function DeliveriesList({ isAdmin }: { isAdmin: boolean }) {
               }}
             >
               <option value="">All Statuses</option>
-              {Object.keys(getStatusConfig('')).map(s => <option key={s}>{s}</option>)}
+              {['Pending', 'Assigned', 'Picked Up', 'In Transit', 'Arrived', 'Completed', 'Cancelled'].map(s => <option key={s} value={s}>{s}</option>)}
             </select>
             <ChevronDown style={{
               position: 'absolute',

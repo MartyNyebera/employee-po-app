@@ -645,7 +645,7 @@ useEffect(() => {
       <div className="space-y-3">
         {filteredPOs.length > 0 ? (
           filteredPOs.map((po) => (
-            <div className="bg-white rounded-xl border border-slate-200 p-4 mb-3">
+            <div key={po.id} className="bg-white rounded-xl border border-slate-200 p-4 mb-3">
               <div className="flex justify-between items-start mb-2">
                 <span className="font-bold text-lg">{po.poNumber}</span>
                 {getStatusBadge(po.status)}
