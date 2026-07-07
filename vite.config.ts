@@ -22,11 +22,21 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
+    chunkSizeWarningLimit: 1000,
     rollupOptions: {
       output: {
         entryFileNames: 'js/[name].[hash].js',
         chunkFileNames: 'js/[name].[hash].js',
-        assetFileNames: 'assets/[name].[hash][extname]'
+        assetFileNames: 'assets/[name].[hash][extname]',
+        // Split heavy vendor libs into separate cacheable chunks so the main app
+        // shell downloads fast and these only load when a page that needs them does.
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom', 'react-router', 'react-router-dom'],
+          'vendor-maps': ['leaflet', 'react-leaflet'],
+          'vendor-charts': ['recharts'],
+          'vendor-motion': ['framer-motion'],
+          'vendor-ui': ['lucide-react', 'date-fns', 'clsx', 'tailwind-merge'],
+        }
       }
     }
   },

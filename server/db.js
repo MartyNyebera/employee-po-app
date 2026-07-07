@@ -195,6 +195,22 @@ export async function createNewTables() {
     await pool.query('CREATE INDEX IF NOT EXISTS idx_driver_messages_driver_id ON driver_messages(driver_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications(recipient_type, recipient_id)');
 
+    // Core business-table indexes backing the list/report endpoints (the columns
+    // they filter and sort on). Guarded on its own so a missing column on an older
+    // schema logs and continues instead of aborting boot.
+    try {
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_purchase_orders_status ON purchase_orders(status)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_purchase_orders_created_date ON purchase_orders(created_date)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_sales_orders_status ON sales_orders(status)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_sales_orders_created_date ON sales_orders(created_date)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_inventory_item_name ON inventory(item_name)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions(type)');
+      console.log('✅ Business-table performance indexes ensured');
+    } catch (err) {
+      console.log('ℹ️ Some business-table indexes were skipped:', err.message);
+    }
+
     console.log('✅ New tables created successfully');
     return true;
   } catch (err) {

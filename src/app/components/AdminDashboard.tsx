@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { useAutoLogout } from '../hooks/useAutoLogout';
 import { Button } from './ui/button';
 import { LogOut, Home, FileText, Receipt, Menu, X, UserPlus, Check, XCircle, MapPin, Clock, Truck, Wrench, ShoppingCart, Package, User, UserCheck, MessageSquare, Users, Factory, UserCog } from 'lucide-react';
@@ -10,26 +10,29 @@ import { canView, canManage, type Role } from '../config/permissions';
 import ErrorBoundary from './ErrorBoundary';
 import { PageErrorFallback } from './PageErrorFallback';
 import { ThemeToggle } from './ThemeToggle';
-import { BusinessOverview } from './BusinessOverview-InlineStyles';
 import { AssetDetails } from './AssetDetails';
 import { PurchaseOrdersList } from './PurchaseOrdersList';
 import { EmployeeApprovals } from './EmployeeApprovals-Professional';
 import { DriverApprovals } from './DriverApprovals-Professional';
 import { AdminRequests } from './AdminRequests-Professional';
-import { MaterialRequests } from './MaterialRequests-Professional';
-import { SalesOrdersList } from './SalesOrdersList-Professional';
-import { TransactionsList } from './TransactionsList-Professional';
-import { WorkingMap as LiveVehicleMap } from './WorkingMap';
-import { FleetList } from './FleetList-Professional';
 import { VehicleDetails } from './VehicleDetails';
-import { PMSReminders } from './PMSReminders-Professional';
-import { PurchaseOrderList } from './PurchaseOrderList-Professional-Fixed';
-import { InventoryList } from './InventoryList-Professional';
-import { DriversList } from './DriversList-Professional';
 import { DriverVehicleAssignment } from './DriverVehicleAssignment';
 import { DeliveryManagement } from './DeliveryManagement';
-import { DeliveriesList } from './DeliveriesList-Professional';
-import { MiscellaneousManagement } from './MiscellaneousManagement-Simple';
+
+// Heavy pages (charts, maps, and large data tables) are code-split and loaded only
+// when their tab is opened — this keeps the initial app-shell bundle small.
+const BusinessOverview = lazy(() => import('./BusinessOverview-InlineStyles').then(m => ({ default: m.BusinessOverview })));
+const MaterialRequests = lazy(() => import('./MaterialRequests-Professional').then(m => ({ default: m.MaterialRequests })));
+const SalesOrdersList = lazy(() => import('./SalesOrdersList-Professional').then(m => ({ default: m.SalesOrdersList })));
+const TransactionsList = lazy(() => import('./TransactionsList-Professional').then(m => ({ default: m.TransactionsList })));
+const LiveVehicleMap = lazy(() => import('./WorkingMap').then(m => ({ default: m.WorkingMap })));
+const FleetList = lazy(() => import('./FleetList-Professional').then(m => ({ default: m.FleetList })));
+const PMSReminders = lazy(() => import('./PMSReminders-Professional').then(m => ({ default: m.PMSReminders })));
+const PurchaseOrderList = lazy(() => import('./PurchaseOrderList-Professional-Fixed').then(m => ({ default: m.PurchaseOrderList })));
+const InventoryList = lazy(() => import('./InventoryList-Professional').then(m => ({ default: m.InventoryList })));
+const DriversList = lazy(() => import('./DriversList-Professional').then(m => ({ default: m.DriversList })));
+const DeliveriesList = lazy(() => import('./DeliveriesList-Professional').then(m => ({ default: m.DeliveriesList })));
+const MiscellaneousManagement = lazy(() => import('./MiscellaneousManagement-Simple').then(m => ({ default: m.MiscellaneousManagement })));
 import { 
   fetchAdminRequests, 
   approveAdminRequest, 
@@ -428,7 +431,13 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
 
         {/* Content Area */}
         <div className={`flex-1 ${currentView === 'gps' ? 'overflow-hidden flex flex-col' : 'overflow-auto'}`}>
-          {renderContent()}
+          <Suspense fallback={
+            <div className="flex items-center justify-center py-24">
+              <div className="w-8 h-8 rounded-full border-2 border-slate-300 border-t-blue-500 animate-spin" />
+            </div>
+          }>
+            {renderContent()}
+          </Suspense>
         </div>
       </div>
     </div>
