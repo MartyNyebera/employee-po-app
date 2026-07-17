@@ -4,8 +4,9 @@ import ErrorBoundary from '../components/ErrorBoundary';
 import { PageErrorFallback } from '../components/PageErrorFallback';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { NavBadge } from '../components/NavBadge';
+import { CreatePurchaseRequestForm } from '../components/CreatePurchaseRequestForm';
 
-export type EmployeeView = 'inventory' | 'requests' | 'history' | 'notifications';
+export type EmployeeView = 'inventory' | 'requests' | 'purchase-request' | 'history' | 'notifications';
 
 interface InventoryItem {
   id: number;
@@ -44,6 +45,7 @@ interface MaterialRequest {
 const NAV_ITEMS = [
   { id: 'inventory'     as EmployeeView, label: 'Inventory',     icon: Package },
   { id: 'requests'      as EmployeeView, label: 'New Request',   icon: FileText },
+  { id: 'purchase-request' as EmployeeView, label: 'Purchase Request', icon: FileText },
   { id: 'history'       as EmployeeView, label: 'My Requests',   icon: ClipboardList },
   { id: 'notifications' as EmployeeView, label: 'Notifications', icon: Bell },
 ];
@@ -585,6 +587,11 @@ export function EmployeePortal() {
               <p className="font-medium text-gray-500">No notifications yet</p>
               <p className="text-sm mt-1">You're all caught up!</p>
             </div>
+          )}
+
+          {/* PURCHASE REQUEST (#1 — every department can raise a PR) */}
+          {view === 'purchase-request' && (
+            <CreatePurchaseRequestForm fetchApi={fetchApi} session={employee || { full_name: '' }} />
           )}
 
         </main>

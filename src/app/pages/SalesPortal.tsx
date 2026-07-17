@@ -10,6 +10,7 @@ import { WithdrawalTab } from '../components/WithdrawalTab';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { confirmDialog } from '../lib/confirm';
 import { printSalesOrder } from '../lib/orderPrint';
+import { CreatePurchaseRequestForm } from '../components/CreatePurchaseRequestForm';
 
 // ============================================================================
 // Sales portal (/sales). Fully independent of the admin dashboard: sales staff sign in with
@@ -20,7 +21,7 @@ import { printSalesOrder } from '../lib/orderPrint';
 // approved orders are what Logistics can then dispatch (/logistics).
 // ============================================================================
 
-type PortalView = 'orders' | 'quotations' | 'clients' | 'withdrawals' | 'signature';
+type PortalView = 'new-pr' | 'orders' | 'quotations' | 'clients' | 'withdrawals' | 'signature';
 
 interface LineItem { id: string; description: string; quantity: number; unit: string; unitPrice: number; amount: number; }
 interface SalesOrder {
@@ -455,6 +456,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   };
 
   const NAV: { id: PortalView; label: string; icon: any }[] = [
+    { id: 'new-pr', label: 'New Purchase Request', icon: FileText },
     { id: 'orders', label: 'Sales Orders', icon: FileText },
     { id: 'quotations', label: 'Quotations', icon: MessageSquare },
     { id: 'clients', label: 'Clients', icon: Users },
@@ -635,6 +637,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                 )}
             </div>
           )}
+          {view === 'new-pr' && <CreatePurchaseRequestForm fetchApi={sFetch} session={session} />}
         </main>
       </div>
 

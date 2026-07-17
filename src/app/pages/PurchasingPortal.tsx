@@ -14,6 +14,7 @@ import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { printPurchaseOrder, esc } from '../lib/orderPrint';
 import { renderPrintDocument } from '../lib/printChrome';
 import { NavBadge } from '../components/NavBadge';
+import { CreatePurchaseRequestForm } from '../components/CreatePurchaseRequestForm';
 import { AttentionCard } from '../components/AttentionCard';
 
 // ============================================================================
@@ -29,7 +30,7 @@ import { AttentionCard } from '../components/AttentionCard';
 // ============================================================================
 
 type PRStatus = 'pending' | 'reviewed' | 'verified' | 'ordered' | 'approved' | 'disapproved';
-type PortalView = 'requests' | 'orders' | 'suppliers' | 'withdrawals' | 'signature';
+type PortalView = 'new-pr' | 'requests' | 'orders' | 'suppliers' | 'withdrawals' | 'signature';
 
 // unitCost/amount are the employee's ESTIMATE; finalUnitCost/finalAmount are what Purchasing
 // priced the line at when they raised the order. Both are kept — see final_total in schema.
@@ -1006,6 +1007,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const rejectedPOCount = orders.filter(o => o.status === 'rejected').length;
 
   const NAV: { id: PortalView; label: string; icon: any }[] = [
+    { id: 'new-pr', label: 'New Purchase Request', icon: FileText },
     { id: 'requests', label: 'Purchase Requests', icon: ClipboardList },
     { id: 'orders', label: 'Purchase Orders', icon: FileText },
     { id: 'suppliers', label: 'Suppliers', icon: Factory },
@@ -1258,6 +1260,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                 )}
             </div>
           )}
+          {view === 'new-pr' && <CreatePurchaseRequestForm fetchApi={pFetch} session={session} />}
         </main>
       </div>
 

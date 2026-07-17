@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Truck, PenTool, Menu, X, Search, Clock, Calendar, Printer, LogOut,
-  Upload, Eraser, PackageCheck, PackageMinus, Plus, PanelLeftClose, PanelLeftOpen,
+  Upload, Eraser, PackageCheck, PackageMinus, Plus, PanelLeftClose, PanelLeftOpen, FileText,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -13,6 +13,7 @@ import { printDeliveryReceipt } from '../lib/deliveryReceiptPrint';
 import { ReceivingModal } from '../components/ReceivingModal';
 import { NavBadge } from '../components/NavBadge';
 import { AttentionCard } from '../components/AttentionCard';
+import { CreatePurchaseRequestForm } from '../components/CreatePurchaseRequestForm';
 
 // ============================================================================
 // Logistics portal (/logistics). Fully independent of the admin dashboard: logistics staff
@@ -30,7 +31,7 @@ import { AttentionCard } from '../components/AttentionCard';
 // wholesale and is not being rebuilt here.
 // ============================================================================
 
-type PortalView = 'deliveries' | 'withdrawals' | 'signature';
+type PortalView = 'new-pr' | 'deliveries' | 'withdrawals' | 'signature';
 
 interface SalesOrder {
   id: string; soNumber: string; client: string; status: string;
@@ -372,6 +373,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   };
 
   const NAV: { id: PortalView; label: string; icon: any; badge?: number }[] = [
+    { id: 'new-pr', label: 'New Purchase Request', icon: FileText },
     { id: 'deliveries', label: 'Deliveries', icon: Truck, badge: pendingCount },
     { id: 'withdrawals', label: 'Withdrawals', icon: PackageMinus },
     { id: 'signature', label: 'My Signature', icon: PenTool },
@@ -574,6 +576,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                 )}
             </div>
           )}
+          {view === 'new-pr' && <CreatePurchaseRequestForm fetchApi={lFetch} session={session} />}
         </main>
       </div>
 

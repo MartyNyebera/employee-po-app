@@ -14,6 +14,7 @@ import { printPurchaseOrder, parsePOLineItems } from '../lib/orderPrint';
 import { printReceivingReport, type ReceivedLine } from '../lib/deliveryReceiptPrint';
 import { ReceivingModal } from '../components/ReceivingModal';
 import { WithdrawalTab } from '../components/WithdrawalTab';
+import { CreatePurchaseRequestForm } from '../components/CreatePurchaseRequestForm';
 import { NavBadge } from '../components/NavBadge';
 import { AttentionCard } from '../components/AttentionCard';
 
@@ -25,7 +26,7 @@ import { AttentionCard } from '../components/AttentionCard';
 // Items entered here feed inventory management and purchase-request selection.
 // ============================================================================
 
-type PortalView = 'inventory' | 'itemRequests' | 'orders' | 'withdrawals' | 'myWithdrawals' | 'signature';
+type PortalView = 'new-pr' | 'inventory' | 'itemRequests' | 'orders' | 'withdrawals' | 'myWithdrawals' | 'signature';
 
 // Section D — #10: inbound receiving moved here from Logistics. An approved purchase order
 // arrives from a supplier; the warehouse marks it received, which adds the goods to stock.
@@ -533,6 +534,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   }), [items, search]);
 
   const NAV: { id: PortalView; label: string; icon: any }[] = [
+    { id: 'new-pr',       label: 'New Purchase Request', icon: FileText },
     { id: 'inventory',    label: 'Inventory', icon: Boxes },
     { id: 'itemRequests', label: 'Item Requests', icon: ClipboardList },
     { id: 'orders',       label: 'Purchase Orders', icon: FileText },
@@ -874,6 +876,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
               </div>
             )}
           </>}
+          {view === 'new-pr' && <CreatePurchaseRequestForm fetchApi={wFetch} session={session} />}
         </main>
       </div>
 

@@ -14,6 +14,7 @@ import { esc, printPurchaseOrder } from '../lib/orderPrint';
 import { renderPrintDocument } from '../lib/printChrome';
 import { NavBadge } from '../components/NavBadge';
 import { AttentionCard } from '../components/AttentionCard';
+import { CreatePurchaseRequestForm } from '../components/CreatePurchaseRequestForm';
 import { WithdrawalTab } from '../components/WithdrawalTab';
 import { nextDeptFor } from '../lib/nextDept';
 
@@ -30,7 +31,7 @@ import { nextDeptFor } from '../lib/nextDept';
 // ============================================================================
 
 type PRStatus = 'pending' | 'reviewed' | 'verified' | 'ordered' | 'approved' | 'disapproved';
-type PortalView = 'requests' | 'orders' | 'projects' | 'withdrawals' | 'signature';
+type PortalView = 'new-pr' | 'requests' | 'orders' | 'projects' | 'withdrawals' | 'signature';
 
 // Section C — #12: Accounting is also the FIRST gate of the purchase-ORDER flow. Purchasing
 // raises an order ('pending'); Accounting reviews it here (→ 'accounting-approved', passing it
@@ -613,6 +614,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const pendingOrderCount = orders.filter(o => o.status === 'pending').length;
 
   const NAV: { id: PortalView; label: string; icon: any }[] = [
+    { id: 'new-pr', label: 'New Purchase Request', icon: FileText },
     { id: 'requests', label: 'Purchase Requests', icon: ClipboardList },
     { id: 'orders', label: 'Purchase Orders', icon: FileText },
     { id: 'projects', label: 'Projects', icon: Briefcase },
@@ -865,6 +867,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                 )}
             </div>
           )}
+          {view === 'new-pr' && <CreatePurchaseRequestForm fetchApi={aFetch} session={session} />}
         </main>
       </div>
 
