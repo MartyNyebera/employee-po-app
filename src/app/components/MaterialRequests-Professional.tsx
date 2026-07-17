@@ -3,6 +3,7 @@ import { Package, Clock, CheckCircle, XCircle, User, Calendar, Tag, Filter, Sear
 import { fetchApi, getStoredAuth } from '../api/client';
 import { confirmDialog } from '../lib/confirm';
 import { renderPrintDocument } from '../lib/printChrome';
+import { SummaryStats } from './SummaryStats';
 
 interface MaterialRequest {
   id: number;
@@ -426,28 +427,28 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
 
   const getStatusConfig = (status: string) => {
     const configs: Record<string, { color: string; bgColor: string; borderColor: string; icon: React.ReactNode; }> = {
-      'approved': { 
-        color: '#059669', 
-        bgColor: '#f0fdf4', 
-        borderColor: '#bbf7d0',
+      'approved': {
+        color: '#7a6a0c',
+        bgColor: '#ececec',
+        borderColor: '#e3ca63',
         icon: <CheckCircle style={{ width: '16px', height: '16px' }} />
       },
-      'rejected': { 
-        color: '#dc2626', 
-        bgColor: '#fef2f2', 
-        borderColor: '#fecaca',
+      'rejected': {
+        color: '#b91c1c',
+        bgColor: '#f4f4f4',
+        borderColor: '#d6d6d6',
         icon: <XCircle style={{ width: '16px', height: '16px' }} />
       },
-      'completed': { 
-        color: '#d1b01b', 
-        bgColor: '#ececec', 
+      'completed': {
+        color: '#7a6a0c',
+        bgColor: '#ececec',
         borderColor: '#e3ca63',
         icon: <Package style={{ width: '16px', height: '16px' }} />
       },
-      'pending': { 
-        color: '#d97706', 
-        bgColor: '#fffbeb', 
-        borderColor: '#fed7aa',
+      'pending': {
+        color: '#5a5a5a',
+        bgColor: '#f4f4f4',
+        borderColor: '#d6d6d6',
         icon: <Clock style={{ width: '16px', height: '16px' }} />
       },
     };
@@ -540,7 +541,7 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
           height: '40px',
           borderRadius: '50%',
           border: '4px solid #d6d6d6',
-          borderTopColor: '#10b981',
+          borderTopColor: '#d1b01b',
           animation: 'spin 1s linear infinite'
         }} />
         <div style={{
@@ -578,7 +579,7 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
             width: '48px',
             height: '48px',
             borderRadius: '12px',
-            backgroundColor: '#10b981',
+            backgroundColor: '#d1b01b',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -637,57 +638,13 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
         </button>
       </div>
 
-      {/* METRIC CARDS */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-        gap: '20px',
-        marginBottom: '32px'
-      }}>
-        {Object.entries(statusCounts).map(([status, count]) => (
-          <div
-            key={status}
-            onClick={() => setFilter(status)}
-            style={{
-              background: filter === status ? '#ececec' : '#ffffff',
-              border: `1px solid ${filter === status ? '#e3ca63' : '#d6d6d6'}`,
-              borderRadius: '16px',
-              padding: '24px',
-              boxShadow: 'none',
-              transition: 'all 0.2s ease',
-              cursor: 'pointer'
-            }}
-            onMouseOver={(e) => {
-              e.currentTarget.style.boxShadow = 'none';
-              e.currentTarget.style.transform = 'translateY(-2px)';
-            }}
-            onMouseOut={(e) => {
-              e.currentTarget.style.boxShadow = 'none';
-              e.currentTarget.style.transform = 'translateY(0)';
-            }}
-          >
-            <div style={{
-              fontSize: '32px',
-              fontWeight: '700',
-              color: filter === status ? '#7a6a0c' : '#000000',
-              margin: '0 0 8px 0',
-              fontFamily: 'Poppins, sans-serif'
-            }}>
-              {count}
-            </div>
-            <div style={{
-              fontSize: '14px',
-              fontWeight: '500',
-              color: filter === status ? '#7a6a0c' : '#5a5a5a',
-              margin: '0',
-              fontFamily: 'Poppins, sans-serif',
-              textTransform: 'capitalize'
-            }}>
-              {status}
-            </div>
-          </div>
-        ))}
-      </div>
+      {/* SUMMARY STRIP */}
+      <SummaryStats items={[
+        { label: 'Total', value: statusCounts.all },
+        { label: 'Low', value: statusCounts.low },
+        { label: 'Normal', value: statusCounts.normal },
+        { label: 'High', value: statusCounts.high, accent: true },
+      ]} />
 
       {/* FILTERS */}
       <div style={{
@@ -1294,7 +1251,7 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                       padding: '12px 20px',
                       borderRadius: '8px',
                       border: 'none',
-                      backgroundColor: '#059669',
+                      backgroundColor: '#d1b01b',
                       color: 'white',
                       fontSize: '14px',
                       fontWeight: '500',

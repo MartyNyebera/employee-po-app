@@ -3,7 +3,7 @@ import { Plus, Trash2, Pencil, Power } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
-import { S, Modal, Field, TextInput, PrimaryBtn, GhostBtn, badge } from './crmKit';
+import { S, Modal, Field, TextInput, PrimaryBtn, GhostBtn, pill } from './crmKit';
 
 // One list for every portal account type (purchasing / warehouse / accounting / sales /
 // logistics). These shipped as five near-identical files; they differ only in the API path
@@ -34,7 +34,7 @@ interface Props {
 }
 
 const statusBadge = (s?: string) =>
-  s === 'deactivated' ? badge('Deactivated', '#991b1b', '#fee2e2') : badge('Active', '#065f46', '#d1fae5');
+  s === 'deactivated' ? pill('Deactivated', 'bad') : pill('Active', 'good');
 const isActive = (s?: string) => s !== 'deactivated';
 
 export function PortalAccountsList({ isAdmin, path, label, portalPath, blurb }: Props) {
@@ -104,7 +104,7 @@ export function PortalAccountsList({ isAdmin, path, label, portalPath, blurb }: 
                   <td style={{ ...S.td, fontWeight: 600, color: '#000000' }}>{e.full_name}</td>
                   <td style={S.td}>{e.email}</td>
                   <td style={S.td}>{e.phone || '—'}</td>
-                  <td style={S.td}>{e.has_signature ? badge('On file', '#065f46', '#d1fae5') : badge('Not set', '#92400e', '#fef3c7')}</td>
+                  <td style={S.td}>{e.has_signature ? pill('On file', 'good') : pill('Not set', 'pending')}</td>
                   <td style={S.td}>{statusBadge(e.status)}</td>
                   <td style={{ ...S.td, textAlign: 'right' }}>
                     {isAdmin ? <>

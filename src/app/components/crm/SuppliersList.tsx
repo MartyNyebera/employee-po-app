@@ -3,7 +3,7 @@ import { Plus, Search, Trash2, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
-import { S, Modal, Field, TextInput, Select, TextArea, PrimaryBtn, GhostBtn, badge } from './crmKit';
+import { S, Modal, Field, TextInput, Select, TextArea, PrimaryBtn, GhostBtn, pill } from './crmKit';
 
 interface Supplier {
   id: string; name: string; type?: string; productsSupplied?: string; contactPerson?: string;
@@ -20,10 +20,10 @@ const PRICE = ['Cheap', 'Average', 'Expensive'];
 const RELIABILITY = ['Excellent', 'Good', 'OK', 'Poor'];
 
 const relBadge = (r?: string) => {
-  if (r === 'Excellent') return badge(r, '#065f46', '#d1fae5');
-  if (r === 'Good') return badge(r, '#7a6a0c', '#ececec');
-  if (r === 'OK') return badge(r, '#92400e', '#fef3c7');
-  if (r === 'Poor') return badge(r, '#991b1b', '#fee2e2');
+  if (r === 'Excellent') return pill(r, 'good');
+  if (r === 'Good') return pill(r, 'good');
+  if (r === 'OK') return pill(r, 'pending');
+  if (r === 'Poor') return pill(r, 'bad');
   return <span style={{ color: '#8a8a8a' }}>—</span>;
 };
 
@@ -89,7 +89,7 @@ export function SuppliersList({ isAdmin }: { isAdmin: boolean }) {
                 <tr key={s.id}>
                   <td style={{ ...S.td, fontWeight: 600, color: '#000000' }}>
                     {s.name}
-                    {s.hasCertificate ? <div style={{ fontSize: '11px', fontWeight: 400, color: '#b0940f' }}>Certificate on file</div> : null}
+                    {s.hasCertificate ? <div style={{ fontSize: '11px', fontWeight: 400, color: '#7a6a0c' }}>Certificate on file</div> : null}
                   </td>
                   <td style={S.td}>{s.type || '—'}</td>
                   <td style={{ ...S.td, maxWidth: '220px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.productsSupplied || '—'}</td>

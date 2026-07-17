@@ -3,7 +3,7 @@ import { Plus, Search, Trash2, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
-import { S, Modal, Field, TextInput, Select, TextArea, PrimaryBtn, GhostBtn, badge } from './crmKit';
+import { S, Modal, Field, TextInput, Select, TextArea, PrimaryBtn, GhostBtn, pill } from './crmKit';
 
 interface Customer {
   id: string; name: string; type?: string; contactPerson?: string; phone?: string; email?: string;
@@ -15,10 +15,10 @@ const SOURCES = ['Referral', 'Facebook', 'Marketplace', 'Ad', 'Walk-in', 'Websit
 const STATUSES = ['Lead', 'Active', 'Repeat', 'Inactive'];
 
 const statusBadge = (s?: string) => {
-  if (s === 'Active') return badge(s, '#065f46', '#d1fae5');
-  if (s === 'Repeat') return badge(s, '#7a6a0c', '#ececec');
-  if (s === 'Lead') return badge(s, '#92400e', '#fef3c7');
-  if (s === 'Inactive') return badge(s, '#5a5a5a', '#e6e6e6');
+  if (s === 'Active') return pill(s, 'good');
+  if (s === 'Repeat') return pill(s, 'good');
+  if (s === 'Lead') return pill(s, 'pending');
+  if (s === 'Inactive') return pill(s, 'bad');
   return <span style={{ color: '#8a8a8a' }}>—</span>;
 };
 

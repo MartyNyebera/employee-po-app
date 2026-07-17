@@ -117,20 +117,20 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
 
   const getStatusConfig = (status: string) => {
     const configs: Record<string, { color: string; bgColor: string; borderColor: string; }> = {
-      'in-stock': { 
-        color: '#059669', 
-        bgColor: '#f0fdf4', 
-        borderColor: '#bbf7d0'
+      'in-stock': {
+        color: '#7a6a0c',
+        bgColor: '#ececec',
+        borderColor: '#e3ca63'
       },
-      'low-stock': { 
-        color: '#d97706', 
-        bgColor: '#fffbeb', 
-        borderColor: '#fed7aa'
+      'low-stock': {
+        color: '#5a5a5a',
+        bgColor: '#f4f4f4',
+        borderColor: '#d6d6d6'
       },
-      'out-of-stock': { 
-        color: '#dc2626', 
-        bgColor: '#fef2f2', 
-        borderColor: '#fecaca'
+      'out-of-stock': {
+        color: '#b91c1c',
+        bgColor: '#f4f4f4',
+        borderColor: '#d6d6d6'
       },
     };
     return configs[status] || configs['in-stock'];
@@ -586,8 +586,8 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                       <span style={{
                         fontSize: '14px',
                         fontWeight: '600',
-                        color: item.status === 'out-of-stock' ? '#dc2626' : 
-                               item.status === 'low-stock' ? '#d97706' : '#059669',
+                        color: item.status === 'out-of-stock' ? '#b91c1c' :
+                               item.status === 'low-stock' ? '#5a5a5a' : '#7a6a0c',
                         fontFamily: 'Poppins, sans-serif'
                       }}>
                         {item.quantity}
@@ -707,7 +707,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                                 gap: '4px'
                               }}
                               onMouseOver={(e) => {
-                                e.currentTarget.style.backgroundColor = '#fbf7e8';
+                                e.currentTarget.style.backgroundColor = '#f4f4f4';
                                 e.currentTarget.style.borderColor = '#d1b01b';
                               }}
                               onMouseOut={(e) => {

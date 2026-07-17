@@ -3,7 +3,7 @@ import { Plus, Trash2, Pencil, Power } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
-import { S, Modal, Field, TextInput, PrimaryBtn, GhostBtn, badge } from './crmKit';
+import { S, Modal, Field, TextInput, PrimaryBtn, GhostBtn, pill } from './crmKit';
 
 // Employee accounts are created by the admin (no self-registration). These accounts
 // log into the /production portal. Raw employee_accounts rows are snake_case.
@@ -19,10 +19,10 @@ interface Employee {
 }
 
 const statusBadge = (s?: string) => {
-  if (s === 'deactivated') return badge('Deactivated', '#991b1b', '#fee2e2');
-  if (s === 'pending') return badge('Pending', '#92400e', '#fef3c7');
-  if (s === 'rejected') return badge('Rejected', '#991b1b', '#fee2e2');
-  return badge('Active', '#065f46', '#d1fae5');
+  if (s === 'deactivated') return pill('Deactivated', 'bad');
+  if (s === 'pending') return pill('Pending', 'pending');
+  if (s === 'rejected') return pill('Rejected', 'bad');
+  return pill('Active', 'good');
 };
 const isActive = (s?: string) => s !== 'deactivated' && s !== 'rejected';
 

@@ -3,14 +3,14 @@ import { Plus, Trash2, Power } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
-import { S, Modal, Field, TextInput, Select, PrimaryBtn, GhostBtn, badge } from './crmKit';
+import { S, Modal, Field, TextInput, Select, PrimaryBtn, GhostBtn, pill } from './crmKit';
 
 interface Staff { id: string; email: string; name: string; role: string; isActive?: boolean; isSuperAdmin?: boolean; createdAt?: string; }
 
 // 'purchasing' is intentionally omitted — purchasing staff now use dedicated Purchasing
 // Accounts (see the Purchasing Accounts tab) and sign into the /purchasing portal.
 const ROLES = ['admin', 'bookkeeper', 'office_admin'];
-const roleBadge = (r: string) => r === 'admin' ? badge('Admin', '#7a6a0c', '#ececec') : r === 'bookkeeper' ? badge('Bookkeeper', '#065f46', '#d1fae5') : r === 'purchasing' ? badge('Purchasing', '#92400e', '#fef3c7') : r === 'office_admin' ? badge('Office Admin', '#7a6a0c', '#ececec') : badge(r, '#262626', '#e6e6e6');
+const roleBadge = (r: string) => r === 'admin' ? pill('Admin', 'good') : r === 'bookkeeper' ? pill('Bookkeeper', 'good') : r === 'purchasing' ? pill('Purchasing', 'good') : r === 'office_admin' ? pill('Office Admin', 'good') : pill(r, 'good');
 
 export function StaffAccountsList() {
   const [rows, setRows] = useState<Staff[]>([]);
@@ -55,10 +55,10 @@ export function StaffAccountsList() {
               : rows.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={5}>No staff accounts yet.</td></tr>
               : rows.map(s => (
                 <tr key={s.id}>
-                  <td style={{ ...S.td, fontWeight: 600, color: '#000000' }}>{s.name}{s.isSuperAdmin ? <span style={{ marginLeft: '8px' }}>{badge('Owner', '#b0940f', '#ececec')}</span> : null}</td>
+                  <td style={{ ...S.td, fontWeight: 600, color: '#000000' }}>{s.name}{s.isSuperAdmin ? <span style={{ marginLeft: '8px' }}>{pill('Owner', 'good')}</span> : null}</td>
                   <td style={S.td}>{s.email}</td>
                   <td style={S.td}>{roleBadge(s.role)}</td>
-                  <td style={S.td}>{s.isActive === false ? badge('Inactive', '#991b1b', '#fee2e2') : badge('Active', '#065f46', '#d1fae5')}</td>
+                  <td style={S.td}>{s.isActive === false ? pill('Inactive', 'bad') : pill('Active', 'good')}</td>
                   <td style={{ ...S.td, textAlign: 'right' }}>
                     {s.isSuperAdmin ? <span style={{ color: '#8a8a8a', fontSize: '12px' }}>—</span>
                       : <>

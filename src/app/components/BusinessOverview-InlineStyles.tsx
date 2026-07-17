@@ -316,7 +316,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
             left: '0',
             right: '0',
             height: '4px',
-            background: 'linear-gradient(90deg, #10b981 0%, #059669 100%)'
+            background: 'linear-gradient(90deg, #d1b01b 0%, #7a6a0c 100%)'
           }} />
           
           <div style={{ 
@@ -333,8 +333,8 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 width: '48px',
                 height: '48px',
                 borderRadius: '12px',
-                background: '#d1fae5',
-                color: '#10b981'
+                background: '#ececec',
+                color: '#d1b01b'
               }}>
                 <DollarSign style={{ width: '24px', height: '24px' }} />
               </div>
@@ -342,7 +342,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 <h6 style={{ 
                   fontSize: '13px', 
                   fontWeight: '600', 
-                  color: '#3d3d3d',
+                  color: '#5a5a5a',
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px',
                   margin: '0',
@@ -370,8 +370,8 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 borderRadius: '6px',
                 fontSize: '12px',
                 fontWeight: '600',
-                color: '#10b981',
-                background: '#dcfce7',
+                color: '#7a6a0c',
+                background: '#ececec',
                 fontFamily: 'Poppins, sans-serif'
               }}>
                 <ArrowUpRight style={{ width: '16px', height: '16px' }} />
@@ -386,8 +386,8 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 borderRadius: '6px',
                 fontSize: '12px',
                 fontWeight: '600',
-                color: '#ef4444',
-                background: '#fee2e2',
+                color: '#dc2626',
+                background: '#f4f4f4',
                 fontFamily: 'Poppins, sans-serif'
               }}>
                 <ArrowDownRight style={{ width: '16px', height: '16px' }} />
@@ -408,7 +408,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
           <p style={{ 
             fontSize: '13px', 
             fontWeight: '500', 
-            color: '#3d3d3d',
+            color: '#5a5a5a',
             margin: '0',
             fontFamily: 'Poppins, sans-serif'
           }}>
@@ -433,7 +433,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
             left: '0',
             right: '0',
             height: '4px',
-            background: 'linear-gradient(90deg, #f59e0b 0%, #d97706 100%)'
+            background: 'linear-gradient(90deg, #d1b01b 0%, #7a6a0c 100%)'
           }} />
           
           <div style={{ 
@@ -450,8 +450,8 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 width: '48px',
                 height: '48px',
                 borderRadius: '12px',
-                background: '#fef3c7',
-                color: '#f59e0b'
+                background: '#ececec',
+                color: '#d1b01b'
               }}>
                 <ShoppingCart style={{ width: '24px', height: '24px' }} />
               </div>
@@ -459,7 +459,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 <h6 style={{ 
                   fontSize: '13px', 
                   fontWeight: '600', 
-                  color: '#3d3d3d',
+                  color: '#5a5a5a',
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px',
                   margin: '0',
@@ -487,8 +487,8 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 borderRadius: '6px',
                 fontSize: '12px',
                 fontWeight: '600',
-                color: '#ef4444',
-                background: '#fee2e2',
+                color: '#dc2626',
+                background: '#f4f4f4',
                 fontFamily: 'Poppins, sans-serif'
               }}>
                 <ArrowUpRight style={{ width: '16px', height: '16px' }} />
@@ -503,8 +503,8 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 borderRadius: '6px',
                 fontSize: '12px',
                 fontWeight: '600',
-                color: '#10b981',
-                background: '#dcfce7',
+                color: '#7a6a0c',
+                background: '#ececec',
                 fontFamily: 'Poppins, sans-serif'
               }}>
                 <ArrowDownRight style={{ width: '16px', height: '16px' }} />
@@ -525,7 +525,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
           <p style={{ 
             fontSize: '13px', 
             fontWeight: '500', 
-            color: '#3d3d3d',
+            color: '#5a5a5a',
             margin: '0',
             fontFamily: 'Poppins, sans-serif'
           }}>
@@ -550,7 +550,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
             left: '0',
             right: '0',
             height: '4px',
-            background: 'linear-gradient(90deg, #d1b01b 0%, #b0940f 100%)'
+            background: 'linear-gradient(90deg, #d1b01b 0%, #d1b01b 100%)'
           }} />
           
           <div style={{ 
@@ -576,7 +576,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 <h6 style={{ 
                   fontSize: '13px', 
                   fontWeight: '600', 
-                  color: '#3d3d3d',
+                  color: '#5a5a5a',
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px',
                   margin: '0',
@@ -603,8 +603,8 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
               borderRadius: '6px',
               fontSize: '12px',
               fontWeight: '600',
-              color: '#10b981',
-              background: '#dcfce7',
+              color: '#7a6a0c',
+              background: '#ececec',
               fontFamily: 'Poppins, sans-serif'
             }}>
               <ArrowUpRight style={{ width: '16px', height: '16px' }} />
@@ -614,7 +614,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
           <p style={{ 
             fontSize: '32px', 
             fontWeight: '700', 
-            color: '#10b981',
+            color: '#000000',
             lineHeight: '1.2',
             margin: '0 0 8px 0',
             fontFamily: 'Poppins, sans-serif'
@@ -624,7 +624,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
           <p style={{ 
             fontSize: '13px', 
             fontWeight: '500', 
-            color: '#3d3d3d',
+            color: '#5a5a5a',
             margin: '0',
             fontFamily: 'Poppins, sans-serif'
           }}>
@@ -649,7 +649,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
             left: '0',
             right: '0',
             height: '4px',
-            background: 'linear-gradient(90deg, #ef4444 0%, #dc2626 100%)'
+            background: 'linear-gradient(90deg, #d1b01b 0%, #7a6a0c 100%)'
           }} />
           
           <div style={{ 
@@ -666,8 +666,8 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 width: '48px',
                 height: '48px',
                 borderRadius: '12px',
-                background: '#fee2e2',
-                color: '#ef4444'
+                background: '#ececec',
+                color: '#d1b01b'
               }}>
                 <Activity style={{ width: '24px', height: '24px' }} />
               </div>
@@ -675,7 +675,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 <h6 style={{ 
                   fontSize: '13px', 
                   fontWeight: '600', 
-                  color: '#3d3d3d',
+                  color: '#5a5a5a',
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px',
                   margin: '0',
@@ -702,8 +702,8 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
               borderRadius: '6px',
               fontSize: '12px',
               fontWeight: '600',
-              color: '#10b981',
-              background: '#dcfce7',
+              color: '#7a6a0c',
+              background: '#ececec',
               fontFamily: 'Poppins, sans-serif'
             }}>
               <ArrowUpRight style={{ width: '16px', height: '16px' }} />
@@ -723,7 +723,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
           <p style={{ 
             fontSize: '13px', 
             fontWeight: '500', 
-            color: '#3d3d3d',
+            color: '#5a5a5a',
             margin: '0',
             fontFamily: 'Poppins, sans-serif'
           }}>

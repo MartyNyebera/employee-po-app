@@ -6,7 +6,7 @@ import { CreateSOModal } from './CreatePOModal';
 import { FileText, Plus, DollarSign, Calendar, Building2, Truck, Edit, Filter, Printer, Trash2, X, Search, Check, Package, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../lib/confirm';
-import { S, peso } from './crm/crmKit';
+import { S, peso, toneText } from './crm/crmKit';
 import { SummaryStats } from './SummaryStats';
 
 const formatDate = (dateString: string) => {
@@ -139,69 +139,8 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
     });
   }, [refreshKey]);
 
-  const getStatusConfig = (status: string) => {
-    const configs: Record<string, { color: string; bgColor: string; borderColor: string; icon: React.ReactNode; }> = {
-      'pending': { 
-        color: '#059669', 
-        bgColor: '#f0fdf4', 
-        borderColor: '#bbf7d0',
-        icon: <Calendar style={{ width: '16px', height: '16px' }} />
-      },
-      'approved': { 
-        color: '#059669', 
-        bgColor: '#f0fdf4', 
-        borderColor: '#bbf7d0',
-        icon: <Check style={{ width: '16px', height: '16px' }} />
-      },
-      'in-progress': { 
-        color: '#d1b01b', 
-        bgColor: '#fbf7e8', 
-        borderColor: '#e8d89a',
-        icon: <Truck style={{ width: '16px', height: '16px' }} />
-      },
-      'PAID': { 
-        color: '#d1b01b', 
-        bgColor: '#fbf7e8', 
-        borderColor: '#e8d89a',
-        icon: <DollarSign style={{ width: '16px', height: '16px' }} />
-      },
-      'completed': { 
-        color: '#065f46', 
-        bgColor: '#ecfdf5', 
-        borderColor: '#a7f3d0',
-        icon: <Check style={{ width: '16px', height: '16px' }} />
-      },
-      'deleting': { 
-        color: '#dc2626', 
-        bgColor: '#fef2f2', 
-        borderColor: '#fecaca',
-        icon: <div style={{ width: '16px', height: '16px' }}>⏳</div>
-      }
-    };
-    return configs[status] || configs.pending;
-  };
-
-  const StatusBadge = ({ status }: { status: string }) => {
-    const config = getStatusConfig(status);
-    return (
-      <div style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: '4px',
-        padding: '4px 12px',
-        borderRadius: '12px',
-        fontSize: '12px',
-        fontWeight: '500',
-        color: config.color,
-        backgroundColor: config.bgColor,
-        border: `1px solid ${config.borderColor}`,
-        fontFamily: 'Poppins, sans-serif'
-      }}>
-        {config.icon}
-        {status.charAt(0).toUpperCase() + status.slice(1)}
-      </div>
-    );
-  };
+  // [removed] getStatusConfig/StatusBadge — the table now renders status as tone-coloured text
+  // (toneText), so the old green/gold pill config is dead. Kept out to stay on-palette.
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-PH', {
@@ -512,7 +451,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
                 <td style={S.td}>{po.client}</td>
                 <td style={{ ...S.td, textAlign: 'right', fontWeight: 600, color: '#000000' }}>{peso(po.amount)}</td>
                 <td style={S.td}>
-                  <span style={{ color: '#d1b01b', fontSize: '12px', fontWeight: 600, whiteSpace: 'nowrap' }}>{statusLabel(po.status)}</span>
+                  <span style={{ color: toneText(po.status), fontSize: '12px', fontWeight: 600, whiteSpace: 'nowrap' }}>{statusLabel(po.status)}</span>
                 </td>
                 <td style={S.td}>
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px', flexWrap: 'wrap' }}>
@@ -767,7 +706,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
                   </div>
                 </div>
                 {editForm.amount !== '' && editForm.costAmount !== '' && (
-                  <div style={{ fontSize: '13px', fontWeight: 600, color: (Number(editForm.amount) - Number(editForm.costAmount)) >= 0 ? '#059669' : '#dc2626', marginTop: '-6px' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: (Number(editForm.amount) - Number(editForm.costAmount)) >= 0 ? '#7a6a0c' : '#dc2626', marginTop: '-6px' }}>
                     Margin: ₱{(Number(editForm.amount) - Number(editForm.costAmount)).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
                   </div>
                 )}

@@ -57,13 +57,13 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
   const getTypeIcon = (type: string) => {
     switch (type) {
       case 'fuel':
-        return <Fuel style={{ width: '16px', height: '16px', color: '#d97706' }} />;
+        return <Fuel style={{ width: '16px', height: '16px', color: '#d1b01b' }} />;
       case 'maintenance':
         return <Wrench style={{ width: '16px', height: '16px', color: '#d1b01b' }} />;
       case 'parts':
         return <Package style={{ width: '16px', height: '16px', color: '#d1b01b' }} />;
       case 'rental':
-        return <TruckIcon style={{ width: '16px', height: '16px', color: '#059669' }} />;
+        return <TruckIcon style={{ width: '16px', height: '16px', color: '#d1b01b' }} />;
       default:
         return <Receipt style={{ width: '16px', height: '16px', color: '#5a5a5a' }} />;
     }
@@ -71,10 +71,10 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
 
   const getTypeConfig = (type: string) => {
     const configs: Record<string, { color: string; bgColor: string; borderColor: string; }> = {
-      'fuel': { 
-        color: '#d97706', 
-        bgColor: '#fffbeb', 
-        borderColor: '#fed7aa'
+      'fuel': {
+        color: '#5a5a5a',
+        bgColor: '#f4f4f4',
+        borderColor: '#d6d6d6'
       },
       'maintenance': { 
         color: '#d1b01b', 
@@ -84,12 +84,12 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
       'parts': { 
         color: '#d1b01b', 
         bgColor: '#ececec', 
-        borderColor: '#c4b5fd'
+        borderColor: '#e3ca63'
       },
-      'rental': { 
-        color: '#059669', 
-        bgColor: '#f0fdf4', 
-        borderColor: '#bbf7d0'
+      'rental': {
+        color: '#7a6a0c',
+        bgColor: '#ececec',
+        borderColor: '#e3ca63'
       },
     };
     return configs[type] || configs['fuel'];
@@ -159,7 +159,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
           height: '40px',
           borderRadius: '50%',
           border: '4px solid #d6d6d6',
-          borderTopColor: '#f97316',
+          borderTopColor: '#d1b01b',
           animation: 'spin 1s linear infinite'
         }} />
         <div style={{
@@ -188,7 +188,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
           width: '64px',
           height: '64px',
           borderRadius: '50%',
-          backgroundColor: '#fef2f2',
+          backgroundColor: '#f4f4f4',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center'
@@ -207,7 +207,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
           </h3>
           <p style={{
             fontSize: '14px',
-            color: '#7f1d1d',
+            color: '#b91c1c',
             margin: '0 0 16px 0',
             fontFamily: 'Poppins, sans-serif'
           }}>
@@ -264,13 +264,13 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
             width: '48px',
             height: '48px',
             borderRadius: '12px',
-            backgroundColor: '#f97316',
+            backgroundColor: '#ececec',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: '0 4px 6px -1px rgba(249, 115, 22, 0.3)'
+            boxShadow: '0 4px 6px -1px rgba(209, 176, 27, 0.3)'
           }}>
-            <Receipt style={{ width: '24px', height: '24px', color: 'white' }} />
+            <Receipt style={{ width: '24px', height: '24px', color: '#d1b01b' }} />
           </div>
           <div>
             <h1 style={{
@@ -296,7 +296,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
           <button
             onClick={() => setShowCreateModal(true)}
             style={{
-              backgroundColor: '#f97316',
+              backgroundColor: '#d1b01b',
               color: 'white',
               padding: '12px 20px',
               borderRadius: '8px',
@@ -311,10 +311,10 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
               transition: 'all 0.2s ease'
             }}
             onMouseOver={(e) => {
-              e.currentTarget.style.backgroundColor = '#ea580c';
+              e.currentTarget.style.backgroundColor = '#7a6a0c';
             }}
             onMouseOut={(e) => {
-              e.currentTarget.style.backgroundColor = '#f97316';
+              e.currentTarget.style.backgroundColor = '#d1b01b';
             }}
           >
             <Plus style={{ width: '16px', height: '16px' }} />
@@ -357,12 +357,12 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
               width: '48px',
               height: '48px',
               borderRadius: '12px',
-              backgroundColor: '#fffbeb',
+              backgroundColor: '#ececec',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <Receipt style={{ width: '24px', height: '24px', color: '#f97316' }} />
+              <Receipt style={{ width: '24px', height: '24px', color: '#d1b01b' }} />
             </div>
           </div>
           <h3 style={{
@@ -387,7 +387,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
 
         <div style={{
           background: '#ffffff',
-          border: '1px solid #fffbeb',
+          border: '1px solid #d6d6d6',
           borderRadius: '16px',
           padding: '24px',
           boxShadow: 'none',
@@ -412,12 +412,12 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
               width: '48px',
               height: '48px',
               borderRadius: '12px',
-              backgroundColor: '#fffbeb',
+              backgroundColor: '#ececec',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <Fuel style={{ width: '24px', height: '24px', color: '#d97706' }} />
+              <Fuel style={{ width: '24px', height: '24px', color: '#d1b01b' }} />
             </div>
             <div style={{
               display: 'flex',
@@ -427,8 +427,8 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
               borderRadius: '6px',
               fontSize: '12px',
               fontWeight: '600',
-              color: '#d97706',
-              backgroundColor: '#fffbeb',
+              color: '#d1b01b',
+              backgroundColor: '#f4f4f4',
               fontFamily: 'Poppins, sans-serif'
             }}>
               Fuel
@@ -437,7 +437,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
           <h3 style={{
             fontSize: '32px',
             fontWeight: '700',
-            color: '#d97706',
+            color: '#d1b01b',
             margin: '0 0 8px 0',
             fontFamily: 'Poppins, sans-serif'
           }}>
@@ -446,7 +446,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
           <p style={{
             fontSize: '14px',
             fontWeight: '500',
-            color: '#78350f',
+            color: '#5a5a5a',
             margin: '0',
             fontFamily: 'Poppins, sans-serif'
           }}>
@@ -584,7 +584,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
           <p style={{
             fontSize: '14px',
             fontWeight: '500',
-            color: '#4d4308',
+            color: '#5a5a5a',
             margin: '0',
             fontFamily: 'Poppins, sans-serif'
           }}>
@@ -637,8 +637,8 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
               transition: 'all 0.2s ease'
             }}
             onFocus={(e) => {
-              e.currentTarget.style.borderColor = '#f97316';
-              e.currentTarget.style.boxShadow = '0 0 0 3px rgba(249, 115, 22, 0.1)';
+              e.currentTarget.style.borderColor = '#d1b01b';
+              e.currentTarget.style.boxShadow = '0 0 0 3px rgba(209, 176, 27, 0.1)';
             }}
             onBlur={(e) => {
               e.currentTarget.style.borderColor = '#d6d6d6';
@@ -666,8 +666,8 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
               transition: 'all 0.2s ease'
             }}
             onFocus={(e) => {
-              e.currentTarget.style.borderColor = '#f97316';
-              e.currentTarget.style.boxShadow = '0 0 0 3px rgba(249, 115, 22, 0.1)';
+              e.currentTarget.style.borderColor = '#d1b01b';
+              e.currentTarget.style.boxShadow = '0 0 0 3px rgba(209, 176, 27, 0.1)';
             }}
             onBlur={(e) => {
               e.currentTarget.style.borderColor = '#d6d6d6';
@@ -763,7 +763,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
                       width: '40px',
                       height: '40px',
                       borderRadius: '8px',
-                      backgroundColor: '#fffbeb',
+                      backgroundColor: '#ececec',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center'
@@ -805,32 +805,32 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
                     gap: '12px',
                     padding: '12px',
                     borderRadius: '8px',
-                    backgroundColor: '#fffbeb',
-                    border: '1px solid #fed7aa'
+                    backgroundColor: '#f4f4f4',
+                    border: '1px solid #d6d6d6'
                   }}>
                     <div style={{
                       width: '32px',
                       height: '32px',
                       borderRadius: '6px',
-                      backgroundColor: '#fbbf24',
+                      backgroundColor: '#ececec',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center'
                     }}>
-                      <DollarSign style={{ width: '16px', height: '16px', color: '#f97316' }} />
+                      <DollarSign style={{ width: '16px', height: '16px', color: '#d1b01b' }} />
                     </div>
                     <div>
                       <div style={{
                         fontSize: '16px',
                         fontWeight: '600',
-                        color: '#d97706',
+                        color: '#d1b01b',
                         fontFamily: 'Poppins, sans-serif'
                       }}>
                         {formatCurrency(txn.amount)}
                       </div>
                       <div style={{
                         fontSize: '12px',
-                        color: '#78350f',
+                        color: '#5a5a5a',
                         fontFamily: 'Poppins, sans-serif'
                       }}>
                         Amount

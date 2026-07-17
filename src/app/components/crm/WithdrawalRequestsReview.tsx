@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
 import { useLiveRefresh } from '../../hooks/useLiveRefresh';
-import { S } from './crmKit';
+import { S, toneText } from './crmKit';
 import { printWithdrawalReceipt } from '../../lib/withdrawalReceiptPrint';
 import { SummaryStats } from '../SummaryStats';
 
@@ -29,7 +29,7 @@ const STATUS_LABEL: Record<string, string> = {
   rejected: 'Rejected',
 };
 const statusText = (s: string) => (
-  <span style={{ color: '#d1b01b', fontSize: '12px', fontWeight: 600, whiteSpace: 'nowrap' }}>
+  <span style={{ color: toneText(s), fontSize: '12px', fontWeight: 600, whiteSpace: 'nowrap' }}>
     {STATUS_LABEL[s] || s.charAt(0).toUpperCase() + s.slice(1)}
   </span>
 );

@@ -65,6 +65,17 @@ export function toneText(status: string): string {
   return TONE[statusToneFor(status)].text;
 }
 
+// A pill with an EXPLICIT tone — for badges whose label doesn't map cleanly through
+// statusToneFor (e.g. "Excellent"/"Owner"/domain words). Same shape as tonePill.
+export function pill(label: string, tone: Tone) {
+  const t = TONE[tone];
+  return (
+    <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '12px', fontWeight: 600, color: t.text, backgroundColor: t.bg, border: `1px solid ${t.border}`, whiteSpace: 'nowrap' }}>
+      {label}
+    </span>
+  );
+}
+
 // A pill coloured by the status' tone. `label` defaults to a Title-cased status.
 export function tonePill(status: string, label?: string) {
   const t = TONE[statusToneFor(status)];

@@ -103,9 +103,9 @@ export function ProperLineChart({ data, height = 400 }: ProperLineChartProps) {
           <Line
             type="monotone"
             dataKey="revenue"
-            stroke="#ffd000"
+            stroke="#d1b01b"
             strokeWidth={2}
-            dot={{ fill: '#ffd000', strokeWidth: 2, r: 4 }}
+            dot={{ fill: '#d1b01b', strokeWidth: 2, r: 4 }}
             activeDot={{ r: 6 }}
             name="Revenue"
             isAnimationActive={true}
@@ -115,7 +115,7 @@ export function ProperLineChart({ data, height = 400 }: ProperLineChartProps) {
             <Line
               type="monotone"
               dataKey="expenses"
-              stroke="#EF4444"
+              stroke="#dc2626"
               strokeWidth={2}
               dot={(props) => {
                 const { cx, cy, value } = props;
@@ -124,7 +124,7 @@ export function ProperLineChart({ data, height = 400 }: ProperLineChartProps) {
                   <circle 
                     key={props.key}
                     cx={cx} cy={cy} r={4} 
-                    fill="#EF4444" 
+                    fill="#dc2626" 
                     stroke="white" 
                     strokeWidth={2}
                   />

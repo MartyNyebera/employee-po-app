@@ -370,7 +370,7 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
                   {!menuOpen && <NavBadge count={badgeForGroup(entry.group)} collapsed />}
                 </button>
                 {menuOpen && expanded && (
-                  <div className="mt-1 space-y-1" style={{ marginLeft: '12px', paddingLeft: '12px', borderLeft: '1px solid #f0f0f0' }}>
+                  <div className="mt-1 space-y-1" style={{ marginLeft: '12px', paddingLeft: '12px', borderLeft: '1px solid #ececec' }}>
                     {entry.children.map(child => renderLeaf(child, true))}
                   </div>
                 )}

@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
 import { useLiveRefresh } from '../../hooks/useLiveRefresh';
-import { S, badge, peso } from './crmKit';
+import { S, badge, peso, toneText } from './crmKit';
 import { printPurchaseRequest } from '../../lib/purchaseRequestPrint';
 import { nextDeptFor } from '../../lib/nextDept';
 import { SummaryStats } from '../SummaryStats';
@@ -26,7 +26,7 @@ interface PurchaseRequest {
 // `text-brand-gold` class. Deliberately does NOT call badge(): that helper is shared by every
 // other CRM screen and still renders pills there.
 const statusBadge = (s: string) => (
-  <span style={{ color: '#d1b01b', fontSize: '12px', fontWeight: 600, whiteSpace: 'nowrap' }}>
+  <span style={{ color: toneText(s), fontSize: '12px', fontWeight: 600, whiteSpace: 'nowrap' }}>
     {s.charAt(0).toUpperCase() + s.slice(1)}
   </span>
 );

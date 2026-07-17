@@ -8,7 +8,7 @@ import { CreatePurchaseOrderModal } from './CreatePurchaseOrderModal';
 import { printPurchaseOrder } from '../lib/orderPrint';
 import { nextDeptFor } from '../lib/nextDept';
 import { SummaryStats } from './SummaryStats';
-import { S, peso } from './crm/crmKit';
+import { S, peso, toneText } from './crm/crmKit';
 
 interface PurchaseOrder {
   id: string;
@@ -137,74 +137,8 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
     });
   };
 
-  const getStatusConfig = (status: string) => {
-    const configs: Record<string, { color: string; bgColor: string; borderColor: string; }> = {
-      'pending': {
-        color: '#d97706',
-        bgColor: '#fffbeb',
-        borderColor: '#fed7aa'
-      },
-      // Accounting has passed it; awaiting admin. Same amber family as pending — still in-queue.
-      'accounting-approved': {
-        color: '#b45309',
-        bgColor: '#fffbeb',
-        borderColor: '#fed7aa'
-      },
-      // Sent back to Purchasing to revise & resubmit.
-      'rejected': {
-        color: '#dc2626',
-        bgColor: '#fef2f2',
-        borderColor: '#fecaca'
-      },
-      'approved': {
-        color: '#d1b01b', 
-        bgColor: '#ececec', 
-        borderColor: '#e3ca63'
-      },
-      // Logistics marks an approved order as an ongoing delivery.
-      'in-progress': {
-        color: '#d1b01b',
-        bgColor: '#ececec',
-        borderColor: '#e3ca63'
-      },
-      'RECEIVED': {
-        color: '#059669',
-        bgColor: '#f0fdf4',
-        borderColor: '#bbf7d0'
-      },
-      'cancelled': {
-        color: '#8a8a8a',
-        bgColor: '#f4f4f4',
-        borderColor: '#d6d6d6'
-      },
-    };
-    // The fallback is why every status needs an entry above: an unmapped one silently renders
-    // in Pending's colours, so a cancelled order would read as awaiting approval.
-    return configs[status] || configs['pending'];
-  };
-
-  const StatusBadge = ({ status }: { status: string }) => {
-    const config = getStatusConfig(status);
-    return (
-      <div style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: '4px',
-        padding: '4px 12px',
-        borderRadius: '12px',
-        fontSize: '12px',
-        fontWeight: '500',
-        color: config.color,
-        backgroundColor: config.bgColor,
-        border: `1px solid ${config.borderColor}`,
-        fontFamily: 'Poppins, sans-serif'
-      }}>
-        {status === 'accounting-approved' ? 'Awaiting admin'
-          : status === 'pending' ? 'Awaiting accounting'
-          : status.charAt(0).toUpperCase() + status.slice(1)}
-      </div>
-    );
-  };
+  // [removed] getStatusConfig/StatusBadge — the table now renders status as tone-coloured text
+  // (toneText), so the old amber/green pill config is dead. Kept out to stay on-palette.
 
   const handleEditClick = (po: PurchaseOrder) => {
     console.log('Editing PO:', po);
@@ -526,7 +460,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                 <td style={S.td}>{po.prNumber || '—'}</td>
                 <td style={{ ...S.td, textAlign: 'right', fontWeight: 600, color: '#000000' }}>{peso(po.amount)}</td>
                 <td style={S.td}>
-                  <span style={{ color: '#d1b01b', fontSize: '12px', fontWeight: 600, whiteSpace: 'nowrap' }}>{statusLabel(po.status)}</span>
+                  <span style={{ color: toneText(po.status), fontSize: '12px', fontWeight: 600, whiteSpace: 'nowrap' }}>{statusLabel(po.status)}</span>
                   {nextDeptFor(po.status, 'po') && <div style={{ fontSize: '11px', color: '#8a8a8a', marginTop: '2px' }}>{nextDeptFor(po.status, 'po')}</div>}
                 </td>
                 <td style={S.td}>

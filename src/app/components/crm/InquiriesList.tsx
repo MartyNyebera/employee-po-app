@@ -3,7 +3,7 @@ import { Plus, Search, ArrowRightCircle, Trash2, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
-import { S, Modal, Field, TextInput, Select, TextArea, PrimaryBtn, GhostBtn, badge, peso } from './crmKit';
+import { S, Modal, Field, TextInput, Select, TextArea, PrimaryBtn, GhostBtn, pill, peso } from './crmKit';
 
 interface Inquiry {
   id: string; inquiryDate: string; customerId?: string; customerName?: string; contact?: string;
@@ -18,11 +18,11 @@ const STATUSES = ['New', 'Quoted', 'Won', 'Lost', 'Follow-up'];
 const LINES = ['Sheet metal (panels)', 'Sheet metal (branded)', 'Trading (electrical)', 'Trading (mechanical)', 'Fabrication (subcon)'];
 
 const statusBadge = (s?: string) => {
-  if (s === 'Won') return badge(s, '#065f46', '#d1fae5');
-  if (s === 'Quoted') return badge(s, '#7a6a0c', '#ececec');
-  if (s === 'New') return badge(s, '#92400e', '#fef3c7');
-  if (s === 'Follow-up') return badge(s, '#b0940f', '#ececec');
-  if (s === 'Lost') return badge(s, '#991b1b', '#fee2e2');
+  if (s === 'Won') return pill(s, 'good');
+  if (s === 'Quoted') return pill(s, 'pending');
+  if (s === 'New') return pill(s, 'pending');
+  if (s === 'Follow-up') return pill(s, 'pending');
+  if (s === 'Lost') return pill(s, 'bad');
   return <span style={{ color: '#8a8a8a' }}>—</span>;
 };
 
@@ -105,12 +105,12 @@ export function InquiriesList({ isAdmin }: { isAdmin: boolean }) {
                     <td style={S.td}>{supplierLabel(r)}</td>
                     <td style={{ ...S.td, textAlign: 'right' }}>{peso(r.supplierQuoteAmount)}</td>
                     <td style={{ ...S.td, textAlign: 'right' }}>{peso(r.quoteAmount)}</td>
-                    <td style={{ ...S.td, textAlign: 'right', fontWeight: 700, color: margin == null ? '#8a8a8a' : margin >= 0 ? '#059669' : '#dc2626' }}>{margin == null ? '—' : peso(margin)}</td>
+                    <td style={{ ...S.td, textAlign: 'right', fontWeight: 700, color: margin == null ? '#8a8a8a' : margin >= 0 ? '#7a6a0c' : '#dc2626' }}>{margin == null ? '—' : peso(margin)}</td>
                     <td style={S.td}>{r.source || '—'}</td>
                     <td style={S.td}>{statusBadge(r.status)}</td>
                     {isAdmin && <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                       {r.salesOrderId
-                        ? badge('Converted', '#065f46', '#d1fae5')
+                        ? pill('Converted', 'good')
                         : <button title="Convert to sales order" style={{ ...S.rowBtn, color: '#d1b01b', borderColor: '#e3ca63' }} onClick={() => setConverting(r)}><ArrowRightCircle size={13} /></button>}
                       <button title="Edit" style={S.rowBtn} onClick={() => { setEditing(r); setShowModal(true); }}><Pencil size={13} /></button>
                       <button title="Delete" style={{ ...S.rowBtn, color: '#b91c1c' }} onClick={() => onDelete(r)}><Trash2 size={14} /></button>
@@ -180,7 +180,7 @@ function InquiryModal({ initial, customers, suppliers, onClose, onSaved }: { ini
           <Field label="Supplier quote (our cost) ₱"><TextInput type="number" value={f.supplierQuoteAmount ?? ''} onChange={e => set('supplierQuoteAmount', e.target.value)} /></Field>
           <Field label="Our quote to client ₱"><TextInput type="number" value={f.quoteAmount ?? ''} onChange={e => set('quoteAmount', e.target.value)} /></Field>
         </div>
-        <div style={{ fontSize: '14px', fontWeight: 700, color: margin == null ? '#8a8a8a' : margin >= 0 ? '#059669' : '#dc2626' }}>
+        <div style={{ fontSize: '14px', fontWeight: 700, color: margin == null ? '#8a8a8a' : margin >= 0 ? '#7a6a0c' : '#dc2626' }}>
           Margin: {margin == null ? '—' : peso(margin)}
         </div>
       </div>
