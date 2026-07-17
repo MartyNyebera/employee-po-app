@@ -10,7 +10,7 @@ import { PageErrorFallback } from '../components/PageErrorFallback';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { confirmDialog } from '../lib/confirm';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
-import { printPurchaseOrder } from '../lib/orderPrint';
+import { printPurchaseOrder, parsePOLineItems } from '../lib/orderPrint';
 import { printReceivingReport, type ReceivedLine } from '../lib/deliveryReceiptPrint';
 import { ReceivingModal } from '../components/ReceivingModal';
 
@@ -747,7 +747,16 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                           </div>
                           <p className="text-xs text-gray-400 mt-0.5">From <span className="text-gray-600 font-medium">{po.client || '—'}</span></p>
                           {po.supplierAddress && <p className="text-xs text-gray-400 mt-0.5">{po.supplierAddress}</p>}
-                          {po.status === 'RECEIVED' && <p className="text-xs text-gray-400 mt-1">Received by <span className="text-gray-600 font-medium">{po.receivedBy || '—'}</span></p>}
+                          {po.status === 'RECEIVED' && (() => {
+                            // Section E — #14: total units short of what was ordered (a shortfall or defects).
+                            const shortN = (po.receivedLines || []).reduce((n, l) => n + Math.max(0, (Number(l.ordered ?? l.added) || 0) - (Number(l.added) || 0)), 0);
+                            return (
+                              <p className="text-xs text-gray-400 mt-1">
+                                Received by <span className="text-gray-600 font-medium">{po.receivedBy || '—'}</span>
+                                {shortN > 0 && <span className="text-amber-600 font-medium"> · short {shortN}</span>}
+                              </p>
+                            );
+                          })()}
                           {po.status === 'cancelled' && po.cancelledBy && <p className="text-xs text-gray-400 mt-1">Cancelled by <span className="text-gray-600 font-medium">{po.cancelledBy}</span></p>}
                         </div>
                         <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
@@ -857,27 +866,42 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
       {adding && <AddItemModal onClose={() => setAdding(false)} onSaved={() => { setAdding(false); load(); }} />}
       {editing && <UpdateItemModal item={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
 
-      {/* Section D — #10: receiving an inbound PO adds its goods to inventory. */}
-      {receivingPO && (
-        <ReceivingModal
-          title="Mark Received"
-          confirmLabel="Mark Received"
-          subtitle={`${receivingPO.poNumber} · from ${receivingPO.client}`}
-          initialNotes={receivingPO.deliveryNotes}
-          onSave={async (receivedBy, notes) => {
-            const r = await wFetch<{ receivedAt?: string; inventoryApplied?: { itemName: string; added: number; newQuantity: number }[] }>(
-              `/purchase-orders/${receivingPO.id}/delivery`,
-              { method: 'PUT', body: JSON.stringify({ status: 'RECEIVED', receivedBy, notes }) },
-            );
-            const n = r.inventoryApplied?.length || 0;
-            toast.success(n ? `${receivingPO.poNumber} received — ${n} item${n > 1 ? 's' : ''} added to inventory` : `${receivingPO.poNumber} marked received`);
-            const p = printPOReceipt(receivingPO, r.inventoryApplied || [], receivedBy, r.receivedAt || undefined, notes);
-            if (!p.ok) toast.error(p.error || 'Receipt recorded — allow popups, then use Receipt on the row');
-          }}
-          onClose={() => setReceivingPO(null)}
-          onDone={() => { setReceivingPO(null); load(); }}
-        />
-      )}
+      {/* Section D — #10 / Section E — #14: receiving an inbound PO adds its USABLE goods to
+          inventory. For a PR-linked order the per-line received/defective grid is shown; a
+          hand-raised order (free-text lines, no inventory) just captures the received-by name. */}
+      {receivingPO && (() => {
+        // No .filter here: the server matches received/defective to its own parse of the same
+        // "Line Items:" blob BY INDEX, so the grid must stay 1:1 with that parse (Section E).
+        const orderLines = receivingPO.prNumber
+          ? parsePOLineItems(receivingPO.description).map(l => ({
+              description: String(l.description || ''),
+              ordered: Number(l.quantity) || 0,
+              unit: l.unit || null,
+            }))
+          : [];
+        return (
+          <ReceivingModal
+            title="Mark Received"
+            confirmLabel="Mark Received"
+            subtitle={`${receivingPO.poNumber} · from ${receivingPO.client}`}
+            initialNotes={receivingPO.deliveryNotes}
+            lines={orderLines.length ? orderLines : undefined}
+            onSave={async (receivedBy, notes, lineResults) => {
+              const r = await wFetch<{ receivedAt?: string; inventoryApplied?: ReceivedLine[]; receivedLines?: ReceivedLine[] }>(
+                `/purchase-orders/${receivingPO.id}/delivery`,
+                { method: 'PUT', body: JSON.stringify({ status: 'RECEIVED', receivedBy, notes, lines: lineResults }) },
+              );
+              const n = r.inventoryApplied?.length || 0;
+              toast.success(n ? `${receivingPO.poNumber} received — ${n} item${n > 1 ? 's' : ''} added to inventory` : `${receivingPO.poNumber} marked received`);
+              // Print the full per-line breakdown (short/defective lines included).
+              const p = printPOReceipt(receivingPO, r.receivedLines || r.inventoryApplied || [], receivedBy, r.receivedAt || undefined, notes);
+              if (!p.ok) toast.error(p.error || 'Receipt recorded — allow popups, then use Receipt on the row');
+            }}
+            onClose={() => setReceivingPO(null)}
+            onDone={() => { setReceivingPO(null); load(); }}
+          />
+        );
+      })()}
       {/* Accept opens the same New Item form, prefilled — so a typo or a wrong unit can be
           fixed before it becomes a permanent row production will order against. */}
       {accepting && (

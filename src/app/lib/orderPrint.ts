@@ -143,6 +143,20 @@ function blobMoney(description: string, label: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// Section E — #14: the warehouse's receiving grid needs the order's lines (description +
+// ordered quantity) to show what to check off. Exported so it reads the SAME "Line Items:" blob
+// the printout does — one parser, no drift.
+export function parsePOLineItems(description?: string | null): PrintableLineItem[] {
+  const raw = blobLine(description || '', 'Line Items:');
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length) return parsed;
+    } catch { /* none */ }
+  }
+  return [];
+}
+
 function parseLineItems(po: PrintablePO): PrintableLineItem[] {
   const description = po.description || '';
   const raw = blobLine(description, 'Line Items:');

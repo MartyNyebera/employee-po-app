@@ -2743,22 +2743,39 @@ function parsePOLineItems(description) {
   } catch { return []; }
 }
 
-// Add a received order's lines to stock, inside the caller's transaction.
+// Receive an order's lines into stock, inside the caller's transaction (Section E — #14).
 //
-// Resolution is by inventoryId — carried from the employee's picker through the request onto
-// the order — falling back to a case-insensitive name match for lines filed before the id was
-// carried. An unresolvable line throws: the goods physically arrived, but we cannot say what
-// they are, and silently skipping would understate stock with no trace.
+// The warehouse enters, per line, how many actually ARRIVED and how many are DEFECTIVE; only the
+// USABLE quantity (received − defective) is added to inventory. `clientLines` carries that,
+// matched to the ordered lines BY INDEX (the receiving grid is built from the same parsed order,
+// in order). With no clientLines — a legacy/blind receipt — a line defaults to fully received,
+// none defective, preserving the old behaviour.
 //
-// Cost is a weighted average: (onHandQty*onHandCost + recvQty*recvCost) / totalQty. Overwriting
+// Resolution is by inventoryId — carried from the employee's picker through the request onto the
+// order — falling back to a case-insensitive name match for older lines. An unresolvable line
+// throws: the goods physically arrived, but we cannot say what they are, and silently skipping
+// would understate stock with no trace.
+//
+// Returns { receivedLines, applied }: receivedLines records EVERY line (ordered/received/
+// defective/added/newQuantity) for the receipt and the "short N" label — even a fully-defective
+// one that added nothing; `applied` is the subset that actually moved stock, for the toast.
+//
+// Cost is a weighted average: (onHandQty*onHandCost + usable*recvCost) / totalQty. Overwriting
 // with the latest price would revalue stock we already owned at a price we never paid for it.
-async function receiveLinesIntoInventory(client, lines) {
+async function receiveLinesIntoInventory(client, lines, clientLines) {
+  const receivedLines = [];
   const applied = [];
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const name = String(line?.description || '').trim();
-    const qty = Number(line?.quantity) || 0;
+    const ordered = Number(line?.quantity) || 0;
     const cost = Number(line?.unitCost ?? line?.unitPrice) || 0;
     if (!name) continue;
+
+    const cl = Array.isArray(clientLines) ? clientLines[i] : null;
+    const received = cl && cl.received != null ? Math.max(0, Number(cl.received) || 0) : ordered;
+    const defective = cl && cl.defective != null ? Math.max(0, Number(cl.defective) || 0) : 0;
+    const usable = Math.max(0, received - defective);
 
     // FOR UPDATE: two receipts touching the same item must not interleave their read-modify-write.
     let row;
@@ -2774,15 +2791,21 @@ async function receiveLinesIntoInventory(client, lines) {
       throw e;
     }
 
-    const onHandQty = parseFloat(row.quantity) || 0;
-    const onHandCost = parseFloat(row.unit_cost) || 0;
-    const newQty = onHandQty + qty;
-    const newCost = newQty > 0 ? (onHandQty * onHandCost + qty * cost) / newQty : cost;
-
-    await client.query('UPDATE inventory SET quantity = $1, unit_cost = $2, updated_at = NOW() WHERE id = $3', [newQty, newCost, row.id]);
-    applied.push({ inventoryId: row.id, itemName: row.item_name, added: qty, newQuantity: newQty, newUnitCost: Math.round(newCost * 100) / 100 });
+    let newQty = parseFloat(row.quantity) || 0;
+    // Only add the good units. A line where nothing usable arrived still gets recorded (added 0)
+    // so the receipt shows the shortfall — there is deliberately NO automatic re-order.
+    if (usable > 0) {
+      const onHandQty = parseFloat(row.quantity) || 0;
+      const onHandCost = parseFloat(row.unit_cost) || 0;
+      newQty = onHandQty + usable;
+      const newCost = newQty > 0 ? (onHandQty * onHandCost + usable * cost) / newQty : cost;
+      await client.query('UPDATE inventory SET quantity = $1, unit_cost = $2, updated_at = NOW() WHERE id = $3', [newQty, newCost, row.id]);
+    }
+    const entry = { inventoryId: row.id, itemName: row.item_name, ordered, received, defective, added: usable, newQuantity: newQty };
+    receivedLines.push(entry);
+    if (usable > 0) applied.push(entry);
   }
-  return applied;
+  return { receivedLines, applied };
 }
 
 // Logistics' confirmation of an inbound delivery — the tail of the purchase-order lifecycle,
@@ -2831,8 +2854,9 @@ app.put('/api/purchase-orders/:id/delivery', requireRole(['admin', 'warehouse'])
       return reject('Who received the delivery is required');
     }
 
-    const actor = req.user?.name || 'Logistics';
+    const actor = req.user?.name || 'Warehouse';
     let applied = [];
+    let receivedLines = [];
     let r;
     if (status === 'in-progress') {
       r = await client.query(
@@ -2845,8 +2869,14 @@ app.put('/api/purchase-orders/:id/delivery', requireRole(['admin', 'warehouse'])
       // the employee's inventory picker, so each one IS an inventory item. An order created by
       // hand (Purchase Orders ▸ New) has free-text lines — services, one-offs, "1 Lot" — which
       // are not inventory and must not be invented as items, nor block the receipt.
+      //
+      // Section E — #14: the warehouse may pass `lines` = per-line { received, defective } so
+      // only the usable quantity is shelved; received_lines records the full ordered/received/
+      // defective/added breakdown for the receipt and the "short N" label.
       if (cur.rows[0].purchase_request_id) {
-        applied = await receiveLinesIntoInventory(client, parsePOLineItems(cur.rows[0].description));
+        const result = await receiveLinesIntoInventory(client, parsePOLineItems(cur.rows[0].description), req.body.lines);
+        receivedLines = result.receivedLines;
+        applied = result.applied;
       }
       // Stored, not just returned: the delivery receipt has to be printable again later, and
       // `new_quantity` is a snapshot of stock at receipt that cannot be recomputed once
@@ -2857,7 +2887,7 @@ app.put('/api/purchase-orders/:id/delivery', requireRole(['admin', 'warehouse'])
         `UPDATE purchase_orders SET status='RECEIVED', received_by=$1, received_at=NOW(),
            delivery_notes=COALESCE($2, delivery_notes), received_lines=$3::jsonb, updated_at=NOW()
          WHERE id=$4 RETURNING *`,
-        [String(receivedBy).trim(), orNull(notes), JSON.stringify(applied), req.params.id]
+        [String(receivedBy).trim(), orNull(notes), JSON.stringify(receivedLines), req.params.id]
       );
     } else {
       r = await client.query(
@@ -2880,8 +2910,10 @@ app.put('/api/purchase-orders/:id/delivery', requireRole(['admin', 'warehouse'])
       cancelledBy: row.cancelled_by ?? null,
       deliveryNotes: row.delivery_notes ?? null,
       // What this receipt did to stock, so the portal can say so rather than leave the user
-      // wondering whether inventory moved.
+      // wondering whether inventory moved. `receivedLines` is the FULL per-line breakdown
+      // (including short/defective lines that added nothing) for the printed receipt.
       inventoryApplied: applied,
+      receivedLines,
     });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
