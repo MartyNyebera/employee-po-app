@@ -42,7 +42,7 @@ export function StaffAccountsList() {
     <div style={S.page}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
         <div><h1 style={S.h1}>Administrator Accounts</h1><p style={S.sub}>Create and manage admin-side logins. Bookkeeper and Purchasing get filtered dashboards.</p></div>
-        <button style={S.addBtn} onClick={() => setShowModal(true)}><Plus size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />New Staff</button>
+        <button style={S.addBtn} onClick={() => setShowModal(true)}><Plus size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />Account</button>
       </div>
 
       <div style={S.card}>

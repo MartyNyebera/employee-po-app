@@ -84,7 +84,7 @@ export function PortalAccountsList({ isAdmin, path, label, portalPath, blurb }: 
           <h1 style={S.h1}>{label} Accounts</h1>
           <p style={S.sub}>Create logins for {label}. They sign into the {label} portal (<strong>{portalPath}</strong>) {blurb}</p>
         </div>
-        {isAdmin && <button style={S.addBtn} onClick={() => { setEditing(null); setShowModal(true); }}><Plus size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />New {label} Account</button>}
+        {isAdmin && <button style={S.addBtn} onClick={() => { setEditing(null); setShowModal(true); }}><Plus size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />Account</button>}
       </div>
 
       <div style={{ marginBottom: '16px' }}>

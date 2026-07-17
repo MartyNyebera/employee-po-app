@@ -68,7 +68,7 @@ export function EmployeeAccountsList({ isAdmin }: { isAdmin: boolean }) {
     <div style={S.page}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
         <div><h1 style={S.h1}>Production Accounts</h1><p style={S.sub}>Create logins for production staff. They use these to sign into the Production portal (<strong>/production</strong>) to file purchase requests.</p></div>
-        {isAdmin && <button style={S.addBtn} onClick={() => { setEditing(null); setShowModal(true); }}><Plus size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />New Employee</button>}
+        {isAdmin && <button style={S.addBtn} onClick={() => { setEditing(null); setShowModal(true); }}><Plus size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />Account</button>}
       </div>
 
       <div style={{ marginBottom: '16px' }}>

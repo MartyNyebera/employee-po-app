@@ -13,12 +13,13 @@ export const S = {
   page: { padding: '32px', backgroundColor: '#ececec', minHeight: '100%' } as React.CSSProperties,
   h1: { fontSize: '28px', fontWeight: 700, color: '#000000', margin: 0 } as React.CSSProperties,
   sub: { fontSize: '14px', color: '#5a5a5a', marginTop: '4px' } as React.CSSProperties,
-  // Black on brand gold — white on #d1b01b fails contrast.
+  // White on brand gold — the requested brand style for the "+ Account" buttons (matches the
+  // dashboard Export button); below AA contrast, but intentional.
   // fontFamily: 'inherit' on every control below is load-bearing, not decoration: <button>,
   // <input> and <select> do NOT inherit the body's Poppins (theme.css) — browsers force their
   // own control font. Without it a 12px button renders visibly larger than 12px Poppins text
   // beside it, because the fallback face has a bigger x-height at the same pixel size.
-  addBtn: { padding: '10px 18px', backgroundColor: '#d1b01b', color: '#000000', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: 600, fontFamily: 'inherit' } as React.CSSProperties,
+  addBtn: { padding: '10px 18px', backgroundColor: '#d1b01b', color: '#ffffff', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: 600, fontFamily: 'inherit' } as React.CSSProperties,
   input: { width: '100%', padding: '10px 14px', borderRadius: '8px', border: '1px solid #d6d6d6', fontSize: '14px', boxSizing: 'border-box', backgroundColor: '#fff', fontFamily: 'inherit' } as React.CSSProperties,
   label: { display: 'block', fontSize: '12px', fontWeight: 600, color: '#262626', marginBottom: '6px' } as React.CSSProperties,
   card: { backgroundColor: '#fff', border: '1px solid #d6d6d6', borderRadius: '14px', overflow: 'hidden' } as React.CSSProperties,
