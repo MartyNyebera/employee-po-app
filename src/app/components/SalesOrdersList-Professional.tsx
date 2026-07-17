@@ -486,18 +486,6 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
           alignItems: 'center',
           gap: '16px'
         }}>
-          <div style={{
-            width: '48px',
-            height: '48px',
-            borderRadius: '12px',
-            backgroundColor: '#d1b01b',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: '0 4px 6px -1px rgba(209, 176, 27, 0.3)'
-          }}>
-            <FileText style={{ width: '24px', height: '24px', color: '#000000' }} />
-          </div>
           <div>
             <h1 style={{
               fontSize: '28px',
@@ -506,7 +494,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
               margin: '0 0 8px 0',
               fontFamily: 'Poppins, sans-serif'
             }}>
-              Sales Orders Management
+              Sales Orders
             </h1>
             <p style={{
               fontSize: '14px',
@@ -623,7 +611,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
 
         <div style={{
           background: '#ffffff',
-          border: '1px solid #fffbeb',
+          border: '1px solid #d6d6d6',
           borderRadius: '16px',
           padding: '24px',
           boxShadow: 'none',
@@ -648,12 +636,12 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
               width: '48px',
               height: '48px',
               borderRadius: '12px',
-              backgroundColor: '#fffbeb',
+              backgroundColor: '#ececec',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <Package style={{ width: '24px', height: '24px', color: '#d97706' }} />
+              <Package style={{ width: '24px', height: '24px', color: '#d1b01b' }} />
             </div>
             <div style={{
               display: 'flex',
@@ -663,8 +651,8 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
               borderRadius: '6px',
               fontSize: '12px',
               fontWeight: '600',
-              color: '#d97706',
-              backgroundColor: '#fffbeb',
+              color: '#d1b01b',
+              backgroundColor: '#ececec',
               fontFamily: 'Poppins, sans-serif'
             }}>
               Pending
@@ -673,7 +661,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
           <h3 style={{
             fontSize: '32px',
             fontWeight: '700',
-            color: '#d97706',
+            color: '#d1b01b',
             margin: '0 0 8px 0',
             fontFamily: 'Poppins, sans-serif'
           }}>
@@ -682,7 +670,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
           <p style={{
             fontSize: '14px',
             fontWeight: '500',
-            color: '#92400e',
+            color: '#7a6a0c',
             margin: '0',
             fontFamily: 'Poppins, sans-serif'
           }}>
@@ -761,7 +749,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
 
         <div style={{
           background: '#ffffff',
-          border: '1px solid #f0fdf4',
+          border: '1px solid #d6d6d6',
           borderRadius: '16px',
           padding: '24px',
           boxShadow: 'none',
@@ -786,12 +774,12 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
               width: '48px',
               height: '48px',
               borderRadius: '12px',
-              backgroundColor: '#f0fdf4',
+              backgroundColor: '#ececec',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <Check style={{ width: '24px', height: '24px', color: '#059669' }} />
+              <Check style={{ width: '24px', height: '24px', color: '#d1b01b' }} />
             </div>
             <div style={{
               display: 'flex',
@@ -801,8 +789,8 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
               borderRadius: '6px',
               fontSize: '12px',
               fontWeight: '600',
-              color: '#059669',
-              backgroundColor: '#f0fdf4',
+              color: '#d1b01b',
+              backgroundColor: '#ececec',
               fontFamily: 'Poppins, sans-serif'
             }}>
               PAID
@@ -811,7 +799,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
           <h3 style={{
             fontSize: '32px',
             fontWeight: '700',
-            color: '#059669',
+            color: '#d1b01b',
             margin: '0 0 8px 0',
             fontFamily: 'Poppins, sans-serif'
           }}>
@@ -820,7 +808,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
           <p style={{
             fontSize: '14px',
             fontWeight: '500',
-            color: '#065f46',
+            color: '#7a6a0c',
             margin: '0',
             fontFamily: 'Poppins, sans-serif'
           }}>
