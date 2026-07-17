@@ -28,10 +28,13 @@ type RequestView = 'new' | 'history' | 'withdrawals' | 'itemRequests' | 'signatu
 // The id is what lets a delivered purchase order add stock back to the right row — matching on
 // the name alone breaks the moment anyone renames an item. Optional because requests filed
 // before this existed carry only the name (the receipt falls back to a name match for those).
-interface LineItem { id: string; no: number; description: string; inventoryId?: string | null; quantity: number; unit: string; unitCost: number; amount: number; }
+// Section H — #6: a line is either an inventory item (default) or a `kind: 'labor'` line —
+// "supply labor" — which carries its own free-text description + laborNote and is NOT an
+// inventory item (no picker, no stock row).
+interface LineItem { id: string; no: number; kind?: 'labor'; description: string; laborNote?: string; inventoryId?: string | null; quantity: number; unit: string; unitCost: number; amount: number; }
 // Editable line in the New Request form. quantity/unitCost are kept as strings so the
 // fields can be fully cleared (empty), which avoids the "can't erase the leading 0" bug.
-interface FormLine { id: string; no: number; description: string; inventoryId: string | null; quantity: string; unit: string; unitCost: string; amount: number; }
+interface FormLine { id: string; no: number; kind?: 'labor'; description: string; laborNote?: string; inventoryId: string | null; quantity: string; unit: string; unitCost: string; amount: number; }
 interface PurchaseRequest {
   id: string; prNumber: string; employeeName?: string; projectId?: string | null; projectName?: string | null;
   neededBy?: string; supplier?: string; notes?: string; items: LineItem[]; total: number;
@@ -113,6 +116,8 @@ const NAV_ITEMS: { id: RequestView; label: string; icon: any }[] = [
 ];
 
 const emptyLine = (no: number): FormLine => ({ id: `new-${no}-${no}${Math.floor(no * 97)}`, no, description: '', inventoryId: null, quantity: '1', unit: 'pcs', unitCost: '', amount: 0 });
+// #6 — a supply-labor line: free-text, priced as a lot, with its own note.
+const emptyLaborLine = (no: number): FormLine => ({ id: `lab-${no}-${Math.floor(no * 131)}`, no, kind: 'labor', description: '', laborNote: '', inventoryId: null, quantity: '1', unit: 'lot', unitCost: '', amount: 0 });
 
 // Employee e-signature pad (draw or upload). Saved to the employee's account and stamped
 // on the "Prepared By" block of their purchase-request printouts.
@@ -664,7 +669,7 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
   // New-request form state
   const [projectId, setProjectId] = useState<string>(''); // '' = Personal use
   const [neededBy, setNeededBy] = useState('');
-  const [notes, setNotes] = useState('');
+  // #6 — the top-level Notes field is gone; a supply-labor line carries its own note instead.
   const [lineItems, setLineItems] = useState<FormLine[]>([emptyLine(1)]);
   const [submitting, setSubmitting] = useState(false);
 
@@ -727,26 +732,27 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
     }));
   };
   const addLineItem = () => setLineItems((prev) => [...prev, emptyLine(prev.length + 1)]);
+  const addLaborLine = () => setLineItems((prev) => [...prev, emptyLaborLine(prev.length + 1)]);
   const deleteLineItem = (id: string) => setLineItems((prev) => prev.filter((li) => li.id !== id).map((li, i) => ({ ...li, no: i + 1 })));
   const subTotal = useMemo(() => sum(lineItems), [lineItems]);
 
-  const resetForm = () => { setProjectId(''); setNeededBy(''); setNotes(''); setLineItems([emptyLine(1)]); };
+  const resetForm = () => { setProjectId(''); setNeededBy(''); setLineItems([emptyLine(1)]); };
 
   const handleSubmitRequest = async () => {
-    // Everything except Notes is required.
     if (!projectId) { toast.error('Choose what this request is for'); return; }
     if (!neededBy) { toast.error('Set the date this is needed by'); return; }
     if (lineItems.length === 0) { toast.error('Add at least one item'); return; }
     const incomplete = lineItems.find((li) =>
       !li.description.trim() || !li.unit || !(Number(li.quantity) > 0) || !(Number(li.unitCost) > 0));
     if (incomplete) {
-      toast.error(`Item ${incomplete.no} is incomplete — item, quantity, unit and est. cost are all required`);
+      toast.error(`Line ${incomplete.no} is incomplete — description, quantity, unit and est. cost are all required`);
       return;
     }
     const valid = lineItems;
-    // Only inventory items may be requested — guard against any line that isn't a known item.
+    // Only inventory items may be requested — guard against any ITEM line that isn't a known
+    // item. Labor lines (#6) are free-text and exempt: they are not inventory.
     const known = new Set(inventory.map((iv) => iv.itemName.toLowerCase()));
-    const unknown = valid.find((li) => !known.has(li.description.trim().toLowerCase()));
+    const unknown = valid.find((li) => li.kind !== 'labor' && !known.has(li.description.trim().toLowerCase()));
     if (unknown) { toast.error(`"${unknown.description}" is not in inventory — pick an item from the list`); return; }
     setSubmitting(true);
     try {
@@ -755,19 +761,26 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
         body: JSON.stringify({
           projectId: projectId === PERSONAL_USE ? null : projectId,
           neededBy,
-          notes: notes.trim() || null,
           // inventoryId travels with the line all the way to receipt: when the resulting
           // purchase order is delivered, that id is what puts the stock back on the right row.
           // Falls back to the picker's resolved match if a line predates the id being carried.
-          items: valid.map((li, i) => ({
-            no: i + 1,
-            description: li.description.trim(),
-            inventoryId: li.inventoryId
-              || inventory.find((iv) => iv.itemName.toLowerCase() === li.description.trim().toLowerCase())?.id
-              || null,
-            quantity: Number(li.quantity), unit: li.unit,
-            unitCost: Number(li.unitCost) || 0, amount: Number(li.amount) || 0,
-          })),
+          // A labor line carries no inventoryId (it is not stock) and keeps its kind + note.
+          items: valid.map((li, i) => li.kind === 'labor'
+            ? {
+                no: i + 1, kind: 'labor', description: li.description.trim(),
+                laborNote: (li.laborNote || '').trim() || null,
+                inventoryId: null, quantity: Number(li.quantity), unit: li.unit || 'lot',
+                unitCost: Number(li.unitCost) || 0, amount: Number(li.amount) || 0,
+              }
+            : {
+                no: i + 1,
+                description: li.description.trim(),
+                inventoryId: li.inventoryId
+                  || inventory.find((iv) => iv.itemName.toLowerCase() === li.description.trim().toLowerCase())?.id
+                  || null,
+                quantity: Number(li.quantity), unit: li.unit,
+                unitCost: Number(li.unitCost) || 0, amount: Number(li.amount) || 0,
+              }),
         }),
       });
       toast.success('Purchase request submitted');
@@ -803,7 +816,7 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
     const rows = req.items.map((it, i) => `
       <tr>
         <td>${i + 1}</td>
-        <td>${esc(it.description || '')}</td>
+        <td>${esc(it.description || '')}${it.kind === 'labor' ? ' <span style="font-size:8pt;color:#555;font-style:italic">(labor)</span>' : ''}${it.laborNote ? `<div style="font-size:8pt;color:#555">${esc(it.laborNote)}</div>` : ''}</td>
         <td style="text-align:center">${esc(it.quantity ?? '')}</td>
         <td style="text-align:center">${esc(it.unit || '')}</td>
         <td style="text-align:right">${peso(it.unitCost)}</td>
@@ -991,7 +1004,10 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-sm font-semibold text-gray-700">Items</label>
-                      <button onClick={addLineItem} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-sm font-medium text-blue-600 hover:bg-blue-50 transition-colors"><Plus className="w-4 h-4" /> Add item</button>
+                      <div className="flex items-center gap-1">
+                        <button onClick={addLineItem} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-sm font-medium text-blue-600 hover:bg-blue-50 transition-colors"><Plus className="w-4 h-4" /> Add item</button>
+                        <button onClick={addLaborLine} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-sm font-medium text-blue-600 hover:bg-blue-50 transition-colors"><Plus className="w-4 h-4" /> Add labor</button>
+                      </div>
                     </div>
                     <div className="overflow-x-auto border border-gray-200 rounded-lg">
                       <table className="w-full text-sm">
@@ -1009,9 +1025,18 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
                         <tbody className="divide-y divide-gray-100">
                           {lineItems.map((li) => (
                             <tr key={li.id}>
-                              <td className="px-3 py-2 text-gray-400">{li.no}</td>
-                              <td className="px-3 py-2"><ItemPicker value={li.description} onCommit={(name, unit, inventoryId) => { updateLineItem(li.id, 'description', name); updateLineItem(li.id, 'inventoryId', inventoryId ?? null); if (unit) updateLineItem(li.id, 'unit', unit); }} inventory={inventory} onRequestNew={setRequestingItem} /></td>
-                              <td className="px-3 py-2"><input type="number" min="0" value={li.quantity} onChange={(e) => updateLineItem(li.id, 'quantity', e.target.value)} placeholder="0" className="w-full px-2 py-1.5 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" /></td>
+                              <td className="px-3 py-2 text-gray-400 align-top">{li.no}{li.kind === 'labor' && <div className="text-[10px] font-semibold text-blue-500 uppercase">Labor</div>}</td>
+                              <td className="px-3 py-2">
+                                {li.kind === 'labor' ? (
+                                  <div className="space-y-1">
+                                    <input value={li.description} onChange={(e) => updateLineItem(li.id, 'description', e.target.value)} placeholder="Labor description (e.g. Installation labor)" className="w-full px-2 py-1.5 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                                    <input value={li.laborNote || ''} onChange={(e) => updateLineItem(li.id, 'laborNote', e.target.value)} placeholder="Note (optional)" className="w-full px-2 py-1 text-xs border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                                  </div>
+                                ) : (
+                                  <ItemPicker value={li.description} onCommit={(name, unit, inventoryId) => { updateLineItem(li.id, 'description', name); updateLineItem(li.id, 'inventoryId', inventoryId ?? null); if (unit) updateLineItem(li.id, 'unit', unit); }} inventory={inventory} onRequestNew={setRequestingItem} />
+                                )}
+                              </td>
+                              <td className="px-3 py-2 align-top"><input type="number" min="0" value={li.quantity} onChange={(e) => updateLineItem(li.id, 'quantity', e.target.value)} placeholder="0" className="w-full px-2 py-1.5 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" /></td>
                               <td className="px-3 py-2">
                                 <select value={li.unit} onChange={(e) => updateLineItem(li.id, 'unit', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                                   {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
@@ -1031,11 +1056,6 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
                         <span className="text-lg font-bold text-gray-900">{peso(subTotal)}</span>
                       </div>
                     </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Notes <span className="text-gray-400 font-normal">(optional)</span></label>
-                    <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Describe the purpose of this request…" className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
                   </div>
 
                   <div className="flex gap-3 pt-1">

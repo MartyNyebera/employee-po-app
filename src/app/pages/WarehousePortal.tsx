@@ -178,7 +178,7 @@ function WarehouseLogin({ onLoggedIn }: { onLoggedIn: (s: Session) => void }) {
 
 // ============================================================================
 // Add-item modal — creates a new inventory item (name, unit, initial qty).
-// The item code is assigned by the server (ITM-YYYY-NNNN): it is NOT NULL UNIQUE, and
+// The item code is assigned by the server (ITM-######, six digits): it is NOT NULL UNIQUE, and
 // asking staff to invent one meant a typo collided with an existing item.
 // ============================================================================
 // `initial` prefills the form; `save` overrides where the item gets created. Accepting an item

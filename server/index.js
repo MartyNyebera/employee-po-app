@@ -3606,21 +3606,23 @@ app.put('/api/deliveries/:id', requireRole(['admin', 'logistics']), async (req, 
 // (Removed a dead duplicate GET /api/inventory — Express serves the earlier
 // registration (~line 1060), so this second one was unreachable.)
 
-// ITM-YYYY-NNNN. Shared by POST /api/inventory and the item-request review route, which
-// also creates inventory rows — one generator so the two cannot drift apart.
+// ITM-###### — six digits, no year (Section H — #11). Shared by POST /api/inventory and the
+// item-request review route, which also creates inventory rows — one generator so the two
+// cannot drift apart.
+//
+// Only new-format codes are considered for the max, via the regex `^ITM-[0-9]{6}$`. Existing
+// ITM-YYYY-NNNN codes are left untouched and cannot collide — a different pattern and length.
 //
 // Takes a `db` (the pool's `query`, or a transaction client) so the review route can read the
 // last code inside its own transaction. Reads-then-inserts without a lock, so two concurrent
 // adds can still collide: both callers catch 23505 and report a conflict rather than a 500.
 async function nextItemCode(db) {
-  const year = new Date().getFullYear();
   const last = await db(
-    `SELECT item_code FROM inventory WHERE item_code LIKE $1 ORDER BY item_code DESC LIMIT 1`,
-    [`ITM-${year}-%`]
+    `SELECT item_code FROM inventory WHERE item_code ~ '^ITM-[0-9]{6}$' ORDER BY item_code DESC LIMIT 1`
   );
   let counter = 1;
-  if (last.rows[0]) { const n = parseInt(last.rows[0].item_code.split('-')[2], 10); if (!isNaN(n)) counter = n + 1; }
-  return `ITM-${year}-${String(counter).padStart(4, '0')}`;
+  if (last.rows[0]) { const n = parseInt(last.rows[0].item_code.split('-')[1], 10); if (!isNaN(n)) counter = n + 1; }
+  return `ITM-${String(counter).padStart(6, '0')}`;
 }
 
 // POST /api/inventory (admin/purchasing/office_admin/warehouse)
