@@ -872,6 +872,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                       }}>
                         {/* View Button */}
                         <button
+                          title="View"
                           onClick={() => {
                             setSelectedItem(item);
                             setShowViewModal(true);
@@ -901,7 +902,6 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                           }}
                         >
                           <Eye style={{ width: '12px', height: '12px' }} />
-                          View
                         </button>
 
                         {/* Admin-only buttons */}
@@ -909,6 +909,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                           <>
                             {/* Withdraw Button */}
                             <button
+                              title="Withdraw"
                               onClick={() => {
                                 setSelectedItem(item);
                                 setShowWithdrawModal(true);
@@ -942,11 +943,11 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                               }}
                             >
                               <Minus style={{ width: '12px', height: '12px' }} />
-                              Withdraw
                             </button>
 
                             {/* Edit Button */}
                             <button
+                              title="Edit"
                               onClick={() => {
                                 setSelectedItem(item);
                                 setShowEditModal(true);
@@ -976,7 +977,6 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                               }}
                             >
                               <Edit style={{ width: '12px', height: '12px' }} />
-                              Edit
                             </button>
 
                             {/* Delete Button */}

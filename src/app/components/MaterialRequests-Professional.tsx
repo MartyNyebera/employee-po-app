@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Package, Clock, CheckCircle, XCircle, User, Calendar, Tag, Filter, Search, RefreshCw, X, Trash2, Printer } from 'lucide-react';
+import { Package, Clock, CheckCircle, XCircle, User, Calendar, Tag, Filter, Search, RefreshCw, X, Trash2, Printer, Eye } from 'lucide-react';
 import { fetchApi, getStoredAuth } from '../api/client';
 import { confirmDialog } from '../lib/confirm';
 import { renderPrintDocument } from '../lib/printChrome';
@@ -939,12 +939,13 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                     alignItems: 'center'
                   }}>
                     <button
+                      title="View details"
                       onClick={() => {
                         setSelectedRequest(request);
                         setShowDetailsModal(true);
                       }}
                       style={{
-                        padding: '8px 16px',
+                        padding: '8px 12px',
                         borderRadius: '8px',
                         border: '1px solid #d6d6d6',
                         backgroundColor: 'white',
@@ -953,17 +954,20 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                         fontWeight: '500',
                         fontFamily: 'Poppins, sans-serif',
                         cursor: 'pointer',
-                        transition: 'all 0.2s ease'
+                        transition: 'all 0.2s ease',
+                        display: 'flex',
+                        alignItems: 'center'
                       }}
                     >
-                      View Details
+                      <Eye style={{ width: '14px', height: '14px' }} />
                     </button>
                     <button
+                      title="Print request"
                       onClick={() => handlePrintPurchaseRequest(request)}
                       style={{
-                        padding: '8px 16px',
+                        padding: '8px 12px',
                         borderRadius: '8px',
-                        border: 'none',
+                        border: '1px solid #d6d6d6',
                         backgroundColor: 'transparent',
                         color: '#262626',
                         fontSize: '12px',
@@ -972,12 +976,10 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                         cursor: 'pointer',
                         transition: 'all 0.2s ease',
                         display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px'
+                        alignItems: 'center'
                       }}
                     >
                       <Printer style={{ width: '14px', height: '14px' }} />
-                      Print Request
                     </button>
                     <button
                       title="Delete"

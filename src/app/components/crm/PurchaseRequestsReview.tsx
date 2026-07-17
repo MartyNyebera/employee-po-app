@@ -162,10 +162,10 @@ export function PurchaseRequestsReview() {
                       <button className="crm-row-btn" style={{ ...S.rowBtn, marginLeft: 0 }} onClick={() => setSelected(pr)}>View</button>
                       {pr.status === 'reviewed' && (
                         <>
-                          <button className="crm-action-btn" style={actionBtn(busyId === pr.id)} disabled={busyId === pr.id}
-                            onClick={() => verify(pr, 'verified')}><Check size={13} strokeWidth={3} /> Verify</button>
-                          <button className="crm-action-btn" style={actionBtn(busyId === pr.id)} disabled={busyId === pr.id}
-                            onClick={() => verify(pr, 'rejected')}><X size={13} strokeWidth={3} /> Reject</button>
+                          <button className="crm-action-btn" title="Verify" style={actionBtn(busyId === pr.id)} disabled={busyId === pr.id}
+                            onClick={() => verify(pr, 'verified')}><Check size={13} strokeWidth={3} /></button>
+                          <button className="crm-action-btn" title="Reject" style={{ ...actionBtn(busyId === pr.id), backgroundColor: '#fff', border: '1px solid #d6d6d6', color: '#b91c1c' }} disabled={busyId === pr.id}
+                            onClick={() => verify(pr, 'rejected')}><X size={13} strokeWidth={3} /></button>
                         </>
                       )}
                       <button className="crm-row-btn" title="Delete request" style={{ ...S.rowBtn, marginLeft: 0, color: '#dc2626' }} disabled={busyId === pr.id}

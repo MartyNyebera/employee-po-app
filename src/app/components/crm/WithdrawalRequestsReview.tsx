@@ -133,17 +133,17 @@ export function WithdrawalRequestsReview({ isAdmin }: { isAdmin: boolean }) {
                           actually deducts the stock, so it must not be reachable before
                           someone has confirmed the stock is really on the shelf. */}
                       {isAdmin && w.status === 'warehouse-approved' && <>
-                        <button className="crm-action-btn" style={actionBtn(processing === w.id)} disabled={processing === w.id}
-                          onClick={() => review(w, 'approved')}><Check size={13} strokeWidth={3} /> Approve</button>
-                        <button className="crm-action-btn" style={actionBtn(processing === w.id)} disabled={processing === w.id}
-                          onClick={() => review(w, 'rejected')}><X size={13} strokeWidth={3} /> Reject</button>
+                        <button className="crm-action-btn" title="Approve" style={actionBtn(processing === w.id)} disabled={processing === w.id}
+                          onClick={() => review(w, 'approved')}><Check size={13} strokeWidth={3} /></button>
+                        <button className="crm-action-btn" title="Reject" style={{ ...actionBtn(processing === w.id), backgroundColor: '#fff', border: '1px solid #d6d6d6', color: '#b91c1c' }} disabled={processing === w.id}
+                          onClick={() => review(w, 'rejected')}><X size={13} strokeWidth={3} /></button>
                       </>}
                       {w.status === 'pending' && (
                         <span style={{ color: '#8a8a8a', fontSize: '12px' }}>Awaiting the warehouse</span>
                       )}
                       {w.status === 'approved' && (
-                        <button className="crm-row-btn" style={{ ...S.rowBtn, marginLeft: 0, display: 'inline-flex', alignItems: 'center', gap: '5px' }}
-                          onClick={() => print(w)}><Printer size={13} /> Receipt</button>
+                        <button className="crm-row-btn" title="Print receipt" style={{ ...S.rowBtn, marginLeft: 0, display: 'inline-flex', alignItems: 'center', gap: '5px' }}
+                          onClick={() => print(w)}><Printer size={13} /></button>
                       )}
                       {w.status === 'rejected' && <span style={{ color: '#8a8a8a', fontSize: '12px' }}>{w.reviewedBy ? `by ${w.reviewedBy}` : '—'}</span>}
                     </div>

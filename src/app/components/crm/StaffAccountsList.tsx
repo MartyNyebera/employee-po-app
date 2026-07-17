@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, Power } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
@@ -62,7 +62,7 @@ export function StaffAccountsList() {
                   <td style={{ ...S.td, textAlign: 'right' }}>
                     {s.isSuperAdmin ? <span style={{ color: '#8a8a8a', fontSize: '12px' }}>—</span>
                       : <>
-                        <button style={{ ...S.rowBtn, color: s.isActive === false ? '#059669' : '#b91c1c' }} onClick={() => toggleActive(s)}>{s.isActive === false ? 'Reactivate' : 'Deactivate'}</button>
+                        <button title={s.isActive === false ? 'Reactivate' : 'Deactivate'} style={{ ...S.rowBtn, color: s.isActive === false ? '#7a6a0c' : '#b91c1c' }} onClick={() => toggleActive(s)}><Power size={13} /></button>
                         <button title="Delete" style={{ ...S.rowBtn, color: '#b91c1c' }} onClick={() => onDelete(s)}><Trash2 size={14} /></button>
                       </>}
                   </td>

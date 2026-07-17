@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, Pencil, Power } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
@@ -108,8 +108,8 @@ export function PortalAccountsList({ isAdmin, path, label, portalPath, blurb }: 
                   <td style={S.td}>{statusBadge(e.status)}</td>
                   <td style={{ ...S.td, textAlign: 'right' }}>
                     {isAdmin ? <>
-                      <button style={S.rowBtn} onClick={() => { setEditing(e); setShowModal(true); }}>Edit</button>
-                      <button style={{ ...S.rowBtn, color: isActive(e.status) ? '#b91c1c' : '#059669' }} onClick={() => toggleActive(e)}>{isActive(e.status) ? 'Deactivate' : 'Reactivate'}</button>
+                      <button title="Edit" style={S.rowBtn} onClick={() => { setEditing(e); setShowModal(true); }}><Pencil size={13} /></button>
+                      <button title={isActive(e.status) ? 'Deactivate' : 'Reactivate'} style={{ ...S.rowBtn, color: isActive(e.status) ? '#b91c1c' : '#7a6a0c' }} onClick={() => toggleActive(e)}><Power size={13} /></button>
                       <button title="Delete" style={{ ...S.rowBtn, color: '#b91c1c' }} onClick={() => onDelete(e)}><Trash2 size={14} /></button>
                     </> : <span style={{ color: '#8a8a8a', fontSize: '12px' }}>—</span>}
                   </td>

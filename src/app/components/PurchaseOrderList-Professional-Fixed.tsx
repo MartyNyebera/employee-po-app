@@ -524,8 +524,8 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                     <button className="crm-row-btn" title="Print" style={{ ...S.rowBtn, marginLeft: 0 }} onClick={() => handlePrintPO(po)}><Printer size={13} /></button>
                     {isAdmin && po.status === 'accounting-approved' && (
                       <>
-                        <button className="crm-row-btn" style={{ ...S.rowBtn, marginLeft: 0, backgroundColor: '#d1b01b', border: '1px solid #d1b01b', color: '#000000' }} disabled={approvingId === po.id} onClick={() => handleApprove(po, 'approved')}>Approve</button>
-                        <button className="crm-row-btn" style={{ ...S.rowBtn, marginLeft: 0, color: '#b91c1c' }} disabled={approvingId === po.id} onClick={() => handleApprove(po, 'disapproved')}>Reject</button>
+                        <button className="crm-row-btn" title="Approve" style={{ ...S.rowBtn, marginLeft: 0, backgroundColor: '#d1b01b', border: '1px solid #d1b01b', color: '#000000' }} disabled={approvingId === po.id} onClick={() => handleApprove(po, 'approved')}><Check size={13} /></button>
+                        <button className="crm-row-btn" title="Reject" style={{ ...S.rowBtn, marginLeft: 0, color: '#b91c1c' }} disabled={approvingId === po.id} onClick={() => handleApprove(po, 'disapproved')}><X size={13} /></button>
                       </>
                     )}
                     {isAdmin && (
