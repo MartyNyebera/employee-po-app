@@ -749,6 +749,13 @@ async function runMigrations() {
         )
       `);
       await query(`CREATE INDEX IF NOT EXISTS idx_deliveries_sales_order ON deliveries(sales_order_id)`);
+      // Section D — #5/#15: a delivery can now originate from a logistics stock WITHDRAWAL rather
+      // than a sales order. Such a row has no sales_order_id (already nullable) and instead carries
+      // the withdrawal it came from, a free-typed destination, and a snapshot of the withdrawn line.
+      await query(`ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS withdrawal_id TEXT`);
+      await query(`ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS destination TEXT`);
+      await query(`ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS items JSONB`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_deliveries_withdrawal ON deliveries(withdrawal_id)`);
       console.log('✅ deliveries table ready');
     } catch (err) { console.log('ℹ️ deliveries table skipped:', err.message); }
 
@@ -826,6 +833,10 @@ async function runMigrations() {
       await query(`ALTER TABLE inventory_withdrawal_requests ADD COLUMN IF NOT EXISTS warehouse_by TEXT`);
       await query(`ALTER TABLE inventory_withdrawal_requests ADD COLUMN IF NOT EXISTS warehouse_by_id TEXT`);
       await query(`ALTER TABLE inventory_withdrawal_requests ADD COLUMN IF NOT EXISTS warehouse_at TIMESTAMPTZ`);
+      // Section D — #5/#15: a logistics-origin withdrawal carries a delivery DESTINATION. Its
+      // presence is what marks the withdrawal as one that should become a delivery on approval;
+      // a production withdrawal (employee stock use) leaves it NULL and creates no delivery.
+      await query(`ALTER TABLE inventory_withdrawal_requests ADD COLUMN IF NOT EXISTS destination TEXT`);
       await query(`ALTER TABLE inventory_withdrawal_requests DROP CONSTRAINT IF EXISTS inventory_withdrawal_requests_status_check`);
       await query(`ALTER TABLE inventory_withdrawal_requests ADD CONSTRAINT inventory_withdrawal_requests_status_check
                      CHECK (status IN ('pending','warehouse-approved','approved','rejected'))`);
@@ -1108,10 +1119,12 @@ app.get('/api/purchase-orders', requireAuth, async (req, res) => {
       whereClause += ` AND po.status = $${paramIndex++}`;
       params.push(status);
     }
-    // An order only reaches Logistics once an admin has approved it, so a pending one is not
+    // Section D — #10: inbound receiving moved from Logistics to the WAREHOUSE. An order only
+    // reaches the warehouse once an admin has approved it, so a pending/in-review one is not
     // theirs to see. Enforced here rather than in the portal: filtering client-side would still
-    // ship the data. Same approach as the purchasing scope on GET /api/purchase-requests.
-    if (effectiveRole(req.user) === 'logistics') {
+    // ship the data. (Logistics no longer reads purchase_orders at all — its inbound tab is gone;
+    // its withdrawal-origin deliveries live on the deliveries table instead.)
+    if (effectiveRole(req.user) === 'warehouse') {
       whereClause += ` AND po.status IN ('approved','in-progress','RECEIVED','cancelled')`;
     }
     const result = await query(
@@ -2785,7 +2798,7 @@ async function receiveLinesIntoInventory(client, lines) {
 // Deliberately does NOT touch the linked purchase request, unlike the approve route above:
 // cancelling records that THIS order fell through, not that the request was wrong — the
 // employee's withdrawal unlock survives.
-app.put('/api/purchase-orders/:id/delivery', requireRole(['admin', 'logistics']), async (req, res) => {
+app.put('/api/purchase-orders/:id/delivery', requireRole(['admin', 'warehouse']), async (req, res) => {
   const client = await getClient();
   try {
     const { status, receivedBy, notes } = req.body;
@@ -3459,6 +3472,10 @@ function mapDelivery(r) {
     amount: r.amount === null || r.amount === undefined ? null : parseFloat(r.amount),
     soStatus: r.so_status ?? null,
     deliveryDate: r.delivery_date ?? null,
+    // Section D — #5/#15: withdrawal-origin deliveries carry no sales order; these describe them.
+    withdrawalId: r.withdrawal_id ?? null,
+    destination: r.destination ?? null,
+    items: r.items ?? null,
   };
 }
 
@@ -3512,16 +3529,28 @@ app.post('/api/deliveries', requireRole(['admin', 'logistics']), async (req, res
   } catch (err) { console.error('delivery create error:', err); res.status(500).json({ error: err.message }); }
 });
 
-// Complete or cancel a delivery.
+// Dispatch, complete or cancel a delivery.
 app.put('/api/deliveries/:id', requireRole(['admin', 'logistics']), async (req, res) => {
   try {
     const { status, receivedBy, notes } = req.body;
-    if (!['delivered', 'cancelled'].includes(status)) {
-      return res.status(400).json({ error: "status must be 'delivered' or 'cancelled'" });
+    // Section D — #15: 'dispatched' handles the withdrawal-origin delivery, which is auto-created
+    // 'pending' (a sales-order dispatch skips straight to 'dispatched' via POST /deliveries).
+    if (!['dispatched', 'delivered', 'cancelled'].includes(status)) {
+      return res.status(400).json({ error: "status must be 'dispatched', 'delivered' or 'cancelled'" });
     }
     const cur = await query('SELECT status FROM deliveries WHERE id = $1', [req.params.id]);
     if (!cur.rows[0]) return res.status(404).json({ error: 'Delivery not found' });
     if (cur.rows[0].status === 'delivered') return res.status(400).json({ error: 'This delivery is already completed' });
+
+    if (status === 'dispatched') {
+      if (cur.rows[0].status !== 'pending') return res.status(400).json({ error: 'Only a pending delivery can be dispatched' });
+      const r = await query(
+        `UPDATE deliveries SET status='dispatched', dispatched_by=$1, dispatched_at=NOW(), notes=COALESCE($2, notes), updated_at=NOW()
+         WHERE id=$3 RETURNING *`,
+        [req.user?.name || 'Logistics', orNull(notes), req.params.id]
+      );
+      return res.json(mapDelivery(r.rows[0]));
+    }
 
     if (status === 'delivered') {
       if (!String(receivedBy || '').trim()) return res.status(400).json({ error: 'Who received the delivery is required' });
@@ -4544,6 +4573,8 @@ function mapWithdrawalRequest(r) {
     warehouseBy: r.warehouse_by ?? null, warehouseAt: r.warehouse_at ?? null,
     deductedAt: r.deducted_at, createdAt: r.created_at, updatedAt: r.updated_at,
     unit: r.unit ?? null,
+    // Section D — #5/#15: present on a logistics-origin withdrawal; drives the auto-created delivery.
+    destination: r.destination ?? null,
   };
 }
 function mapInquiry(r) {
@@ -5044,12 +5075,14 @@ app.post('/api/inventory/:id/withdraw', requireAuth, async (req, res) => {
 
     const id = newId('WDR');
     try {
+      // Section D — #5/#15: an optional destination marks this as a logistics-origin withdrawal
+      // that should become a delivery once an admin approves it. Production withdrawals omit it.
       await query(
         `INSERT INTO inventory_withdrawal_requests
-           (id, withdrawal_number, inventory_id, item_name, quantity, reason, requested_by_id, requested_by_name, purchase_request_id, status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending')`,
+           (id, withdrawal_number, inventory_id, item_name, quantity, reason, requested_by_id, requested_by_name, purchase_request_id, destination, status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending')`,
         [id, withdrawalNumber, req.params.id, item.rows[0].item_name, qty, orNull(req.body.reason),
-         req.user?.id ?? null, req.user?.name || 'Unknown', orNull(req.body.purchaseRequestId)]
+         req.user?.id ?? null, req.user?.name || 'Unknown', orNull(req.body.purchaseRequestId), orNull(req.body.destination)]
       );
       // Re-read through the joined SELECT rather than using RETURNING *: a bare row has no
       // pr_number or unit, so the created object would differ in shape from the same row in
@@ -5180,7 +5213,7 @@ app.put('/api/inventory-withdrawals/:id/review', requireRole(['admin', 'warehous
 
     if (status === 'approved') {
       const qty = parseFloat(wr.rows[0].quantity);
-      const item = await client.query('SELECT quantity FROM inventory WHERE id = $1 FOR UPDATE', [wr.rows[0].inventory_id]);
+      const item = await client.query('SELECT quantity, unit FROM inventory WHERE id = $1 FOR UPDATE', [wr.rows[0].inventory_id]);
       if (!item.rows[0]) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Inventory item no longer exists' }); }
       if (qty > parseFloat(item.rows[0].quantity)) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Cannot approve — exceeds available stock' }); }
       await client.query('UPDATE inventory SET quantity = quantity - $1, updated_at = NOW() WHERE id = $2', [qty, wr.rows[0].inventory_id]);
@@ -5205,6 +5238,25 @@ app.put('/api/inventory-withdrawals/:id/review', requireRole(['admin', 'warehous
         if (left.rows[0].n === 0) {
           await client.query(`UPDATE purchase_requests SET withdrawn=true, updated_at=NOW() WHERE id=$1`, [prId]);
         }
+      }
+
+      // Section D — #15: a logistics-origin withdrawal (one with a destination) becomes a
+      // delivery the moment it's approved and the stock is deducted — in THIS transaction, so a
+      // deducted withdrawal can never exist without its delivery. It lands in Logistics' "for
+      // delivery" tab (a deliveries row with no sales_order_id). Production withdrawals skip this.
+      const destination = wr.rows[0].destination;
+      if (destination) {
+        const year = new Date().getFullYear();
+        const last = await client.query(`SELECT delivery_number FROM deliveries WHERE delivery_number LIKE $1 ORDER BY delivery_number DESC LIMIT 1 FOR UPDATE`, [`DR-${year}-%`]);
+        let counter = 1;
+        if (last.rows[0]) { const n = parseInt(last.rows[0].delivery_number.split('-')[2], 10); if (!isNaN(n)) counter = n + 1; }
+        const deliveryNumber = `DR-${year}-${String(counter).padStart(4, '0')}`;
+        const items = JSON.stringify([{ itemName: wr.rows[0].item_name, quantity: qty, unit: item.rows[0].unit || null }]);
+        await client.query(
+          `INSERT INTO deliveries (id, delivery_number, sales_order_id, withdrawal_id, destination, items, status, notes)
+           VALUES ($1,$2,NULL,$3,$4,$5::jsonb,'pending',$6)`,
+          [`DEL-${req.params.id}`, deliveryNumber, req.params.id, destination, items, orNull(wr.rows[0].reason)]
+        );
       }
       await client.query('COMMIT');
       return res.json(mapWithdrawalRequest(upd.rows[0]));

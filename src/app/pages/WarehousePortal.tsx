@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Menu, X, Search, LogOut, Package, Plus, Pencil, Boxes, ClipboardList, Check, PackageMinus,
   PanelLeftClose, PanelLeftOpen, PenTool, Eraser, Upload,
+  FileText, Truck, Ban, Printer, Calendar, Clock, PackageCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -9,6 +10,9 @@ import { PageErrorFallback } from '../components/PageErrorFallback';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { confirmDialog } from '../lib/confirm';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
+import { printPurchaseOrder } from '../lib/orderPrint';
+import { printReceivingReport, type ReceivedLine } from '../lib/deliveryReceiptPrint';
+import { ReceivingModal } from '../components/ReceivingModal';
 
 // ============================================================================
 // Warehouse portal (/warehouse). Fully independent of the admin dashboard:
@@ -18,7 +22,33 @@ import { useLiveRefresh } from '../hooks/useLiveRefresh';
 // Items entered here feed inventory management and purchase-request selection.
 // ============================================================================
 
-type PortalView = 'inventory' | 'itemRequests' | 'withdrawals' | 'signature';
+type PortalView = 'inventory' | 'itemRequests' | 'orders' | 'withdrawals' | 'signature';
+
+// Section D — #10: inbound receiving moved here from Logistics. An approved purchase order
+// arrives from a supplier; the warehouse marks it received, which adds the goods to stock.
+// `client` holds the supplier name (the column is shared with sales orders). The server sends
+// the warehouse only approved-and-beyond orders.
+interface PurchaseOrder {
+  id: string; poNumber: string; client: string; status: string; amount: number;
+  description?: string | null; createdDate?: string | null; deliveryDate?: string | null;
+  docDate?: string | null; supplierAddress?: string | null; supplierContact?: string | null;
+  supplierTin?: string | null; prNumber?: string | null;
+  inTransitAt?: string | null; receivedAt?: string | null; receivedBy?: string | null;
+  cancelledAt?: string | null; cancelledBy?: string | null; deliveryNotes?: string | null;
+  receivedLines?: ReceivedLine[] | null;
+}
+
+// A purchase order's raw status is storage-shaped ('in-progress', 'RECEIVED') and reads badly
+// on screen; `hint` says what the warehouse does next.
+const poState = (s: string): { label: string; hint: string | null } => {
+  if (s === 'approved') return { label: 'Ready', hint: 'Awaiting receipt' };
+  if (s === 'in-progress') return { label: 'Ongoing delivery', hint: 'In transit from supplier' };
+  if (s === 'RECEIVED') return { label: 'Received', hint: null };
+  if (s === 'cancelled') return { label: 'Cancelled', hint: null };
+  return { label: (s || '').charAt(0).toUpperCase() + (s || '').slice(1), hint: null };
+};
+
+const peso = (n: number) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 interface InventoryItem {
   id: string; itemCode: string; itemName: string; description?: string;
@@ -389,6 +419,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [itemRequests, setItemRequests] = useState<ItemRequest[]>([]);
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  const [receivingPO, setReceivingPO] = useState<PurchaseOrder | null>(null);
   const [signature, setSignature] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -401,15 +433,19 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const load = async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!silent) setLoading(true);
     try {
-      const [inv, irs, wds, sig] = await Promise.all([
+      const [inv, irs, wds, pos, sig] = await Promise.all([
         wFetch<InventoryItem[]>('/inventory'),
         wFetch<ItemRequest[]>('/item-requests').catch(() => []),
         wFetch<WithdrawalRequest[]>('/inventory-withdrawals').catch(() => []),
+        // Section D — #10: the server scopes /purchase-orders to approved-and-beyond for the
+        // warehouse role, so pending/in-review orders never reach this browser.
+        wFetch<PurchaseOrder[]>('/purchase-orders').catch(() => []),
         wFetch<{ signature: string | null }>('/warehouse/signature'),
       ]);
       setItems(inv || []);
       setItemRequests(irs || []);
       setWithdrawals(wds || []);
+      setPurchaseOrders(pos || []);
       setSignature(sig?.signature || null);
     }
     catch (e: any) { if (!silent) toast.error(e.message || 'Failed to load inventory'); }
@@ -417,7 +453,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   };
   useEffect(() => { load(); }, []);
   // Paused while a review/accept is in flight so a poll can't race the mutation's own refetch.
-  useLiveRefresh(() => load({ silent: true }), { enabled: !busyId });
+  useLiveRefresh(() => load({ silent: true }), { enabled: !busyId && !receivingPO });
 
   const declineRequest = async (r: ItemRequest) => {
     if (!(await confirmDialog({ title: `Decline the request for “${r.itemName}”?`, message: 'No item will be created.', confirmLabel: 'Decline', tone: 'danger' }))) return;
@@ -448,6 +484,46 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 
   const pendingWithdrawals = withdrawals.filter(w => w.status === 'pending').length;
 
+  // ---- Inbound purchase orders (Section D — #10, moved from Logistics) -----------------
+  const filteredPOs = useMemo(() => purchaseOrders.filter(po => {
+    const q = search.toLowerCase();
+    return !q || po.poNumber.toLowerCase().includes(q) || (po.client || '').toLowerCase().includes(q)
+      || (po.prNumber || '').toLowerCase().includes(q);
+  }), [purchaseOrders, search]);
+  // Actionable = still needs a confirmation from the warehouse. RECEIVED/cancelled are terminal.
+  const openPOCount = purchaseOrders.filter(po => po.status === 'approved' || po.status === 'in-progress').length;
+
+  const setPODelivery = async (po: PurchaseOrder, status: 'in-progress' | 'cancelled') => {
+    if (status === 'cancelled' && !(await confirmDialog({ title: `Cancel ${po.poNumber}?`, message: 'This cannot be undone. The purchase request stays approved.', confirmLabel: 'Cancel order', tone: 'danger' }))) return;
+    setBusyId(po.id);
+    try {
+      await wFetch(`/purchase-orders/${po.id}/delivery`, { method: 'PUT', body: JSON.stringify({ status }) });
+      toast.success(status === 'in-progress' ? `${po.poNumber} marked as an ongoing delivery` : `${po.poNumber} cancelled`);
+      load();
+    } catch (e: any) { toast.error('Failed: ' + e.message); } finally { setBusyId(''); }
+  };
+
+  const printPO = async (po: PurchaseOrder) => {
+    const r = await printPurchaseOrder(po as any, () => wFetch(`/purchase-orders/${po.id}/signatures`));
+    if (!r.ok) toast.error(r.error || 'Failed to open the print window');
+  };
+
+  // The inbound delivery receipt. One function for the auto-open on receive and the Receipt
+  // button, so a reprint is the same document. `undefined` (not []) for an unrecorded legacy
+  // receipt is what makes the document say "not recorded" instead of "nothing was added".
+  const printPOReceipt = (po: PurchaseOrder, lines?: ReceivedLine[] | null, receivedBy?: string, receivedAt?: string, notes?: string | null) => {
+    const p = printReceivingReport({
+      poNumber: po.poNumber, supplier: po.client,
+      supplierAddress: po.supplierAddress, supplierContact: po.supplierContact,
+      prNumber: po.prNumber, amount: po.amount,
+      receivedBy: receivedBy ?? po.receivedBy ?? '',
+      receivedAt: receivedAt ?? po.receivedAt ?? undefined,
+      notes: notes ?? po.deliveryNotes, items: lines,
+    });
+    if (!p.ok) toast.error(p.error || 'Failed to open the print window');
+    return p;
+  };
+
   const filtered = useMemo(() => items.filter(it => {
     const q = search.toLowerCase();
     return !q || it.itemName.toLowerCase().includes(q) || (it.itemCode || '').toLowerCase().includes(q);
@@ -456,6 +532,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const NAV: { id: PortalView; label: string; icon: any }[] = [
     { id: 'inventory',    label: 'Inventory', icon: Boxes },
     { id: 'itemRequests', label: 'Item Requests', icon: ClipboardList },
+    { id: 'orders',       label: 'Purchase Orders', icon: FileText },
     { id: 'withdrawals',  label: 'Withdrawals', icon: PackageMinus },
     { id: 'signature',    label: 'My Signature', icon: PenTool },
   ];
@@ -643,6 +720,75 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 
           {/* WITHDRAWALS — the first of two approvals. Releasing moves no stock; the admin's
               approval afterwards is what deducts. */}
+          {view === 'orders' && <>
+          <div>
+            <h2 className="font-bold text-gray-900">Purchase Orders</h2>
+            <p className="text-sm text-gray-500 mt-0.5">Orders an admin approved, arriving from a supplier. Mark one received to add the goods to inventory.</p>
+          </div>
+          <div className="relative mt-4">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+            <input type="text" placeholder="Search PO #, supplier, PR #…" value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-4 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" />
+          </div>
+          {loading ? <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading…</div>
+            : filteredPOs.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-48 text-gray-400"><FileText className="w-10 h-10 mb-3 text-gray-300" /><p className="font-medium text-gray-500">No purchase orders</p><p className="text-xs mt-1">Orders appear here once an admin approves them.</p></div>
+            ) : (
+              <div className="space-y-3 mt-3">
+                {filteredPOs.map(po => {
+                  const st = poState(po.status);
+                  const open = po.status === 'approved' || po.status === 'in-progress';
+                  return (
+                    <div key={po.id} className="bg-white rounded-xl border border-gray-200 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="font-semibold text-gray-900 text-sm">{po.poNumber}</h3>
+                            {po.prNumber && <span className="text-xs text-gray-400">· for {po.prNumber}</span>}
+                          </div>
+                          <p className="text-xs text-gray-400 mt-0.5">From <span className="text-gray-600 font-medium">{po.client || '—'}</span></p>
+                          {po.supplierAddress && <p className="text-xs text-gray-400 mt-0.5">{po.supplierAddress}</p>}
+                          {po.status === 'RECEIVED' && <p className="text-xs text-gray-400 mt-1">Received by <span className="text-gray-600 font-medium">{po.receivedBy || '—'}</span></p>}
+                          {po.status === 'cancelled' && po.cancelledBy && <p className="text-xs text-gray-400 mt-1">Cancelled by <span className="text-gray-600 font-medium">{po.cancelledBy}</span></p>}
+                        </div>
+                        <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+                          <span className="text-xs font-semibold text-brand-gold">{st.label}</span>
+                          {st.hint && <span className="text-[11px] text-gray-400">{st.hint}</span>}
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between mt-3 flex-wrap gap-2">
+                        <div className="flex items-center gap-3 text-xs text-gray-400">
+                          {po.deliveryDate && <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />due {new Date(po.deliveryDate).toLocaleDateString()}</span>}
+                          {po.inTransitAt && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />ongoing {new Date(po.inTransitAt).toLocaleDateString()}</span>}
+                          {po.receivedAt && <span className="flex items-center gap-1"><PackageCheck className="w-3 h-3" />received {new Date(po.receivedAt).toLocaleDateString()}</span>}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-gray-900 mr-1">{peso(po.amount)}</span>
+                          {po.status === 'approved' && (
+                            <button onClick={() => setPODelivery(po, 'in-progress')} disabled={busyId === po.id}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50"><Truck className="w-3.5 h-3.5" /> Mark Ongoing</button>
+                          )}
+                          {open && (
+                            <button onClick={() => setReceivingPO(po)} disabled={busyId === po.id}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50"><PackageCheck className="w-3.5 h-3.5" /> Mark Received</button>
+                          )}
+                          {open && (
+                            <button onClick={() => setPODelivery(po, 'cancelled')} disabled={busyId === po.id}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"><Ban className="w-3.5 h-3.5" /> Cancel</button>
+                          )}
+                          {po.status === 'RECEIVED' && (
+                            <button onClick={() => printPOReceipt(po, po.receivedLines)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><PackageCheck className="w-3.5 h-3.5" /> Receipt</button>
+                          )}
+                          <button onClick={() => printPO(po)} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Printer className="w-3.5 h-3.5" /> Print</button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>}
+
           {view === 'withdrawals' && <>
           <div>
             <h2 className="font-bold text-gray-900">Withdrawal Requests</h2>
@@ -710,6 +856,28 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 
       {adding && <AddItemModal onClose={() => setAdding(false)} onSaved={() => { setAdding(false); load(); }} />}
       {editing && <UpdateItemModal item={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
+
+      {/* Section D — #10: receiving an inbound PO adds its goods to inventory. */}
+      {receivingPO && (
+        <ReceivingModal
+          title="Mark Received"
+          confirmLabel="Mark Received"
+          subtitle={`${receivingPO.poNumber} · from ${receivingPO.client}`}
+          initialNotes={receivingPO.deliveryNotes}
+          onSave={async (receivedBy, notes) => {
+            const r = await wFetch<{ receivedAt?: string; inventoryApplied?: { itemName: string; added: number; newQuantity: number }[] }>(
+              `/purchase-orders/${receivingPO.id}/delivery`,
+              { method: 'PUT', body: JSON.stringify({ status: 'RECEIVED', receivedBy, notes }) },
+            );
+            const n = r.inventoryApplied?.length || 0;
+            toast.success(n ? `${receivingPO.poNumber} received — ${n} item${n > 1 ? 's' : ''} added to inventory` : `${receivingPO.poNumber} marked received`);
+            const p = printPOReceipt(receivingPO, r.inventoryApplied || [], receivedBy, r.receivedAt || undefined, notes);
+            if (!p.ok) toast.error(p.error || 'Receipt recorded — allow popups, then use Receipt on the row');
+          }}
+          onClose={() => setReceivingPO(null)}
+          onDone={() => { setReceivingPO(null); load(); }}
+        />
+      )}
       {/* Accept opens the same New Item form, prefilled — so a typo or a wrong unit can be
           fixed before it becomes a permanent row production will order against. */}
       {accepting && (

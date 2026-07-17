@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Truck, PenTool, Menu, X, Search, Clock, Calendar, Printer, LogOut,
-  Upload, Eraser, PackageCheck, FileText, Ban, PanelLeftClose, PanelLeftOpen,
+  Upload, Eraser, PackageCheck, PackageMinus, Plus, PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -9,50 +9,31 @@ import { PageErrorFallback } from '../components/PageErrorFallback';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { confirmDialog } from '../lib/confirm';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
-import { printDeliveryReceipt, printReceivingReport, type ReceivedLine } from '../lib/deliveryReceiptPrint';
-import { printPurchaseOrder } from '../lib/orderPrint';
+import { printDeliveryReceipt } from '../lib/deliveryReceiptPrint';
+import { ReceivingModal } from '../components/ReceivingModal';
 
 // ============================================================================
 // Logistics portal (/logistics). Fully independent of the admin dashboard: logistics staff
 // sign in with a dedicated Logistics Account (created by an admin), using its OWN
 // token/session — separate from every other portal's.
 //
-// Two directions of goods, one per tab, deliberately kept apart:
-//   Deliveries      — OUTBOUND. Approved sales orders we ship to a customer; each gets its
-//                     own `deliveries` row and DR number.
-//   Purchase Orders — INBOUND. Orders an admin approved, arriving from a supplier. Tracked on
-//                     the order's OWN status (approved -> in-progress -> RECEIVED/cancelled)
-//                     rather than a delivery record — RECEIVED is what the Business Overview
-//                     counts as an expense, so it has to live on the order itself.
+// OUTBOUND goods only (inbound receiving moved to the Warehouse — Section D #10):
+//   Deliveries  — approved sales orders shipped to a customer, PLUS withdrawal-origin deliveries
+//                 (Section D #15: a logistics stock withdrawal that an admin approved). Each is a
+//                 `deliveries` row with a DR number; a withdrawal one has no sales order.
+//   Withdrawals — logistics requests stock out of inventory to a typed destination. Once the
+//                 warehouse releases it and an admin approves it, it auto-becomes a delivery above.
 //
 // Deliberately narrow — no drivers, vehicles or GPS. The previous fleet feature was removed
 // wholesale and is not being rebuilt here.
 // ============================================================================
 
-type PortalView = 'deliveries' | 'orders' | 'signature';
+type PortalView = 'deliveries' | 'withdrawals' | 'signature';
 
 interface SalesOrder {
   id: string; soNumber: string; client: string; status: string;
   amount: number; createdDate?: string | null; deliveryDate?: string | null;
   customerAddress?: string | null; customerContact?: string | null;
-}
-// Inbound order from a supplier. `client` holds the supplier name (the column is shared with
-// sales orders). The server only ever sends Logistics approved-and-beyond orders.
-interface PurchaseOrder {
-  id: string; poNumber: string; client: string; status: string; amount: number;
-  description?: string | null; createdDate?: string | null; deliveryDate?: string | null;
-  docDate?: string | null; supplierAddress?: string | null; supplierContact?: string | null;
-  supplierTin?: string | null; preparedBy?: string | null; reviewedBy?: string | null;
-  paymentTerms?: string | null; termsAndConditions?: string | null;
-  prNumber?: string | null; prStatus?: string | null;
-  approvedBy?: string | null; approvedAt?: string | null;
-  inTransitAt?: string | null; inTransitBy?: string | null;
-  receivedAt?: string | null; receivedBy?: string | null;
-  cancelledAt?: string | null; cancelledBy?: string | null; deliveryNotes?: string | null;
-  // What went onto the shelf when this was received — recorded at that moment, so the
-  // delivery receipt can be reprinted. null means the receipt predates the record, which the
-  // document reports as "not recorded" rather than as "nothing was added".
-  receivedLines?: ReceivedLine[] | null;
 }
 interface Delivery {
   id: string; deliveryNumber: string; salesOrderId: string | null; status: string;
@@ -61,6 +42,19 @@ interface Delivery {
   soNumber?: string | null; client?: string | null;
   customerAddress?: string | null; customerContact?: string | null;
   amount?: number | null; soStatus?: string | null; deliveryDate?: string | null;
+  // Section D — #15: set on a withdrawal-origin delivery (no sales order behind it).
+  withdrawalId?: string | null; destination?: string | null;
+  items?: { itemName: string; quantity: number; unit?: string | null }[] | null;
+}
+// Minimal shape for the withdrawal item-picker.
+interface InventoryItem { id: string; itemName: string; unit?: string | null; quantity: number; }
+// A withdrawal this logistics account requested. `destination` is always set (that's what makes
+// it a logistics withdrawal that becomes a delivery).
+interface WithdrawalRequest {
+  id: string; withdrawalNumber?: string | null; itemName?: string | null;
+  quantity: number; unit?: string | null; reason?: string | null; destination?: string | null;
+  status: 'pending' | 'warehouse-approved' | 'approved' | 'rejected';
+  warehouseBy?: string | null; reviewedBy?: string | null; createdAt?: string;
 }
 interface Session { id: number; full_name: string; email: string; phone?: string; }
 
@@ -71,21 +65,18 @@ interface Job {
   state: 'pending' | 'dispatched' | 'delivered' | 'cancelled';
 }
 
+const WD_STATUS_LABEL: Record<string, string> = {
+  pending: 'Awaiting warehouse',
+  'warehouse-approved': 'Awaiting admin',
+  approved: 'Approved — in deliveries',
+  rejected: 'Rejected',
+};
+
 const TOKEN_KEY = 'logistics_token';
 const SESSION_KEY = 'logistics_session';
 
 const peso = (n: number) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const statusLabel = (s: string) => (s || '').charAt(0).toUpperCase() + (s || '').slice(1);
-
-// A purchase order's raw status is storage-shaped ('in-progress', 'RECEIVED') and reads badly
-// on screen. `hint` says what Logistics is expected to do next, matching the Deliveries tab.
-const poState = (s: string): { label: string; hint: string | null } => {
-  if (s === 'approved') return { label: 'Ready', hint: 'Awaiting delivery' };
-  if (s === 'in-progress') return { label: 'Ongoing delivery', hint: 'In transit from supplier' };
-  if (s === 'RECEIVED') return { label: 'Delivered', hint: null };
-  if (s === 'cancelled') return { label: 'Cancelled', hint: null };
-  return { label: statusLabel(s), hint: null };
-};
 
 function readSession(): Session | null {
   try { return JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); } catch { return null; }
@@ -244,61 +235,6 @@ function SignaturePad({ initial, onSaved }: { initial: string | null; onSaved: (
 }
 
 // ============================================================================
-// Record who took receipt of something. Shared by BOTH tabs — an outbound delivery and an
-// inbound purchase order ask the identical question, so `onSave` carries the difference
-// rather than a second near-identical modal.
-// ============================================================================
-function DeliveredModal({ subtitle, initialNotes, onSave, onClose, onDone }: {
-  subtitle: string;
-  initialNotes?: string | null;
-  onSave: (receivedBy: string, notes: string | null) => Promise<void>;
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const [receivedBy, setReceivedBy] = useState('');
-  const [notes, setNotes] = useState(initialNotes || '');
-  const [saving, setSaving] = useState(false);
-
-  const save = async () => {
-    if (!receivedBy.trim()) { toast.error('Who received the delivery?'); return; }
-    setSaving(true);
-    try {
-      await onSave(receivedBy.trim(), notes.trim() || null);
-      onDone();
-    } catch (e: any) { toast.error('Failed: ' + e.message); } finally { setSaving(false); }
-  };
-
-  const input = 'w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500';
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-5 border-b border-gray-200">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900">Mark Delivered</h2>
-            <p className="text-xs text-gray-400 mt-0.5">{subtitle}</p>
-          </div>
-          <button onClick={onClose} className="p-1.5 rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-600"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="p-5 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Received by <span className="text-red-500">*</span></label>
-            <input value={receivedBy} onChange={e => setReceivedBy(e.target.value)} placeholder="Name of the person who received it" className={input} />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-            <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} className={input} />
-          </div>
-        </div>
-        <div className="flex items-center justify-end gap-2 p-5 border-t border-gray-200">
-          <button onClick={onClose} className="px-4 py-2 text-sm font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">Cancel</button>
-          <button onClick={save} disabled={saving} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"><PackageCheck className="w-4 h-4" /> {saving ? 'Saving…' : 'Mark Delivered'}</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================================
 // Portal shell
 // ============================================================================
 function Portal({ session, onSignOut }: { session: Session; onSignOut: () => void }) {
@@ -307,29 +243,33 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const [mobileOpen, setMobileOpen] = useState(false);
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
+  const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [signature, setSignature] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [completing, setCompleting] = useState<Job | null>(null);
-  const [receivingPO, setReceivingPO] = useState<PurchaseOrder | null>(null);
+  // A withdrawal-origin delivery being marked delivered (no sales order behind it).
+  const [completingDelivery, setCompletingDelivery] = useState<Delivery | null>(null);
+  const [requesting, setRequesting] = useState(false);
 
   // silent: background poll — no spinner, no toast on a blip (see useLiveRefresh).
   const loadAll = async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!silent) setLoading(true);
     try {
-      // The server scopes /purchase-orders to approved-and-beyond for the logistics role, so
-      // no client-side filter is needed here — pending orders never reach this browser.
-      const [sos, dels, pos, sig] = await Promise.all([
+      const [sos, dels, wds, inv, sig] = await Promise.all([
         lFetch<SalesOrder[]>('/sales-orders'),
         lFetch<Delivery[]>('/deliveries'),
-        lFetch<PurchaseOrder[]>('/purchase-orders'),
+        // Only this account's own withdrawals — the destination-carrying logistics ones.
+        lFetch<WithdrawalRequest[]>('/inventory-withdrawals/mine').catch(() => []),
+        lFetch<InventoryItem[]>('/inventory').catch(() => []),
         lFetch<{ signature: string | null }>('/logistics/signature'),
       ]);
       setOrders(sos || []);
       setDeliveries(dels || []);
-      setPurchaseOrders(pos || []);
+      setWithdrawals(wds || []);
+      setInventory(inv || []);
       setSignature(sig?.signature || null);
     } catch (e: any) {
       if (String(e.message).includes('session expired')) { onSignOut(); return; }
@@ -337,11 +277,11 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     } finally { if (!silent) setLoading(false); }
   };
   useEffect(() => { loadAll(); }, []);
-  // Paused while a delivery is in flight or a complete/receive modal is open.
-  useLiveRefresh(() => loadAll({ silent: true }), { enabled: !busyId && !completing && !receivingPO });
+  // Paused while a delivery is in flight or any modal is open.
+  useLiveRefresh(() => loadAll({ silent: true }), { enabled: !busyId && !completing && !completingDelivery && !requesting });
 
-  // Only approved orders are dispatchable, so the job list is those joined to their delivery
-  // record (if any). An order with no row is implicitly pending.
+  // Only approved sales orders are dispatchable, so the job list is those joined to their
+  // delivery record (if any). An order with no row is implicitly pending.
   const jobs = useMemo<Job[]>(() => {
     const byOrder = new Map<string, Delivery>();
     for (const d of deliveries) {
@@ -356,66 +296,43 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
       });
   }, [orders, deliveries]);
 
+  // Section D — #15: withdrawal-origin deliveries — a deliveries row with no sales order, created
+  // when an admin approved a logistics withdrawal. Dispatched/delivered with the same flow.
+  const withdrawalDeliveries = useMemo(
+    () => deliveries.filter(d => d.withdrawalId && d.status !== 'cancelled'),
+    [deliveries],
+  );
+
   const filtered = useMemo(() => jobs.filter(j => {
     const q = search.toLowerCase();
     return !q || j.so.soNumber.toLowerCase().includes(q) || (j.so.client || '').toLowerCase().includes(q)
       || (j.delivery?.deliveryNumber || '').toLowerCase().includes(q);
   }), [jobs, search]);
 
-  const pendingCount = jobs.filter(j => j.state === 'pending').length;
-
-  // ---- Inbound purchase orders -------------------------------------------------------
-  const filteredPOs = useMemo(() => purchaseOrders.filter(po => {
+  const filteredWD = useMemo(() => withdrawalDeliveries.filter(d => {
     const q = search.toLowerCase();
-    return !q || po.poNumber.toLowerCase().includes(q) || (po.client || '').toLowerCase().includes(q)
-      || (po.prNumber || '').toLowerCase().includes(q);
-  }), [purchaseOrders, search]);
+    return !q || (d.deliveryNumber || '').toLowerCase().includes(q) || (d.destination || '').toLowerCase().includes(q);
+  }), [withdrawalDeliveries, search]);
 
-  // Actionable = still needs a confirmation from Logistics. RECEIVED/cancelled are terminal.
-  const openPOCount = purchaseOrders.filter(po => po.status === 'approved' || po.status === 'in-progress').length;
-
-  const setPODelivery = async (po: PurchaseOrder, status: 'in-progress' | 'cancelled') => {
-    if (status === 'cancelled' && !(await confirmDialog({ title: `Cancel ${po.poNumber}?`, message: 'This cannot be undone. The purchase request stays approved.', confirmLabel: 'Cancel order', tone: 'danger' }))) return;
-    setBusyId(po.id);
-    try {
-      await lFetch(`/purchase-orders/${po.id}/delivery`, { method: 'PUT', body: JSON.stringify({ status }) });
-      toast.success(status === 'in-progress' ? `${po.poNumber} marked as an ongoing delivery` : `${po.poNumber} cancelled`);
-      loadAll();
-    } catch (e: any) { toast.error('Failed: ' + e.message); } finally { setBusyId(null); }
-  };
-
-  const printPO = async (po: PurchaseOrder) => {
-    const r = await printPurchaseOrder(po as any, () => lFetch(`/purchase-orders/${po.id}/signatures`));
-    if (!r.ok) toast.error(r.error || 'Failed to open the print window');
-  };
-
-  // The inbound delivery receipt. One function for both the auto-open on Mark Delivered and
-  // the Print Receipt button, so a reprint is byte-for-byte the document that opened at the
-  // time — `lines` is the only difference: fresh from the PUT response, or from the stored
-  // received_lines afterwards. Passing `undefined` (not []) for an unrecorded legacy receipt
-  // is what makes the document say "not recorded" instead of "nothing was added".
-  const printPOReceipt = (po: PurchaseOrder, lines?: ReceivedLine[] | null, receivedBy?: string, receivedAt?: string, notes?: string | null) => {
-    const p = printReceivingReport({
-      poNumber: po.poNumber,
-      supplier: po.client,
-      supplierAddress: po.supplierAddress,
-      supplierContact: po.supplierContact,
-      prNumber: po.prNumber,
-      amount: po.amount,
-      receivedBy: receivedBy ?? po.receivedBy ?? '',
-      receivedAt: receivedAt ?? po.receivedAt ?? undefined,
-      notes: notes ?? po.deliveryNotes,
-      items: lines,
-    });
-    if (!p.ok) toast.error(p.error || 'Failed to open the print window');
-    return p;
-  };
+  const pendingCount = jobs.filter(j => j.state === 'pending').length
+    + withdrawalDeliveries.filter(d => d.status === 'pending').length;
 
   const dispatch = async (job: Job) => {
     setBusyId(job.so.id);
     try {
       const d = await lFetch<Delivery>('/deliveries', { method: 'POST', body: JSON.stringify({ salesOrderId: job.so.id }) });
       toast.success(`${job.so.soNumber} dispatched as ${d.deliveryNumber}`);
+      loadAll();
+    } catch (e: any) { toast.error('Failed: ' + e.message); } finally { setBusyId(null); }
+  };
+
+  // A withdrawal-origin delivery already exists (auto-created 'pending'), so dispatch flips it
+  // pending -> dispatched via PUT rather than creating a new row.
+  const dispatchWithdrawal = async (d: Delivery) => {
+    setBusyId(d.id);
+    try {
+      await lFetch(`/deliveries/${d.id}`, { method: 'PUT', body: JSON.stringify({ status: 'dispatched' }) });
+      toast.success(`${d.deliveryNumber} dispatched`);
       loadAll();
     } catch (e: any) { toast.error('Failed: ' + e.message); } finally { setBusyId(null); }
   };
@@ -432,10 +349,29 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     if (!r.ok) toast.error(r.error || 'Failed to open the print window');
   };
 
-  // FileText for purchase orders, matching what the Purchasing portal already uses for them.
+  // Section D — #15: receipt for a withdrawal-origin delivery — the destination stands in for
+  // the customer, and the withdrawn line is spelled out in the notes.
+  const printWD = (d: Delivery) => {
+    const item = d.items?.[0];
+    const r = printDeliveryReceipt({
+      deliveryNumber: d.deliveryNumber, status: d.status, soNumber: null,
+      client: d.destination || '—', customerAddress: null, customerContact: null, amount: null,
+      dispatchedBy: d.dispatchedBy, dispatchedAt: d.dispatchedAt, deliveredAt: d.deliveredAt,
+      receivedBy: d.receivedBy,
+      notes: item ? `${item.quantity} ${item.unit || ''} ${item.itemName}${d.notes ? ' — ' + d.notes : ''}` : d.notes,
+    });
+    if (!r.ok) toast.error(r.error || 'Failed to open the print window');
+  };
+
+  const requestWithdrawal = async (inventoryId: string, quantity: number, destination: string, reason: string | null) => {
+    await lFetch(`/inventory/${inventoryId}/withdraw`, { method: 'POST', body: JSON.stringify({ quantity, destination, reason }) });
+    toast.success('Withdrawal requested — the warehouse releases it, then an admin approves');
+    loadAll();
+  };
+
   const NAV: { id: PortalView; label: string; icon: any; badge?: number }[] = [
     { id: 'deliveries', label: 'Deliveries', icon: Truck, badge: pendingCount },
-    { id: 'orders', label: 'Purchase Orders', icon: FileText, badge: openPOCount },
+    { id: 'withdrawals', label: 'Withdrawals', icon: PackageMinus },
     { id: 'signature', label: 'My Signature', icon: PenTool },
   ];
 
@@ -505,10 +441,51 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
               </div>
 
               {loading ? <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading…</div>
-                : filtered.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-48 text-gray-400"><Truck className="w-10 h-10 mb-3 text-gray-300" /><p className="font-medium text-gray-500">Nothing to deliver</p><p className="text-xs mt-1">Sales orders appear here once an admin approves them.</p></div>
+                : (filtered.length === 0 && filteredWD.length === 0) ? (
+                  <div className="flex flex-col items-center justify-center h-48 text-gray-400"><Truck className="w-10 h-10 mb-3 text-gray-300" /><p className="font-medium text-gray-500">Nothing to deliver</p><p className="text-xs mt-1">Approved sales orders and approved stock withdrawals appear here.</p></div>
                 ) : (
+                  <>
+                  {filteredWD.length > 0 && (
+                    <div className="space-y-3">
+                      <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Withdrawal deliveries</h3>
+                      {filteredWD.map(d => {
+                        const item = d.items?.[0];
+                        return (
+                          <div key={d.id} className="bg-white rounded-xl border border-gray-200 p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <h3 className="font-semibold text-gray-900 text-sm">{d.deliveryNumber}</h3>
+                                  {item && <span className="text-xs text-gray-400">· {item.quantity} {item.unit || ''} {item.itemName}</span>}
+                                </div>
+                                <p className="text-xs text-gray-400 mt-0.5">Deliver to <span className="text-gray-600 font-medium">{d.destination || '—'}</span></p>
+                                {d.status === 'delivered' && <p className="text-xs text-gray-400 mt-1">Received by <span className="text-gray-600 font-medium">{d.receivedBy || '—'}</span></p>}
+                              </div>
+                              <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+                                <span className="text-xs font-semibold text-brand-gold">{statusLabel(d.status)}</span>
+                                {d.status === 'pending' && <span className="text-[11px] text-gray-400">Ready to dispatch</span>}
+                                {d.status === 'dispatched' && <span className="text-[11px] text-gray-400">Out for delivery</span>}
+                              </div>
+                            </div>
+                            <div className="flex items-center justify-end gap-2 mt-3 flex-wrap">
+                              {d.status === 'pending' && (
+                                <button onClick={() => dispatchWithdrawal(d)} disabled={busyId === d.id}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"><Truck className="w-3.5 h-3.5" /> Dispatch</button>
+                              )}
+                              {d.status === 'dispatched' && (
+                                <button onClick={() => setCompletingDelivery(d)}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"><PackageCheck className="w-3.5 h-3.5" /> Mark Delivered</button>
+                              )}
+                              <button onClick={() => printWD(d)} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Printer className="w-3.5 h-3.5" /> Receipt</button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {filtered.length > 0 && (
                   <div className="space-y-3">
+                    {filteredWD.length > 0 && <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Sales-order deliveries</h3>}
                     {filtered.map(job => (
                       <div key={job.so.id} className="bg-white rounded-xl border border-gray-200 p-4">
                         <div className="flex items-start justify-between gap-3">
@@ -544,8 +521,6 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                               <button onClick={() => setCompleting(job)}
                                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"><PackageCheck className="w-3.5 h-3.5" /> Mark Delivered</button>
                             )}
-                            {/* "Receipt", not "Print": this is the delivery receipt, and the
-                                Purchase Orders tab uses Print for the order itself. */}
                             {job.delivery && (
                               <button onClick={() => print(job)} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Printer className="w-3.5 h-3.5" /> Receipt</button>
                             )}
@@ -554,81 +529,42 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                       </div>
                     ))}
                   </div>
+                  )}
+                  </>
                 )}
             </div>
           )}
 
-          {view === 'orders' && (
+          {view === 'withdrawals' && (
             <div className="space-y-4">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                <input type="text" placeholder="Search PO #, supplier, PR #…" value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-4 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-bold text-gray-900">Stock Withdrawals</h2>
+                  <p className="text-sm text-gray-500 mt-0.5">Request stock out of inventory to a destination. The warehouse releases it, an admin approves, and it then appears under Deliveries.</p>
+                </div>
+                <button onClick={() => setRequesting(true)} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex-shrink-0"><Plus className="w-4 h-4" /> Request withdrawal</button>
               </div>
 
               {loading ? <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading…</div>
-                : filteredPOs.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-48 text-gray-400"><FileText className="w-10 h-10 mb-3 text-gray-300" /><p className="font-medium text-gray-500">No purchase orders</p><p className="text-xs mt-1">Orders appear here once an admin approves them.</p></div>
+                : withdrawals.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-48 text-gray-400"><PackageMinus className="w-10 h-10 mb-3 text-gray-300" /><p className="font-medium text-gray-500">No withdrawals yet</p><p className="text-xs mt-1">Request one to move stock to a site.</p></div>
                 ) : (
                   <div className="space-y-3">
-                    {filteredPOs.map(po => {
-                      const st = poState(po.status);
-                      const open = po.status === 'approved' || po.status === 'in-progress';
-                      return (
-                        <div key={po.id} className="bg-white rounded-xl border border-gray-200 p-4">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <h3 className="font-semibold text-gray-900 text-sm">{po.poNumber}</h3>
-                                {po.prNumber && <span className="text-xs text-gray-400">· for {po.prNumber}</span>}
-                              </div>
-                              {/* `client` is the supplier on a purchase order — the column is shared with sales orders. */}
-                              <p className="text-xs text-gray-400 mt-0.5">From <span className="text-gray-600 font-medium">{po.client || '—'}</span></p>
-                              {po.supplierAddress && <p className="text-xs text-gray-400 mt-0.5">{po.supplierAddress}</p>}
-                              {po.status === 'RECEIVED' && (
-                                <p className="text-xs text-gray-400 mt-1">Received by <span className="text-gray-600 font-medium">{po.receivedBy || '—'}</span></p>
-                              )}
-                              {po.status === 'cancelled' && po.cancelledBy && (
-                                <p className="text-xs text-gray-400 mt-1">Cancelled by <span className="text-gray-600 font-medium">{po.cancelledBy}</span></p>
-                              )}
+                    {withdrawals.map(w => (
+                      <div key={w.id} className="bg-white rounded-xl border border-gray-200 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h3 className="font-semibold text-gray-900 text-sm">{w.withdrawalNumber || '—'}</h3>
+                              <span className="text-xs text-gray-400">{w.quantity} {w.unit || ''} · {w.itemName}</span>
                             </div>
-                            <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-                              <span className="text-xs font-semibold text-brand-gold">{st.label}</span>
-                              {st.hint && <span className="text-[11px] text-gray-400">{st.hint}</span>}
-                            </div>
+                            {w.destination && <p className="text-xs text-gray-400 mt-0.5">To <span className="text-gray-600 font-medium">{w.destination}</span></p>}
+                            {w.reason && <p className="text-xs text-gray-400 mt-0.5">{w.reason}</p>}
                           </div>
-                          <div className="flex items-center justify-between mt-3 flex-wrap gap-2">
-                            <div className="flex items-center gap-3 text-xs text-gray-400">
-                              {po.deliveryDate && <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />due {new Date(po.deliveryDate).toLocaleDateString()}</span>}
-                              {po.inTransitAt && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />ongoing {new Date(po.inTransitAt).toLocaleDateString()}</span>}
-                              {po.receivedAt && <span className="flex items-center gap-1"><PackageCheck className="w-3 h-3" />received {new Date(po.receivedAt).toLocaleDateString()}</span>}
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-bold text-gray-900 mr-1">{peso(po.amount)}</span>
-                              {po.status === 'approved' && (
-                                <button onClick={() => setPODelivery(po, 'in-progress')} disabled={busyId === po.id}
-                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"><Truck className="w-3.5 h-3.5" /> Mark Ongoing</button>
-                              )}
-                              {open && (
-                                <button onClick={() => setReceivingPO(po)} disabled={busyId === po.id}
-                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"><PackageCheck className="w-3.5 h-3.5" /> Mark Delivered</button>
-                              )}
-                              {open && (
-                                <button onClick={() => setPODelivery(po, 'cancelled')} disabled={busyId === po.id}
-                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"><Ban className="w-3.5 h-3.5" /> Cancel</button>
-                              )}
-                              {/* Only a received order has a delivery receipt to give. Reprintable
-                                  from here for good — it used to exist solely as the popup that
-                                  opened once on Mark Delivered, and was gone once closed. */}
-                              {po.status === 'RECEIVED' && (
-                                <button onClick={() => printPOReceipt(po, po.receivedLines)}
-                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><PackageCheck className="w-3.5 h-3.5" /> Receipt</button>
-                              )}
-                              <button onClick={() => printPO(po)} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Printer className="w-3.5 h-3.5" /> Print</button>
-                            </div>
-                          </div>
+                          <span className="flex-shrink-0 text-xs font-semibold text-brand-gold">{WD_STATUS_LABEL[w.status] || w.status}</span>
                         </div>
-                      );
-                    })}
+                      </div>
+                    ))}
                   </div>
                 )}
             </div>
@@ -637,7 +573,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
       </div>
 
       {completing && (
-        <DeliveredModal
+        <ReceivingModal
           subtitle={`${completing.delivery?.deliveryNumber} · ${completing.so.soNumber} · ${completing.so.client}`}
           initialNotes={completing.delivery?.notes}
           onSave={async (receivedBy, notes) => {
@@ -665,32 +601,98 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
         />
       )}
 
-      {receivingPO && (
-        <DeliveredModal
-          subtitle={`${receivingPO.poNumber} · from ${receivingPO.client}`}
-          initialNotes={receivingPO.deliveryNotes}
+      {/* Section D — #15: completing a withdrawal-origin delivery. */}
+      {completingDelivery && (
+        <ReceivingModal
+          subtitle={`${completingDelivery.deliveryNumber} · to ${completingDelivery.destination || '—'}`}
+          initialNotes={completingDelivery.notes}
           onSave={async (receivedBy, notes) => {
-            const r = await lFetch<{ receivedAt?: string; inventoryApplied?: { itemName: string; added: number; newQuantity: number }[] }>(
-              `/purchase-orders/${receivingPO.id}/delivery`,
-              { method: 'PUT', body: JSON.stringify({ status: 'RECEIVED', receivedBy, notes }) },
-            );
-            // Say what moved. Receiving silently would leave the user unsure whether stock
-            // went up — and an order with no inventory lines (a hand-raised one) adds nothing.
-            const n = r.inventoryApplied?.length || 0;
-            toast.success(
-              n ? `${receivingPO.poNumber} received — ${n} item${n > 1 ? 's' : ''} added to inventory`
-                : `${receivingPO.poNumber} marked delivered`,
-            );
-            // Auto-open the delivery receipt, listing exactly what went onto the shelf. It is
-            // no longer the only chance to see it — the same document is behind Receipt on the
-            // row from now on — but opening it here still saves a click at the moment it matters.
-            const p = printPOReceipt(receivingPO, r.inventoryApplied || [], receivedBy, r.receivedAt || new Date().toISOString(), notes);
-            if (!p.ok) toast.error(p.error || 'Receipt recorded — allow popups, then use Receipt on the row');
+            await lFetch(`/deliveries/${completingDelivery.id}`, {
+              method: 'PUT', body: JSON.stringify({ status: 'delivered', receivedBy, notes }),
+            });
+            toast.success(`${completingDelivery.deliveryNumber} marked delivered`);
+            printWD({ ...completingDelivery, status: 'delivered', receivedBy, notes });
           }}
-          onClose={() => setReceivingPO(null)}
-          onDone={() => { setReceivingPO(null); loadAll(); }}
+          onClose={() => setCompletingDelivery(null)}
+          onDone={() => { setCompletingDelivery(null); loadAll(); }}
         />
       )}
+
+      {/* Section D — #5: request a stock withdrawal to a destination. */}
+      {requesting && (
+        <WithdrawalRequestModal
+          inventory={inventory}
+          onSubmit={requestWithdrawal}
+          onClose={() => setRequesting(false)}
+          onDone={() => setRequesting(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Request a stock withdrawal (Section D — #5). Logistics picks an inventory item, a quantity,
+// and a destination (required — that is what turns the approved withdrawal into a delivery).
+// ============================================================================
+function WithdrawalRequestModal({ inventory, onSubmit, onClose, onDone }: {
+  inventory: InventoryItem[];
+  onSubmit: (inventoryId: string, quantity: number, destination: string, reason: string | null) => Promise<void>;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [inventoryId, setInventoryId] = useState('');
+  const [quantity, setQuantity] = useState('');
+  const [destination, setDestination] = useState('');
+  const [reason, setReason] = useState('');
+  const [saving, setSaving] = useState(false);
+  const picked = inventory.find(i => i.id === inventoryId);
+
+  const submit = async () => {
+    const qty = Number(quantity);
+    if (!inventoryId) { toast.error('Pick an item'); return; }
+    if (!qty || qty <= 0) { toast.error('Enter a quantity'); return; }
+    if (picked && qty > picked.quantity) { toast.error(`Only ${picked.quantity} ${picked.unit || ''} in stock`); return; }
+    if (!destination.trim()) { toast.error('A destination is required'); return; }
+    setSaving(true);
+    try { await onSubmit(inventoryId, qty, destination.trim(), reason.trim() || null); onDone(); }
+    catch (e: any) { toast.error('Failed: ' + e.message); } finally { setSaving(false); }
+  };
+
+  const input = 'w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500';
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-5 border-b border-gray-200">
+          <h2 className="text-lg font-semibold text-gray-900">Request withdrawal</h2>
+          <button onClick={onClose} className="p-1.5 rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-600"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Item <span className="text-red-500">*</span></label>
+            <select value={inventoryId} onChange={e => setInventoryId(e.target.value)} className={input}>
+              <option value="">Select an item…</option>
+              {inventory.map(i => <option key={i.id} value={i.id}>{i.itemName} ({i.quantity} {i.unit || ''} in stock)</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Quantity <span className="text-red-500">*</span></label>
+            <input type="number" min="1" value={quantity} onChange={e => setQuantity(e.target.value)} className={input} placeholder={picked ? `up to ${picked.quantity}` : ''} />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Destination <span className="text-red-500">*</span></label>
+            <input value={destination} onChange={e => setDestination(e.target.value)} className={input} placeholder="Where it is being delivered" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+            <textarea value={reason} onChange={e => setReason(e.target.value)} rows={2} className={input} />
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-2 p-5 border-t border-gray-200">
+          <button onClick={onClose} className="px-4 py-2 text-sm font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">Cancel</button>
+          <button onClick={submit} disabled={saving} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"><PackageMinus className="w-4 h-4" /> {saving ? 'Requesting…' : 'Request'}</button>
+        </div>
+      </div>
     </div>
   );
 }
