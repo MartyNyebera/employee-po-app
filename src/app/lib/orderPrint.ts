@@ -201,7 +201,11 @@ const SHARED_CSS = `
   .summary-label { font-weight: bold; }
   .summary-value { text-align: right; }
   .terms-section { font-size: 8pt; margin-bottom: 20px; line-height: 1.3; }
-  .signature-section { margin-top: 30px; }
+  /* #7 — margin-top:auto drops the block to the page bottom (inside the .print-fill flex column),
+     so it prints as a footer just above the company address/contact footer; the padding keeps a
+     minimum gap when content already reaches the bottom. break-inside:avoid stops the boxes
+     splitting across a page. */
+  .signature-section { margin-top: auto; padding-top: 24px; break-inside: avoid; }
   .approved-header { text-align: center; font-weight: bold; font-size: 10pt; margin-bottom: 15px; letter-spacing: 2px; }
   .approved-header.rejected { text-decoration: line-through; }
   /* Three boxes (Prepared / Reviewed / Approved) share the A4 text column. flex:1 + min-width:0
@@ -297,6 +301,7 @@ export async function printPurchaseOrder(
     </tr>`).join('');
 
   const body = `
+  <div class="print-fill">
   <div class="info-section">
     <div class="info-box">
       <div class="info-box-title">SUPPLIER NAME AND ADDRESS</div>
@@ -370,6 +375,7 @@ export async function printPurchaseOrder(
         ${s.date ? `<div class="signature-date">${esc(new Date(s.date).toLocaleDateString())}</div>` : ''}
       </div>`).join('')}
     </div>
+  </div>
   </div>`;
 
   const html = renderPrintDocument({

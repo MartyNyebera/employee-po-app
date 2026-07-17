@@ -34,17 +34,25 @@ const esc = (v: unknown): string =>
 // .document-title, which live here so #2/#3/#4 are a single-source change.
 export const PRINT_CHROME_CSS = `
   @page { margin: 0.5in; size: A4; }
+  html, body { height: 100%; }
   body { font-family: 'Times New Roman', serif; font-size: 11pt; line-height: 1.3; color: black; margin: 0; padding: 0; background: white; }
-  /* The whole document is one table so the header/footer groups repeat per page. */
-  .print-page { width: 100%; border-collapse: collapse; }
+  /* The whole document is one table so the header/footer groups repeat per page. With html/body
+     at full height and the table at height:100%, the single <tbody> row absorbs the slack — which
+     drops the repeating <tfoot> to the physical bottom of the page (#5). */
+  .print-page { width: 100%; border-collapse: collapse; height: 100%; }
   .print-page > thead { display: table-header-group; }
   .print-page > tfoot { display: table-footer-group; }
   .print-page > thead > tr > td,
-  .print-page > tfoot > tr > td,
-  .print-page > tbody > tr > td { padding: 0; }
-  /* A little breathing room between the repeating header/footer and the flowing content. */
-  .print-header { padding: 2px 0 8px; }
-  .print-body { padding: 6px 2px 10px; }
+  .print-page > tfoot > tr > td { padding: 0; }
+  /* The body cell fills the remaining height so an opt-in bottom-pinned block (e.g. the PO
+     signatures, #7) can sink to just above the footer. */
+  .print-page > tbody > tr > td { padding: 0; height: 100%; }
+  /* Extra top/bottom breathing room around the KIMOEL letterhead (#5). */
+  .print-header { padding: 20px 0 14px; }
+  .print-body { padding: 6px 2px 10px; height: 100%; box-sizing: border-box; }
+  /* Opt-in: a body that wraps itself in .print-fill becomes a full-height flex column, so a
+     child given margin-top:auto (the PO signature block) is pushed to the page bottom (#7). */
+  .print-fill { display: flex; flex-direction: column; min-height: 100%; }
   .print-foot { padding: 6px 0 2px; }
   .company-name { text-align: center; font-size: 15pt; font-weight: bold; margin-bottom: 8px; }
   /* #3 — the document title in a bordered rectangle, on EVERY document (not just orders). */

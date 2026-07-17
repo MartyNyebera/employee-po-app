@@ -357,8 +357,11 @@ async function printCheckReport(pr: PurchaseRequest) {
   const signDate = (d?: string | null) =>
     d ? `<div class="sign-date">${esc(new Date(d).toLocaleDateString())}</div>` : '';
   const css = `
-    .meta { display:flex; flex-wrap:wrap; gap:6px 32px; margin:14px 0; font-size:10pt; }
-    .meta div span { font-weight:bold; }
+    /* #6 — project/date-filed/needed-by stacked on the left, PR No. right-aligned. */
+    .meta { display:flex; justify-content:space-between; align-items:flex-start; margin:14px 0; font-size:10pt; }
+    .meta-left div { margin-bottom:2px; }
+    .meta span { font-weight:bold; }
+    .meta-right { text-align:right; }
     table.items { width:100%; border-collapse:collapse; margin-top:6px; font-size:10pt; }
     table.items th, table.items td { border:1px solid #000; padding:5px 6px; }
     table.items th { background:#f0f0f0; }
@@ -376,12 +379,14 @@ async function printCheckReport(pr: PurchaseRequest) {
 `;
   const body = `
     <div class="meta">
-      <div><span>PR No.:</span> ${esc(pr.prNumber)}</div>
-      <div><span>For (Project):</span> ${esc(pr.projectName || 'Personal use')}</div>
-      <div><span>Date filed:</span> ${esc(pr.createdAt ? new Date(pr.createdAt).toLocaleDateString() : '—')}</div>
-      <div><span>Needed by:</span> ${esc(pr.neededBy ? new Date(pr.neededBy).toLocaleDateString() : '—')}</div>
-      <div><span>Supplier:</span> ${esc(pr.supplier || '—')}</div>
+      <div class="meta-left">
+        <div><span>For (Project):</span> ${esc(pr.projectName || 'Personal use')}</div>
+        <div><span>Date filed:</span> ${esc(pr.createdAt ? new Date(pr.createdAt).toLocaleDateString() : '—')}</div>
+        <div><span>Needed by:</span> ${esc(pr.neededBy ? new Date(pr.neededBy).toLocaleDateString() : '—')}</div>
+      </div>
+      <div class="meta-right"><span>PR No.:</span> ${esc(pr.prNumber)}</div>
     </div>
+    <div class="document-title" style="margin:12px auto 4px">PURCHASE REQUEST REVIEW</div>
     <table class="items">
       <thead><tr><th>No</th><th>Description</th><th>Qty</th><th>Unit</th><th>Est. Cost</th><th>Amount</th></tr></thead>
       <tbody>${rows}</tbody>
@@ -416,7 +421,7 @@ async function printCheckReport(pr: PurchaseRequest) {
     </div>`;
   const html = renderPrintDocument({
     title: `PR Review Report ${pr.prNumber}`,
-    docTitle: 'PURCHASE REQUEST REVIEW REPORT',
+    docTitle: '',
     css,
     body,
   });
@@ -573,6 +578,10 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
   const [loadingSuppliers, setLoadingSuppliers] = useState(true);
   const [supplierId, setSupplierId] = useState('');
   const [f, setF] = useState({ poDate: today, deliveryDate: '' });
+  // #4 — the buyer picks whether this order is domestic or foreign, and types the payment-terms
+  // days. Both are new inputs on this form (the admin-side modal already had the type selector).
+  const [poType, setPoType] = useState<'domestic' | 'foreign'>('domestic');
+  const [termsDays, setTermsDays] = useState('30');
   const [saving, setSaving] = useState(false);
   const set = (k: string, v: string) => setF(p => ({ ...p, [k]: v }));
 
@@ -603,7 +612,16 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
   const supplierContact = supplier
     ? [supplier.contactPerson, supplier.phone].filter(Boolean).join(' · ')
     : '';
-  const terms = supplier?.paymentTerms?.trim() || '30 days from receipt/acceptance';
+  // The days field composes the stored payment-terms text. Picking a supplier seeds it from the
+  // leading number in that supplier's terms (if any), but the buyer can override.
+  useEffect(() => {
+    const d = supplier?.paymentTerms?.match(/\d+/)?.[0];
+    if (d) setTermsDays(d);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supplierId]);
+  const terms = termsDays.trim()
+    ? `${termsDays.trim()} days from receipt/acceptance`
+    : (supplier?.paymentTerms?.trim() || '30 days from receipt/acceptance');
 
   const save = async () => {
     if (!supplier) { toast.error('Pick a supplier'); return; }
@@ -639,6 +657,7 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
           createdDate: f.poDate,
           deliveryDate: f.deliveryDate,
           paymentTerms: terms,
+          poType,
           preparedBy: session.full_name,
         }),
       });
@@ -689,12 +708,25 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
                 <span className="w-28 flex-shrink-0 text-xs font-medium text-gray-400 pt-0.5">Contact</span>
                 <span className="text-gray-700">{supplierContact || '—'}</span>
               </div>
-              <div className="flex gap-3 px-3 py-2">
-                <span className="w-28 flex-shrink-0 text-xs font-medium text-gray-400 pt-0.5">Payment terms</span>
-                <span className="text-gray-700">{terms}</span>
-              </div>
             </div>
           )}
+
+          {/* #4 — PO type (domestic/foreign) and the manually-typed payment-terms days. */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">PO type</label>
+              <select value={poType} onChange={e => setPoType(e.target.value as 'domestic' | 'foreign')} className={`${input} bg-white`}>
+                <option value="domestic">Domestic</option>
+                <option value="foreign">Foreign</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Payment terms (days)</label>
+              <input type="number" min="0" step="1" value={termsDays}
+                onChange={e => setTermsDays(e.target.value)} placeholder="30" className={input} />
+              <p className="text-xs text-gray-400 mt-1">Stored as “{terms}”.</p>
+            </div>
+          </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>

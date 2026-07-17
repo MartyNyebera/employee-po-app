@@ -232,7 +232,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
     <div style={{
       padding: '32px',
       fontFamily: 'Poppins, sans-serif',
-      backgroundColor: '#ffffff',
+      backgroundColor: '#ececec',
       minHeight: '100vh'
     }}>
       {/* HEADER */}
@@ -247,18 +247,6 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
           alignItems: 'center',
           gap: '16px'
         }}>
-          <div style={{
-            width: '48px',
-            height: '48px',
-            borderRadius: '12px',
-            backgroundColor: '#d1b01b',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: '0 4px 6px -1px rgba(209, 176, 27, 0.3)'
-          }}>
-            <Package style={{ width: '24px', height: '24px', color: '#000000' }} />
-          </div>
           <div>
             <h1 style={{
               fontSize: '28px',

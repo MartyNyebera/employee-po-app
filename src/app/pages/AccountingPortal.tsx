@@ -192,8 +192,11 @@ async function printReviewReport(pr: PurchaseRequest) {
   const signDate = (d?: string | null) =>
     d ? `<div class="sign-date">${esc(new Date(d).toLocaleDateString())}</div>` : '';
   const css = `
-    .meta { display:flex; flex-wrap:wrap; gap:6px 32px; margin:14px 0; font-size:10pt; }
-    .meta div span { font-weight:bold; }
+    /* #6 — project/date-filed/needed-by stacked on the left, PR No. right-aligned. */
+    .meta { display:flex; justify-content:space-between; align-items:flex-start; margin:14px 0; font-size:10pt; }
+    .meta-left div { margin-bottom:2px; }
+    .meta span { font-weight:bold; }
+    .meta-right { text-align:right; }
     table.items { width:100%; border-collapse:collapse; margin-top:6px; font-size:10pt; }
     table.items th, table.items td { border:1px solid #000; padding:5px 6px; }
     table.items th { background:#f0f0f0; }
@@ -211,11 +214,14 @@ async function printReviewReport(pr: PurchaseRequest) {
 `;
   const body = `
     <div class="meta">
-      <div><span>PR No.:</span> ${esc(pr.prNumber)}</div>
-      <div><span>For (Project):</span> ${esc(pr.projectName || 'Personal use')}</div>
-      <div><span>Date filed:</span> ${esc(pr.createdAt ? new Date(pr.createdAt).toLocaleDateString() : '—')}</div>
-      <div><span>Needed by:</span> ${esc(pr.neededBy ? new Date(pr.neededBy).toLocaleDateString() : '—')}</div>
+      <div class="meta-left">
+        <div><span>For (Project):</span> ${esc(pr.projectName || 'Personal use')}</div>
+        <div><span>Date filed:</span> ${esc(pr.createdAt ? new Date(pr.createdAt).toLocaleDateString() : '—')}</div>
+        <div><span>Needed by:</span> ${esc(pr.neededBy ? new Date(pr.neededBy).toLocaleDateString() : '—')}</div>
+      </div>
+      <div class="meta-right"><span>PR No.:</span> ${esc(pr.prNumber)}</div>
     </div>
+    <div class="document-title" style="margin:12px auto 4px">PURCHASE REQUEST REVIEW</div>
     <table class="items">
       <thead><tr><th>No</th><th>Description</th><th>Qty</th><th>Unit</th><th>Est. Cost</th><th>Amount</th></tr></thead>
       <tbody>${rows}</tbody>
@@ -250,7 +256,7 @@ async function printReviewReport(pr: PurchaseRequest) {
     </div>`;
   const html = renderPrintDocument({
     title: `PR Review Report ${pr.prNumber}`,
-    docTitle: 'PURCHASE REQUEST REVIEW REPORT',
+    docTitle: '',
     css,
     body,
   });
