@@ -63,6 +63,7 @@ export interface PrintablePO {
   approvedBy?: string | null;
   approvedAt?: string | null;
   paymentTerms?: string | null;
+  poType?: string | null;
   termsAndConditions?: string | null;
   prNumber?: string | null;
   prStatus?: string | null;
@@ -247,6 +248,9 @@ export async function printPurchaseOrder(
   const address = po.supplierAddress || blobLine(description, 'Address:') || '';
   const contact = po.supplierContact || blobLine(description, 'Contact:') || '';
   const paymentTerms = po.paymentTerms || blobLine(description, 'Payment Terms:') || DEFAULT_PAYMENT_TERMS;
+  // #7 — domestic vs foreign. Real column first; legacy orders read it from the description blob.
+  const poTypeRaw = (po.poType || blobLine(description, 'PO Type:') || 'domestic').trim().toLowerCase();
+  const poType = poTypeRaw === 'foreign' ? 'Foreign' : 'Domestic';
 
   // Section C — #12: three signatories, in the order they act. Prepared By is the purchasing
   // staffer who raised the order (processedBy); a hand-raised order with no purchasing account
@@ -317,6 +321,7 @@ export async function printPurchaseOrder(
         <strong>PO Date:</strong> ${esc(fmtDate(po.docDate || po.createdDate))}<br>
         <strong>PO Number:</strong> ${esc(po.poNumber)}<br>
         ${po.prNumber ? `<strong>PR Number:</strong> ${esc(po.prNumber)}<br>` : ''}
+        <strong>Type:</strong> ${esc(poType)}<br>
         <strong>Delivery Date:</strong> ${esc(fmtDate(po.deliveryDate))}<br>
         <strong>Page:</strong> 1 of 1
       </div>
