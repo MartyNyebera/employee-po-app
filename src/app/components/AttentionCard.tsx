@@ -37,7 +37,6 @@ export function AttentionCard({ items }: { items: AttentionItem[] }) {
               <span className="text-sm text-gray-700">{it.label}</span>
               <span className="flex items-center gap-2">
                 <span className="min-w-[18px] h-[18px] px-1.5 rounded-full bg-red-600 text-white text-[11px] font-bold leading-[18px] text-center">{it.count > 99 ? '99+' : it.count}</span>
-                <span className="text-xs font-medium text-red-600">View</span>
               </span>
             </button>
           </li>

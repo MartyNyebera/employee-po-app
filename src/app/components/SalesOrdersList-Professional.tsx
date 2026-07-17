@@ -3,7 +3,7 @@ import { fetchPurchaseOrders, createPurchaseOrder, updatePurchaseOrder, deletePu
 import { fetchVehicles, type Vehicle } from '../api/fleet';
 import { printSalesOrder } from '../lib/orderPrint';
 import { CreateSOModal } from './CreatePOModal';
-import { FileText, Plus, DollarSign, Calendar, Building2, Truck, Edit, Filter, Printer, Trash2, X, Search, Check, Package } from 'lucide-react';
+import { FileText, Plus, DollarSign, Calendar, Building2, Truck, Edit, Filter, Printer, Trash2, X, Search, Check, Package, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../lib/confirm';
 
@@ -580,7 +580,8 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
                 e.currentTarget.style.transform = 'translateY(0)';
               }}
             >
-              🔄 Refresh
+              <RefreshCw style={{ width: '16px', height: '16px' }} />
+              Refresh
             </button>
           </div>
         )}
