@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   FileText, PenTool, Menu, X, Search, Clock, Calendar, Printer, LogOut,
-  Upload, Eraser, Plus, Trash2, PanelLeftClose, PanelLeftOpen, PackageMinus,
+  Upload, Eraser, Plus, Trash2, PanelLeftClose, PanelLeftOpen, PackageMinus, MessageSquare, Users, ArrowRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { PageErrorFallback } from '../components/PageErrorFallback';
 import { WithdrawalTab } from '../components/WithdrawalTab';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
+import { confirmDialog } from '../lib/confirm';
 import { printSalesOrder } from '../lib/orderPrint';
 
 // ============================================================================
@@ -19,7 +20,7 @@ import { printSalesOrder } from '../lib/orderPrint';
 // approved orders are what Logistics can then dispatch (/logistics).
 // ============================================================================
 
-type PortalView = 'orders' | 'withdrawals' | 'signature';
+type PortalView = 'orders' | 'quotations' | 'clients' | 'withdrawals' | 'signature';
 
 interface LineItem { id: string; description: string; quantity: number; unit: string; unitPrice: number; amount: number; }
 interface SalesOrder {
@@ -30,7 +31,14 @@ interface SalesOrder {
   paymentTerms?: string | null; termsAndConditions?: string | null;
   line?: string | null; source?: string | null;
 }
-interface Customer { id: string; name: string; address?: string; contactPerson?: string; phone?: string; }
+interface Customer { id: string; name: string; type?: string | null; address?: string; location?: string | null; contactPerson?: string | null; phone?: string | null; email?: string | null; }
+// A quotation is an `inquiries` row (the sales pipeline). Sales creates one, then converts a
+// won quotation into a sales order (#6).
+interface Quotation {
+  id: string; inquiryDate?: string | null; customerId?: string | null; customerName?: string | null;
+  contact?: string | null; whatTheyWant?: string | null; quoteAmount?: number | null; status: string;
+  salesOrderId?: string | null; notes?: string | null;
+}
 interface Session { id: number; full_name: string; email: string; phone?: string; }
 
 const TOKEN_KEY = 'sales_token';
@@ -394,21 +402,27 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const [mobileOpen, setMobileOpen] = useState(false);
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [quotations, setQuotations] = useState<Quotation[]>([]);
   const [signature, setSignature] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [creating, setCreating] = useState(false);
+  const [creatingQuote, setCreatingQuote] = useState(false);
+  const [creatingClient, setCreatingClient] = useState(false);
+  const [convertingId, setConvertingId] = useState<string | null>(null);
 
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [sos, custs, sig] = await Promise.all([
+      const [sos, custs, quotes, sig] = await Promise.all([
         sFetch<SalesOrder[]>('/sales-orders'),
         sFetch<Customer[]>('/customers').catch(() => []),
+        sFetch<Quotation[]>('/inquiries').catch(() => []),
         sFetch<{ signature: string | null }>('/sales/signature'),
       ]);
       setOrders(sos || []);
       setCustomers(custs || []);
+      setQuotations(quotes || []);
       setSignature(sig?.signature || null);
     } catch (e: any) {
       if (String(e.message).includes('session expired')) { onSignOut(); return; }
@@ -416,6 +430,19 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     } finally { setLoading(false); }
   };
   useEffect(() => { loadAll(); }, []);
+
+  // #6 — turn a quotation into a sales order (pending admin approval). No PO raised from Sales.
+  const convertQuote = async (q: Quotation) => {
+    if (q.salesOrderId) { toast.error('This quotation is already converted'); return; }
+    if (!(await confirmDialog({ title: `Create sales order from this quotation?`, message: 'A sales order is raised and sent to admin for approval.', confirmLabel: 'Create SO' }))) return;
+    setConvertingId(q.id);
+    try {
+      const r = await sFetch<{ salesOrder?: { soNumber?: string } }>(`/inquiries/${q.id}/convert`, { method: 'POST', body: JSON.stringify({ raisePurchaseOrder: false }) });
+      toast.success(`Sales order ${r.salesOrder?.soNumber || ''} created — sent to admin for approval`);
+      await loadAll();
+      setView('orders');
+    } catch (e: any) { toast.error('Failed: ' + e.message); } finally { setConvertingId(null); }
+  };
 
   const filtered = useMemo(() => orders.filter(so => {
     const q = search.toLowerCase();
@@ -429,6 +456,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 
   const NAV: { id: PortalView; label: string; icon: any }[] = [
     { id: 'orders', label: 'Sales Orders', icon: FileText },
+    { id: 'quotations', label: 'Quotations', icon: MessageSquare },
+    { id: 'clients', label: 'Clients', icon: Users },
     { id: 'withdrawals', label: 'Withdrawals', icon: PackageMinus },
     { id: 'signature', label: 'My Signature', icon: PenTool },
   ];
@@ -492,6 +521,73 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 
           {view === 'withdrawals' && <WithdrawalTab fetchFn={sFetch} />}
 
+          {view === 'quotations' && (
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <div>
+                  <h1 className="text-lg font-semibold text-gray-900">Quotations</h1>
+                  <p className="text-sm text-gray-500 mt-0.5">Quote a client, then turn a won quotation into a sales order.</p>
+                </div>
+                <button onClick={() => setCreatingQuote(true)} className="sm:ml-auto inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-brand-gold text-white rounded-lg hover:opacity-90"><Plus className="w-4 h-4" /> New quotation</button>
+              </div>
+              {loading ? <div className="text-sm text-gray-400 py-10 text-center">Loading…</div>
+                : quotations.length === 0 ? <div className="text-sm text-gray-400 py-10 text-center border border-dashed border-gray-200 rounded-xl">No quotations yet.</div>
+                : (
+                  <div className="space-y-2">
+                    {quotations.map(q => (
+                      <div key={q.id} className="bg-white rounded-xl border border-gray-200 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h3 className="font-semibold text-gray-900 text-sm">{q.customerName || 'Walk-in client'}</h3>
+                              <span className="text-xs text-gray-400">{q.quoteAmount != null ? peso(q.quoteAmount) : '—'}</span>
+                            </div>
+                            {q.whatTheyWant && <p className="text-xs text-gray-500 mt-0.5">{q.whatTheyWant}</p>}
+                            <p className="text-xs text-brand-gold font-medium mt-1">{statusLabel(q.status)}{q.salesOrderId ? ' · converted' : ''}</p>
+                          </div>
+                          {!q.salesOrderId && (
+                            <button onClick={() => convertQuote(q)} disabled={convertingId === q.id}
+                              className="flex-shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50">
+                              {convertingId === q.id ? 'Creating…' : <>Create SO <ArrowRight className="w-3.5 h-3.5" /></>}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+            </div>
+          )}
+
+          {view === 'clients' && (
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <div>
+                  <h1 className="text-lg font-semibold text-gray-900">Clients</h1>
+                  <p className="text-sm text-gray-500 mt-0.5">Who we sell to. New clients appear in the sales-order and quotation pickers.</p>
+                </div>
+                <button onClick={() => setCreatingClient(true)} className="sm:ml-auto inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-brand-gold text-white rounded-lg hover:opacity-90"><Plus className="w-4 h-4" /> New client</button>
+              </div>
+              {loading ? <div className="text-sm text-gray-400 py-10 text-center">Loading…</div>
+                : customers.length === 0 ? <div className="text-sm text-gray-400 py-10 text-center border border-dashed border-gray-200 rounded-xl">No clients yet.</div>
+                : (
+                  <div className="space-y-2">
+                    {customers.map(c => (
+                      <div key={c.id} className="bg-white rounded-xl border border-gray-200 p-4">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="font-semibold text-gray-900 text-sm">{c.name}</h3>
+                          {c.type && <span className="text-xs text-gray-400">{c.type}</span>}
+                        </div>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {[c.contactPerson, c.phone, c.email, c.location].filter(Boolean).join(' · ') || 'No contact details'}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+            </div>
+          )}
+
           {view === 'orders' && (
             <div className="space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center gap-3">
@@ -546,6 +642,172 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
         <CreateSOModal session={session} customers={customers} onClose={() => setCreating(false)}
           onCreated={() => { setCreating(false); loadAll(); }} />
       )}
+      {creatingQuote && (
+        <CreateQuotationModal customers={customers} onClose={() => setCreatingQuote(false)}
+          onCreated={() => { setCreatingQuote(false); loadAll(); }} />
+      )}
+      {creatingClient && (
+        <CreateClientModal onClose={() => setCreatingClient(false)}
+          onCreated={() => { setCreatingClient(false); loadAll(); }} />
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Create a quotation (#6). Pick an existing client or type a new name, describe what they want,
+// and set the quote amount. It lands as a 'New' inquiries row that can later be converted to a SO.
+// ============================================================================
+function CreateQuotationModal({ customers, onClose, onCreated }: {
+  customers: Customer[]; onClose: () => void; onCreated: () => void;
+}) {
+  const [customerId, setCustomerId] = useState('');
+  const [customerName, setCustomerName] = useState('');
+  const [whatTheyWant, setWhatTheyWant] = useState('');
+  const [quoteAmount, setQuoteAmount] = useState('');
+  const [source, setSource] = useState('');
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+  const picked = customers.find(c => c.id === customerId);
+
+  const submit = async () => {
+    const name = (picked?.name || customerName).trim();
+    if (!name) { toast.error('Pick a client or type a name'); return; }
+    if (!whatTheyWant.trim()) { toast.error('Describe what they want'); return; }
+    setSaving(true);
+    try {
+      await sFetch('/inquiries', { method: 'POST', body: JSON.stringify({
+        customerId: customerId || null, customerName: name, contact: picked?.phone || null,
+        whatTheyWant: whatTheyWant.trim(), quoteAmount: quoteAmount ? Number(quoteAmount) : null,
+        source: source || null, status: 'New', notes: notes.trim() || null,
+      }) });
+      toast.success('Quotation created');
+      onCreated();
+    } catch (e: any) { toast.error('Failed: ' + e.message); } finally { setSaving(false); }
+  };
+
+  const input = 'w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500';
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden max-h-[90vh]" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-5 border-b border-gray-200">
+          <h2 className="text-lg font-semibold text-gray-900">New quotation</h2>
+          <button onClick={onClose} className="p-1.5 rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-600"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 space-y-4 overflow-y-auto">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Existing client</label>
+            <select value={customerId} onChange={e => setCustomerId(e.target.value)} className={input}>
+              <option value="">— pick a client, or type below —</option>
+              {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          {!customerId && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">…or new client name</label>
+              <input value={customerName} onChange={e => setCustomerName(e.target.value)} className={input} placeholder="Client name" />
+            </div>
+          )}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">What they want <span className="text-red-500">*</span></label>
+            <textarea value={whatTheyWant} onChange={e => setWhatTheyWant(e.target.value)} rows={2} className={input} placeholder="Describe the items / job" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Quote amount</label>
+              <input type="number" min="0" step="0.01" value={quoteAmount} onChange={e => setQuoteAmount(e.target.value)} className={input} placeholder="0.00" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Source</label>
+              <select value={source} onChange={e => setSource(e.target.value)} className={input}>
+                <option value="">—</option>
+                {SO_SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+            <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} className={input} />
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-2 p-5 border-t border-gray-200">
+          <button onClick={onClose} className="px-4 py-2 text-sm font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">Cancel</button>
+          <button onClick={submit} disabled={saving} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-brand-gold text-white rounded-lg hover:opacity-90 disabled:opacity-50">{saving ? 'Saving…' : 'Create quotation'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Create a client (#6). Posts to /api/customers (Sales is now permitted). The new client shows
+// up immediately in the sales-order and quotation pickers.
+// ============================================================================
+function CreateClientModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [name, setName] = useState('');
+  const [type, setType] = useState('');
+  const [contactPerson, setContactPerson] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [location, setLocation] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (!name.trim()) { toast.error('A client name is required'); return; }
+    setSaving(true);
+    try {
+      await sFetch('/customers', { method: 'POST', body: JSON.stringify({
+        name: name.trim(), type: type.trim() || null, contactPerson: contactPerson.trim() || null,
+        phone: phone.trim() || null, email: email.trim() || null, location: location.trim() || null, status: 'Active',
+      }) });
+      toast.success('Client added');
+      onCreated();
+    } catch (e: any) { toast.error('Failed: ' + e.message); } finally { setSaving(false); }
+  };
+
+  const input = 'w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500';
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden max-h-[90vh]" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-5 border-b border-gray-200">
+          <h2 className="text-lg font-semibold text-gray-900">New client</h2>
+          <button onClick={onClose} className="p-1.5 rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-600"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 space-y-4 overflow-y-auto">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Client name <span className="text-red-500">*</span></label>
+            <input value={name} onChange={e => setName(e.target.value)} className={input} placeholder="Company or person" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+              <input value={type} onChange={e => setType(e.target.value)} className={input} placeholder="Contractor, distributor…" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Contact person</label>
+              <input value={contactPerson} onChange={e => setContactPerson(e.target.value)} className={input} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+              <input value={phone} onChange={e => setPhone(e.target.value)} className={input} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+              <input value={email} onChange={e => setEmail(e.target.value)} className={input} />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
+            <input value={location} onChange={e => setLocation(e.target.value)} className={input} placeholder="City / address" />
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-2 p-5 border-t border-gray-200">
+          <button onClick={onClose} className="px-4 py-2 text-sm font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">Cancel</button>
+          <button onClick={submit} disabled={saving} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-brand-gold text-white rounded-lg hover:opacity-90 disabled:opacity-50">{saving ? 'Saving…' : 'Add client'}</button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -4752,7 +4752,7 @@ app.get('/api/customers/:id', async (req, res) => {
     res.json(mapCustomer(r.rows[0]));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-app.post('/api/customers', requireRole(['owner','admin']), async (req, res) => {
+app.post('/api/customers', requireRole(['owner','admin','sales']), async (req, res) => {
   try {
     const b = req.body; const id = newId('CUS');
     const r = await query(
@@ -5531,7 +5531,7 @@ app.get('/api/inquiries/:id', async (req, res) => {
     res.json(mapInquiry(r.rows[0]));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-app.post('/api/inquiries', requireRole(['owner','admin','purchasing','office_admin']), async (req, res) => {
+app.post('/api/inquiries', requireRole(['owner','admin','purchasing','office_admin','sales']), async (req, res) => {
   try {
     const b = req.body; const id = newId('INQ');
     const r = await query(
@@ -5542,7 +5542,7 @@ app.post('/api/inquiries', requireRole(['owner','admin','purchasing','office_adm
     res.status(201).json(mapInquiry(r.rows[0]));
   } catch (err) { console.error('inquiry create error:', err); res.status(500).json({ error: err.message }); }
 });
-app.patch('/api/inquiries/:id', requireRole(['owner','admin','purchasing','office_admin']), async (req, res) => {
+app.patch('/api/inquiries/:id', requireRole(['owner','admin','purchasing','office_admin','sales']), async (req, res) => {
   try {
     const b = req.body;
     const cols = { inquiry_date:b.inquiryDate, customer_id:b.customerId, customer_name:b.customerName, contact:b.contact, what_they_want:b.whatTheyWant, line:b.line, source:b.source, status:b.status, quote_amount:b.quoteAmount, supplier_id:b.supplierId, supplier_name:b.supplierName, supplier_quote_amount:b.supplierQuoteAmount, follow_up_date:b.followUpDate, notes:b.notes };
@@ -5566,7 +5566,7 @@ app.delete('/api/inquiries/:id', requireRole(['owner','admin','purchasing','offi
 // Convert a won quotation -> Sales Order (client) + optional Purchase Order (supplier).
 // raisePurchaseOrder (bool) controls the buying side. Cost (supplier quote) is stored on the
 // SO as cost_amount for per-order margin; the raised PO is the cost on the financial dashboard.
-app.post('/api/inquiries/:id/convert', requireRole(['owner','admin','purchasing','office_admin']), async (req, res) => {
+app.post('/api/inquiries/:id/convert', requireRole(['owner','admin','purchasing','office_admin','sales']), async (req, res) => {
   try {
     const { raisePurchaseOrder = true } = req.body || {};
     const inqRes = await query('SELECT * FROM inquiries WHERE id = $1', [req.params.id]);
