@@ -12,6 +12,7 @@ import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { printWithdrawalReceipt } from '../lib/withdrawalReceiptPrint';
 import { esc } from '../lib/orderPrint';
+import { renderPrintDocument } from '../lib/printChrome';
 
 // ============================================================================
 // Production portal (/production, formerly /requests). Employees sign in with the account an
@@ -814,17 +815,12 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
       : `<div style="height:60px"></div>`;
     const signDate = (d?: string | null) =>
       d ? `<div class="sign-date">${esc(new Date(d).toLocaleDateString())}</div>` : '';
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Purchase Request ${req.prNumber}</title>
-    <style>
-      @page { margin: 0.6in; size: A4; }
-      /* padding-bottom keeps flowing content clear of the fixed page footer */
-      body { font-family: 'Times New Roman', serif; font-size: 11pt; color:#000; padding-bottom: 34px; }
-      .system-title { text-align:center; font-size:10pt; letter-spacing:1px; }
-      .company-name { text-align:center; font-size:15pt; font-weight:bold; }
-      .company-address, .contact-details, .proprietor { text-align:center; font-size:9pt; }
-      .doc-title { text-align:center; font-size:13pt; font-weight:bold; margin:14px 0 4px; text-decoration:underline; }
-      .meta { display:flex; flex-wrap:wrap; gap:6px 32px; margin:14px 0; font-size:10pt; }
-      .meta div span { font-weight:bold; }
+    const css = `
+      /* #3 — PR meta is two columns: the project block stacked on the LEFT, PR No. on the RIGHT. */
+      .meta { display:flex; justify-content:space-between; align-items:flex-start; margin:14px 0; font-size:10pt; }
+      .meta .meta-left div { margin-bottom:3px; }
+      .meta .meta-left span, .meta .meta-right span { font-weight:bold; }
+      .meta .meta-right { text-align:right; }
       table.items { width:100%; border-collapse:collapse; margin-top:6px; font-size:10pt; }
       table.items th, table.items td { border:1px solid #000; padding:5px 6px; }
       table.items th { background:#f0f0f0; }
@@ -839,20 +835,15 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
       .sign-line { border-top:1px solid #000; padding-top:3px; font-weight:bold; font-size:10pt; overflow-wrap:break-word; }
       .sign-role { font-size:8.5pt; color:#333; }
       .sign-date { font-size:8.5pt; color:#333; margin-top:1px; }
-      /* Real page footer: pinned to the bottom of every printed page. */
-      .footer { position:fixed; bottom:0; left:0; right:0; text-align:center; font-size:8pt; color:#333; border-top:1px solid #ccc; padding-top:6px; background:#fff; }
-    </style></head><body>
-      <div class="system-title">KIMOEL TRACKING SYSTEM</div>
-      <div class="company-name">KIMOEL TRADING &amp; CONSTRUCTION INCORPORATED</div>
-      <div class="company-address">PUROK 1, LODLOD, LIPA CITY, BATANGAS</div>
-      <div class="contact-details">Tel: (043) - 741 - 2023 | Email: kimoel_leotagle@yahoo.com</div>
-      <div class="proprietor">LEO TAGLE (Mobile: 0917 - 628 - 3217)</div>
-      <div class="doc-title">PURCHASE REQUEST</div>
+`;
+    const body = `
       <div class="meta">
-        <div><span>PR No.:</span> ${esc(req.prNumber)}</div>
-        <div><span>For (Project):</span> ${esc(req.projectName || 'Personal use')}</div>
-        <div><span>Date filed:</span> ${esc(req.createdAt ? new Date(req.createdAt).toLocaleDateString() : '—')}</div>
-        <div><span>Needed by:</span> ${esc(req.neededBy ? new Date(req.neededBy).toLocaleDateString() : '—')}</div>
+        <div class="meta-left">
+          <div><span>For (Project):</span> ${esc(req.projectName || 'Personal use')}</div>
+          <div><span>Date filed:</span> ${esc(req.createdAt ? new Date(req.createdAt).toLocaleDateString() : '—')}</div>
+          <div><span>Needed by:</span> ${esc(req.neededBy ? new Date(req.neededBy).toLocaleDateString() : '—')}</div>
+        </div>
+        <div class="meta-right"><span>PR No.:</span> ${esc(req.prNumber)}</div>
       </div>
       <table class="items">
         <thead><tr><th>No</th><th>Description</th><th>Qty</th><th>Unit</th><th>Est. Cost</th><th>Amount</th></tr></thead>
@@ -879,9 +870,13 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
           <div class="sign-role">Approved By</div>
           ${signDate(req.verifiedAt)}
         </div>
-      </div>
-      <div class="footer">Purchase Request ${esc(req.prNumber)} | KIMOEL TRADING &amp; CONSTRUCTION INCORPORATED</div>
-    </body></html>`;
+      </div>`;
+    const html = renderPrintDocument({
+      title: `Purchase Request ${req.prNumber}`,
+      docTitle: 'PURCHASE REQUEST',
+      css,
+      body,
+    });
     // open() resets the document — without it, write() appends onto the "Preparing…" placeholder.
     w.document.open();
     w.document.write(html);

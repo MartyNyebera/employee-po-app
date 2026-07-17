@@ -8,7 +8,12 @@
 // Three signatories, in the order they act: production asks, the warehouse releases the stock
 // from the shelf, the admin authorises — and only that last step deducts. A block fills in as
 // each person acts, so the receipt is printable mid-flight and shows exactly how far it got.
+//
+// The letterhead/footer/title and per-page repeat come from the shared print chrome
+// (printChrome.ts); this module only owns the content styles (meta, item table, signatures).
 // ============================================================================
+
+import { renderPrintDocument } from './printChrome';
 
 export interface PrintableWithdrawal {
   withdrawalNumber?: string | null;
@@ -67,24 +72,15 @@ export async function printWithdrawalReceipt(
     { title: 'Approved By', name: approved ? (w0.reviewedBy || '') : '', sig: approved ? sigs.approvedSignature : null, date: approved ? w0.reviewedAt : null },
   ];
 
-  const html = `<!doctype html>
-<html><head><meta charset="utf-8"><title>Withdrawal Receipt - ${esc(w0.withdrawalNumber || '')}</title>
-<style>
-  @page { margin: 0.6in; size: A4; }
-  /* padding-bottom keeps flowing content clear of the fixed page footer */
-  body { font-family: 'Times New Roman', serif; font-size: 11pt; color: #000; padding-bottom: 34px; }
-  .system-title { text-align: center; font-size: 10pt; letter-spacing: 1px; }
-  .company-name { text-align: center; font-size: 15pt; font-weight: bold; }
-  .company-address, .contact-details, .proprietor { text-align: center; font-size: 9pt; }
-  .doc-title { text-align: center; font-size: 13pt; font-weight: bold; margin: 14px 0 4px; text-decoration: underline; }
+  const css = `
   .meta { display: flex; flex-wrap: wrap; gap: 6px 32px; margin: 14px 0; font-size: 10pt; }
   .meta div span { font-weight: bold; }
   table.items { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 10pt; }
   table.items th, table.items td { border: 1px solid #000; padding: 5px 6px; }
   table.items th { background: #f0f0f0; }
   .cert { margin: 22px 0 10px; font-size: 10.5pt; line-height: 1.5; }
-  /* Three blocks across now (Requested / Released / Approved), so they share the width via
-     flex:1 rather than a fixed 280px each — 3 × 280 overflows the A4 text column.
+  /* Three blocks across (Requested / Released / Approved), sharing the width via flex:1 rather
+     than a fixed 280px each — 3 × 280 overflows the A4 text column.
      break-inside keeps a signature from being stranded from its name across a page. */
   .sign-row { display: flex; gap: 20px; margin-top: 26px; break-inside: avoid; }
   .sign-wrap { flex: 1; min-width: 0; }
@@ -95,15 +91,9 @@ export async function printWithdrawalReceipt(
   .sign-name { font-weight: bold; margin-top: 3px; font-size: 10pt; overflow-wrap: break-word; }
   .sign-role { font-size: 9pt; }
   .sign-date { font-size: 8.5pt; color: #333; margin-top: 1px; }
-  .footer { position: fixed; bottom: 0; left: 0; right: 0; text-align: center; font-size: 8pt; color: #333; border-top: 1px solid #ccc; padding-top: 6px; background: #fff; }
-</style></head><body>
-  <div class="system-title">KIMOEL TRACKING SYSTEM</div>
-  <div class="company-name">KIMOEL TRADING &amp; CONSTRUCTION INCORPORATED</div>
-  <div class="company-address">PUROK 1, LODLOD, LIPA CITY, BATANGAS</div>
-  <div class="contact-details">Tel: (043) - 741 - 2023 | Email: kimoel_leotagle@yahoo.com</div>
-  <div class="proprietor">LEO TAGLE (Mobile: 0917 - 628 - 3217)</div>
-  <div class="doc-title">STOCK WITHDRAWAL RECEIPT</div>
+`;
 
+  const body = `
   <div class="meta">
     <div><span>WD No.:</span> ${esc(w0.withdrawalNumber || '—')}</div>
     ${w0.prNumber ? `<div><span>For request:</span> ${esc(w0.prNumber)}</div>` : ''}
@@ -140,10 +130,14 @@ export async function printWithdrawalReceipt(
       <div class="sign-role">${b.title}</div>
       ${b.date ? `<div class="sign-date">${esc(fmtDate(b.date))}</div>` : ''}
     </div>`).join('')}
-  </div>
+  </div>`;
 
-  <div class="footer">${esc(w0.withdrawalNumber || '')} | Stock Withdrawal Receipt | KIMOEL TRADING &amp; CONSTRUCTION INCORPORATED</div>
-</body></html>`;
+  const html = renderPrintDocument({
+    title: `Withdrawal Receipt - ${w0.withdrawalNumber || ''}`,
+    docTitle: 'STOCK WITHDRAWAL RECEIPT',
+    css,
+    body,
+  });
 
   // open() resets the document — without it, write() appends onto the "Preparing…" placeholder.
   w.document.open();

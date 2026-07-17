@@ -8,7 +8,13 @@
 // module rather than each carrying a copy to keep in sync.
 //
 // Print-only styling stays 'Times New Roman' — screen UI is Poppins, documents are formal.
+//
+// Header/footer/title/@page/body now come from the shared print chrome (printChrome.ts) so the
+// letterhead (#2), bordered title (#3) and per-page repeat (#4) are a single-source change. This
+// module only owns the CONTENT styles (info boxes, items table, signatures).
 // ============================================================================
+
+import { renderPrintDocument } from './printChrome';
 
 export interface PrintableLineItem {
   no?: number | string;
@@ -158,18 +164,10 @@ function parseLineItems(po: PrintablePO): PrintableLineItem[] {
   }];
 }
 
-// Both documents share one stylesheet — they are the same paper with a different title.
+// Both documents share one stylesheet — they are the same paper with a different title. The
+// letterhead/footer/title/@page/body are NOT redefined here: they belong to PRINT_CHROME_CSS
+// and this string is appended after it.
 const SHARED_CSS = `
-  @page { margin: 0.5in; size: A4; }
-  /* padding-bottom keeps flowing content clear of the fixed page footer */
-  body { font-family: 'Times New Roman', serif; font-size: 11pt; line-height: 1.3; color: black; margin: 0; padding: 15px; padding-bottom: 40px; background: white; }
-  .header-date { text-align: right; font-size: 9pt; margin-bottom: 5px; }
-  .system-title { text-align: center; font-size: 10pt; font-weight: bold; letter-spacing: 1px; margin-bottom: 5px; }
-  .company-name { text-align: center; font-size: 16pt; font-weight: bold; margin-bottom: 3px; }
-  .company-address { text-align: center; font-size: 10pt; margin-bottom: 2px; }
-  .contact-details { text-align: center; font-size: 9pt; margin-bottom: 2px; }
-  .proprietor { text-align: center; font-size: 9pt; font-weight: bold; margin-bottom: 8px; }
-  .document-title { text-align: center; font-size: 16pt; font-weight: bold; border: 2px solid black; padding: 8px; margin-bottom: 15px; background: white; }
   .info-section { display: flex; gap: 10px; margin-bottom: 15px; }
   .info-box { flex: 1; border: 1px solid black; padding: 8px; min-height: 60px; }
   .info-box-title { font-weight: bold; font-size: 9pt; margin-bottom: 5px; text-align: center; }
@@ -209,8 +207,6 @@ const SHARED_CSS = `
   .signature-name { font-size: 7.5pt; font-weight: bold; overflow-wrap: break-word; }
   .signature-date { font-size: 7pt; color: #333; margin-top: 1px; }
   .computer-generated { text-align: center; font-size: 8pt; font-style: italic; margin-top: 10px; }
-  /* Real page footer: pinned to the bottom of EVERY printed page, not just the last. */
-  .footer { position: fixed; bottom: 0; left: 0; right: 0; text-align: center; font-size: 8pt; color: #333; border-top: 1px solid #ccc; padding-top: 6px; background: #fff; }
 `;
 
 // `loadSignatures` is injected rather than imported because each caller holds a DIFFERENT
@@ -295,18 +291,7 @@ export async function printPurchaseOrder(
       <td class="amount-col">${peso(Number(it.amount ?? 0))}</td>
     </tr>`).join('');
 
-  const html = `<!doctype html>
-<html><head><meta charset="utf-8"><title>Purchase Order - ${esc(po.poNumber)}</title>
-<style>${SHARED_CSS}</style></head>
-<body>
-  <div class="header-date">${esc(new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }))} &nbsp;&nbsp;&nbsp;&nbsp; Purchase Order</div>
-  <div class="system-title">KIMOEL TRACKING SYSTEM</div>
-  <div class="company-name">KIMOEL TRADING &amp; CONSTRUCTION INCORPORATED</div>
-  <div class="company-address">PUROK 1, LODLOD, LIPA CITY, BATANGAS</div>
-  <div class="contact-details">Tel: (043) - 741 - 2023 | Email: kimoel_leotagle@yahoo.com</div>
-  <div class="proprietor">LEO TAGLE (Mobile: 0917 - 628 - 3217)</div>
-  <div class="document-title">PURCHASE ORDER</div>
-
+  const body = `
   <div class="info-section">
     <div class="info-box">
       <div class="info-box-title">SUPPLIER NAME AND ADDRESS</div>
@@ -379,10 +364,14 @@ export async function printPurchaseOrder(
         ${s.date ? `<div class="signature-date">${esc(new Date(s.date).toLocaleDateString())}</div>` : ''}
       </div>`).join('')}
     </div>
-  </div>
+  </div>`;
 
-  <div class="footer">PO ${esc(po.poNumber)} | Purchase Order | KIMOEL TRADING &amp; CONSTRUCTION INCORPORATED</div>
-</body></html>`;
+  const html = renderPrintDocument({
+    title: `Purchase Order - ${po.poNumber}`,
+    docTitle: 'PURCHASE ORDER',
+    css: SHARED_CSS,
+    body,
+  });
 
   // open() resets the document — without it, write() appends onto the "Preparing…" placeholder.
   w.document.open();
@@ -440,18 +429,7 @@ export function printSalesOrder(so: PrintableSO): { ok: boolean; error?: string 
       <td class="amount-col">${peso(Number(it.amount ?? 0))}</td>
     </tr>`).join('');
 
-  const html = `<!doctype html>
-<html><head><meta charset="utf-8"><title>Sales Order - ${esc(so.soNumber)}</title>
-<style>${SHARED_CSS}</style></head>
-<body>
-  <div class="header-date">${esc(new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }))} &nbsp;&nbsp;&nbsp;&nbsp; Sales Order</div>
-  <div class="system-title">KIMOEL TRACKING SYSTEM</div>
-  <div class="company-name">KIMOEL TRADING &amp; CONSTRUCTION INCORPORATED</div>
-  <div class="company-address">PUROK 1, LODLOD, LIPA CITY, BATANGAS</div>
-  <div class="contact-details">Tel: (043) - 741 - 2023 | Email: kimoel_leotagle@yahoo.com</div>
-  <div class="proprietor">LEO TAGLE (Mobile: 0917 - 628 - 3217)</div>
-  <div class="document-title">SALES ORDER</div>
-
+  const body = `
   <div class="info-section">
     <div class="info-box">
       <div class="info-box-title">CUSTOMER NAME AND ADDRESS</div>
@@ -532,9 +510,14 @@ export function printSalesOrder(so: PrintableSO): { ok: boolean; error?: string 
     </div>
   </div>
 
-  <div class="computer-generated">Computer Generated - No Signature Required</div>
-  <div class="footer">SO ${esc(so.soNumber)} | Sales Order | KIMOEL TRADING &amp; CONSTRUCTION INCORPORATED</div>
-</body></html>`;
+  <div class="computer-generated">Computer Generated - No Signature Required</div>`;
+
+  const html = renderPrintDocument({
+    title: `Sales Order - ${so.soNumber}`,
+    docTitle: 'SALES ORDER',
+    css: SHARED_CSS,
+    body,
+  });
 
   w.document.write(html);
   w.document.close();

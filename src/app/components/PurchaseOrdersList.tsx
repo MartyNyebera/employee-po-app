@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { FileText, Plus, DollarSign, Calendar, Building2, Truck, Edit, Filter, Printer, Trash2, X, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../lib/confirm';
+import { renderPrintDocument } from '../lib/printChrome';
 
 const formatDate = (dateString: string) => {
   if (!dateString) return 'N/A';
@@ -226,70 +227,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
       }];
     }
 
-    const printContent = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Purchase Order - ${po.poNumber}</title>
-        <style>
-          @page {
-            margin: 0.5in;
-            size: A4;
-          }
-          body {
-            font-family: 'Times New Roman', serif;
-            font-size: 11pt;
-            line-height: 1.3;
-            color: black;
-            margin: 0;
-            padding: 15px;
-            background: white;
-          }
-          
-          /* Header Section */
-          .header-date {
-            text-align: right;
-            font-size: 9pt;
-            margin-bottom: 5px;
-          }
-          .system-title {
-            text-align: center;
-            font-size: 10pt;
-            font-weight: bold;
-            margin-bottom: 5px;
-          }
-          .company-name {
-            text-align: center;
-            font-size: 16pt;
-            font-weight: bold;
-            margin-bottom: 3px;
-          }
-          .company-address {
-            text-align: center;
-            font-size: 10pt;
-            margin-bottom: 2px;
-          }
-          .contact-details {
-            text-align: center;
-            font-size: 9pt;
-            margin-bottom: 2px;
-          }
-          .proprietor {
-            text-align: center;
-            font-size: 9pt;
-            font-weight: bold;
-            margin-bottom: 10px;
-          }
-          .document-title {
-            text-align: center;
-            font-size: 20pt;
-            font-weight: bold;
-            margin: 15px 0;
-            border-top: 2px solid black;
-            border-bottom: 2px solid black;
-            padding: 10px 0;
-          }
-          
+    const css = `
           /* Info Boxes */
           .info-section {
             display: flex;
@@ -428,32 +366,14 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
             font-size: 8pt;
           }
           
-          /* Footer */
-          .footer {
-            text-align: center;
-            font-size: 8pt;
-            margin-top: 20px;
-            border-top: 1px solid black;
-            padding-top: 10px;
-          }
           .computer-generated {
             text-align: center;
             font-size: 8pt;
             font-style: italic;
             margin-top: 10px;
           }
-        </style>
-      </head>
-      <body>
-        <!-- HEADER SECTION -->
-        <div class="header-date">${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}     Sales Order</div>
-        <div class="system-title">Kimoel Tracking System</div>
-        <div class="company-name">KIMOEL TRADING & CONSTRUCTION INCORPORATED</div>
-        <div class="company-address">PUROK 1, LODLOD, LIPA CITY, BATANGAS</div>
-        <div class="contact-details">Tel: (043) - 741 - 2023 | Email: kimoel_leotagle@yahoo.com</div>
-        <div class="proprietor">LEO TAGLE (Mobile: 0917 - 628 - 3217)</div>
-        <div class="document-title">SALES ORDER</div>
-        
+`;
+    const body = `
         <!-- TOP INFO BOXES -->
         <div class="info-section">
           <div class="info-box">
@@ -571,16 +491,14 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
         
         <div class="computer-generated">
           This is a computer generated document, no signature is required
-        </div>
-        
-        <!-- FOOTER -->
-        <div class="footer">
-          Purchase Order ${po.poNumber} | Page 1 of 1 | KIMOEL TRADING & CONSTRUCTION INCORPORATED
-        </div>
-      </body>
-      </html>
-    `;
+        </div>`;
 
+    const printContent = renderPrintDocument({
+      title: `Purchase Order - ${po.poNumber}`,
+      docTitle: 'SALES ORDER',
+      css,
+      body,
+    });
     printWindow.document.write(printContent);
     printWindow.document.close();
     

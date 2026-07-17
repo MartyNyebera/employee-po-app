@@ -1,8 +1,12 @@
 // ============================================================================
 // The delivery receipt — printed from the logistics portal (/logistics).
 // Same house style as the order documents (lib/orderPrint.ts): A4, Times New Roman,
-// escaped interpolation, a footer fixed to every page, and write → close → focus → print.
+// escaped interpolation, write → close → focus → print. The letterhead/footer/title and the
+// per-page repeat come from the shared print chrome (printChrome.ts); this module only owns
+// the content styles (meta rows, boxes, item table, signature).
 // ============================================================================
+
+import { renderPrintDocument } from './printChrome';
 
 export interface PrintableDelivery {
   deliveryNumber: string;
@@ -33,16 +37,7 @@ export function printDeliveryReceipt(d: PrintableDelivery): { ok: boolean; error
   const w = window.open('', '_blank');
   if (!w) return { ok: false, error: 'Please allow popups to print the delivery receipt' };
 
-  const html = `<!doctype html>
-<html><head><meta charset="utf-8"><title>Delivery Receipt - ${esc(d.deliveryNumber)}</title>
-<style>
-  @page { margin: 0.6in; size: A4; }
-  /* padding-bottom keeps flowing content clear of the fixed page footer */
-  body { font-family: 'Times New Roman', serif; font-size: 11pt; color: #000; padding-bottom: 34px; }
-  .system-title { text-align: center; font-size: 10pt; letter-spacing: 1px; }
-  .company-name { text-align: center; font-size: 15pt; font-weight: bold; }
-  .company-address, .contact-details, .proprietor { text-align: center; font-size: 9pt; }
-  .doc-title { text-align: center; font-size: 13pt; font-weight: bold; margin: 14px 0 4px; text-decoration: underline; }
+  const css = `
   .meta { display: flex; flex-wrap: wrap; gap: 6px 32px; margin: 14px 0; font-size: 10pt; }
   .meta div span { font-weight: bold; }
   .box { border: 1px solid #000; padding: 10px; margin-top: 10px; font-size: 10pt; }
@@ -53,15 +48,9 @@ export function printDeliveryReceipt(d: PrintableDelivery): { ok: boolean; error
   .sign-line { border-bottom: 1px solid #000; }
   .sign-name { font-weight: bold; margin-top: 3px; }
   .sign-role { font-size: 9pt; }
-  .footer { position: fixed; bottom: 0; left: 0; right: 0; text-align: center; font-size: 8pt; color: #333; border-top: 1px solid #ccc; padding-top: 6px; background: #fff; }
-</style></head><body>
-  <div class="system-title">KIMOEL TRACKING SYSTEM</div>
-  <div class="company-name">KIMOEL TRADING &amp; CONSTRUCTION INCORPORATED</div>
-  <div class="company-address">PUROK 1, LODLOD, LIPA CITY, BATANGAS</div>
-  <div class="contact-details">Tel: (043) - 741 - 2023 | Email: kimoel_leotagle@yahoo.com</div>
-  <div class="proprietor">LEO TAGLE (Mobile: 0917 - 628 - 3217)</div>
-  <div class="doc-title">DELIVERY RECEIPT</div>
+`;
 
+  const body = `
   <div class="meta">
     <div><span>DR No.:</span> ${esc(d.deliveryNumber)}</div>
     <div><span>Sales Order:</span> ${esc(d.soNumber || '—')}</div>
@@ -90,10 +79,14 @@ export function printDeliveryReceipt(d: PrintableDelivery): { ok: boolean; error
     <div class="sign-line"></div>
     <div class="sign-name">${esc(d.receivedBy || '')}</div>
     <div class="sign-role">Received By (signature over printed name)</div>
-  </div>
+  </div>`;
 
-  <div class="footer">${esc(d.deliveryNumber)} | Delivery Receipt | KIMOEL TRADING &amp; CONSTRUCTION INCORPORATED</div>
-</body></html>`;
+  const html = renderPrintDocument({
+    title: `Delivery Receipt - ${d.deliveryNumber}`,
+    docTitle: 'DELIVERY RECEIPT',
+    css,
+    body,
+  });
 
   w.document.write(html);
   w.document.close();
@@ -142,15 +135,7 @@ export function printReceivingReport(r: PrintableReceipt): { ok: boolean; error?
       <td style="text-align:center">${it.newQuantity === undefined ? '' : esc(it.newQuantity)}</td>
     </tr>`).join('');
 
-  const html = `<!doctype html>
-<html><head><meta charset="utf-8"><title>Delivery Receipt - ${esc(r.poNumber)}</title>
-<style>
-  @page { margin: 0.6in; size: A4; }
-  body { font-family: 'Times New Roman', serif; font-size: 11pt; color: #000; padding-bottom: 34px; }
-  .system-title { text-align: center; font-size: 10pt; letter-spacing: 1px; }
-  .company-name { text-align: center; font-size: 15pt; font-weight: bold; }
-  .company-address, .contact-details, .proprietor { text-align: center; font-size: 9pt; }
-  .doc-title { text-align: center; font-size: 13pt; font-weight: bold; margin: 14px 0 4px; text-decoration: underline; }
+  const css = `
   .meta { display: flex; flex-wrap: wrap; gap: 6px 32px; margin: 14px 0; font-size: 10pt; }
   .meta div span { font-weight: bold; }
   .box { border: 1px solid #000; padding: 10px; margin-top: 10px; font-size: 10pt; }
@@ -164,15 +149,9 @@ export function printReceivingReport(r: PrintableReceipt): { ok: boolean; error?
   .sign-line { border-bottom: 1px solid #000; }
   .sign-name { font-weight: bold; margin-top: 3px; }
   .sign-role { font-size: 9pt; }
-  .footer { position: fixed; bottom: 0; left: 0; right: 0; text-align: center; font-size: 8pt; color: #333; border-top: 1px solid #ccc; padding-top: 6px; background: #fff; }
-</style></head><body>
-  <div class="system-title">KIMOEL TRACKING SYSTEM</div>
-  <div class="company-name">KIMOEL TRADING &amp; CONSTRUCTION INCORPORATED</div>
-  <div class="company-address">PUROK 1, LODLOD, LIPA CITY, BATANGAS</div>
-  <div class="contact-details">Tel: (043) - 741 - 2023 | Email: kimoel_leotagle@yahoo.com</div>
-  <div class="proprietor">LEO TAGLE (Mobile: 0917 - 628 - 3217)</div>
-  <div class="doc-title">DELIVERY RECEIPT</div>
+`;
 
+  const body = `
   <div class="meta">
     <div><span>PO No.:</span> ${esc(r.poNumber)}</div>
     ${r.prNumber ? `<div><span>For request:</span> ${esc(r.prNumber)}</div>` : ''}
@@ -209,10 +188,14 @@ export function printReceivingReport(r: PrintableReceipt): { ok: boolean; error?
     <div class="sign-line"></div>
     <div class="sign-name">${esc(r.receivedBy || '')}</div>
     <div class="sign-role">Received By (signature over printed name)</div>
-  </div>
+  </div>`;
 
-  <div class="footer">${esc(r.poNumber)} | Delivery Receipt | KIMOEL TRADING &amp; CONSTRUCTION INCORPORATED</div>
-</body></html>`;
+  const html = renderPrintDocument({
+    title: `Delivery Receipt - ${r.poNumber}`,
+    docTitle: 'DELIVERY RECEIPT',
+    css,
+    body,
+  });
 
   w.document.write(html);
   w.document.close();

@@ -6,6 +6,7 @@ import { Input } from './ui/input';
 import { FileText, Plus, ShoppingCart, Package, Edit, Trash2, Filter, Printer, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../lib/confirm';
+import { renderPrintDocument } from '../lib/printChrome';
 import { fetchApi, updatePurchaseOrder, deletePurchaseOrder } from '../api/client';
 import { CreatePurchaseOrderModal } from './CreatePurchaseOrderModal';
 
@@ -209,70 +210,7 @@ const formatCurrency = (amount: number) => {
       }];
     }
 
-    const printContent = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Purchase Order - ${po.poNumber}</title>
-        <style>
-          @page {
-            margin: 0.5in;
-            size: A4;
-          }
-          body {
-            font-family: 'Times New Roman', serif;
-            font-size: 11pt;
-            line-height: 1.3;
-            color: black;
-            margin: 0;
-            padding: 15px;
-            background: white;
-          }
-          
-          /* Header Section */
-          .header-date {
-            text-align: right;
-            font-size: 9pt;
-            margin-bottom: 5px;
-          }
-          .system-title {
-            text-align: center;
-            font-size: 10pt;
-            font-weight: bold;
-            margin-bottom: 5px;
-          }
-          .company-name {
-            text-align: center;
-            font-size: 14pt;
-            font-weight: bold;
-            margin-bottom: 3px;
-          }
-          .company-address {
-            text-align: center;
-            font-size: 9pt;
-            margin-bottom: 2px;
-          }
-          .contact-details {
-            text-align: center;
-            font-size: 8pt;
-            margin-bottom: 2px;
-          }
-          .proprietor {
-            text-align: center;
-            font-size: 8pt;
-            font-weight: bold;
-            margin-bottom: 8px;
-          }
-          .document-title {
-            text-align: center;
-            font-size: 16pt;
-            font-weight: bold;
-            border: 2px solid black;
-            padding: 8px;
-            margin-bottom: 15px;
-            background: white;
-          }
-          
+    const css = `
           /* Info Boxes */
           .info-section {
             display: flex;
@@ -398,32 +336,14 @@ const formatCurrency = (amount: number) => {
             font-size: 8pt;
           }
           
-          /* Footer */
-          .footer {
-            text-align: center;
-            font-size: 8pt;
-            margin-top: 20px;
-            border-top: 1px solid black;
-            padding-top: 10px;
-          }
           .computer-generated {
             text-align: center;
             font-size: 8pt;
             font-style: italic;
             margin-top: 10px;
           }
-        </style>
-      </head>
-      <body>
-        <!-- HEADER SECTION -->
-        <div class="header-date">${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}     Purchase Order</div>
-        <div class="system-title">Kimoel Tracking System</div>
-        <div class="company-name">KIMOEL TRADING & CONSTRUCTION INCORPORATED</div>
-        <div class="company-address">PUROK 1, LODLOD, LIPA CITY, BATANGAS</div>
-        <div class="contact-details">Tel: (043) - 741 - 2023 | Email: kimoel_leotagle@yahoo.com</div>
-        <div class="proprietor">LEO TAGLE (Mobile: 0917 - 628 - 3217)</div>
-        <div class="document-title">PURCHASE ORDER</div>
-        
+`;
+    const body = `
         <!-- TOP INFO BOXES -->
         <div class="info-section">
           <div class="info-box">
@@ -534,20 +454,16 @@ const formatCurrency = (amount: number) => {
           </div>
         </div>
         
-        <!-- FOOTER -->
-        <div class="footer">
-          <strong>KIMOEL TRADING & CONSTRUCTION INCORPORATED</strong><br>
-          PUROK 1, LODLOD, LIPA CITY, BATANGAS<br>
-          Tel: (043) - 741 - 2023 | Email: kimoel_leotagle@yahoo.com
-        </div>
-        
         <div class="computer-generated">
           Computer Generated - No Signature Required
-        </div>
-      </body>
-      </html>
-    `;
+        </div>`;
 
+    const printContent = renderPrintDocument({
+      title: `Purchase Order - ${po.poNumber}`,
+      docTitle: 'PURCHASE ORDER',
+      css,
+      body,
+    });
     printWindow.document.write(printContent);
     printWindow.document.close();
     

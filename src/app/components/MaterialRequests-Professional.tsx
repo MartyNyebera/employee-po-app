@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Package, Clock, CheckCircle, XCircle, User, Calendar, Tag, Filter, Search, RefreshCw, X, Trash2, Printer } from 'lucide-react';
 import { fetchApi, getStoredAuth } from '../api/client';
 import { confirmDialog } from '../lib/confirm';
+import { renderPrintDocument } from '../lib/printChrome';
 
 interface MaterialRequest {
   id: number;
@@ -60,79 +61,7 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
       return;
     }
 
-    const printContent = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>PURCHASE REQUEST - ${request.request_number}</title>
-        <style>
-          * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-          }
-          
-          body {
-            font-family: 'Times New Roman', serif;
-            font-size: 12px;
-            line-height: 1.4;
-            color: #000;
-            background: white;
-          }
-          
-          .page {
-            width: 8.5in;
-            height: 11in;
-            padding: 0.3in;
-            margin: 0 auto;
-            overflow: hidden;
-          }
-          
-          .header {
-            text-align: center;
-            margin-bottom: 20px;
-            border-bottom: 2px solid #000;
-            padding-bottom: 10px;
-          }
-          
-          .company-name {
-            font-size: 24px;
-            font-weight: bold;
-            text-transform: uppercase;
-            margin-bottom: 4px;
-            letter-spacing: 1px;
-          }
-          
-          .company-address {
-            font-size: 10px;
-            margin-bottom: 2px;
-            font-weight: 500;
-          }
-          
-          .company-contact {
-            font-size: 10px;
-            margin-bottom: 2px;
-            font-weight: 500;
-          }
-          
-          .proprietor {
-            font-size: 10px;
-            font-style: italic;
-            font-weight: 500;
-          }
-          
-          .document-title {
-            font-size: 18px;
-            font-weight: bold;
-            text-align: center;
-            margin: 20px 0;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            border: 2px solid #000;
-            padding: 8px;
-            background-color: #f5f5f5;
-          }
-          
+    const css = `
           .info-section {
             margin-bottom: 15px;
           }
@@ -346,37 +275,13 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
           }
           
           @media print {
-            .page {
-              margin: 0;
-              padding: 0.2in;
-              height: 11in;
-              overflow: hidden;
-            }
-            
             body {
               -webkit-print-color-adjust: exact;
               color-adjust: exact;
-              margin: 0;
-              padding: 0;
-            }
-            
-            * {
-              box-sizing: border-box;
             }
           }
-        </style>
-      </head>
-      <body>
-        <div class="page">
-          <div class="header">
-            <div class="company-name">KIMOEL TRADING & CONSTRUCTION INCORPORATED</div>
-            <div class="company-address">PUROK 1, LODLOD, LIPA CITY, BATANGAS</div>
-            <div class="company-contact">Tel: (043) - 741 - 2023 | Email: kimoel_leotagle@yahoo.com</div>
-            <div class="proprietor">LEO TAGLE (Mobile: 0917 - 628 - 3217)</div>
-          </div>
-          
-          <div class="document-title">Purchase Request Form</div>
-          
+`;
+    const body = `
           <div class="info-section">
             <div class="info-row">
               <div class="info-box">
@@ -447,12 +352,14 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                 <div style="font-size: 11px; color: #666; margin-top: 5px;">MM/DD/YYYY</div>
               </div>
             </div>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
+          </div>`;
 
+    const printContent = renderPrintDocument({
+      title: `PURCHASE REQUEST - ${request.request_number}`,
+      docTitle: 'PURCHASE REQUEST FORM',
+      css,
+      body,
+    });
     printWindow.document.write(printContent);
     printWindow.document.close();
     printWindow.focus();

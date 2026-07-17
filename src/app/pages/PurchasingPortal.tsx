@@ -11,6 +11,7 @@ import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { confirmDialog } from '../lib/confirm';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { printPurchaseOrder, esc } from '../lib/orderPrint';
+import { renderPrintDocument } from '../lib/printChrome';
 
 // ============================================================================
 // Purchasing Management portal (/purchasing). Fully independent of the admin
@@ -352,15 +353,7 @@ async function printCheckReport(pr: PurchaseRequest) {
   // under an unsigned block reads as missing data rather than not-yet.
   const signDate = (d?: string | null) =>
     d ? `<div class="sign-date">${esc(new Date(d).toLocaleDateString())}</div>` : '';
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>PR Review Report ${pr.prNumber}</title>
-  <style>
-    @page { margin: 0.6in; size: A4; }
-    /* padding-bottom keeps flowing content clear of the fixed page footer */
-    body { font-family: 'Times New Roman', serif; font-size: 11pt; color:#000; padding-bottom: 34px; }
-    .system-title { text-align:center; font-size:10pt; letter-spacing:1px; }
-    .company-name { text-align:center; font-size:15pt; font-weight:bold; }
-    .company-address, .contact-details, .proprietor { text-align:center; font-size:9pt; }
-    .doc-title { text-align:center; font-size:13pt; font-weight:bold; margin:14px 0 4px; text-decoration:underline; }
+  const css = `
     .meta { display:flex; flex-wrap:wrap; gap:6px 32px; margin:14px 0; font-size:10pt; }
     .meta div span { font-weight:bold; }
     table.items { width:100%; border-collapse:collapse; margin-top:6px; font-size:10pt; }
@@ -377,15 +370,8 @@ async function printCheckReport(pr: PurchaseRequest) {
     .sign-name { font-weight:bold; margin-top:3px; font-size:10pt; }
     .sign-role { font-size:9pt; }
     .sign-date { font-size:8.5pt; color:#333; margin-top:1px; }
-    /* Real page footer: pinned to the bottom of every printed page. */
-    .footer { position:fixed; bottom:0; left:0; right:0; text-align:center; font-size:8pt; color:#333; border-top:1px solid #ccc; padding-top:6px; background:#fff; }
-  </style></head><body>
-    <div class="system-title">KIMOEL TRACKING SYSTEM</div>
-    <div class="company-name">KIMOEL TRADING &amp; CONSTRUCTION INCORPORATED</div>
-    <div class="company-address">PUROK 1, LODLOD, LIPA CITY, BATANGAS</div>
-    <div class="contact-details">Tel: (043) - 741 - 2023 | Email: kimoel_leotagle@yahoo.com</div>
-    <div class="proprietor">LEO TAGLE (Mobile: 0917 - 628 - 3217)</div>
-    <div class="doc-title">PURCHASE REQUEST REVIEW REPORT</div>
+`;
+  const body = `
     <div class="meta">
       <div><span>PR No.:</span> ${esc(pr.prNumber)}</div>
       <div><span>For (Project):</span> ${esc(pr.projectName || 'Personal use')}</div>
@@ -424,9 +410,13 @@ async function printCheckReport(pr: PurchaseRequest) {
         <div class="sign-role">Approved By</div>
         ${signDate(pr.verifiedAt)}
       </div>
-    </div>
-    <div class="footer">Purchase Request ${esc(pr.prNumber)} | Review Report | KIMOEL TRADING &amp; CONSTRUCTION INCORPORATED</div>
-  </body></html>`;
+    </div>`;
+  const html = renderPrintDocument({
+    title: `PR Review Report ${pr.prNumber}`,
+    docTitle: 'PURCHASE REQUEST REVIEW REPORT',
+    css,
+    body,
+  });
   // open() resets the document — without it, write() would append the report onto the
   // "Preparing…" placeholder instead of replacing it.
   w.document.open();
