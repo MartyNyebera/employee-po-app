@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Package, Clock, CheckCircle, XCircle, User, Calendar, Tag, Filter, Search, RefreshCw, X, Trash2, Printer } from 'lucide-react';
 import { fetchApi, getStoredAuth } from '../api/client';
+import { confirmDialog } from '../lib/confirm';
 
 interface MaterialRequest {
   id: number;
@@ -35,7 +36,7 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
 
   // Delete a material request
   const handleDelete = async (id: number) => {
-    if (!confirm('Are you sure you want to delete this material request?')) {
+    if (!(await confirmDialog({ title: 'Delete this material request?', message: 'This action cannot be undone.', confirmLabel: 'Delete', tone: 'danger' }))) {
       return;
     }
 
@@ -531,9 +532,9 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
         icon: <XCircle style={{ width: '16px', height: '16px' }} />
       },
       'completed': { 
-        color: '#2563eb', 
-        bgColor: '#dbeafe', 
-        borderColor: '#93c5fd',
+        color: '#d1b01b', 
+        bgColor: '#ececec', 
+        borderColor: '#e3ca63',
         icon: <Package style={{ width: '16px', height: '16px' }} />
       },
       'pending': { 
@@ -554,14 +555,14 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
         borderColor: '#fecaca'
       },
       'normal': { 
-        color: '#2563eb', 
-        bgColor: '#dbeafe', 
-        borderColor: '#93c5fd'
+        color: '#d1b01b', 
+        bgColor: '#ececec', 
+        borderColor: '#e3ca63'
       },
       'low': { 
-        color: '#6b7280', 
-        bgColor: '#f3f4f6', 
-        borderColor: '#d1d5db'
+        color: '#5a5a5a', 
+        bgColor: '#e6e6e6', 
+        borderColor: '#c9c9c9'
       },
     };
     return configs[urgency] || configs['low'];
@@ -581,7 +582,7 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
         color: config.color,
         backgroundColor: config.bgColor,
         border: `1px solid ${config.borderColor}`,
-        fontFamily: 'Inter, sans-serif'
+        fontFamily: 'Poppins, sans-serif'
       }}>
         {config.icon}
         {status.charAt(0).toUpperCase() + status.slice(1)}
@@ -603,7 +604,7 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
         color: config.color,
         backgroundColor: config.bgColor,
         border: `1px solid ${config.borderColor}`,
-        fontFamily: 'Inter, sans-serif'
+        fontFamily: 'Poppins, sans-serif'
       }}>
         {urgency.charAt(0).toUpperCase() + urgency.slice(1)}
       </div>
@@ -631,15 +632,15 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
           width: '40px',
           height: '40px',
           borderRadius: '50%',
-          border: '4px solid #e5e7eb',
+          border: '4px solid #d6d6d6',
           borderTopColor: '#10b981',
           animation: 'spin 1s linear infinite'
         }} />
         <div style={{
           fontSize: '16px',
           fontWeight: '500',
-          color: '#6b7280',
-          fontFamily: 'Inter, sans-serif'
+          color: '#5a5a5a',
+          fontFamily: 'Poppins, sans-serif'
         }}>
           Loading material requests...
         </div>
@@ -650,7 +651,7 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
   return (
     <div style={{
       padding: '32px',
-      fontFamily: 'Inter, sans-serif',
+      fontFamily: 'Poppins, sans-serif',
       backgroundColor: '#ffffff',
       minHeight: '100vh'
     }}>
@@ -682,17 +683,17 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
             <h1 style={{
               fontSize: '28px',
               fontWeight: '700',
-              color: '#111827',
+              color: '#000000',
               margin: '0 0 8px 0',
-              fontFamily: 'Plus Jakarta Sans, Inter, sans-serif'
+              fontFamily: 'Poppins, sans-serif'
             }}>
               Material Requests Management
             </h1>
             <p style={{
               fontSize: '14px',
-              color: '#6b7280',
+              color: '#5a5a5a',
               margin: '0',
-              fontFamily: 'Inter, sans-serif'
+              fontFamily: 'Poppins, sans-serif'
             }}>
               Review and manage employee material requests
             </p>
@@ -702,13 +703,13 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
           onClick={fetchRequests}
           style={{
             backgroundColor: 'white',
-            color: '#374151',
+            color: '#262626',
             padding: '12px 20px',
             borderRadius: '8px',
-            border: '1px solid #e5e7eb',
+            border: '1px solid #d6d6d6',
             fontSize: '14px',
             fontWeight: '500',
-            fontFamily: 'Inter, sans-serif',
+            fontFamily: 'Poppins, sans-serif',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
@@ -716,15 +717,15 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
             transition: 'all 0.2s ease'
           }}
           onMouseOver={(e) => {
-            e.currentTarget.style.backgroundColor = '#f9fafb';
-            e.currentTarget.style.borderColor = '#d1d5db';
+            e.currentTarget.style.backgroundColor = '#ececec';
+            e.currentTarget.style.borderColor = '#c9c9c9';
           }}
           onMouseOut={(e) => {
             e.currentTarget.style.backgroundColor = 'white';
-            e.currentTarget.style.borderColor = '#e5e7eb';
+            e.currentTarget.style.borderColor = '#d6d6d6';
           }}
         >
-          <RefreshCw style={{ width: '16px', height: '16px', color: '#6b7280' }} />
+          <RefreshCw style={{ width: '16px', height: '16px', color: '#5a5a5a' }} />
           Refresh
         </button>
       </div>
@@ -741,8 +742,8 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
             key={status}
             onClick={() => setFilter(status)}
             style={{
-              background: filter === status ? '#dbeafe' : '#ffffff',
-              border: `1px solid ${filter === status ? '#93c5fd' : '#e5e7eb'}`,
+              background: filter === status ? '#ececec' : '#ffffff',
+              border: `1px solid ${filter === status ? '#e3ca63' : '#d6d6d6'}`,
               borderRadius: '16px',
               padding: '24px',
               boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -761,18 +762,18 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
             <div style={{
               fontSize: '32px',
               fontWeight: '700',
-              color: filter === status ? '#1e40af' : '#111827',
+              color: filter === status ? '#7a6a0c' : '#000000',
               margin: '0 0 8px 0',
-              fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+              fontFamily: 'Poppins, sans-serif'
             }}>
               {count}
             </div>
             <div style={{
               fontSize: '14px',
               fontWeight: '500',
-              color: filter === status ? '#1e40af' : '#6b7280',
+              color: filter === status ? '#7a6a0c' : '#5a5a5a',
               margin: '0',
-              fontFamily: 'Inter, sans-serif',
+              fontFamily: 'Poppins, sans-serif',
               textTransform: 'capitalize'
             }}>
               {status}
@@ -784,7 +785,7 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
       {/* FILTERS */}
       <div style={{
         background: '#ffffff',
-        border: '1px solid #e5e7eb',
+        border: '1px solid #d6d6d6',
         borderRadius: '16px',
         padding: '24px',
         boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -804,10 +805,10 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
             minWidth: '250px',
             padding: '12px 16px',
             borderRadius: '8px',
-            border: '1px solid #e5e7eb',
-            backgroundColor: '#f9fafb'
+            border: '1px solid #d6d6d6',
+            backgroundColor: '#ececec'
           }}>
-            <Search style={{ width: '16px', height: '16px', color: '#6b7280' }} />
+            <Search style={{ width: '16px', height: '16px', color: '#5a5a5a' }} />
             <input
               type="text"
               placeholder="Search requests..."
@@ -818,9 +819,9 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                 border: 'none',
                 outline: 'none',
                 fontSize: '14px',
-                fontFamily: 'Inter, sans-serif',
+                fontFamily: 'Poppins, sans-serif',
                 backgroundColor: 'transparent',
-                color: '#111827'
+                color: '#000000'
               }}
             />
           </div>
@@ -835,13 +836,13 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                 style={{
                   padding: '12px 20px',
                   borderRadius: '8px',
-                  border: '1px solid #e5e7eb',
+                  border: '1px solid #d6d6d6',
                   fontSize: '14px',
-                  fontFamily: 'Inter, sans-serif',
+                  fontFamily: 'Poppins, sans-serif',
                   cursor: 'pointer',
                   transition: 'all 0.2s ease',
-                  backgroundColor: filter === urgency ? '#dbeafe' : 'white',
-                  color: filter === urgency ? '#1e40af' : '#374151',
+                  backgroundColor: filter === urgency ? '#ececec' : 'white',
+                  color: filter === urgency ? '#7a6a0c' : '#262626',
                   fontWeight: '500'
                 }}
               >
@@ -856,7 +857,7 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
       {filteredRequests.length === 0 ? (
         <div style={{
           background: '#ffffff',
-          border: '1px solid #e5e7eb',
+          border: '1px solid #d6d6d6',
           borderRadius: '16px',
           padding: '48px',
           textAlign: 'center',
@@ -865,24 +866,24 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
           <Package style={{ 
             width: '64px', 
             height: '64px', 
-            color: '#d1d5db',
+            color: '#c9c9c9',
             marginBottom: '16px',
             margin: '0 auto 16px'
           }} />
           <h3 style={{
             fontSize: '20px',
             fontWeight: '600',
-            color: '#374151',
+            color: '#262626',
             margin: '0 0 8px 0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             No requests found
           </h3>
           <p style={{
             fontSize: '14px',
-            color: '#6b7280',
+            color: '#5a5a5a',
             margin: '0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             Try adjusting your search or filters
           </p>
@@ -897,7 +898,7 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
               key={request.id}
               style={{
                 background: '#ffffff',
-                border: '1px solid #e5e7eb',
+                border: '1px solid #d6d6d6',
                 borderRadius: '16px',
                 padding: '24px',
                 boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -942,9 +943,9 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                       <h3 style={{
                         fontSize: '18px',
                         fontWeight: '600',
-                        color: '#111827',
+                        color: '#000000',
                         margin: '0 0 4px 0',
-                        fontFamily: 'Inter, sans-serif'
+                        fontFamily: 'Poppins, sans-serif'
                       }}>
                         {request.item_name}
                       </h3>
@@ -958,18 +959,18 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                       </div>
                       <div style={{
                         fontSize: '14px',
-                        color: '#6b7280',
+                        color: '#5a5a5a',
                         marginBottom: '8px',
-                        fontFamily: 'Inter, sans-serif'
+                        fontFamily: 'Poppins, sans-serif'
                       }}>
                         {request.quantity_requested} {request.unit}
                         {request.item_code && ` • ${request.item_code}`}
                       </div>
                       <p style={{
                         fontSize: '14px',
-                        color: '#6b7280',
+                        color: '#5a5a5a',
                         marginBottom: '12px',
-                        fontFamily: 'Inter, sans-serif'
+                        fontFamily: 'Poppins, sans-serif'
                       }}>
                         {request.purpose}
                       </p>
@@ -978,7 +979,7 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                         alignItems: 'center',
                         gap: '4px',
                         fontSize: '12px',
-                        color: '#6b7280',
+                        color: '#5a5a5a',
                         marginBottom: '12px'
                       }}>
                         <div style={{
@@ -1011,13 +1012,13 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                           marginTop: '12px',
                           padding: '12px',
                           borderRadius: '8px',
-                          backgroundColor: '#f9fafb',
-                          border: '1px solid #e5e7eb'
+                          backgroundColor: '#ececec',
+                          border: '1px solid #d6d6d6'
                         }}>
                           <p style={{
                             fontSize: '14px',
-                            color: '#374151',
-                            fontFamily: 'Inter, sans-serif'
+                            color: '#262626',
+                            fontFamily: 'Poppins, sans-serif'
                           }}>
                             <strong>Admin Notes:</strong> {request.admin_notes}
                           </p>
@@ -1038,12 +1039,12 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                       style={{
                         padding: '8px 16px',
                         borderRadius: '8px',
-                        border: '1px solid #e5e7eb',
+                        border: '1px solid #d6d6d6',
                         backgroundColor: 'white',
-                        color: '#374151',
+                        color: '#262626',
                         fontSize: '12px',
                         fontWeight: '500',
-                        fontFamily: 'Inter, sans-serif',
+                        fontFamily: 'Poppins, sans-serif',
                         cursor: 'pointer',
                         transition: 'all 0.2s ease'
                       }}
@@ -1057,10 +1058,10 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                         borderRadius: '8px',
                         border: 'none',
                         backgroundColor: 'transparent',
-                        color: '#374151',
+                        color: '#262626',
                         fontSize: '12px',
                         fontWeight: '500',
-                        fontFamily: 'Inter, sans-serif',
+                        fontFamily: 'Poppins, sans-serif',
                         cursor: 'pointer',
                         transition: 'all 0.2s ease',
                         display: 'flex',
@@ -1079,10 +1080,10 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                         borderRadius: '8px',
                         border: 'none',
                         backgroundColor: 'transparent',
-                        color: '#374151',
+                        color: '#262626',
                         fontSize: '12px',
                         fontWeight: '500',
-                        fontFamily: 'Inter, sans-serif',
+                        fontFamily: 'Poppins, sans-serif',
                         cursor: processingId === request.id ? 'not-allowed' : 'pointer',
                         opacity: processingId === request.id ? 0.5 : 1,
                         transition: 'all 0.2s ease',
@@ -1132,14 +1133,14 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
               alignItems: 'center',
               justifyContent: 'space-between',
               padding: '24px',
-              borderBottom: '1px solid #e5e7eb'
+              borderBottom: '1px solid #d6d6d6'
             }}>
               <h2 style={{
                 fontSize: '20px',
                 fontWeight: '600',
-                color: '#111827',
+                color: '#000000',
                 margin: '0',
-                fontFamily: 'Inter, sans-serif'
+                fontFamily: 'Poppins, sans-serif'
               }}>
                 Request Details
               </h2>
@@ -1149,12 +1150,12 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                   padding: '8px',
                   borderRadius: '6px',
                   border: 'none',
-                  backgroundColor: '#f3f4f6',
+                  backgroundColor: '#e6e6e6',
                   cursor: 'pointer',
                   transition: 'all 0.2s ease'
                 }}
               >
-                <X style={{ width: '20px', height: '20px', color: '#6b7280' }} />
+                <X style={{ width: '20px', height: '20px', color: '#5a5a5a' }} />
               </button>
             </div>
             
@@ -1169,16 +1170,16 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                   display: 'block',
                   fontSize: '12px',
                   fontWeight: '600',
-                  color: '#374151',
+                  color: '#262626',
                   marginBottom: '6px',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Request Number
                 </label>
                 <p style={{
                   fontSize: '14px',
-                  color: '#111827',
-                  fontFamily: 'Inter, sans-serif'
+                  color: '#000000',
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   {selectedRequest.request_number}
                 </p>
@@ -1188,9 +1189,9 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                   display: 'block',
                   fontSize: '12px',
                   fontWeight: '600',
-                  color: '#374151',
+                  color: '#262626',
                   marginBottom: '6px',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Status
                 </label>
@@ -1203,16 +1204,16 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                   display: 'block',
                   fontSize: '12px',
                   fontWeight: '600',
-                  color: '#374151',
+                  color: '#262626',
                   marginBottom: '6px',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Employee
                 </label>
                 <p style={{
                   fontSize: '14px',
-                  color: '#111827',
-                  fontFamily: 'Inter, sans-serif'
+                  color: '#000000',
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   {selectedRequest.employee_name}
                 </p>
@@ -1222,16 +1223,16 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                   display: 'block',
                   fontSize: '12px',
                   fontWeight: '600',
-                  color: '#374151',
+                  color: '#262626',
                   marginBottom: '6px',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Date Requested
                 </label>
                 <p style={{
                   fontSize: '14px',
-                  color: '#111827',
-                  fontFamily: 'Inter, sans-serif'
+                  color: '#000000',
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   {new Date(selectedRequest.created_at).toLocaleDateString()}
                 </p>
@@ -1241,16 +1242,16 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                   display: 'block',
                   fontSize: '12px',
                   fontWeight: '600',
-                  color: '#374151',
+                  color: '#262626',
                   marginBottom: '6px',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Item
                 </label>
                 <p style={{
                   fontSize: '14px',
-                  color: '#111827',
-                  fontFamily: 'Inter, sans-serif'
+                  color: '#000000',
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   {selectedRequest.item_name}
                 </p>
@@ -1260,16 +1261,16 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                   display: 'block',
                   fontSize: '12px',
                   fontWeight: '600',
-                  color: '#374151',
+                  color: '#262626',
                   marginBottom: '6px',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Quantity
                 </label>
                 <p style={{
                   fontSize: '14px',
-                  color: '#111827',
-                  fontFamily: 'Inter, sans-serif'
+                  color: '#000000',
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   {selectedRequest.quantity_requested} {selectedRequest.unit}
                 </p>
@@ -1279,9 +1280,9 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                   display: 'block',
                   fontSize: '12px',
                   fontWeight: '600',
-                  color: '#374151',
+                  color: '#262626',
                   marginBottom: '6px',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Urgency
                 </label>
@@ -1294,16 +1295,16 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                   display: 'block',
                   fontSize: '12px',
                   fontWeight: '600',
-                  color: '#374151',
+                  color: '#262626',
                   marginBottom: '6px',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Item Code
                 </label>
                 <p style={{
                   fontSize: '14px',
-                  color: '#111827',
-                  fontFamily: 'Inter, sans-serif'
+                  color: '#000000',
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   {selectedRequest.item_code || 'N/A'}
                 </p>
@@ -1318,32 +1319,32 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                   display: 'block',
                   fontSize: '12px',
                   fontWeight: '600',
-                  color: '#374151',
+                  color: '#262626',
                   marginBottom: '6px',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Purpose
                 </label>
                 <p style={{
                   fontSize: '14px',
-                  color: '#111827',
-                  fontFamily: 'Inter, sans-serif'
+                  color: '#000000',
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   {selectedRequest.purpose}
                 </p>
               </div>
               {selectedRequest.admin_notes && (
                 <div style={{
-                  backgroundColor: '#f9fafb',
-                  border: '1px solid #e5e7eb',
+                  backgroundColor: '#ececec',
+                  border: '1px solid #d6d6d6',
                   borderRadius: '8px',
                   padding: '12px',
                   marginTop: '16px'
                 }}>
                   <p style={{
                     fontSize: '14px',
-                    color: '#374151',
-                    fontFamily: 'Inter, sans-serif'
+                    color: '#262626',
+                    fontFamily: 'Poppins, sans-serif'
                   }}>
                     <strong>Admin Notes:</strong> {selectedRequest.admin_notes}
                   </p>
@@ -1362,12 +1363,12 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                   flex: 1,
                   padding: '12px 20px',
                   borderRadius: '8px',
-                  border: '1px solid #e5e7eb',
+                  border: '1px solid #d6d6d6',
                   backgroundColor: 'white',
-                  color: '#374151',
+                  color: '#262626',
                   fontSize: '14px',
                   fontWeight: '500',
-                  fontFamily: 'Inter, sans-serif',
+                  fontFamily: 'Poppins, sans-serif',
                   cursor: 'pointer',
                   transition: 'all 0.2s ease'
                 }}
@@ -1388,7 +1389,7 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                       color: 'white',
                       fontSize: '14px',
                       fontWeight: '500',
-                      fontFamily: 'Inter, sans-serif',
+                      fontFamily: 'Poppins, sans-serif',
                       cursor: processingId === selectedRequest.id ? 'not-allowed' : 'pointer',
                       opacity: processingId === selectedRequest.id ? 0.5 : 1,
                       transition: 'all 0.2s ease'
@@ -1408,7 +1409,7 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                       color: 'white',
                       fontSize: '14px',
                       fontWeight: '500',
-                      fontFamily: 'Inter, sans-serif',
+                      fontFamily: 'Poppins, sans-serif',
                       cursor: processingId === selectedRequest.id ? 'not-allowed' : 'pointer',
                       opacity: processingId === selectedRequest.id ? 0.5 : 1,
                       transition: 'all 0.2s ease'

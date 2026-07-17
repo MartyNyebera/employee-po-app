@@ -562,7 +562,7 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
             <Button type="button" variant="outline" className="flex-1" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white" disabled={loading}>
+            <Button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-black" disabled={loading}>
               {loading ? 'Creating...' : 'Create Purchase Order'}
             </Button>
           </div>

@@ -210,7 +210,7 @@ export function EditInventoryItemModal({ item, onClose, onUpdated }: EditInvento
             <Button type="button" variant="outline" className="flex-1" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white" disabled={loading}>
+            <Button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-black" disabled={loading}>
               {loading ? 'Updating...' : 'Update Item'}
             </Button>
           </div>

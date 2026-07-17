@@ -7,32 +7,33 @@
    ============================================================================ */
 
 /* ===== GOOGLE FONTS IMPORT ===== */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
 
 /* ===== CSS VARIABLES / DESIGN TOKENS ===== */
 :root {
-  /* Colors — single brand accent: blue #2563eb (matches Tailwind `primary` + crmKit).
-     (--color-success below stays green; green is only a semantic status colour now.) */
-  --color-primary: #2563eb;
-  --color-primary-light: #dbeafe;
-  --color-primary-dark: #1d4ed8;
-  --color-secondary: #2563eb;
-  --color-neutral-50: #f9fafb;
-  --color-neutral-100: #f3f4f6;
-  --color-neutral-200: #e5e7eb;
-  --color-neutral-300: #d1d5db;
-  --color-neutral-400: #9ca3af;
-  --color-neutral-500: #6b7280;
-  --color-neutral-600: #4b5563;
-  --color-neutral-700: #374151;
-  --color-neutral-800: #1f2937;
-  --color-neutral-900: #111827;
-  
+  /* Colors — single brand accent: gold #d1b01b.
+     (--color-success/warning/error below stay green/amber/red: those are
+     semantic status colours, not brand decoration.) */
+  --color-primary: #d1b01b;
+  --color-primary-light: #ececec;
+  --color-primary-dark: #b0940f;
+  --color-secondary: #d1b01b;
+  --color-neutral-50: #ececec;
+  --color-neutral-100: #e6e6e6;
+  --color-neutral-200: #d6d6d6;
+  --color-neutral-300: #c9c9c9;
+  --color-neutral-400: #8a8a8a;
+  --color-neutral-500: #5a5a5a;
+  --color-neutral-600: #3d3d3d;
+  --color-neutral-700: #262626;
+  --color-neutral-800: #141414;
+  --color-neutral-900: #000000;
+
   /* Success, Warning, Error */
   --color-success: #10b981;
   --color-warning: #f59e0b;
   --color-error: #ef4444;
-  --color-info: #3b82f6;
+  --color-info: #d1b01b;
   
   /* Spacing */
   --spacing-xs: 4px;
@@ -88,12 +89,12 @@ body {
 }
 
 .admin-portal {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
+  font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
   font-size: 14px;
   font-weight: 400;
   line-height: 1.6;
   color: #000000;
-  background-color: #ffffff;
+  background-color: #ececec;
 }
 
 /* ===== CONTAINER FIXES (scoped to admin portal only) ===== */
@@ -157,15 +158,15 @@ body {
 /* Preserve the text-hierarchy instead of flattening every level to pure black,
    otherwise headings, secondary labels and captions all render identically. */
 .admin-portal .text-gray-900 {
-  color: #111827 !important;
+  color: #000000 !important;
 }
 
 .admin-portal .text-gray-600 {
-  color: #4b5563 !important;
+  color: #3d3d3d !important;
 }
 
 .admin-portal .text-gray-400 {
-  color: #6b7280 !important;
+  color: #8a8a8a !important;
 }
 
 .admin-portal .mt-1 {
@@ -234,7 +235,7 @@ body {
 /* ===== TYPOGRAPHY (scoped to admin portal only) ===== */
 .admin-portal h1, .admin-portal h2, .admin-portal h3,
 .admin-portal h4, .admin-portal h5, .admin-portal h6 {
-  font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
+  font-family: 'Poppins', sans-serif;
   font-weight: 700;
   line-height: 1.2;
   color: #000000;
@@ -252,7 +253,7 @@ body {
 
 /* ===== PROFESSIONAL CARD COMPONENT ===== */
 .professional-card {
-  background: var(--color-neutral-50) !important;
+  background: #ffffff !important;
   border: 1px solid var(--color-neutral-200) !important;
   border-radius: var(--radius-xl) !important;
   padding: var(--spacing-xl) !important;
@@ -269,7 +270,7 @@ body {
 /* ===== METRIC CARD STYLES ===== */
 .metric-card {
   position: relative !important;
-  background: var(--color-neutral-50) !important;
+  background: #ffffff !important;
   border: 1px solid var(--color-neutral-200) !important;
   border-radius: var(--radius-xl) !important;
   padding: var(--spacing-xl) !important;
@@ -300,7 +301,7 @@ body {
 }
 
 .metric-card.variant-blue::before {
-  background: linear-gradient(90deg, var(--color-secondary) 0%, #1d4ed8 100%) !important;
+  background: linear-gradient(90deg, var(--color-secondary) 0%, #b0940f 100%) !important;
 }
 
 .metric-card.variant-orange {
@@ -340,7 +341,7 @@ body {
 }
 
 .metric-icon-container.variant-blue {
-  background: #dbeafe !important;
+  background: #ececec !important;
   color: var(--color-secondary) !important;
 }
 
@@ -416,7 +417,7 @@ body {
   line-height: 1.2 !important;
   margin: 0 !important;
   margin-bottom: var(--spacing-sm) !important;
-  font-family: 'Plus Jakarta Sans', 'Inter', monospace !important;
+  font-family: 'Poppins', sans-serif !important;
 }
 
 .metric-change {
@@ -428,7 +429,7 @@ body {
 
 /* ===== BUTTONS (scoped to admin portal only) ===== */
 .admin-portal button, .admin-portal .button {
-  font-family: 'Inter', sans-serif !important;
+  font-family: 'Poppins', sans-serif !important;
   font-size: 14px !important;
   font-weight: 500 !important;
   border-radius: var(--radius-lg) !important;
@@ -439,6 +440,55 @@ body {
      those edges and made outline buttons vanish into the card. */
   border: none;
   outline: none !important;
+}
+
+/* ---- CRM table row buttons (crmKit S.rowBtn + the PR Verify/Reject actions) ------------
+   The blanket rule above pins EVERY admin button to 14px/500 with !important — and a
+   stylesheet !important beats an inline style, so the 12px/600 those components set in JS
+   is silently discarded. These selectors are both more specific and !important, so the
+   authored size finally lands: the row buttons must match the 12px/600 status text they
+   sit beside. Hover lives here too — :hover cannot be expressed as an inline style. */
+.admin-portal button.crm-row-btn,
+.admin-portal button.crm-action-btn {
+  font-size: 12px !important;
+  font-weight: 600 !important;
+}
+/* Ghost row button (View): neutral wash, matching the Production sidebar's inactive tab. */
+.admin-portal button.crm-row-btn:hover:not(:disabled) {
+  background-color: #ececec !important;
+}
+/* Verify / Reject: gold deepening to #b0940f, the same hover the Production portal's
+   sidebar uses for its active tab (bg-blue-600 → hover:bg-blue-700 in the remapped ramp). */
+.admin-portal button.crm-action-btn:hover:not(:disabled) {
+  background-color: #b0940f !important;
+  border-color: #b0940f !important;
+}
+
+/* ---- Sidebar nav buttons -----------------------------------------------------------------
+   The sidebar is styled to match the portals (solid accent pill when active, muted grey at
+   rest). Things above fight that and have to be undone HERE, not in the component, because a
+   stylesheet !important beats an inline style:
+     - `border-radius: var(--radius-lg)` overrides Tailwind's rounded-lg (0.5rem);
+     - `transition: all` animates background AND layout, so a collapsing rail wobbles;
+     - `font-size/weight` are pinned to 14px/500 — equal to text-sm/font-medium, kept explicit
+       so a change to the blanket rule cannot silently drift the nav.
+
+   🔴 This rule deliberately does NOT set background, padding or border. It is specificity
+   (0,2,1); Tailwind's `bg-blue-600`/`px-3`/`py-2.5` are (0,1,0). Anything set here would beat
+   the utilities the component is trying to use — including the gold pill itself. The nav's
+   look must come from the utility classes; this rule only undoes the blanket `button` rule
+   above, which is !important and therefore unbeatable from the class list.
+
+   That leaves one trap, handled in the component instead: the
+   `button[class*="primary"|"secondary"|"outline"]` rules further down are SUBSTRING matches on
+   the whole class attribute. `focus:outline-none` — idiomatic Tailwind — contains "outline",
+   so it silently turns this pill into a bordered transparent ghost with 10px/16px padding.
+   AdminDashboard's nav therefore carries no such substring. See the note there. */
+.admin-portal button.crm-nav-btn {
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  border-radius: 0.5rem !important;
+  transition: background-color var(--transition-fast), color var(--transition-fast) !important;
 }
 
 /* Primary Button */
@@ -479,12 +529,12 @@ body {
 }
 
 .admin-portal .btn-outline:hover, .admin-portal button[class*="outline"]:hover {
-  background-color: #eff6ff !important;
+  background-color: #fbf7e8 !important;
 }
 
 /* ===== INPUTS & FORMS (scoped to admin portal only) ===== */
 .admin-portal input, .admin-portal textarea, .admin-portal select {
-  font-family: 'Inter', sans-serif !important;
+  font-family: 'Poppins', sans-serif !important;
   font-size: 14px !important;
   padding: 10px 12px !important;
   border: 1px solid var(--color-neutral-200) !important;
@@ -503,7 +553,7 @@ body {
 /* Placeholders must read as muted hint text, not solid black — black made empty
    fields indistinguishable from filled ones. */
 .admin-portal input::placeholder, .admin-portal textarea::placeholder {
-  color: #9ca3af !important;
+  color: #8a8a8a !important;
 }
 
 /* ===== BADGES & TAGS ===== */
@@ -534,7 +584,7 @@ body {
 }
 
 .badge-info {
-  background-color: #dbeafe !important;
+  background-color: #ececec !important;
   color: var(--color-info) !important;
 }
 
@@ -562,7 +612,7 @@ body {
 
 /* ===== CHARTS & DATA VISUALIZATION ===== */
 .chart-container {
-  background: var(--color-neutral-50) !important;
+  background: #ffffff !important;
   border: 1px solid var(--color-neutral-200) !important;
   border-radius: var(--radius-xl) !important;
   padding: var(--spacing-xl) !important;

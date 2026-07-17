@@ -1,24 +1,8 @@
-import { getStoredAuth } from './client';
-
-function getAuthHeaders(): Record<string, string> {
-  const auth = getStoredAuth();
-  return {
-    'Content-Type': 'application/json',
-    ...(auth?.token ? { Authorization: `Bearer ${auth.token}` } : {}),
-  };
-}
-
-async function fleetFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`/api/fleet${path}`, {
-    ...options,
-    headers: { ...getAuthHeaders(), ...options?.headers },
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-  return res.json();
-}
+// Fleet feature removed (vehicles / PMS / maintenance / odometer / fleet POs).
+// The fleet backend routes and database tables no longer exist. This module is kept
+// only as a compatibility shim so a few surviving components (Sales Orders,
+// Transactions, Purchase Orders) that referenced an optional vehicle picker still
+// compile — every call now resolves to empty data / no-op instead of hitting the API.
 
 export type VehicleType = 'Dump Truck' | 'Mini Dump' | 'Backhoe' | 'Boom Truck' | 'L3 Loader';
 export type PmsStatus = 'OK' | 'DUE_SOON' | 'OVERDUE';
@@ -82,36 +66,28 @@ export const VEHICLE_TYPES: VehicleType[] = [
   'Dump Truck', 'Mini Dump', 'Backhoe', 'Boom Truck', 'L3 Loader'
 ];
 
-// Vehicles
-export const fetchVehicles = () => fleetFetch<Vehicle[]>('/vehicles');
-export const fetchVehicle = (id: string) => fleetFetch<Vehicle>(`/vehicles/${id}`);
-export const createVehicle = (data: Partial<Vehicle>) =>
-  fleetFetch<Vehicle>('/vehicles', { method: 'POST', body: JSON.stringify(data) });
-export const updateVehicle = (id: string, data: Partial<Vehicle>) =>
-  fleetFetch<Vehicle>(`/vehicles/${id}`, { method: 'PUT', body: JSON.stringify(data) });
-export const deleteVehicle = (id: string) =>
-  fleetFetch(`/vehicles/${id}`, { method: 'DELETE' });
+const removed = (): never => {
+  throw new Error('Fleet feature has been removed');
+};
+
+// Vehicles — reads return empty, mutations are unsupported.
+export const fetchVehicles = async (): Promise<Vehicle[]> => [];
+export const fetchVehicle = async (_id: string): Promise<Vehicle | null> => null;
+export const createVehicle = async (_data: Partial<Vehicle>): Promise<Vehicle> => removed();
+export const updateVehicle = async (_id: string, _data: Partial<Vehicle>): Promise<Vehicle> => removed();
+export const deleteVehicle = async (_id: string): Promise<void> => {};
 
 // Odometer
-export const fetchOdometerLogs = (vehicleId: string) =>
-  fleetFetch<OdometerLog[]>(`/vehicles/${vehicleId}/odometer-logs`);
-export const logOdometer = (vehicleId: string, odometer: number, source = 'manual') =>
-  fleetFetch(`/vehicles/${vehicleId}/odometer`, { method: 'POST', body: JSON.stringify({ odometer, source }) });
+export const fetchOdometerLogs = async (_vehicleId: string): Promise<OdometerLog[]> => [];
+export const logOdometer = async (_vehicleId: string, _odometer: number, _source = 'manual'): Promise<void> => {};
 
 // Maintenance
-export const fetchMaintenance = (vehicleId: string) =>
-  fleetFetch<MaintenanceRecord[]>(`/vehicles/${vehicleId}/maintenance`);
-export const createMaintenance = (vehicleId: string, data: Partial<MaintenanceRecord>) =>
-  fleetFetch<MaintenanceRecord>(`/vehicles/${vehicleId}/maintenance`, { method: 'POST', body: JSON.stringify(data) });
+export const fetchMaintenance = async (_vehicleId: string): Promise<MaintenanceRecord[]> => [];
+export const createMaintenance = async (_vehicleId: string, _data: Partial<MaintenanceRecord>): Promise<MaintenanceRecord> => removed();
 
 // Purchase Orders
-export const fetchVehiclePOs = (vehicleId: string) =>
-  fleetFetch<FleetPO[]>(`/vehicles/${vehicleId}/purchase-orders`);
-export const createVehiclePO = (vehicleId: string, data: Partial<FleetPO>) =>
-  fleetFetch<FleetPO>(`/vehicles/${vehicleId}/purchase-orders`, { method: 'POST', body: JSON.stringify(data) });
+export const fetchVehiclePOs = async (_vehicleId: string): Promise<FleetPO[]> => [];
+export const createVehiclePO = async (_vehicleId: string, _data: Partial<FleetPO>): Promise<FleetPO> => removed();
 
 // PMS Reminders
-export const fetchPmsReminders = () => fleetFetch<Vehicle[]>('/pms-reminders');
-
-// Seed
-export const seedFleet = () => fleetFetch('/seed', { method: 'POST' });
+export const fetchPmsReminders = async (): Promise<Vehicle[]> => [];

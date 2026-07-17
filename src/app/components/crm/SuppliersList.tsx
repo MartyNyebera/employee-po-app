@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Plus, Search } from 'lucide-react';
 import { toast } from 'sonner';
+import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
 import { S, Modal, Field, TextInput, Select, TextArea, PrimaryBtn, GhostBtn, badge } from './crmKit';
 
@@ -8,6 +9,10 @@ interface Supplier {
   id: string; name: string; type?: string; productsSupplied?: string; contactPerson?: string;
   phone?: string; email?: string; location?: string; paymentTerms?: string;
   priceLevel?: string; reliability?: string; lastOrdered?: string; notes?: string;
+  tin?: string;
+  // Read-only here. The scan is uploaded/replaced from the purchasing portal via its own
+  // route; this form never holds the document, so saving here cannot clobber it.
+  hasCertificate?: boolean;
 }
 
 const TYPES = ['Electrical parts', 'Mechanical parts', 'Both', 'Fabrication (subcon)', 'Raw materials'];
@@ -16,10 +21,10 @@ const RELIABILITY = ['Excellent', 'Good', 'OK', 'Poor'];
 
 const relBadge = (r?: string) => {
   if (r === 'Excellent') return badge(r, '#065f46', '#d1fae5');
-  if (r === 'Good') return badge(r, '#1e40af', '#dbeafe');
+  if (r === 'Good') return badge(r, '#7a6a0c', '#ececec');
   if (r === 'OK') return badge(r, '#92400e', '#fef3c7');
   if (r === 'Poor') return badge(r, '#991b1b', '#fee2e2');
-  return <span style={{ color: '#9ca3af' }}>—</span>;
+  return <span style={{ color: '#8a8a8a' }}>—</span>;
 };
 
 export function SuppliersList({ isAdmin }: { isAdmin: boolean }) {
@@ -46,7 +51,7 @@ export function SuppliersList({ isAdmin }: { isAdmin: boolean }) {
   });
 
   const onDelete = async (s: Supplier) => {
-    if (!window.confirm(`Delete supplier "${s.name}"?`)) return;
+    if (!(await confirmDialog({ title: `Delete supplier "${s.name}"?`, message: 'This cannot be undone.', confirmLabel: 'Delete', tone: 'danger' }))) return;
     const prev = rows; setRows(rows.filter(r => r.id !== s.id));
     try { await fetchApi(`/suppliers/${s.id}`, { method: 'DELETE' }); toast.success('Supplier deleted'); }
     catch { setRows(prev); toast.error('Delete failed'); }
@@ -61,7 +66,7 @@ export function SuppliersList({ isAdmin }: { isAdmin: boolean }) {
 
       <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
         <div style={{ position: 'relative', flex: 1, minWidth: '220px' }}>
-          <Search size={16} style={{ position: 'absolute', left: '12px', top: '11px', color: '#9ca3af' }} />
+          <Search size={16} style={{ position: 'absolute', left: '12px', top: '11px', color: '#8a8a8a' }} />
           <input placeholder="Search suppliers…" value={search} onChange={e => setSearch(e.target.value)} style={{ ...S.input, paddingLeft: '36px' }} />
         </div>
         <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} style={{ ...S.input, width: 'auto', cursor: 'pointer' }}>
@@ -74,18 +79,22 @@ export function SuppliersList({ isAdmin }: { isAdmin: boolean }) {
         <table style={S.table}>
           <thead><tr>
             <th style={S.th}>Name</th><th style={S.th}>Type</th><th style={S.th}>Products</th>
-            <th style={S.th}>Contact</th><th style={S.th}>Price</th><th style={S.th}>Reliability</th>
+            <th style={S.th}>Contact</th><th style={S.th}>TIN</th><th style={S.th}>Price</th><th style={S.th}>Reliability</th>
             {isAdmin && <th style={{ ...S.th, textAlign: 'right' }}>Actions</th>}
           </tr></thead>
           <tbody>
-            {loading ? <tr><td style={S.td} colSpan={7}>Loading…</td></tr>
-              : filtered.length === 0 ? <tr><td style={{ ...S.td, color: '#9ca3af' }} colSpan={7}>No suppliers yet.</td></tr>
+            {loading ? <tr><td style={S.td} colSpan={8}>Loading…</td></tr>
+              : filtered.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={8}>No suppliers yet.</td></tr>
               : filtered.map(s => (
                 <tr key={s.id}>
-                  <td style={{ ...S.td, fontWeight: 600, color: '#111827' }}>{s.name}</td>
+                  <td style={{ ...S.td, fontWeight: 600, color: '#000000' }}>
+                    {s.name}
+                    {s.hasCertificate ? <div style={{ fontSize: '11px', fontWeight: 400, color: '#b0940f' }}>Certificate on file</div> : null}
+                  </td>
                   <td style={S.td}>{s.type || '—'}</td>
                   <td style={{ ...S.td, maxWidth: '220px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.productsSupplied || '—'}</td>
-                  <td style={S.td}>{s.contactPerson || '—'}{s.phone ? <div style={{ fontSize: '12px', color: '#9ca3af' }}>{s.phone}</div> : null}</td>
+                  <td style={S.td}>{s.contactPerson || '—'}{s.phone ? <div style={{ fontSize: '12px', color: '#8a8a8a' }}>{s.phone}</div> : null}</td>
+                  <td style={S.td}>{s.tin || '—'}</td>
                   <td style={S.td}>{s.priceLevel || '—'}</td>
                   <td style={S.td}>{relBadge(s.reliability)}</td>
                   {isAdmin && <td style={{ ...S.td, textAlign: 'right' }}>
@@ -134,6 +143,7 @@ function SupplierModal({ initial, onClose, onSaved }: { initial: Supplier | null
         <Field label="Price level"><Select value={f.priceLevel || ''} onChange={v => set('priceLevel', v)} options={PRICE} /></Field>
         <Field label="Reliability"><Select value={f.reliability || ''} onChange={v => set('reliability', v)} options={RELIABILITY} /></Field>
         <Field label="Last ordered"><TextInput type="date" value={(f.lastOrdered || '').slice(0, 10)} onChange={e => set('lastOrdered', e.target.value)} /></Field>
+        <Field label="TIN number"><TextInput value={f.tin || ''} onChange={e => set('tin', e.target.value)} placeholder="000-000-000-000" /></Field>
       </div>
       <Field label="Notes"><TextArea value={f.notes || ''} onChange={e => set('notes', e.target.value)} /></Field>
     </Modal>

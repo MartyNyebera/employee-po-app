@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Plus, Search, ArrowRightCircle } from 'lucide-react';
 import { toast } from 'sonner';
+import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
 import { S, Modal, Field, TextInput, Select, TextArea, PrimaryBtn, GhostBtn, badge, peso } from './crmKit';
 
@@ -18,11 +19,11 @@ const LINES = ['Sheet metal (panels)', 'Sheet metal (branded)', 'Trading (electr
 
 const statusBadge = (s?: string) => {
   if (s === 'Won') return badge(s, '#065f46', '#d1fae5');
-  if (s === 'Quoted') return badge(s, '#1e40af', '#dbeafe');
+  if (s === 'Quoted') return badge(s, '#7a6a0c', '#ececec');
   if (s === 'New') return badge(s, '#92400e', '#fef3c7');
-  if (s === 'Follow-up') return badge(s, '#7c3aed', '#ede9fe');
+  if (s === 'Follow-up') return badge(s, '#b0940f', '#ececec');
   if (s === 'Lost') return badge(s, '#991b1b', '#fee2e2');
-  return <span style={{ color: '#9ca3af' }}>—</span>;
+  return <span style={{ color: '#8a8a8a' }}>—</span>;
 };
 
 export function InquiriesList({ isAdmin }: { isAdmin: boolean }) {
@@ -60,7 +61,7 @@ export function InquiriesList({ isAdmin }: { isAdmin: boolean }) {
   const supplierLabel = (r: Inquiry) => r.supplierName || suppliers.find(s => s.id === r.supplierId)?.name || '—';
 
   const onDelete = async (r: Inquiry) => {
-    if (!window.confirm('Delete this quotation?')) return;
+    if (!(await confirmDialog({ title: 'Delete this quotation?', message: 'This cannot be undone.', confirmLabel: 'Delete', tone: 'danger' }))) return;
     const prev = rows; setRows(rows.filter(x => x.id !== r.id));
     try { await fetchApi(`/inquiries/${r.id}`, { method: 'DELETE' }); toast.success('Quotation deleted'); }
     catch { setRows(prev); toast.error('Delete failed'); }
@@ -75,7 +76,7 @@ export function InquiriesList({ isAdmin }: { isAdmin: boolean }) {
 
       <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
         <div style={{ position: 'relative', flex: 1, minWidth: '220px' }}>
-          <Search size={16} style={{ position: 'absolute', left: '12px', top: '11px', color: '#9ca3af' }} />
+          <Search size={16} style={{ position: 'absolute', left: '12px', top: '11px', color: '#8a8a8a' }} />
           <input placeholder="Search by client, part or supplier…" value={search} onChange={e => setSearch(e.target.value)} style={{ ...S.input, paddingLeft: '36px' }} />
         </div>
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ ...S.input, width: 'auto', cursor: 'pointer' }}>
@@ -94,23 +95,23 @@ export function InquiriesList({ isAdmin }: { isAdmin: boolean }) {
           </tr></thead>
           <tbody>
             {loading ? <tr><td style={S.td} colSpan={9}>Loading…</td></tr>
-              : filtered.length === 0 ? <tr><td style={{ ...S.td, color: '#9ca3af' }} colSpan={9}>No quotations yet.</td></tr>
+              : filtered.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={9}>No quotations yet.</td></tr>
               : filtered.map(r => {
                 const margin = (r.quoteAmount != null && r.supplierQuoteAmount != null) ? r.quoteAmount - r.supplierQuoteAmount : null;
                 return (
                   <tr key={r.id}>
-                    <td style={{ ...S.td, fontWeight: 600, color: '#111827' }}>{customerLabel(r)}</td>
-                    <td style={{ ...S.td, maxWidth: '200px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.whatTheyWant || '—'}{r.line ? <div style={{ fontSize: '12px', color: '#9ca3af' }}>{r.line}</div> : null}</td>
+                    <td style={{ ...S.td, fontWeight: 600, color: '#000000' }}>{customerLabel(r)}</td>
+                    <td style={{ ...S.td, maxWidth: '200px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.whatTheyWant || '—'}{r.line ? <div style={{ fontSize: '12px', color: '#8a8a8a' }}>{r.line}</div> : null}</td>
                     <td style={S.td}>{supplierLabel(r)}</td>
                     <td style={{ ...S.td, textAlign: 'right' }}>{peso(r.supplierQuoteAmount)}</td>
                     <td style={{ ...S.td, textAlign: 'right' }}>{peso(r.quoteAmount)}</td>
-                    <td style={{ ...S.td, textAlign: 'right', fontWeight: 700, color: margin == null ? '#9ca3af' : margin >= 0 ? '#059669' : '#dc2626' }}>{margin == null ? '—' : peso(margin)}</td>
+                    <td style={{ ...S.td, textAlign: 'right', fontWeight: 700, color: margin == null ? '#8a8a8a' : margin >= 0 ? '#059669' : '#dc2626' }}>{margin == null ? '—' : peso(margin)}</td>
                     <td style={S.td}>{r.source || '—'}</td>
                     <td style={S.td}>{statusBadge(r.status)}</td>
                     {isAdmin && <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                       {r.salesOrderId
                         ? badge('Converted', '#065f46', '#d1fae5')
-                        : <button style={{ ...S.rowBtn, color: '#2563eb', borderColor: '#bfdbfe' }} onClick={() => setConverting(r)}><ArrowRightCircle size={13} style={{ verticalAlign: '-2px', marginRight: '4px' }} />Convert</button>}
+                        : <button style={{ ...S.rowBtn, color: '#d1b01b', borderColor: '#e8d89a' }} onClick={() => setConverting(r)}><ArrowRightCircle size={13} style={{ verticalAlign: '-2px', marginRight: '4px' }} />Convert</button>}
                       <button style={S.rowBtn} onClick={() => { setEditing(r); setShowModal(true); }}>Edit</button>
                       <button style={{ ...S.rowBtn, color: '#b91c1c' }} onClick={() => onDelete(r)}>Delete</button>
                     </td>}
@@ -166,8 +167,8 @@ function InquiryModal({ initial, customers, suppliers, onClose, onSaved }: { ini
       </div>
       <Field label="What they want"><TextArea value={f.whatTheyWant || ''} onChange={e => set('whatTheyWant', e.target.value)} placeholder="Part / product the client is asking for" /></Field>
 
-      <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '14px 16px', margin: '6px 0 14px' }}>
-        <div style={{ fontSize: '12px', fontWeight: 700, color: '#374151', marginBottom: '10px' }}>QUOTES</div>
+      <div style={{ background: '#ececec', border: '1px solid #d6d6d6', borderRadius: '10px', padding: '14px 16px', margin: '6px 0 14px' }}>
+        <div style={{ fontSize: '12px', fontWeight: 700, color: '#262626', marginBottom: '10px' }}>QUOTES</div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
           <Field label="Supplier (we called)">
             <select value={f.supplierId || ''} onChange={e => set('supplierId', e.target.value)} style={{ ...S.input, cursor: 'pointer' }}>
@@ -179,7 +180,7 @@ function InquiryModal({ initial, customers, suppliers, onClose, onSaved }: { ini
           <Field label="Supplier quote (our cost) ₱"><TextInput type="number" value={f.supplierQuoteAmount ?? ''} onChange={e => set('supplierQuoteAmount', e.target.value)} /></Field>
           <Field label="Our quote to client ₱"><TextInput type="number" value={f.quoteAmount ?? ''} onChange={e => set('quoteAmount', e.target.value)} /></Field>
         </div>
-        <div style={{ fontSize: '14px', fontWeight: 700, color: margin == null ? '#9ca3af' : margin >= 0 ? '#059669' : '#dc2626' }}>
+        <div style={{ fontSize: '14px', fontWeight: 700, color: margin == null ? '#8a8a8a' : margin >= 0 ? '#059669' : '#dc2626' }}>
           Margin: {margin == null ? '—' : peso(margin)}
         </div>
       </div>
@@ -213,18 +214,18 @@ function ConvertModal({ inquiry, supplierLabel, customerLabel, onClose, onDone }
   return (
     <Modal title="Convert to Sales Order" onClose={onClose}
       footer={<><GhostBtn onClick={onClose}>Cancel</GhostBtn><PrimaryBtn onClick={go} disabled={busy}>{busy ? 'Converting…' : 'Convert'}</PrimaryBtn></>}>
-      <p style={{ fontSize: '14px', color: '#374151', marginTop: 0 }}>
+      <p style={{ fontSize: '14px', color: '#262626', marginTop: 0 }}>
         This creates a <strong>Sales Order</strong> to <strong>{customerLabel}</strong> for <strong>{peso(inquiry.quoteAmount)}</strong>
         {inquiry.supplierQuoteAmount != null && <> (cost recorded {peso(inquiry.supplierQuoteAmount)}, margin {peso(margin)})</>} and marks this quotation <strong>Won</strong>.
       </p>
-      <label style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '12px 14px', border: '1px solid #e5e7eb', borderRadius: '10px', cursor: canPO ? 'pointer' : 'not-allowed', opacity: canPO ? 1 : 0.5 }}>
+      <label style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '12px 14px', border: '1px solid #d6d6d6', borderRadius: '10px', cursor: canPO ? 'pointer' : 'not-allowed', opacity: canPO ? 1 : 0.5 }}>
         <input type="checkbox" checked={raisePO} disabled={!canPO} onChange={e => setRaisePO(e.target.checked)} style={{ marginTop: '2px' }} />
-        <span style={{ fontSize: '14px', color: '#374151' }}>
+        <span style={{ fontSize: '14px', color: '#262626' }}>
           Also raise a <strong>Purchase Order</strong> to <strong>{supplierLabel}</strong> for <strong>{peso(inquiry.supplierQuoteAmount)}</strong>
-          {!canPO && <span style={{ display: 'block', fontSize: '12px', color: '#9ca3af' }}>Add a supplier and supplier quote to enable this.</span>}
+          {!canPO && <span style={{ display: 'block', fontSize: '12px', color: '#8a8a8a' }}>Add a supplier and supplier quote to enable this.</span>}
         </span>
       </label>
-      <p style={{ fontSize: '12px', color: '#9ca3af', marginBottom: 0 }}>You can still adjust the client price on the Sales Order afterwards.</p>
+      <p style={{ fontSize: '12px', color: '#8a8a8a', marginBottom: 0 }}>You can still adjust the client price on the Sales Order afterwards.</p>
     </Modal>
   );
 }

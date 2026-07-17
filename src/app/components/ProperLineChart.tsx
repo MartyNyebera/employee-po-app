@@ -80,16 +80,16 @@ export function ProperLineChart({ data, height = 400 }: ProperLineChartProps) {
             bottom: 5,
           }}
         >
-          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+          <CartesianGrid strokeDasharray="3 3" stroke="#d6d6d6" />
           <XAxis 
             dataKey="date" 
-            tick={{ fill: '#6b7280', fontSize: 12 }}
-            tickLine={{ stroke: '#e5e7eb' }}
+            tick={{ fill: '#5a5a5a', fontSize: 12 }}
+            tickLine={{ stroke: '#d6d6d6' }}
           />
           <YAxis 
             tickFormatter={yAxisTickFormatter}
-            tick={{ fill: '#6b7280', fontSize: 12 }}
-            tickLine={{ stroke: '#e5e7eb' }}
+            tick={{ fill: '#5a5a5a', fontSize: 12 }}
+            tickLine={{ stroke: '#d6d6d6' }}
             domain={[0, 'dataMax + 100000']}
             allowDataOverflow={false}
           />
@@ -103,9 +103,9 @@ export function ProperLineChart({ data, height = 400 }: ProperLineChartProps) {
           <Line
             type="monotone"
             dataKey="revenue"
-            stroke="#14b8a6"
+            stroke="#ffd000"
             strokeWidth={2}
-            dot={{ fill: '#14b8a6', strokeWidth: 2, r: 4 }}
+            dot={{ fill: '#ffd000', strokeWidth: 2, r: 4 }}
             activeDot={{ r: 6 }}
             name="Revenue"
             isAnimationActive={true}

@@ -2,6 +2,7 @@
 import { Package, ClipboardList, Bell, LogOut, Menu, X, User, Wifi, WifiOff, AlertCircle, FileText, Clock, Search } from 'lucide-react';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { PageErrorFallback } from '../components/PageErrorFallback';
+import { useDocumentTitle } from '../lib/useDocumentTitle';
 
 export type EmployeeView = 'inventory' | 'requests' | 'history' | 'notifications';
 
@@ -46,7 +47,7 @@ const NAV_ITEMS = [
   { id: 'notifications' as EmployeeView, label: 'Notifications', icon: Bell },
 ];
 
-function SidebarInner({ view, setView, setMobileMenuOpen, unreadCount, employee, connectionStatus, handleLogout }: {
+function SidebarInner({ view, setView, setMobileMenuOpen, unreadCount, employee, connectionStatus, handleLogout, collapsed, setCollapsed }: {
   view: EmployeeView;
   setView: (v: EmployeeView) => void;
   setMobileMenuOpen: (v: boolean) => void;
@@ -54,12 +55,20 @@ function SidebarInner({ view, setView, setMobileMenuOpen, unreadCount, employee,
   employee: any;
   connectionStatus: string;
   handleLogout: () => void;
+  collapsed: boolean;
+  setCollapsed: (v: boolean) => void;
 }) {
   return (
-    <div className="bg-white flex flex-col h-full">
-      <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-200">
-        <img src="/kimoel-logo.png" alt="Logo" className="h-8 w-auto object-contain" />
-        <span className="text-base font-black tracking-wide text-gray-900">EMPLOYEE</span>
+    <div className="bg-white flex flex-col h-full border-r border-gray-200">
+      <div className="border-b border-gray-200">
+        <div className="flex items-center gap-2 px-3 py-3">
+          <button onClick={() => setCollapsed(!collapsed)} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 flex-shrink-0"><Menu className="w-5 h-5" /></button>
+          {!collapsed && <span className="font-black tracking-wide text-gray-900">Employee</span>}
+        </div>
+        {!collapsed && (
+          <div className="flex justify-center px-5 pb-4"><img src="/kimoel-logo.png" alt="Logo" className="h-32 w-auto object-contain" /></div>
+        )}
       </div>
       <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-0.5">
         {NAV_ITEMS.map(({ id, label, icon: Icon }) => {
@@ -67,16 +76,17 @@ function SidebarInner({ view, setView, setMobileMenuOpen, unreadCount, employee,
           return (
             <button
               key={id}
+              title={label}
               onClick={() => { setView(id); setMobileMenuOpen(false); }}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium focus:outline-none transition-colors ${
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium focus:outline-none transition-colors ${collapsed ? 'justify-center' : ''} ${
                 active
-                  ? 'bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-700'
+                  ? 'bg-blue-600 text-black hover:bg-blue-700 active:bg-blue-700'
                   : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900 active:bg-gray-100'
               }`}
             >
               <Icon className="w-4 h-4 flex-shrink-0" />
-              <span>{label}</span>
-              {id === 'notifications' && unreadCount > 0 && (
+              {!collapsed && <span>{label}</span>}
+              {!collapsed && id === 'notifications' && unreadCount > 0 && (
                 <span className={`ml-auto text-xs font-semibold rounded-full px-1.5 py-0.5 ${active ? 'bg-white/30 text-white' : 'bg-red-100 text-red-600'}`}>
                   {unreadCount}
                 </span>
@@ -86,28 +96,31 @@ function SidebarInner({ view, setView, setMobileMenuOpen, unreadCount, employee,
         })}
       </nav>
       <div className="border-t border-gray-200 px-3 py-3 space-y-1">
-        <div className="flex items-center gap-3 px-3 py-2">
+        <div className={`flex items-center gap-3 px-3 py-2 ${collapsed ? 'justify-center' : ''}`}>
           <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center flex-shrink-0">
             <User className="w-4 h-4 text-white" />
           </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-gray-900 truncate">
-              {employee?.full_name || employee?.email || 'Employee'}
-            </p>
-            <div className="flex items-center gap-1 mt-0.5">
-              {connectionStatus === 'online'
-                ? <><Wifi className="w-3 h-3 text-emerald-500" /><span className="text-xs text-emerald-600">Online</span></>
-                : <><WifiOff className="w-3 h-3 text-red-500" /><span className="text-xs text-red-500">Offline</span></>
-              }
+          {!collapsed && (
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-gray-900 truncate">
+                {employee?.full_name || employee?.email || 'Employee'}
+              </p>
+              <div className="flex items-center gap-1 mt-0.5">
+                {connectionStatus === 'online'
+                  ? <><Wifi className="w-3 h-3 text-emerald-500" /><span className="text-xs text-emerald-600">Online</span></>
+                  : <><WifiOff className="w-3 h-3 text-red-500" /><span className="text-xs text-red-500">Offline</span></>
+                }
+              </div>
             </div>
-          </div>
+          )}
         </div>
         <button
           onClick={handleLogout}
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-red-50 hover:text-red-600"
+          title="Sign out"
+          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-red-50 hover:text-red-600 ${collapsed ? 'justify-center' : ''}`}
         >
           <LogOut className="w-4 h-4 flex-shrink-0" />
-          <span>Sign out</span>
+          {!collapsed && <span>Sign out</span>}
         </button>
       </div>
     </div>
@@ -115,8 +128,10 @@ function SidebarInner({ view, setView, setMobileMenuOpen, unreadCount, employee,
 }
 
 export function EmployeePortal() {
+  useDocumentTitle('Employee');
   const [view, setView] = useState<EmployeeView>('inventory');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'online' | 'offline'>('online');
   const [unreadCount, setUnreadCount] = useState(0);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
@@ -284,7 +299,7 @@ export function EmployeePortal() {
     return matchSearch && matchStock && matchLoc;
   });
 
-  const sidebarProps = { view, setView, setMobileMenuOpen, unreadCount, employee, connectionStatus, handleLogout };
+  const sidebarProps = { view, setView, setMobileMenuOpen, unreadCount, employee, connectionStatus, handleLogout, collapsed, setCollapsed };
 
   return (
     <ErrorBoundary fallback={<PageErrorFallback />}>
@@ -300,8 +315,8 @@ export function EmployeePortal() {
 
       {/* Sidebar — fixed on mobile, static on desktop */}
       <div className={`
-        flex-shrink-0 w-64 z-30
-        lg:relative lg:flex lg:flex-col
+        flex-shrink-0 w-64 z-30 transition-all duration-200
+        lg:relative lg:flex lg:flex-col ${collapsed ? 'lg:w-20' : 'lg:w-64'}
         ${mobileMenuOpen ? 'fixed inset-y-0 left-0 flex flex-col' : 'hidden lg:flex lg:flex-col'}
       `}>
         <SidebarInner {...sidebarProps} />
@@ -319,9 +334,6 @@ export function EmployeePortal() {
             >
               {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
             </button>
-            <h1 className="text-lg font-bold text-gray-900">
-              {NAV_ITEMS.find(n => n.id === view)?.label ?? 'Employee Portal'}
-            </h1>
           </div>
           <span className="text-xs text-gray-400 hidden sm:block">
             {new Date().toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}
@@ -406,7 +418,7 @@ export function EmployeePortal() {
                             setView('requests');
                           }}
                           disabled={item.status === 'out-of-stock'}
-                          className="w-full py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                          className="w-full py-2 text-sm font-medium rounded-lg bg-blue-600 text-black hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           {item.status === 'out-of-stock' ? 'Out of Stock' : 'Request Item'}
                         </button>
@@ -512,7 +524,7 @@ export function EmployeePortal() {
                     <button
                       onClick={handleSubmitRequest}
                       disabled={isSubmitting}
-                      className="flex-1 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                      className="flex-1 py-2 text-sm font-medium bg-blue-600 text-black rounded-lg hover:bg-blue-700 disabled:opacity-50"
                     >{isSubmitting ? 'Submitting…' : 'Submit Request'}</button>
                   </div>
                 </div>
@@ -531,7 +543,7 @@ export function EmployeePortal() {
                 <div className="flex flex-col items-center justify-center h-48 text-gray-400">
                   <ClipboardList className="w-10 h-10 mb-3 text-gray-300" />
                   <p className="font-medium text-gray-500">No requests yet</p>
-                  <button onClick={() => setView('requests')} className="mt-3 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                  <button onClick={() => setView('requests')} className="mt-3 px-4 py-2 text-sm font-medium bg-blue-600 text-black rounded-lg hover:bg-blue-700">
                     Create Request
                   </button>
                 </div>

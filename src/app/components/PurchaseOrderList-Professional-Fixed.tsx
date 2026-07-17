@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react';
 import { FileText, Plus, ShoppingCart, Package, Edit, Trash2, Filter, Printer, X, Check } from 'lucide-react';
 import { toast } from 'sonner';
+import { confirmDialog } from '../lib/confirm';
 import { fetchApi, updatePurchaseOrder, deletePurchaseOrder } from '../api/client';
+import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { CreatePurchaseOrderModal } from './CreatePurchaseOrderModal';
+import { printPurchaseOrder } from '../lib/orderPrint';
 
 interface PurchaseOrder {
   id: string;
@@ -10,10 +13,21 @@ interface PurchaseOrder {
   client: string;
   description: string;
   amount: number;
-  status: 'pending' | 'approved' | 'RECEIVED';
+  // 'in-progress' / 'RECEIVED' / 'cancelled' are set by Logistics once an admin approves
+  // (PUT /api/purchase-orders/:id/delivery). 'RECEIVED' is what counts as an expense.
+  status: 'pending' | 'approved' | 'in-progress' | 'RECEIVED' | 'cancelled';
   createdDate: string;
   deliveryDate: string;
   assignedAssets: string[];
+  // Set when this order was raised against a purchase request (the /purchasing portal).
+  // Approving the order is what approves that request.
+  purchaseRequestId?: string | null;
+  prNumber?: string | null;
+  prStatus?: string | null;
+  approvedBy?: string | null;
+  approvedAt?: string | null;
+  // From the linked supplier record; printed in the document's supplier block.
+  supplierTin?: string | null;
 }
 
 interface PurchaseOrderListProps {
@@ -25,6 +39,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [approvingId, setApprovingId] = useState('');
   const [filter, setFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null);
@@ -47,7 +62,8 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
     docDate: '',
   });
 
-  const fetchPurchaseOrders = async (trackPoId?: string) => {
+  const fetchPurchaseOrders = async (trackPoId?: string, opts: { silent?: boolean } = {}) => {
+    const { silent = false } = opts;
     try {
       const data = await fetchApi<any[]>('/purchase-orders');
       console.log('Raw API data:', data);
@@ -73,6 +89,11 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
         supplierContact: po.supplierContact ?? po.supplier_contact,
         paymentTerms: po.paymentTerms ?? po.payment_terms,
         termsAndConditions: po.termsAndConditions ?? po.terms_and_conditions,
+        // Purchase-request link + approval record (drives the Approve action and the print stamp)
+        purchaseRequestId: po.purchaseRequestId ?? po.purchase_request_id ?? null,
+        prNumber: po.prNumber ?? po.pr_number ?? null,
+        approvedBy: po.approvedBy ?? po.approved_by ?? null,
+        approvedAt: po.approvedAt ?? po.approved_at ?? null,
       }));
       
       console.log('Transformed data:', transformedData);
@@ -86,7 +107,8 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
       setPurchaseOrders(transformedData);
     } catch (error) {
       console.error('Error fetching purchase orders:', error);
-      toast.error('Failed to load purchase orders');
+      // A background poll must not toast on a blip.
+      if (!silent) toast.error('Failed to load purchase orders');
     } finally {
       setLoading(false);
     }
@@ -116,16 +138,29 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
         borderColor: '#fed7aa'
       },
       'approved': { 
-        color: '#2563eb', 
-        bgColor: '#dbeafe', 
-        borderColor: '#93c5fd'
+        color: '#d1b01b', 
+        bgColor: '#ececec', 
+        borderColor: '#e3ca63'
       },
-      'RECEIVED': { 
-        color: '#059669', 
-        bgColor: '#f0fdf4', 
+      // Logistics marks an approved order as an ongoing delivery.
+      'in-progress': {
+        color: '#d1b01b',
+        bgColor: '#ececec',
+        borderColor: '#e3ca63'
+      },
+      'RECEIVED': {
+        color: '#059669',
+        bgColor: '#f0fdf4',
         borderColor: '#bbf7d0'
       },
+      'cancelled': {
+        color: '#8a8a8a',
+        bgColor: '#f4f4f4',
+        borderColor: '#d6d6d6'
+      },
     };
+    // The fallback is why every status needs an entry above: an unmapped one silently renders
+    // in Pending's colours, so a cancelled order would read as awaiting approval.
     return configs[status] || configs['pending'];
   };
 
@@ -143,7 +178,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
         color: config.color,
         backgroundColor: config.bgColor,
         border: `1px solid ${config.borderColor}`,
-        fontFamily: 'Inter, sans-serif'
+        fontFamily: 'Poppins, sans-serif'
       }}>
         {status.charAt(0).toUpperCase() + status.slice(1)}
       </div>
@@ -265,6 +300,25 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
     setIsEditing(true);
   };
 
+  // Admin approval — the final gate of the purchase-request flow. This goes through the
+  // dedicated approve route (not the generic PATCH) because the server records the approver
+  // and flips the linked purchase request to approved/disapproved in the same transaction.
+  const handleApprove = async (po: PurchaseOrder, status: 'approved' | 'disapproved') => {
+    const what = po.prNumber ? `${po.poNumber} (for ${po.prNumber})` : po.poNumber;
+    const ok = status === 'approved'
+      ? await confirmDialog({ title: `Approve ${what}?`, message: po.prNumber ? 'This also approves the purchase request, releasing it for withdrawal.' : undefined, confirmLabel: 'Approve' })
+      : await confirmDialog({ title: `Reject ${what}?`, message: po.prNumber ? 'The purchase request will be marked disapproved.' : undefined, confirmLabel: 'Reject', tone: 'danger' });
+    if (!ok) return;
+    setApprovingId(po.id);
+    try {
+      await fetchApi(`/purchase-orders/${po.id}/approve`, { method: 'PUT', body: JSON.stringify({ status }) });
+      toast.success(status === 'approved' ? 'Purchase order approved' : 'Purchase order rejected');
+      setRefreshKey(k => k + 1);
+    } catch (e: any) {
+      toast.error('Failed: ' + (e?.message || 'unknown error'));
+    } finally { setApprovingId(''); }
+  };
+
   const handleSaveEdit = async () => {
     if (!selectedPO) return;
     
@@ -310,7 +364,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
   };
 
   const handleDeletePO = async (po: PurchaseOrder) => {
-    if (!confirm(`Are you sure you want to delete PO ${po.poNumber}? This action cannot be undone.`)) {
+    if (!(await confirmDialog({ title: `Delete PO ${po.poNumber}?`, message: 'This action cannot be undone.', confirmLabel: 'Delete', tone: 'danger' }))) {
       return;
     }
 
@@ -328,445 +382,12 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
     }
   };
 
-  const handlePrintPO = (po: PurchaseOrder) => {
-    // Create a professional print window with the same template as Sales Order
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) {
-      toast.error('Please allow popups to print PO documents');
-      return;
-    }
-
-    // Try to parse line items from description field (same as Sales Order)
-    let lineItems = [];
-    let supplierData = {
-      name: po.client,
-      address: '',
-      contact: '',
-      preparedBy: 'Kim Karen D. Tagle',
-      reviewedBy: '',
-    };
-
-    try {
-      // Check if description contains JSON line items
-      if (po.description.includes('Line Items:')) {
-        const lineItemsMatch = po.description.match(/Line Items:\s*(\[.*?\])/);
-        if (lineItemsMatch) {
-          lineItems = JSON.parse(lineItemsMatch[1]);
-        }
-      }
-
-      // Extract supplier data from description
-      if (po.description.includes('Address:')) {
-        supplierData.address = po.description.split('Address:')[1].split('\n')[0].trim();
-      }
-      if (po.description.includes('Contact:')) {
-        supplierData.contact = po.description.split('Contact:')[1].split('\n')[0].trim();
-      }
-      if (po.description.includes('Prepared By:')) {
-        supplierData.preparedBy = po.description.split('Prepared By:')[1].split('\n')[0].trim();
-      }
-      if (po.description.includes('Reviewed By:')) {
-        supplierData.reviewedBy = po.description.split('Reviewed By:')[1].split('\n')[0].trim();
-      }
-      // Prefer real columns over anything parsed from the description (converted/new orders)
-      if ((po as any).supplierAddress) supplierData.address = (po as any).supplierAddress;
-      if ((po as any).supplierContact) supplierData.contact = (po as any).supplierContact;
-      if ((po as any).preparedBy) supplierData.preparedBy = (po as any).preparedBy;
-      if ((po as any).reviewedBy) supplierData.reviewedBy = (po as any).reviewedBy;
-      // Never leave Prepared By blank — always default to the standard name
-      if (!supplierData.preparedBy || !supplierData.preparedBy.trim()) {
-        supplierData.preparedBy = 'Kim Karen D. Tagle';
-      }
-    } catch (error) {
-      console.error('Error parsing PO description:', error);
-      // Fallback to single item if parsing fails
-      lineItems = [{
-        id: "1",
-        no: 1,
-        description: po.description.split('Line Items:')[0] || po.description,
-        quantity: 1,
-        unit: "Lot",
-        unitPrice: po.amount,
-        amount: po.amount
-      }];
-    }
-
-    // If no line items found, create a default one
-    if (lineItems.length === 0) {
-      lineItems = [{
-        id: "1",
-        no: 1,
-        description: po.description.split('Line Items:')[0] || po.description,
-        quantity: 1,
-        unit: "Lot",
-        unitPrice: po.amount,
-        amount: po.amount
-      }];
-    }
-
-    // Editable PDF header values — prefer the order's real columns, else fall back to defaults.
-    const poDocDate = (po as any).docDate || po.createdDate;
-    const poPaymentTerms = (po as any).paymentTerms || '30 days from receipt/acceptance';
-    const PO_DEFAULT_TC = [
-      'Prices quoted are firm and valid for 30 days from PO date.',
-      'Delivery shall be made to the specified address within the agreed timeframe.',
-      'Materials shall conform to specifications and quality standards.',
-      'Payment shall be made within 30 days from receipt and acceptance of materials.',
-      'This PO is governed by the laws of the Republic of the Philippines.',
-    ];
-    const poTcLines = ((po as any).termsAndConditions
-      ? String((po as any).termsAndConditions).split('\n').map((l: string) => l.replace(/^\s*\d+\.\s*/, '').trim()).filter(Boolean)
-      : PO_DEFAULT_TC);
-    const poTcHtml = poTcLines.map((l: string, i: number) => `${i + 1}. ${l}`).join('<br>');
-
-    const printContent = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Purchase Order - ${po.poNumber}</title>
-        <style>
-          @page {
-            margin: 0.5in;
-            size: A4;
-          }
-          body {
-            font-family: 'Times New Roman', serif;
-            font-size: 11pt;
-            line-height: 1.3;
-            color: black;
-            margin: 0;
-            padding: 15px;
-            background: white;
-          }
-          
-          /* Header Section */
-          .header-date {
-            text-align: right;
-            font-size: 9pt;
-            margin-bottom: 5px;
-          }
-          .system-title {
-            text-align: center;
-            font-size: 10pt;
-            font-weight: bold;
-            margin-bottom: 5px;
-          }
-          .company-name {
-            text-align: center;
-            font-size: 16pt;
-            font-weight: bold;
-            margin-bottom: 3px;
-          }
-          .company-address {
-            text-align: center;
-            font-size: 10pt;
-            margin-bottom: 2px;
-          }
-          .contact-details {
-            text-align: center;
-            font-size: 9pt;
-            margin-bottom: 2px;
-          }
-          .proprietor {
-            text-align: center;
-            font-size: 9pt;
-            font-weight: bold;
-            margin-bottom: 8px;
-          }
-          .document-title {
-            text-align: center;
-            font-size: 16pt;
-            font-weight: bold;
-            border: 2px solid black;
-            padding: 8px;
-            margin-bottom: 15px;
-            background: white;
-          }
-          
-          /* Info Boxes */
-          .info-section {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 15px;
-          }
-          .info-box {
-            flex: 1;
-            border: 1px solid black;
-            padding: 8px;
-            min-height: 60px;
-          }
-          .info-box-title {
-            font-weight: bold;
-            font-size: 9pt;
-            margin-bottom: 5px;
-            text-align: center;
-          }
-          .info-content {
-            font-size: 8pt;
-            line-height: 1.2;
-          }
-          
-          /* Payment Terms */
-          .payment-terms {
-            text-align: center;
-            font-weight: bold;
-            font-size: 9pt;
-            margin-bottom: 15px;
-            padding: 5px;
-            border: 1px solid black;
-          }
-          
-          /* Items Table */
-          .items-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-bottom: 15px;
-            font-size: 8pt;
-          }
-          .items-table th {
-            border: 1px solid black;
-            padding: 5px;
-            text-align: center;
-            font-weight: bold;
-            background: #f5f5f5;
-          }
-          .items-table td {
-            border: 1px solid black;
-            padding: 4px;
-            text-align: center;
-          }
-          .description-col {
-            text-align: left !important;
-          }
-          .number-col { width: 8%; }
-          .description-col { width: 40%; }
-          .quantity-col { width: 12%; }
-          .unit-col { width: 12%; }
-          .unit-cost-col { width: 14%; }
-          .amount-col { width: 14%; }
-          
-          /* Summary Section */
-          .summary-section {
-            margin-bottom: 15px;
-          }
-          .summary-box {
-            border: 1px solid black;
-            padding: 10px;
-            width: 300px;
-            margin-left: auto;
-          }
-          .summary-row {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 5px;
-            font-size: 9pt;
-          }
-          .summary-label {
-            font-weight: bold;
-          }
-          .summary-value {
-            text-align: right;
-          }
-          
-          /* Terms Section */
-          .terms-section {
-            font-size: 8pt;
-            margin-bottom: 20px;
-            line-height: 1.3;
-          }
-          
-          /* Signature Section */
-          .signature-section {
-            margin-top: 30px;
-          }
-          .approved-header {
-            text-align: center;
-            font-weight: bold;
-            font-size: 10pt;
-            margin-bottom: 15px;
-          }
-          .signature-boxes {
-            display: flex;
-            gap: 20px;
-          }
-          .signature-box {
-            flex: 1;
-            border: 1px solid black;
-            padding: 10px;
-            text-align: center;
-          }
-          .signature-title {
-            font-weight: bold;
-            font-size: 9pt;
-            margin-bottom: 20px;
-          }
-          .signature-line {
-            border-bottom: 1px solid black;
-            margin: 30px 0 5px 0;
-          }
-          .signature-name {
-            font-size: 8pt;
-          }
-          
-          /* Footer */
-          .footer {
-            text-align: center;
-            font-size: 8pt;
-            margin-top: 20px;
-            border-top: 1px solid black;
-            padding-top: 10px;
-          }
-          .computer-generated {
-            text-align: center;
-            font-size: 8pt;
-            font-style: italic;
-            margin-top: 10px;
-          }
-        </style>
-      </head>
-      <body>
-        <!-- HEADER SECTION -->
-        <div class="header-date">${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}     Purchase Order</div>
-        <div class="system-title">Kimoel Tracking System</div>
-        <div class="company-name">KIMOEL TRADING & CONSTRUCTION INCORPORATED</div>
-        <div class="company-address">PUROK 1, LODLOD, LIPA CITY, BATANGAS</div>
-        <div class="contact-details">Tel: (043) - 741 - 2023 | Email: kimoel_leotagle@yahoo.com</div>
-        <div class="proprietor">LEO TAGLE (Mobile: 0917 - 628 - 3217)</div>
-        <div class="document-title">PURCHASE ORDER</div>
-        
-        <!-- TOP INFO BOXES -->
-        <div class="info-section">
-          <div class="info-box">
-            <div class="info-box-title">SUPPLIER NAME AND ADDRESS</div>
-            <div class="info-content">
-              ${supplierData.name}<br>
-              ${supplierData.address}<br>
-              ${supplierData.contact}
-            </div>
-          </div>
-          <div class="info-box">
-            <div class="info-box-title">BILL TO</div>
-            <div class="info-content">
-              KIMOEL TRADING & CONSTRUCTION INCORPORATED<br>
-              PUROK 1, LODLOD, LIPA CITY, BATANGAS<br>
-              Tel: (043) - 741 - 2023<br>
-              Email: kimoel_leotagle@yahoo.com
-            </div>
-          </div>
-          <div class="info-box">
-            <div class="info-content">
-              <strong>PO Date:</strong> ${formatDate(poDocDate)}<br>
-              <strong>PO Number:</strong> ${po.poNumber}<br>
-              <strong>Page:</strong> 1 of 1<br>
-              <strong>PO TYPE:</strong> Domestic Foreign<br>
-              <strong>VAT Type:</strong> Vatable Non-Vatable
-            </div>
-          </div>
-        </div>
-        
-        <!-- PAYMENT TERMS -->
-        <div class="payment-terms">
-          PAYMENT TERMS: ${poPaymentTerms}
-        </div>
-        
-        <!-- LINE ITEMS TABLE -->
-        <table class="items-table">
-          <thead>
-            <tr>
-              <th class="number-col">No.</th>
-              <th class="description-col">Description</th>
-              <th class="quantity-col">Quantity</th>
-              <th class="unit-col">Unit</th>
-              <th class="unit-cost-col">Unit Cost</th>
-              <th class="amount-col">Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${lineItems.map((item: any) => `
-              <tr>
-                <td class="number-col">${item.no || item.id}</td>
-                <td class="description-col">${item.description || ''}</td>
-                <td class="quantity-col">${item.quantity || 1}</td>
-                <td class="unit-col">${item.unit || 'Lot'}</td>
-                <td class="unit-cost-col">${formatCurrency(item.unitPrice || item.amount || 0)}</td>
-                <td class="amount-col">${formatCurrency(item.amount || 0)}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-        
-        <!-- SUMMARY SECTION -->
-        <div class="summary-section">
-          <div class="summary-box">
-            <div class="summary-row">
-              <div class="summary-label">Sub Total:</div>
-              <div class="summary-value">${formatCurrency(po.amount)}</div>
-            </div>
-            <div class="summary-row">
-              <div class="summary-label">EWT:</div>
-              <div class="summary-value">0.00</div>
-            </div>
-            <div class="summary-row">
-              <div class="summary-label">VAT Amount:</div>
-              <div class="summary-value">0.00</div>
-            </div>
-            <div class="summary-row">
-              <div class="summary-label">Total Amount:</div>
-              <div class="summary-value">${formatCurrency(po.amount)}</div>
-            </div>
-          </div>
-        </div>
-        
-        <!-- TERMS & CONDITIONS -->
-        <div class="terms-section">
-          <strong>TERMS & CONDITIONS:</strong><br>
-          ${poTcHtml}
-        </div>
-        
-        <!-- SIGNATURE SECTION -->
-        <div class="signature-section">
-          <div class="approved-header">APPROVED</div>
-          <div class="signature-boxes">
-            <div class="signature-box">
-              <div class="signature-title">Prepared By:</div>
-              <div class="signature-line"></div>
-              <div class="signature-name">${supplierData.preparedBy}</div>
-            </div>
-            <div class="signature-box">
-              <div class="signature-title">Reviewed By:</div>
-              <div class="signature-line"></div>
-              <div class="signature-name">${supplierData.reviewedBy}</div>
-            </div>
-            <div class="signature-box">
-              <div class="signature-title">Approved By:</div>
-              <div class="signature-line"></div>
-              <div class="signature-name">Leo Tagle</div>
-            </div>
-          </div>
-        </div>
-        
-        <!-- FOOTER -->
-        <div class="footer">
-          <strong>KIMOEL TRADING & CONSTRUCTION INCORPORATED</strong><br>
-          PUROK 1, LODLOD, LIPA CITY, BATANGAS<br>
-          Tel: (043) - 741 - 2023 | Email: kimoel_leotagle@yahoo.com
-        </div>
-        
-        <div class="computer-generated">
-          Computer Generated - No Signature Required
-        </div>
-      </body>
-      </html>
-    `;
-
-    printWindow.document.write(printContent);
-    printWindow.document.close();
-    
-    // Wait for content to load, then print
-    printWindow.onload = () => {
-      printWindow.print();
-      printWindow.close();
-    };
+  // The document itself lives in lib/orderPrint — the purchasing and logistics portals print
+  // the same order, and one template means one thing to keep correct. Signatures are fetched
+  // per document (they are ~20KB each and are deliberately not on the list payload).
+  const handlePrintPO = async (po: PurchaseOrder) => {
+    const r = await printPurchaseOrder(po as any, () => fetchApi(`/purchase-orders/${po.id}/signatures`));
+    if (!r.ok) toast.error(r.error || 'Failed to open the print window');
   };
 
   const filteredPOs = purchaseOrders.filter(po => {
@@ -796,6 +417,15 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
     return () => window.removeEventListener('ordersUpdated', handleOrdersUpdated);
   }, []);
 
+  // Live refresh — silent, and PAUSED whenever a create/edit modal is open or an approval is in
+  // flight. This is the fragile screen: it does optimistic deletes and edits, so a background
+  // refetch mid-action could revert an optimistic change or stomp an open editor. Gating on
+  // those states is what keeps that from happening.
+  useLiveRefresh(
+    () => fetchPurchaseOrders(undefined, { silent: true }),
+    { enabled: !showCreateModal && !selectedPO && !approvingId },
+  );
+
   if (loading) {
     return (
       <div style={{
@@ -810,15 +440,15 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
           width: '40px',
           height: '40px',
           borderRadius: '50%',
-          border: '4px solid #e5e7eb',
-          borderTopColor: '#2563eb',
+          border: '4px solid #d6d6d6',
+          borderTopColor: '#d1b01b',
           animation: 'spin 1s linear infinite'
         }} />
         <div style={{
           fontSize: '16px',
           fontWeight: '500',
-          color: '#6b7280',
-          fontFamily: 'Inter, sans-serif'
+          color: '#5a5a5a',
+          fontFamily: 'Poppins, sans-serif'
         }}>
           Loading purchase orders...
         </div>
@@ -829,7 +459,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
   return (
     <div style={{
       padding: '32px',
-      fontFamily: 'Inter, sans-serif',
+      fontFamily: 'Poppins, sans-serif',
       backgroundColor: '#ffffff',
       minHeight: '100vh'
     }}>
@@ -849,29 +479,29 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
             width: '48px',
             height: '48px',
             borderRadius: '12px',
-            backgroundColor: '#2563eb',
+            backgroundColor: '#d1b01b',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: '0 4px 6px -1px rgba(59, 130, 246, 0.3)'
+            boxShadow: '0 4px 6px -1px rgba(209, 176, 27, 0.3)'
           }}>
-            <ShoppingCart style={{ width: '24px', height: '24px', color: 'white' }} />
+            <ShoppingCart style={{ width: '24px', height: '24px', color: '#000000' }} />
           </div>
           <div>
             <h1 style={{
               fontSize: '28px',
               fontWeight: '700',
-              color: '#111827',
+              color: '#000000',
               margin: '0 0 8px 0',
-              fontFamily: 'Plus Jakarta Sans, Inter, sans-serif'
+              fontFamily: 'Poppins, sans-serif'
             }}>
               Purchase Orders Management
             </h1>
             <p style={{
               fontSize: '14px',
-              color: '#6b7280',
+              color: '#5a5a5a',
               margin: '0',
-              fontFamily: 'Inter, sans-serif'
+              fontFamily: 'Poppins, sans-serif'
             }}>
               Manage purchases from vendors and suppliers
             </p>
@@ -881,14 +511,14 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
           <button
             onClick={() => setShowCreateModal(true)}
             style={{
-              backgroundColor: '#2563eb',
-              color: 'white',
+              backgroundColor: '#d1b01b',
+              color: '#000000',
               padding: '12px 20px',
               borderRadius: '8px',
               border: 'none',
               fontSize: '14px',
               fontWeight: '500',
-              fontFamily: 'Inter, sans-serif',
+              fontFamily: 'Poppins, sans-serif',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
@@ -896,10 +526,10 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
               transition: 'all 0.2s ease'
             }}
             onMouseOver={(e) => {
-              e.currentTarget.style.backgroundColor = '#2563eb';
+              e.currentTarget.style.backgroundColor = '#d1b01b';
             }}
             onMouseOut={(e) => {
-              e.currentTarget.style.backgroundColor = '#2563eb';
+              e.currentTarget.style.backgroundColor = '#d1b01b';
             }}
           >
             <Plus style={{ width: '16px', height: '16px' }} />
@@ -917,7 +547,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
       }}>
         <div style={{
           background: '#ffffff',
-          border: '1px solid #e5e7eb',
+          border: '1px solid #d6d6d6',
           borderRadius: '16px',
           padding: '24px',
           boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -942,29 +572,29 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
               width: '48px',
               height: '48px',
               borderRadius: '12px',
-              backgroundColor: '#dbeafe',
+              backgroundColor: '#ececec',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <ShoppingCart style={{ width: '24px', height: '24px', color: '#2563eb' }} />
+              <ShoppingCart style={{ width: '24px', height: '24px', color: '#d1b01b' }} />
             </div>
           </div>
           <h3 style={{
             fontSize: '32px',
             fontWeight: '700',
-            color: '#111827',
+            color: '#000000',
             margin: '0 0 8px 0',
-            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             {purchaseOrders.length}
           </h3>
           <p style={{
             fontSize: '14px',
             fontWeight: '500',
-            color: '#6b7280',
+            color: '#5a5a5a',
             margin: '0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             Total POs
           </p>
@@ -1014,7 +644,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
               fontWeight: '600',
               color: '#d97706',
               backgroundColor: '#fffbeb',
-              fontFamily: 'Inter, sans-serif'
+              fontFamily: 'Poppins, sans-serif'
             }}>
               Pending
             </div>
@@ -1024,7 +654,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
             fontWeight: '700',
             color: '#d97706',
             margin: '0 0 8px 0',
-            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             {pendingCount}
           </h3>
@@ -1033,7 +663,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
             fontWeight: '500',
             color: '#92400e',
             margin: '0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             Pending
           </p>
@@ -1041,7 +671,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
 
         <div style={{
           background: '#ffffff',
-          border: '1px solid #dbeafe',
+          border: '1px solid #d6d6d6',
           borderRadius: '16px',
           padding: '24px',
           boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -1066,12 +696,12 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
               width: '48px',
               height: '48px',
               borderRadius: '12px',
-              backgroundColor: '#dbeafe',
+              backgroundColor: '#ececec',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <FileText style={{ width: '24px', height: '24px', color: '#2563eb' }} />
+              <FileText style={{ width: '24px', height: '24px', color: '#d1b01b' }} />
             </div>
             <div style={{
               display: 'flex',
@@ -1081,9 +711,9 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
               borderRadius: '6px',
               fontSize: '12px',
               fontWeight: '600',
-              color: '#2563eb',
-              backgroundColor: '#dbeafe',
-              fontFamily: 'Inter, sans-serif'
+              color: '#d1b01b',
+              backgroundColor: '#ececec',
+              fontFamily: 'Poppins, sans-serif'
             }}>
               Approved
             </div>
@@ -1091,18 +721,18 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
           <h3 style={{
             fontSize: '32px',
             fontWeight: '700',
-            color: '#2563eb',
+            color: '#d1b01b',
             margin: '0 0 8px 0',
-            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             {approvedCount}
           </h3>
           <p style={{
             fontSize: '14px',
             fontWeight: '500',
-            color: '#1e40af',
+            color: '#7a6a0c',
             margin: '0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             Approved
           </p>
@@ -1152,7 +782,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
               fontWeight: '600',
               color: '#059669',
               backgroundColor: '#f0fdf4',
-              fontFamily: 'Inter, sans-serif'
+              fontFamily: 'Poppins, sans-serif'
             }}>
               Received
             </div>
@@ -1162,7 +792,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
             fontWeight: '700',
             color: '#059669',
             margin: '0 0 8px 0',
-            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             {receivedCount}
           </h3>
@@ -1171,7 +801,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
             fontWeight: '500',
             color: '#065f46',
             margin: '0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             Received
           </p>
@@ -1181,7 +811,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
       {/* FILTERS */}
       <div style={{
         background: '#ffffff',
-        border: '1px solid #e5e7eb',
+        border: '1px solid #d6d6d6',
         borderRadius: '16px',
         padding: '24px',
         boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -1198,16 +828,16 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
             alignItems: 'center',
             gap: '8px'
           }}>
-            <Filter style={{ width: '16px', height: '16px', color: '#6b7280' }} />
+            <Filter style={{ width: '16px', height: '16px', color: '#5a5a5a' }} />
             <select
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               style={{
                 padding: '12px 40px 12px 16px',
                 borderRadius: '8px',
-                border: '1px solid #e5e7eb',
+                border: '1px solid #d6d6d6',
                 fontSize: '14px',
-                fontFamily: 'Inter, sans-serif',
+                fontFamily: 'Poppins, sans-serif',
                 appearance: 'none',
                 backgroundColor: 'white',
                 cursor: 'pointer',
@@ -1215,18 +845,20 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                 position: 'relative'
               }}
               onFocus={(e) => {
-                e.currentTarget.style.borderColor = '#2563eb';
-                e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
+                e.currentTarget.style.borderColor = '#d1b01b';
+                e.currentTarget.style.boxShadow = '0 0 0 3px rgba(209, 176, 27, 0.1)';
               }}
               onBlur={(e) => {
-                e.currentTarget.style.borderColor = '#e5e7eb';
+                e.currentTarget.style.borderColor = '#d6d6d6';
                 e.currentTarget.style.boxShadow = 'none';
               }}
             >
               <option value="all">All Status</option>
               <option value="pending">Pending</option>
               <option value="approved">Approved</option>
+              <option value="in-progress">Ongoing delivery</option>
               <option value="RECEIVED">Received</option>
+              <option value="cancelled">Cancelled</option>
             </select>
           </div>
           <div style={{ flex: 1, minWidth: '250px' }}>
@@ -1239,17 +871,17 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                 width: '100%',
                 padding: '12px 16px',
                 borderRadius: '8px',
-                border: '1px solid #e5e7eb',
+                border: '1px solid #d6d6d6',
                 fontSize: '14px',
-                fontFamily: 'Inter, sans-serif',
+                fontFamily: 'Poppins, sans-serif',
                 transition: 'all 0.2s ease'
               }}
               onFocus={(e) => {
-                e.currentTarget.style.borderColor = '#2563eb';
-                e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
+                e.currentTarget.style.borderColor = '#d1b01b';
+                e.currentTarget.style.boxShadow = '0 0 0 3px rgba(209, 176, 27, 0.1)';
               }}
               onBlur={(e) => {
-                e.currentTarget.style.borderColor = '#e5e7eb';
+                e.currentTarget.style.borderColor = '#d6d6d6';
                 e.currentTarget.style.boxShadow = 'none';
               }}
             />
@@ -1261,7 +893,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
       {filteredPOs.length === 0 ? (
         <div style={{
           background: '#ffffff',
-          border: '1px solid #e5e7eb',
+          border: '1px solid #d6d6d6',
           borderRadius: '16px',
           padding: '48px',
           textAlign: 'center',
@@ -1270,24 +902,24 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
           <Package style={{ 
             width: '64px', 
             height: '64px', 
-            color: '#d1d5db',
+            color: '#c9c9c9',
             marginBottom: '16px',
             margin: '0 auto 16px'
           }} />
           <h3 style={{
             fontSize: '20px',
             fontWeight: '600',
-            color: '#374151',
+            color: '#262626',
             margin: '0 0 8px 0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             No purchase orders found
           </h3>
           <p style={{
             fontSize: '14px',
-            color: '#6b7280',
+            color: '#5a5a5a',
             margin: '0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             Create your first purchase order to get started.
           </p>
@@ -1302,7 +934,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
               key={po.id}
               style={{
                 background: '#ffffff',
-                border: '1px solid #e5e7eb',
+                border: '1px solid #d6d6d6',
                 borderRadius: '16px',
                 padding: '24px',
                 boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -1326,10 +958,15 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                 <span style={{
                   fontSize: '18px',
                   fontWeight: '600',
-                  color: '#111827',
-                  fontFamily: 'Inter, sans-serif'
+                  color: '#000000',
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   {po.poNumber}
+                  {po.prNumber && (
+                    <span style={{ fontSize: '12px', fontWeight: '500', color: '#5a5a5a', marginLeft: '8px', fontFamily: 'Poppins, sans-serif' }}>
+                      for {po.prNumber}
+                    </span>
+                  )}
                 </span>
                 <StatusBadge status={po.status} />
               </div>
@@ -1338,9 +975,9 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                 display: 'flex',
                 justifyContent: 'space-between',
                 fontSize: '14px',
-                color: '#6b7280',
+                color: '#5a5a5a',
                 marginBottom: '8px',
-                fontFamily: 'Inter, sans-serif'
+                fontFamily: 'Poppins, sans-serif'
               }}>
                 <span>Vendor: {po.client}</span>
                 <span>{formatDate(po.createdDate)}</span>
@@ -1354,16 +991,16 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                 marginBottom: '20px'
               }}>
                 <span style={{
-                  color: '#6b7280',
-                  fontFamily: 'Inter, sans-serif'
+                  color: '#5a5a5a',
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Delivery: {formatDate(po.deliveryDate)}
                 </span>
                 <span style={{
                   fontSize: '16px',
                   fontWeight: '600',
-                  color: '#111827',
-                  fontFamily: 'Inter, sans-serif'
+                  color: '#000000',
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   {formatCurrency(po.amount)}
                 </span>
@@ -1376,17 +1013,50 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
               }}>
                 {isAdmin && (
                   <>
+                    {po.status === 'pending' && (
+                      <>
+                        <button
+                          onClick={() => handleApprove(po, 'approved')}
+                          disabled={approvingId === po.id}
+                          style={{
+                            padding: '8px 12px', borderRadius: '6px', border: 'none',
+                            backgroundColor: '#16a34a', color: 'white', fontSize: '12px',
+                            fontWeight: '500', fontFamily: 'Poppins, sans-serif',
+                            cursor: approvingId === po.id ? 'default' : 'pointer',
+                            opacity: approvingId === po.id ? 0.6 : 1,
+                            display: 'flex', alignItems: 'center', gap: '6px',
+                          }}
+                        >
+                          <Check style={{ width: '14px', height: '14px' }} />
+                          Approve
+                        </button>
+                        <button
+                          onClick={() => handleApprove(po, 'disapproved')}
+                          disabled={approvingId === po.id}
+                          style={{
+                            padding: '8px 12px', borderRadius: '6px', border: '1px solid #d6d6d6',
+                            backgroundColor: 'white', color: '#dc2626', fontSize: '12px',
+                            fontWeight: '500', fontFamily: 'Poppins, sans-serif',
+                            cursor: approvingId === po.id ? 'default' : 'pointer',
+                            opacity: approvingId === po.id ? 0.6 : 1,
+                            display: 'flex', alignItems: 'center', gap: '6px',
+                          }}
+                        >
+                          Reject
+                        </button>
+                      </>
+                    )}
                     <button
                       onClick={() => handleEditClick(po)}
                       style={{
                         padding: '8px 12px',
                         borderRadius: '6px',
-                        border: '1px solid #dbeafe',
+                        border: '1px solid #d6d6d6',
                         backgroundColor: 'white',
-                        color: '#2563eb',
+                        color: '#d1b01b',
                         fontSize: '12px',
                         fontWeight: '500',
-                        fontFamily: 'Inter, sans-serif',
+                        fontFamily: 'Poppins, sans-serif',
                         cursor: 'pointer',
                         transition: 'all 0.2s ease',
                         display: 'flex',
@@ -1394,12 +1064,12 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                         gap: '6px'
                       }}
                       onMouseOver={(e) => {
-                        e.currentTarget.style.backgroundColor = '#eff6ff';
-                        e.currentTarget.style.borderColor = '#2563eb';
+                        e.currentTarget.style.backgroundColor = '#fbf7e8';
+                        e.currentTarget.style.borderColor = '#d1b01b';
                       }}
                       onMouseOut={(e) => {
                         e.currentTarget.style.backgroundColor = 'white';
-                        e.currentTarget.style.borderColor = '#dbeafe';
+                        e.currentTarget.style.borderColor = '#d6d6d6';
                       }}
                     >
                       <Edit style={{ width: '14px', height: '14px' }} />
@@ -1410,12 +1080,12 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                       style={{
                         padding: '8px 12px',
                         borderRadius: '6px',
-                        border: '1px solid #dbeafe',
+                        border: '1px solid #d6d6d6',
                         backgroundColor: 'white',
-                        color: '#2563eb',
+                        color: '#d1b01b',
                         fontSize: '12px',
                         fontWeight: '500',
-                        fontFamily: 'Inter, sans-serif',
+                        fontFamily: 'Poppins, sans-serif',
                         cursor: 'pointer',
                         transition: 'all 0.2s ease',
                         display: 'flex',
@@ -1423,12 +1093,12 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                         gap: '6px'
                       }}
                       onMouseOver={(e) => {
-                        e.currentTarget.style.backgroundColor = '#eff6ff';
-                        e.currentTarget.style.borderColor = '#2563eb';
+                        e.currentTarget.style.backgroundColor = '#fbf7e8';
+                        e.currentTarget.style.borderColor = '#d1b01b';
                       }}
                       onMouseOut={(e) => {
                         e.currentTarget.style.backgroundColor = 'white';
-                        e.currentTarget.style.borderColor = '#dbeafe';
+                        e.currentTarget.style.borderColor = '#d6d6d6';
                       }}
                     >
                       <Printer style={{ width: '14px', height: '14px' }} />
@@ -1444,7 +1114,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                         color: '#dc2626',
                         fontSize: '12px',
                         fontWeight: '500',
-                        fontFamily: 'Inter, sans-serif',
+                        fontFamily: 'Poppins, sans-serif',
                         cursor: 'pointer',
                         transition: 'all 0.2s ease',
                         display: 'flex',
@@ -1513,15 +1183,15 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
               alignItems: 'center',
               justifyContent: 'space-between',
               padding: '24px',
-              borderBottom: '1px solid #e5e7eb',
+              borderBottom: '1px solid #d6d6d6',
               flexShrink: 0
             }}>
               <h2 style={{
                 fontSize: '20px',
                 fontWeight: '600',
-                color: '#111827',
+                color: '#000000',
                 margin: '0',
-                fontFamily: 'Inter, sans-serif'
+                fontFamily: 'Poppins, sans-serif'
               }}>
                 Edit Purchase Order
               </h2>
@@ -1531,18 +1201,18 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                   padding: '8px',
                   borderRadius: '6px',
                   border: 'none',
-                  backgroundColor: '#f3f4f6',
+                  backgroundColor: '#e6e6e6',
                   cursor: 'pointer',
                   transition: 'all 0.2s ease'
                 }}
                 onMouseOver={(e) => {
-                  e.currentTarget.style.backgroundColor = '#e5e7eb';
+                  e.currentTarget.style.backgroundColor = '#d6d6d6';
                 }}
                 onMouseOut={(e) => {
-                  e.currentTarget.style.backgroundColor = '#f3f4f6';
+                  e.currentTarget.style.backgroundColor = '#e6e6e6';
                 }}
               >
-                <X style={{ width: '20px', height: '20px', color: '#6b7280' }} />
+                <X style={{ width: '20px', height: '20px', color: '#5a5a5a' }} />
               </button>
             </div>
 
@@ -1557,9 +1227,9 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                     display: 'block',
                     fontSize: '12px',
                     fontWeight: '600',
-                    color: '#374151',
+                    color: '#262626',
                     marginBottom: '6px',
-                    fontFamily: 'Inter, sans-serif'
+                    fontFamily: 'Poppins, sans-serif'
                   }}>
                     PO Number
                   </label>
@@ -1571,10 +1241,10 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                       width: '100%',
                       padding: '12px 16px',
                       borderRadius: '8px',
-                      border: '1px solid #e5e7eb',
-                      backgroundColor: '#f9fafb',
-                      color: '#9ca3af',
-                      fontFamily: 'Inter, sans-serif'
+                      border: '1px solid #d6d6d6',
+                      backgroundColor: '#ececec',
+                      color: '#8a8a8a',
+                      fontFamily: 'Poppins, sans-serif'
                     }}
                   />
                 </div>
@@ -1584,9 +1254,9 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                     display: 'block',
                     fontSize: '12px',
                     fontWeight: '600',
-                    color: '#374151',
+                    color: '#262626',
                     marginBottom: '6px',
-                    fontFamily: 'Inter, sans-serif'
+                    fontFamily: 'Poppins, sans-serif'
                   }}>
                     Status
                   </label>
@@ -1603,19 +1273,19 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                       width: '100%',
                       padding: '12px 16px',
                       borderRadius: '8px',
-                      border: '1px solid #e5e7eb',
+                      border: '1px solid #d6d6d6',
                       fontSize: '14px',
-                      fontFamily: 'Inter, sans-serif',
+                      fontFamily: 'Poppins, sans-serif',
                       backgroundColor: 'white',
                       cursor: 'pointer',
                       transition: 'all 0.2s ease'
                     }}
                     onFocus={(e) => {
-                      e.currentTarget.style.borderColor = '#2563eb';
-                      e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
+                      e.currentTarget.style.borderColor = '#d1b01b';
+                      e.currentTarget.style.boxShadow = '0 0 0 3px rgba(209, 176, 27, 0.1)';
                     }}
                     onBlur={(e) => {
-                      e.currentTarget.style.borderColor = '#e5e7eb';
+                      e.currentTarget.style.borderColor = '#d6d6d6';
                       e.currentTarget.style.boxShadow = 'none';
                     }}
                   >
@@ -1630,9 +1300,9 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                     display: 'block',
                     fontSize: '12px',
                     fontWeight: '600',
-                    color: '#374151',
+                    color: '#262626',
                     marginBottom: '6px',
-                    fontFamily: 'Inter, sans-serif'
+                    fontFamily: 'Poppins, sans-serif'
                   }}>
                     Description
                   </label>
@@ -1645,9 +1315,9 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                       width: '100%',
                       padding: '12px 16px',
                       borderRadius: '8px',
-                      border: '1px solid #e5e7eb',
+                      border: '1px solid #d6d6d6',
                       fontSize: '14px',
-                      fontFamily: 'Inter, sans-serif',
+                      fontFamily: 'Poppins, sans-serif',
                       resize: 'none',
                       transition: 'all 0.2s ease'
                     }}
@@ -1657,36 +1327,36 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                 {/* Document / PDF header fields */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                   <div>
-                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '6px', fontFamily: 'Inter, sans-serif' }}>Document date</label>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#262626', marginBottom: '6px', fontFamily: 'Poppins, sans-serif' }}>Document date</label>
                     <input type="date" value={editForm.docDate} onChange={e => setEditForm({ ...editForm, docDate: e.target.value })}
-                      style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', fontFamily: 'Inter, sans-serif', backgroundColor: 'white' }} />
+                      style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #d6d6d6', fontSize: '14px', fontFamily: 'Poppins, sans-serif', backgroundColor: 'white' }} />
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '6px', fontFamily: 'Inter, sans-serif' }}>Prepared By</label>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#262626', marginBottom: '6px', fontFamily: 'Poppins, sans-serif' }}>Prepared By</label>
                     <input type="text" value={editForm.preparedBy} onChange={e => setEditForm({ ...editForm, preparedBy: e.target.value })} placeholder="Kim Karen D. Tagle"
-                      style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', fontFamily: 'Inter, sans-serif', backgroundColor: 'white' }} />
+                      style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #d6d6d6', fontSize: '14px', fontFamily: 'Poppins, sans-serif', backgroundColor: 'white' }} />
                   </div>
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '6px', fontFamily: 'Inter, sans-serif' }}>Supplier address</label>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#262626', marginBottom: '6px', fontFamily: 'Poppins, sans-serif' }}>Supplier address</label>
                   <textarea value={editForm.customerAddress} onChange={e => setEditForm({ ...editForm, customerAddress: e.target.value })} rows={2}
-                    style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', fontFamily: 'Inter, sans-serif', backgroundColor: 'white', resize: 'vertical' }} />
+                    style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #d6d6d6', fontSize: '14px', fontFamily: 'Poppins, sans-serif', backgroundColor: 'white', resize: 'vertical' }} />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '6px', fontFamily: 'Inter, sans-serif' }}>Supplier contact</label>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#262626', marginBottom: '6px', fontFamily: 'Poppins, sans-serif' }}>Supplier contact</label>
                   <input type="text" value={editForm.customerContact} onChange={e => setEditForm({ ...editForm, customerContact: e.target.value })}
-                    style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', fontFamily: 'Inter, sans-serif', backgroundColor: 'white' }} />
+                    style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #d6d6d6', fontSize: '14px', fontFamily: 'Poppins, sans-serif', backgroundColor: 'white' }} />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '6px', fontFamily: 'Inter, sans-serif' }}>Payment terms</label>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#262626', marginBottom: '6px', fontFamily: 'Poppins, sans-serif' }}>Payment terms</label>
                   <input type="text" value={editForm.paymentTerms} onChange={e => setEditForm({ ...editForm, paymentTerms: e.target.value })} placeholder="30 days from receipt/acceptance"
-                    style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', fontFamily: 'Inter, sans-serif', backgroundColor: 'white' }} />
+                    style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #d6d6d6', fontSize: '14px', fontFamily: 'Poppins, sans-serif', backgroundColor: 'white' }} />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#374151', marginBottom: '6px', fontFamily: 'Inter, sans-serif' }}>Terms &amp; conditions</label>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#262626', marginBottom: '6px', fontFamily: 'Poppins, sans-serif' }}>Terms &amp; conditions</label>
                   <textarea value={editForm.termsAndConditions} onChange={e => setEditForm({ ...editForm, termsAndConditions: e.target.value })} rows={3} placeholder="One per line; leave blank to use the standard terms"
-                    style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', fontFamily: 'Inter, sans-serif', backgroundColor: 'white', resize: 'vertical' }} />
+                    style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #d6d6d6', fontSize: '14px', fontFamily: 'Poppins, sans-serif', backgroundColor: 'white', resize: 'vertical' }} />
                 </div>
               </div>
 
@@ -1701,18 +1371,18 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                   style={{
                     padding: '12px 20px',
                     borderRadius: '8px',
-                    border: '1px solid #e5e7eb',
+                    border: '1px solid #d6d6d6',
                     backgroundColor: 'white',
-                    color: '#374151',
+                    color: '#262626',
                     fontSize: '14px',
                     fontWeight: '500',
-                    fontFamily: 'Inter, sans-serif',
+                    fontFamily: 'Poppins, sans-serif',
                     cursor: 'pointer',
                     transition: 'all 0.2s ease',
                     flex: 1
                   }}
                   onMouseOver={(e) => {
-                    e.currentTarget.style.backgroundColor = '#f9fafb';
+                    e.currentTarget.style.backgroundColor = '#ececec';
                   }}
                   onMouseOut={(e) => {
                     e.currentTarget.style.backgroundColor = 'white';
@@ -1726,11 +1396,11 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                     padding: '12px 20px',
                     borderRadius: '8px',
                     border: 'none',
-                    backgroundColor: '#2563eb',
-                    color: 'white',
+                    backgroundColor: '#d1b01b',
+                    color: '#000000',
                     fontSize: '14px',
                     fontWeight: '500',
-                    fontFamily: 'Inter, sans-serif',
+                    fontFamily: 'Poppins, sans-serif',
                     cursor: loading ? 'not-allowed' : 'pointer',
                     opacity: loading ? 0.6 : 1,
                     transition: 'all 0.2s ease',

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Package, Plus, Search, Filter, ArrowUpDown, Eye, X, Minus, Edit, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { confirmDialog } from '../lib/confirm';
 import { fetchApi } from '../api/client';
 import { CreateInventoryItemModal } from './CreateInventoryItemModal';
 import { EditInventoryModalSimple } from './EditInventoryModalSimple';
@@ -148,7 +149,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
         color: config.color,
         backgroundColor: config.bgColor,
         border: `1px solid ${config.borderColor}`,
-        fontFamily: 'Inter, sans-serif'
+        fontFamily: 'Poppins, sans-serif'
       }}>
         {status === 'in-stock' ? 'In Stock' : status === 'low-stock' ? 'Low Stock' : 'Out of Stock'}
       </div>
@@ -210,15 +211,15 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
           width: '40px',
           height: '40px',
           borderRadius: '50%',
-          border: '4px solid #e5e7eb',
-          borderTopColor: '#8b5cf6',
+          border: '4px solid #d6d6d6',
+          borderTopColor: '#d1b01b',
           animation: 'spin 1s linear infinite'
         }} />
         <div style={{
           fontSize: '16px',
           fontWeight: '500',
-          color: '#6b7280',
-          fontFamily: 'Inter, sans-serif'
+          color: '#5a5a5a',
+          fontFamily: 'Poppins, sans-serif'
         }}>
           Loading inventory...
         </div>
@@ -229,7 +230,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
   return (
     <div style={{
       padding: '32px',
-      fontFamily: 'Inter, sans-serif',
+      fontFamily: 'Poppins, sans-serif',
       backgroundColor: '#ffffff',
       minHeight: '100vh'
     }}>
@@ -249,29 +250,29 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
             width: '48px',
             height: '48px',
             borderRadius: '12px',
-            backgroundColor: '#8b5cf6',
+            backgroundColor: '#d1b01b',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: '0 4px 6px -1px rgba(139, 92, 246, 0.3)'
+            boxShadow: '0 4px 6px -1px rgba(209, 176, 27, 0.3)'
           }}>
-            <Package style={{ width: '24px', height: '24px', color: 'white' }} />
+            <Package style={{ width: '24px', height: '24px', color: '#000000' }} />
           </div>
           <div>
             <h1 style={{
               fontSize: '28px',
               fontWeight: '700',
-              color: '#111827',
+              color: '#000000',
               margin: '0 0 8px 0',
-              fontFamily: 'Plus Jakarta Sans, Inter, sans-serif'
+              fontFamily: 'Poppins, sans-serif'
             }}>
               Inventory Management
             </h1>
             <p style={{
               fontSize: '14px',
-              color: '#6b7280',
+              color: '#5a5a5a',
               margin: '0',
-              fontFamily: 'Inter, sans-serif'
+              fontFamily: 'Poppins, sans-serif'
             }}>
               Manage items and track stock levels
             </p>
@@ -281,14 +282,14 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
           <button
             onClick={() => setShowCreateModal(true)}
             style={{
-              backgroundColor: '#8b5cf6',
-              color: 'white',
+              backgroundColor: '#d1b01b',
+              color: '#000000',
               padding: '12px 20px',
               borderRadius: '8px',
               border: 'none',
               fontSize: '14px',
               fontWeight: '500',
-              fontFamily: 'Inter, sans-serif',
+              fontFamily: 'Poppins, sans-serif',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
@@ -296,10 +297,10 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
               transition: 'all 0.2s ease'
             }}
             onMouseOver={(e) => {
-              e.currentTarget.style.backgroundColor = '#2563eb';
+              e.currentTarget.style.backgroundColor = '#d1b01b';
             }}
             onMouseOut={(e) => {
-              e.currentTarget.style.backgroundColor = '#8b5cf6';
+              e.currentTarget.style.backgroundColor = '#d1b01b';
             }}
           >
             <Plus style={{ width: '16px', height: '16px' }} />
@@ -317,7 +318,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
       }}>
         <div style={{
           background: '#ffffff',
-          border: '1px solid #e5e7eb',
+          border: '1px solid #d6d6d6',
           borderRadius: '16px',
           padding: '24px',
           boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -342,29 +343,29 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
               width: '48px',
               height: '48px',
               borderRadius: '12px',
-              backgroundColor: '#ede9fe',
+              backgroundColor: '#ececec',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <Package style={{ width: '24px', height: '24px', color: '#8b5cf6' }} />
+              <Package style={{ width: '24px', height: '24px', color: '#d1b01b' }} />
             </div>
           </div>
           <h3 style={{
             fontSize: '32px',
             fontWeight: '700',
-            color: '#111827',
+            color: '#000000',
             margin: '0 0 8px 0',
-            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             {totalItems}
           </h3>
           <p style={{
             fontSize: '14px',
             fontWeight: '500',
-            color: '#6b7280',
+            color: '#5a5a5a',
             margin: '0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             Total Items
           </p>
@@ -414,7 +415,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
               fontWeight: '600',
               color: '#059669',
               backgroundColor: '#f0fdf4',
-              fontFamily: 'Inter, sans-serif'
+              fontFamily: 'Poppins, sans-serif'
             }}>
               In Stock
             </div>
@@ -424,7 +425,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
             fontWeight: '700',
             color: '#059669',
             margin: '0 0 8px 0',
-            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             {inStockCount}
           </h3>
@@ -433,7 +434,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
             fontWeight: '500',
             color: '#065f46',
             margin: '0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             In Stock
           </p>
@@ -483,7 +484,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
               fontWeight: '600',
               color: '#d97706',
               backgroundColor: '#fffbeb',
-              fontFamily: 'Inter, sans-serif'
+              fontFamily: 'Poppins, sans-serif'
             }}>
               Low Stock
             </div>
@@ -493,7 +494,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
             fontWeight: '700',
             color: '#d97706',
             margin: '0 0 8px 0',
-            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             {lowStockCount}
           </h3>
@@ -502,7 +503,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
             fontWeight: '500',
             color: '#78350f',
             margin: '0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             Low Stock
           </p>
@@ -552,7 +553,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
               fontWeight: '600',
               color: '#dc2626',
               backgroundColor: '#fef2f2',
-              fontFamily: 'Inter, sans-serif'
+              fontFamily: 'Poppins, sans-serif'
             }}>
               Out of Stock
             </div>
@@ -562,7 +563,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
             fontWeight: '700',
             color: '#dc2626',
             margin: '0 0 8px 0',
-            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             {outOfStockCount}
           </h3>
@@ -571,7 +572,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
             fontWeight: '500',
             color: '#7f1d1d',
             margin: '0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             Out of Stock
           </p>
@@ -581,7 +582,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
       {/* FILTERS */}
       <div style={{
         background: '#ffffff',
-        border: '1px solid #e5e7eb',
+        border: '1px solid #d6d6d6',
         borderRadius: '16px',
         padding: '24px',
         boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -601,10 +602,10 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
             minWidth: '250px',
             padding: '12px 16px',
             borderRadius: '8px',
-            border: '1px solid #e5e7eb',
-            backgroundColor: '#f9fafb'
+            border: '1px solid #d6d6d6',
+            backgroundColor: '#ececec'
           }}>
-            <Search style={{ width: '16px', height: '16px', color: '#6b7280' }} />
+            <Search style={{ width: '16px', height: '16px', color: '#5a5a5a' }} />
             <input
               type="text"
               placeholder="Search items..."
@@ -615,9 +616,9 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                 border: 'none',
                 outline: 'none',
                 fontSize: '14px',
-                fontFamily: 'Inter, sans-serif',
+                fontFamily: 'Poppins, sans-serif',
                 backgroundColor: 'transparent',
-                color: '#111827'
+                color: '#000000'
               }}
             />
           </div>
@@ -626,27 +627,27 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
             alignItems: 'center',
             gap: '8px'
           }}>
-            <Filter style={{ width: '16px', height: '16px', color: '#6b7280' }} />
+            <Filter style={{ width: '16px', height: '16px', color: '#5a5a5a' }} />
             <select
               value={filter}
               onChange={(e) => setFilter(e.target.value as any)}
               style={{
                 padding: '12px 40px 12px 16px',
                 borderRadius: '8px',
-                border: '1px solid #e5e7eb',
+                border: '1px solid #d6d6d6',
                 fontSize: '14px',
-                fontFamily: 'Inter, sans-serif',
+                fontFamily: 'Poppins, sans-serif',
                 appearance: 'none',
                 backgroundColor: 'white',
                 cursor: 'pointer',
                 transition: 'all 0.2s ease'
               }}
               onFocus={(e) => {
-                e.currentTarget.style.borderColor = '#8b5cf6';
-                e.currentTarget.style.boxShadow = '0 0 0 3px rgba(139, 92, 246, 0.1)';
+                e.currentTarget.style.borderColor = '#d1b01b';
+                e.currentTarget.style.boxShadow = '0 0 0 3px rgba(209, 176, 27, 0.1)';
               }}
               onBlur={(e) => {
-                e.currentTarget.style.borderColor = '#e5e7eb';
+                e.currentTarget.style.borderColor = '#d6d6d6';
                 e.currentTarget.style.boxShadow = 'none';
               }}
             >
@@ -661,27 +662,27 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
             alignItems: 'center',
             gap: '8px'
           }}>
-            <ArrowUpDown style={{ width: '16px', height: '16px', color: '#6b7280' }} />
+            <ArrowUpDown style={{ width: '16px', height: '16px', color: '#5a5a5a' }} />
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as any)}
               style={{
                 padding: '12px 40px 12px 16px',
                 borderRadius: '8px',
-                border: '1px solid #e5e7eb',
+                border: '1px solid #d6d6d6',
                 fontSize: '14px',
-                fontFamily: 'Inter, sans-serif',
+                fontFamily: 'Poppins, sans-serif',
                 appearance: 'none',
                 backgroundColor: 'white',
                 cursor: 'pointer',
                 transition: 'all 0.2s ease'
               }}
               onFocus={(e) => {
-                e.currentTarget.style.borderColor = '#8b5cf6';
-                e.currentTarget.style.boxShadow = '0 0 0 3px rgba(139, 92, 246, 0.1)';
+                e.currentTarget.style.borderColor = '#d1b01b';
+                e.currentTarget.style.boxShadow = '0 0 0 3px rgba(209, 176, 27, 0.1)';
               }}
               onBlur={(e) => {
-                e.currentTarget.style.borderColor = '#e5e7eb';
+                e.currentTarget.style.borderColor = '#d6d6d6';
                 e.currentTarget.style.boxShadow = 'none';
               }}
             >
@@ -697,7 +698,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
       {filteredInventory.length === 0 ? (
         <div style={{
           background: '#ffffff',
-          border: '1px solid #e5e7eb',
+          border: '1px solid #d6d6d6',
           borderRadius: '16px',
           padding: '48px',
           textAlign: 'center',
@@ -706,24 +707,24 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
           <Package style={{ 
             width: '64px', 
             height: '64px', 
-            color: '#d1d5db',
+            color: '#c9c9c9',
             marginBottom: '16px',
             margin: '0 auto 16px'
           }} />
           <h3 style={{
             fontSize: '20px',
             fontWeight: '600',
-            color: '#374151',
+            color: '#262626',
             margin: '0 0 8px 0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             No inventory items found
           </h3>
           <p style={{
             fontSize: '14px',
-            color: '#6b7280',
+            color: '#5a5a5a',
             margin: '0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             Add your first item to get started.
           </p>
@@ -731,7 +732,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
       ) : (
         <div style={{
           background: '#ffffff',
-          border: '1px solid #e5e7eb',
+          border: '1px solid #d6d6d6',
           borderRadius: '16px',
           boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
           overflow: 'hidden'
@@ -745,18 +746,18 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
             }}>
               <thead>
                 <tr style={{
-                  backgroundColor: '#f9fafb',
-                  borderBottom: '1px solid #e5e7eb'
+                  backgroundColor: '#ececec',
+                  borderBottom: '1px solid #d6d6d6'
                 }}>
                   <th style={{
                     padding: '16px',
                     textAlign: 'left',
                     fontSize: '12px',
                     fontWeight: '600',
-                    color: '#6b7280',
+                    color: '#5a5a5a',
                     textTransform: 'uppercase',
                     letterSpacing: '0.05em',
-                    fontFamily: 'Inter, sans-serif'
+                    fontFamily: 'Poppins, sans-serif'
                   }}>
                     Item Code
                   </th>
@@ -765,10 +766,10 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                     textAlign: 'left',
                     fontSize: '12px',
                     fontWeight: '600',
-                    color: '#6b7280',
+                    color: '#5a5a5a',
                     textTransform: 'uppercase',
                     letterSpacing: '0.05em',
-                    fontFamily: 'Inter, sans-serif'
+                    fontFamily: 'Poppins, sans-serif'
                   }}>
                     Item Name
                   </th>
@@ -777,10 +778,10 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                     textAlign: 'left',
                     fontSize: '12px',
                     fontWeight: '600',
-                    color: '#6b7280',
+                    color: '#5a5a5a',
                     textTransform: 'uppercase',
                     letterSpacing: '0.05em',
-                    fontFamily: 'Inter, sans-serif'
+                    fontFamily: 'Poppins, sans-serif'
                   }}>
                     Description
                   </th>
@@ -789,10 +790,10 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                     textAlign: 'center',
                     fontSize: '12px',
                     fontWeight: '600',
-                    color: '#6b7280',
+                    color: '#5a5a5a',
                     textTransform: 'uppercase',
                     letterSpacing: '0.05em',
-                    fontFamily: 'Inter, sans-serif'
+                    fontFamily: 'Poppins, sans-serif'
                   }}>
                     Quantity
                   </th>
@@ -801,10 +802,10 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                     textAlign: 'center',
                     fontSize: '12px',
                     fontWeight: '600',
-                    color: '#6b7280',
+                    color: '#5a5a5a',
                     textTransform: 'uppercase',
                     letterSpacing: '0.05em',
-                    fontFamily: 'Inter, sans-serif'
+                    fontFamily: 'Poppins, sans-serif'
                   }}>
                     Unit
                   </th>
@@ -813,10 +814,10 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                     textAlign: 'left',
                     fontSize: '12px',
                     fontWeight: '600',
-                    color: '#6b7280',
+                    color: '#5a5a5a',
                     textTransform: 'uppercase',
                     letterSpacing: '0.05em',
-                    fontFamily: 'Inter, sans-serif'
+                    fontFamily: 'Poppins, sans-serif'
                   }}>
                     Location
                   </th>
@@ -825,10 +826,10 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                     textAlign: 'center',
                     fontSize: '12px',
                     fontWeight: '600',
-                    color: '#6b7280',
+                    color: '#5a5a5a',
                     textTransform: 'uppercase',
                     letterSpacing: '0.05em',
-                    fontFamily: 'Inter, sans-serif'
+                    fontFamily: 'Poppins, sans-serif'
                   }}>
                     Status
                   </th>
@@ -837,10 +838,10 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                     textAlign: 'center',
                     fontSize: '12px',
                     fontWeight: '600',
-                    color: '#6b7280',
+                    color: '#5a5a5a',
                     textTransform: 'uppercase',
                     letterSpacing: '0.05em',
-                    fontFamily: 'Inter, sans-serif'
+                    fontFamily: 'Poppins, sans-serif'
                   }}>
                     Actions
                   </th>
@@ -851,23 +852,23 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                   <tr
                     key={item.id}
                     style={{
-                      borderBottom: '1px solid #f3f4f6',
+                      borderBottom: '1px solid #e6e6e6',
                       transition: 'background-color 0.2s ease'
                     }}
                     onMouseOver={(e) => {
-                      e.currentTarget.style.backgroundColor = '#f9fafb';
+                      e.currentTarget.style.backgroundColor = '#ececec';
                     }}
                     onMouseOut={(e) => {
                       e.currentTarget.style.backgroundColor = 'transparent';
                     }}
                   >
-                    <td style={{ padding: '16px', fontSize: '14px', fontWeight: '500', color: '#111827', fontFamily: 'Inter, sans-serif' }}>
+                    <td style={{ padding: '16px', fontSize: '14px', fontWeight: '500', color: '#000000', fontFamily: 'Poppins, sans-serif' }}>
                       {item.itemCode}
                     </td>
-                    <td style={{ padding: '16px', fontSize: '14px', color: '#374151', fontFamily: 'Inter, sans-serif' }}>
+                    <td style={{ padding: '16px', fontSize: '14px', color: '#262626', fontFamily: 'Poppins, sans-serif' }}>
                       {item.itemName}
                     </td>
-                    <td style={{ padding: '16px', fontSize: '14px', color: '#6b7280', fontFamily: 'Inter, sans-serif' }}>
+                    <td style={{ padding: '16px', fontSize: '14px', color: '#5a5a5a', fontFamily: 'Poppins, sans-serif' }}>
                       {item.description}
                     </td>
                     <td style={{ padding: '16px', textAlign: 'center' }}>
@@ -876,15 +877,15 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                         fontWeight: '600',
                         color: item.status === 'out-of-stock' ? '#dc2626' : 
                                item.status === 'low-stock' ? '#d97706' : '#059669',
-                        fontFamily: 'Inter, sans-serif'
+                        fontFamily: 'Poppins, sans-serif'
                       }}>
                         {item.quantity}
                       </span>
                     </td>
-                    <td style={{ padding: '16px', textAlign: 'center', fontSize: '14px', color: '#374151', fontFamily: 'Inter, sans-serif' }}>
+                    <td style={{ padding: '16px', textAlign: 'center', fontSize: '14px', color: '#262626', fontFamily: 'Poppins, sans-serif' }}>
                       {item.unit}
                     </td>
-                    <td style={{ padding: '16px', fontSize: '14px', color: '#374151', fontFamily: 'Inter, sans-serif' }}>
+                    <td style={{ padding: '16px', fontSize: '14px', color: '#262626', fontFamily: 'Poppins, sans-serif' }}>
                       {item.location}
                     </td>
                     <td style={{ padding: '16px', textAlign: 'center' }}>
@@ -906,12 +907,12 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                           style={{
                             padding: '6px 10px',
                             borderRadius: '6px',
-                            border: '1px solid #ede9fe',
+                            border: '1px solid #d6d6d6',
                             backgroundColor: 'white',
-                            color: '#8b5cf6',
+                            color: '#d1b01b',
                             fontSize: '11px',
                             fontWeight: '500',
-                            fontFamily: 'Inter, sans-serif',
+                            fontFamily: 'Poppins, sans-serif',
                             cursor: 'pointer',
                             transition: 'all 0.2s ease',
                             display: 'flex',
@@ -919,12 +920,12 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                             gap: '4px'
                           }}
                           onMouseOver={(e) => {
-                            e.currentTarget.style.backgroundColor = '#f3f4f6';
-                            e.currentTarget.style.borderColor = '#8b5cf6';
+                            e.currentTarget.style.backgroundColor = '#e6e6e6';
+                            e.currentTarget.style.borderColor = '#d1b01b';
                           }}
                           onMouseOut={(e) => {
                             e.currentTarget.style.backgroundColor = 'white';
-                            e.currentTarget.style.borderColor = '#ede9fe';
+                            e.currentTarget.style.borderColor = '#d6d6d6';
                           }}
                         >
                           <Eye style={{ width: '12px', height: '12px' }} />
@@ -945,11 +946,11 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                                 padding: '6px 10px',
                                 borderRadius: '6px',
                                 border: '1px solid #fecaca',
-                                backgroundColor: item.quantity === 0 ? '#f9fafb' : 'white',
-                                color: item.quantity === 0 ? '#d1d5db' : '#dc2626',
+                                backgroundColor: item.quantity === 0 ? '#ececec' : 'white',
+                                color: item.quantity === 0 ? '#c9c9c9' : '#dc2626',
                                 fontSize: '11px',
                                 fontWeight: '500',
-                                fontFamily: 'Inter, sans-serif',
+                                fontFamily: 'Poppins, sans-serif',
                                 cursor: item.quantity === 0 ? 'not-allowed' : 'pointer',
                                 transition: 'all 0.2s ease',
                                 display: 'flex',
@@ -964,7 +965,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                                 }
                               }}
                               onMouseOut={(e) => {
-                                e.currentTarget.style.backgroundColor = item.quantity === 0 ? '#f9fafb' : 'white';
+                                e.currentTarget.style.backgroundColor = item.quantity === 0 ? '#ececec' : 'white';
                                 e.currentTarget.style.borderColor = '#fecaca';
                               }}
                             >
@@ -981,12 +982,12 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                               style={{
                                 padding: '6px 10px',
                                 borderRadius: '6px',
-                                border: '1px solid #dbeafe',
+                                border: '1px solid #d6d6d6',
                                 backgroundColor: 'white',
-                                color: '#2563eb',
+                                color: '#d1b01b',
                                 fontSize: '11px',
                                 fontWeight: '500',
-                                fontFamily: 'Inter, sans-serif',
+                                fontFamily: 'Poppins, sans-serif',
                                 cursor: 'pointer',
                                 transition: 'all 0.2s ease',
                                 display: 'flex',
@@ -994,12 +995,12 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                                 gap: '4px'
                               }}
                               onMouseOver={(e) => {
-                                e.currentTarget.style.backgroundColor = '#eff6ff';
-                                e.currentTarget.style.borderColor = '#2563eb';
+                                e.currentTarget.style.backgroundColor = '#fbf7e8';
+                                e.currentTarget.style.borderColor = '#d1b01b';
                               }}
                               onMouseOut={(e) => {
                                 e.currentTarget.style.backgroundColor = 'white';
-                                e.currentTarget.style.borderColor = '#dbeafe';
+                                e.currentTarget.style.borderColor = '#d6d6d6';
                               }}
                             >
                               <Edit style={{ width: '12px', height: '12px' }} />
@@ -1008,20 +1009,20 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
 
                             {/* Delete Button */}
                             <button
-                              onClick={() => {
-                                if (window.confirm(`Are you sure you want to delete ${item.itemName}?`)) {
+                              onClick={async () => {
+                                if (await confirmDialog({ title: `Delete ${item.itemName}?`, message: 'This cannot be undone.', confirmLabel: 'Delete', tone: 'danger' })) {
                                   handleDelete(item.id);
                                 }
                               }}
                               style={{
                                 padding: '6px 10px',
                                 borderRadius: '6px',
-                                border: '1px solid #f3f4f6',
+                                border: '1px solid #e6e6e6',
                                 backgroundColor: 'white',
-                                color: '#6b7280',
+                                color: '#5a5a5a',
                                 fontSize: '11px',
                                 fontWeight: '500',
-                                fontFamily: 'Inter, sans-serif',
+                                fontFamily: 'Poppins, sans-serif',
                                 cursor: 'pointer',
                                 transition: 'all 0.2s ease',
                                 display: 'flex',
@@ -1029,14 +1030,14 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                                 gap: '4px'
                               }}
                               onMouseOver={(e) => {
-                                e.currentTarget.style.backgroundColor = '#f9fafb';
-                                e.currentTarget.style.borderColor = '#d1d5db';
-                                e.currentTarget.style.color = '#374151';
+                                e.currentTarget.style.backgroundColor = '#ececec';
+                                e.currentTarget.style.borderColor = '#c9c9c9';
+                                e.currentTarget.style.color = '#262626';
                               }}
                               onMouseOut={(e) => {
                                 e.currentTarget.style.backgroundColor = 'white';
-                                e.currentTarget.style.borderColor = '#f3f4f6';
-                                e.currentTarget.style.color = '#6b7280';
+                                e.currentTarget.style.borderColor = '#e6e6e6';
+                                e.currentTarget.style.color = '#5a5a5a';
                               }}
                             >
                               <Trash2 style={{ width: '12px', height: '12px' }} />
@@ -1087,9 +1088,9 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
               <h2 style={{
                 fontSize: '20px',
                 fontWeight: '600',
-                color: '#111827',
+                color: '#000000',
                 margin: '0',
-                fontFamily: 'Inter, sans-serif'
+                fontFamily: 'Poppins, sans-serif'
               }}>
                 Item Details
               </h2>
@@ -1102,18 +1103,18 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                   padding: '8px',
                   borderRadius: '6px',
                   border: 'none',
-                  backgroundColor: '#f3f4f6',
+                  backgroundColor: '#e6e6e6',
                   cursor: 'pointer',
                   transition: 'all 0.2s ease'
                 }}
                 onMouseOver={(e) => {
-                  e.currentTarget.style.backgroundColor = '#e5e7eb';
+                  e.currentTarget.style.backgroundColor = '#d6d6d6';
                 }}
                 onMouseOut={(e) => {
-                  e.currentTarget.style.backgroundColor = '#f3f4f6';
+                  e.currentTarget.style.backgroundColor = '#e6e6e6';
                 }}
               >
-                <X style={{ width: '20px', height: '20px', color: '#6b7280' }} />
+                <X style={{ width: '20px', height: '20px', color: '#5a5a5a' }} />
               </button>
             </div>
             
@@ -1127,16 +1128,16 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                   display: 'block',
                   fontSize: '12px',
                   fontWeight: '600',
-                  color: '#374151',
+                  color: '#262626',
                   marginBottom: '6px',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Item Code
                 </label>
                 <p style={{
                   fontSize: '14px',
-                  color: '#111827',
-                  fontFamily: 'Inter, sans-serif'
+                  color: '#000000',
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   {selectedItem.itemCode}
                 </p>
@@ -1146,16 +1147,16 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                   display: 'block',
                   fontSize: '12px',
                   fontWeight: '600',
-                  color: '#374151',
+                  color: '#262626',
                   marginBottom: '6px',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Item Name
                 </label>
                 <p style={{
                   fontSize: '14px',
-                  color: '#111827',
-                  fontFamily: 'Inter, sans-serif'
+                  color: '#000000',
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   {selectedItem.itemName}
                 </p>
@@ -1165,16 +1166,16 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                   display: 'block',
                   fontSize: '12px',
                   fontWeight: '600',
-                  color: '#374151',
+                  color: '#262626',
                   marginBottom: '6px',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Description
                 </label>
                 <p style={{
                   fontSize: '14px',
-                  color: '#111827',
-                  fontFamily: 'Inter, sans-serif'
+                  color: '#000000',
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   {selectedItem.description}
                 </p>
@@ -1184,16 +1185,16 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                   display: 'block',
                   fontSize: '12px',
                   fontWeight: '600',
-                  color: '#374151',
+                  color: '#262626',
                   marginBottom: '6px',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Quantity
                 </label>
                 <p style={{
                   fontSize: '14px',
-                  color: '#111827',
-                  fontFamily: 'Inter, sans-serif'
+                  color: '#000000',
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   {selectedItem.quantity} {selectedItem.unit}
                 </p>
@@ -1203,16 +1204,16 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                   display: 'block',
                   fontSize: '12px',
                   fontWeight: '600',
-                  color: '#374151',
+                  color: '#262626',
                   marginBottom: '6px',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Location
                 </label>
                 <p style={{
                   fontSize: '14px',
-                  color: '#111827',
-                  fontFamily: 'Inter, sans-serif'
+                  color: '#000000',
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   {selectedItem.location}
                 </p>
@@ -1222,16 +1223,16 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                   display: 'block',
                   fontSize: '12px',
                   fontWeight: '600',
-                  color: '#374151',
+                  color: '#262626',
                   marginBottom: '6px',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Last Updated
                 </label>
                 <p style={{
                   fontSize: '14px',
-                  color: '#111827',
-                  fontFamily: 'Inter, sans-serif'
+                  color: '#000000',
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   {selectedItem.lastUpdated}
                 </p>
@@ -1241,9 +1242,9 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                   display: 'block',
                   fontSize: '12px',
                   fontWeight: '600',
-                  color: '#374151',
+                  color: '#262626',
                   marginBottom: '6px',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Status
                 </label>
@@ -1263,18 +1264,18 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                 style={{
                   padding: '12px 20px',
                   borderRadius: '8px',
-                  border: '1px solid #e5e7eb',
+                  border: '1px solid #d6d6d6',
                   backgroundColor: 'white',
-                  color: '#374151',
+                  color: '#262626',
                   fontSize: '14px',
                   fontWeight: '500',
-                  fontFamily: 'Inter, sans-serif',
+                  fontFamily: 'Poppins, sans-serif',
                   cursor: 'pointer',
                   transition: 'all 0.2s ease',
                   flex: 1
                 }}
                 onMouseOver={(e) => {
-                  e.currentTarget.style.backgroundColor = '#f9fafb';
+                  e.currentTarget.style.backgroundColor = '#ececec';
                 }}
                 onMouseOut={(e) => {
                   e.currentTarget.style.backgroundColor = 'white';
@@ -1289,20 +1290,20 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                     padding: '12px 20px',
                     borderRadius: '8px',
                     border: 'none',
-                    backgroundColor: '#8b5cf6',
-                    color: 'white',
+                    backgroundColor: '#d1b01b',
+                    color: '#000000',
                     fontSize: '14px',
                     fontWeight: '500',
-                    fontFamily: 'Inter, sans-serif',
+                    fontFamily: 'Poppins, sans-serif',
                     cursor: 'pointer',
                     transition: 'all 0.2s ease',
                     flex: 1
                   }}
                   onMouseOver={(e) => {
-                    e.currentTarget.style.backgroundColor = '#2563eb';
+                    e.currentTarget.style.backgroundColor = '#d1b01b';
                   }}
                   onMouseOut={(e) => {
-                    e.currentTarget.style.backgroundColor = '#8b5cf6';
+                    e.currentTarget.style.backgroundColor = '#d1b01b';
                   }}
                 >
                   Edit Item

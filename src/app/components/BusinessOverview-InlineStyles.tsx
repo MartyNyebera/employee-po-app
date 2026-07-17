@@ -174,7 +174,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
 
   if (loading) {
     return (
-      <div style={{ padding: '24px', fontFamily: 'Inter, sans-serif' }}>
+      <div style={{ padding: '24px', fontFamily: 'Poppins, sans-serif' }}>
         <div style={{ 
           display: 'grid', 
           gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', 
@@ -183,28 +183,28 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
         }}>
           {Array.from({ length: 4 }).map((_, index) => (
             <div key={index} style={{
-              backgroundColor: '#f9fafb',
-              border: '1px solid #e5e7eb',
+              backgroundColor: '#ececec',
+              border: '1px solid #d6d6d6',
               borderRadius: '16px',
               padding: '24px',
               height: '140px'
             }}>
               <div style={{ 
-                background: 'linear-gradient(90deg, #e5e7eb 0%, #f3f4f6 50%, #e5e7eb 100%)',
+                background: 'linear-gradient(90deg, #d6d6d6 0%, #e6e6e6 50%, #d6d6d6 100%)',
                 height: '20px',
                 borderRadius: '4px',
                 marginBottom: '16px',
                 animation: 'loading 1.5s infinite'
               }} />
               <div style={{ 
-                background: 'linear-gradient(90deg, #e5e7eb 0%, #f3f4f6 50%, #e5e7eb 100%)',
+                background: 'linear-gradient(90deg, #d6d6d6 0%, #e6e6e6 50%, #d6d6d6 100%)',
                 height: '32px',
                 borderRadius: '4px',
                 marginBottom: '12px',
                 animation: 'loading 1.5s infinite'
               }} />
               <div style={{ 
-                background: 'linear-gradient(90deg, #e5e7eb 0%, #f3f4f6 50%, #e5e7eb 100%)',
+                background: 'linear-gradient(90deg, #d6d6d6 0%, #e6e6e6 50%, #d6d6d6 100%)',
                 height: '16px',
                 borderRadius: '4px',
                 width: '60%',
@@ -218,7 +218,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
   }
 
   return (
-    <div style={{ padding: '24px', fontFamily: 'Inter, sans-serif' }}>
+    <div style={{ padding: '24px', fontFamily: 'Poppins, sans-serif' }}>
       {/* Header Section */}
       <div style={{ 
         display: 'flex', 
@@ -231,15 +231,15 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
           <h1 style={{ 
             fontSize: '32px', 
             fontWeight: '700', 
-            color: '#111827',
+            color: '#000000',
             margin: '0',
-            fontFamily: 'Plus Jakarta Sans, Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             Business Overview
           </h1>
           <p style={{ 
             fontSize: '14px', 
-            color: '#6b7280', 
+            color: '#5a5a5a', 
             marginTop: '4px',
             margin: '4px 0 0 0'
           }}>
@@ -249,16 +249,16 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
         
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Calendar style={{ width: '20px', height: '20px', color: '#9ca3af' }} />
+            <Calendar style={{ width: '20px', height: '20px', color: '#8a8a8a' }} />
             <select
               value={timePeriod}
               onChange={(e) => setTimePeriod(e.target.value as TimePeriod)}
               style={{
                 padding: '8px 16px',
-                border: '1px solid #d1d5db',
+                border: '1px solid #c9c9c9',
                 borderRadius: '8px',
                 fontSize: '14px',
-                fontFamily: 'Inter, sans-serif',
+                fontFamily: 'Poppins, sans-serif',
                 color: '#000000',
                 backgroundColor: '#ffffff'
               }}
@@ -273,12 +273,12 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
           
           <button style={{
             padding: '8px 16px',
-            border: '1px solid #2563eb',
+            border: '1px solid #d1b01b',
             borderRadius: '8px',
             backgroundColor: 'transparent',
-            color: '#2563eb',
+            color: '#d1b01b',
             fontSize: '14px',
-            fontFamily: 'Inter, sans-serif',
+            fontFamily: 'Poppins, sans-serif',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
@@ -302,8 +302,8 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
         {/* Revenue Card */}
         <div style={{
           position: 'relative',
-          background: '#f9fafb',
-          border: '1px solid #e5e7eb',
+          background: '#ececec',
+          border: '1px solid #d6d6d6',
           borderRadius: '16px',
           padding: '24px',
           boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -342,20 +342,20 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 <h6 style={{ 
                   fontSize: '13px', 
                   fontWeight: '600', 
-                  color: '#4b5563',
+                  color: '#3d3d3d',
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px',
                   margin: '0',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Revenue (SO)
                 </h6>
                 <p style={{ 
                   fontSize: '12px', 
                   fontWeight: '400', 
-                  color: '#6b7280',
+                  color: '#5a5a5a',
                   margin: '0',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Paid Sales Orders
                 </p>
@@ -372,7 +372,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 fontWeight: '600',
                 color: '#10b981',
                 background: '#dcfce7',
-                fontFamily: 'Inter, sans-serif'
+                fontFamily: 'Poppins, sans-serif'
               }}>
                 <ArrowUpRight style={{ width: '16px', height: '16px' }} />
                 <span>{Math.abs(metrics?.revenueTrend || 0)}%</span>
@@ -388,7 +388,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 fontWeight: '600',
                 color: '#ef4444',
                 background: '#fee2e2',
-                fontFamily: 'Inter, sans-serif'
+                fontFamily: 'Poppins, sans-serif'
               }}>
                 <ArrowDownRight style={{ width: '16px', height: '16px' }} />
                 <span>{Math.abs(metrics?.revenueTrend || 0)}%</span>
@@ -398,19 +398,19 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
           <p style={{ 
             fontSize: '32px', 
             fontWeight: '700', 
-            color: '#111827',
+            color: '#000000',
             lineHeight: '1.2',
             margin: '0 0 8px 0',
-            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             {formatCurrency(metrics?.revenue || 0)}
           </p>
           <p style={{ 
             fontSize: '13px', 
             fontWeight: '500', 
-            color: '#4b5563',
+            color: '#3d3d3d',
             margin: '0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             Difference
           </p>
@@ -419,8 +419,8 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
         {/* Expenses Card */}
         <div style={{
           position: 'relative',
-          background: '#f9fafb',
-          border: '1px solid #e5e7eb',
+          background: '#ececec',
+          border: '1px solid #d6d6d6',
           borderRadius: '16px',
           padding: '24px',
           boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -459,20 +459,20 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 <h6 style={{ 
                   fontSize: '13px', 
                   fontWeight: '600', 
-                  color: '#4b5563',
+                  color: '#3d3d3d',
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px',
                   margin: '0',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Expenses (PO)
                 </h6>
                 <p style={{ 
                   fontSize: '12px', 
                   fontWeight: '400', 
-                  color: '#6b7280',
+                  color: '#5a5a5a',
                   margin: '0',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Received Purchase Orders
                 </p>
@@ -489,7 +489,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 fontWeight: '600',
                 color: '#ef4444',
                 background: '#fee2e2',
-                fontFamily: 'Inter, sans-serif'
+                fontFamily: 'Poppins, sans-serif'
               }}>
                 <ArrowUpRight style={{ width: '16px', height: '16px' }} />
                 <span>{Math.abs(metrics?.expensesTrend || 0).toFixed(1)}%</span>
@@ -505,7 +505,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 fontWeight: '600',
                 color: '#10b981',
                 background: '#dcfce7',
-                fontFamily: 'Inter, sans-serif'
+                fontFamily: 'Poppins, sans-serif'
               }}>
                 <ArrowDownRight style={{ width: '16px', height: '16px' }} />
                 <span>{Math.abs(metrics?.expensesTrend || 0).toFixed(1)}%</span>
@@ -515,19 +515,19 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
           <p style={{ 
             fontSize: '32px', 
             fontWeight: '700', 
-            color: '#111827',
+            color: '#000000',
             lineHeight: '1.2',
             margin: '0 0 8px 0',
-            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             ₱{metrics?.expenses?.toLocaleString('en-PH') || 0}
           </p>
           <p style={{ 
             fontSize: '13px', 
             fontWeight: '500', 
-            color: '#4b5563',
+            color: '#3d3d3d',
             margin: '0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             Difference
           </p>
@@ -536,8 +536,8 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
         {/* Net Profit Card */}
         <div style={{
           position: 'relative',
-          background: '#f9fafb',
-          border: '1px solid #e5e7eb',
+          background: '#ececec',
+          border: '1px solid #d6d6d6',
           borderRadius: '16px',
           padding: '24px',
           boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -550,7 +550,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
             left: '0',
             right: '0',
             height: '4px',
-            background: 'linear-gradient(90deg, #2563eb 0%, #1d4ed8 100%)'
+            background: 'linear-gradient(90deg, #d1b01b 0%, #b0940f 100%)'
           }} />
           
           <div style={{ 
@@ -567,8 +567,8 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 width: '48px',
                 height: '48px',
                 borderRadius: '12px',
-                background: '#dbeafe',
-                color: '#2563eb'
+                background: '#ececec',
+                color: '#d1b01b'
               }}>
                 <Target style={{ width: '24px', height: '24px' }} />
               </div>
@@ -576,20 +576,20 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 <h6 style={{ 
                   fontSize: '13px', 
                   fontWeight: '600', 
-                  color: '#4b5563',
+                  color: '#3d3d3d',
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px',
                   margin: '0',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Net Profit
                 </h6>
                 <p style={{ 
                   fontSize: '12px', 
                   fontWeight: '400', 
-                  color: '#6b7280',
+                  color: '#5a5a5a',
                   margin: '0',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Difference
                 </p>
@@ -605,7 +605,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
               fontWeight: '600',
               color: '#10b981',
               background: '#dcfce7',
-              fontFamily: 'Inter, sans-serif'
+              fontFamily: 'Poppins, sans-serif'
             }}>
               <ArrowUpRight style={{ width: '16px', height: '16px' }} />
               <span>12.5%</span>
@@ -617,16 +617,16 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
             color: '#10b981',
             lineHeight: '1.2',
             margin: '0 0 8px 0',
-            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             {formatCurrency(((metrics?.revenue || 0) - (isNaN(metrics?.expenses || 0) ? 0 : (metrics?.expenses || 0))) as number)}
           </p>
           <p style={{ 
             fontSize: '13px', 
             fontWeight: '500', 
-            color: '#4b5563',
+            color: '#3d3d3d',
             margin: '0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             Revenue - Expenses
           </p>
@@ -635,8 +635,8 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
         {/* Profit Margin Card */}
         <div style={{
           position: 'relative',
-          background: '#f9fafb',
-          border: '1px solid #e5e7eb',
+          background: '#ececec',
+          border: '1px solid #d6d6d6',
           borderRadius: '16px',
           padding: '24px',
           boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -675,20 +675,20 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
                 <h6 style={{ 
                   fontSize: '13px', 
                   fontWeight: '600', 
-                  color: '#4b5563',
+                  color: '#3d3d3d',
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px',
                   margin: '0',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Profit Margin
                 </h6>
                 <p style={{ 
                   fontSize: '12px', 
                   fontWeight: '400', 
-                  color: '#6b7280',
+                  color: '#5a5a5a',
                   margin: '0',
-                  fontFamily: 'Inter, sans-serif'
+                  fontFamily: 'Poppins, sans-serif'
                 }}>
                   Percentage
                 </p>
@@ -704,7 +704,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
               fontWeight: '600',
               color: '#10b981',
               background: '#dcfce7',
-              fontFamily: 'Inter, sans-serif'
+              fontFamily: 'Poppins, sans-serif'
             }}>
               <ArrowUpRight style={{ width: '16px', height: '16px' }} />
               <span>2.1%</span>
@@ -713,19 +713,19 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
           <p style={{ 
             fontSize: '32px', 
             fontWeight: '700', 
-            color: '#111827',
+            color: '#000000',
             lineHeight: '1.2',
             margin: '0 0 8px 0',
-            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             {metrics?.revenue ? formatPercentage(((metrics.revenue - (metrics.expenses || 0)) / metrics.revenue) * 100) : '0%'}
           </p>
           <p style={{ 
             fontSize: '13px', 
             fontWeight: '500', 
-            color: '#4b5563',
+            color: '#3d3d3d',
             margin: '0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             (Net Profit / Revenue) × 100
           </p>
@@ -735,14 +735,14 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
 
       {/* CHART SECTION */}
       <div style={{
-        background: '#f9fafb',
-        border: '1px solid #e5e7eb',
+        background: '#ececec',
+        border: '1px solid #d6d6d6',
         borderRadius: '16px',
         padding: '24px',
         boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
         marginBottom: '32px'
       }}>
-        <h2 style={{ fontSize: '20px', fontWeight: '600', color: '#111827', marginBottom: '24px' }}>
+        <h2 style={{ fontSize: '20px', fontWeight: '600', color: '#000000', marginBottom: '24px' }}>
           Expenses vs Revenue Trend
         </h2>
         <ProperLineChart data={chartData} />

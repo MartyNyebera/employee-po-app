@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Plus, Search } from 'lucide-react';
 import { toast } from 'sonner';
+import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
 import { S, Modal, Field, TextInput, Select, TextArea, PrimaryBtn, GhostBtn, badge } from './crmKit';
 
@@ -15,10 +16,10 @@ const STATUSES = ['Lead', 'Active', 'Repeat', 'Inactive'];
 
 const statusBadge = (s?: string) => {
   if (s === 'Active') return badge(s, '#065f46', '#d1fae5');
-  if (s === 'Repeat') return badge(s, '#1e40af', '#dbeafe');
+  if (s === 'Repeat') return badge(s, '#7a6a0c', '#ececec');
   if (s === 'Lead') return badge(s, '#92400e', '#fef3c7');
-  if (s === 'Inactive') return badge(s, '#6b7280', '#f3f4f6');
-  return <span style={{ color: '#9ca3af' }}>—</span>;
+  if (s === 'Inactive') return badge(s, '#5a5a5a', '#e6e6e6');
+  return <span style={{ color: '#8a8a8a' }}>—</span>;
 };
 
 export function CustomersList({ isAdmin }: { isAdmin: boolean }) {
@@ -45,7 +46,7 @@ export function CustomersList({ isAdmin }: { isAdmin: boolean }) {
   });
 
   const onDelete = async (c: Customer) => {
-    if (!window.confirm(`Delete customer "${c.name}"?`)) return;
+    if (!(await confirmDialog({ title: `Delete customer "${c.name}"?`, message: 'This cannot be undone.', confirmLabel: 'Delete', tone: 'danger' }))) return;
     const prev = rows; setRows(rows.filter(r => r.id !== c.id));
     try { await fetchApi(`/customers/${c.id}`, { method: 'DELETE' }); toast.success('Customer deleted'); }
     catch { setRows(prev); toast.error('Delete failed'); }
@@ -60,7 +61,7 @@ export function CustomersList({ isAdmin }: { isAdmin: boolean }) {
 
       <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
         <div style={{ position: 'relative', flex: 1, minWidth: '220px' }}>
-          <Search size={16} style={{ position: 'absolute', left: '12px', top: '11px', color: '#9ca3af' }} />
+          <Search size={16} style={{ position: 'absolute', left: '12px', top: '11px', color: '#8a8a8a' }} />
           <input placeholder="Search customers…" value={search} onChange={e => setSearch(e.target.value)} style={{ ...S.input, paddingLeft: '36px' }} />
         </div>
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ ...S.input, width: 'auto', cursor: 'pointer' }}>
@@ -78,12 +79,12 @@ export function CustomersList({ isAdmin }: { isAdmin: boolean }) {
           </tr></thead>
           <tbody>
             {loading ? <tr><td style={S.td} colSpan={7}>Loading…</td></tr>
-              : filtered.length === 0 ? <tr><td style={{ ...S.td, color: '#9ca3af' }} colSpan={7}>No customers yet.</td></tr>
+              : filtered.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={7}>No customers yet.</td></tr>
               : filtered.map(c => (
                 <tr key={c.id}>
-                  <td style={{ ...S.td, fontWeight: 600, color: '#111827' }}>{c.name}</td>
+                  <td style={{ ...S.td, fontWeight: 600, color: '#000000' }}>{c.name}</td>
                   <td style={S.td}>{c.type || '—'}</td>
-                  <td style={S.td}>{c.contactPerson || '—'}{c.phone ? <div style={{ fontSize: '12px', color: '#9ca3af' }}>{c.phone}</div> : null}</td>
+                  <td style={S.td}>{c.contactPerson || '—'}{c.phone ? <div style={{ fontSize: '12px', color: '#8a8a8a' }}>{c.phone}</div> : null}</td>
                   <td style={{ ...S.td, maxWidth: '200px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.whatTheyBuy || '—'}</td>
                   <td style={S.td}>{c.source || '—'}</td>
                   <td style={S.td}>{statusBadge(c.status)}</td>

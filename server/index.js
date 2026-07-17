@@ -54,18 +54,18 @@ import { seed } from './seed.js';
 import { hashPassword, comparePassword, signToken, requireAuth, requireAdmin, requireSuperAdmin, requireRole, effectiveRole } from './auth.js';
 import { createSalesOrder, createPurchaseOrder } from './order-service.js';
 import { sendEmailToAdminsNewRequest, sendEmailToApplicant } from './email.js';
-import { getDevices, getDevice, createDevice, updateDevice, deleteDevice, getPositions, getPositionHistory, getGeofences, checkConnection, getTraccarWsUrl, authHeader, TRACCAR_URL } from './traccar.js';
-import { getVehicles, getVehicle, createVehicle, updateVehicle, deleteVehicle, getOdometerLogs, logOdometer, getMaintenance, createMaintenance, getVehiclePOs, createVehiclePO, getPmsReminders } from './fleet.js';
-import mobileGPSRouter from './mobile-gps.js';
-import { seedFleet } from './seed-fleet.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(compression()); // gzip/brotli text responses (JS/CSS/JSON) — ~3-4x smaller over the wire
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// 5mb, not the 100kb default: scanned certificates of registration are stored as base64
+// data URLs and a legible A4 scan exceeds 100kb easily. Note this also makes the per-route
+// size guards (e.g. the signature routes' 2M-character check) reachable — under the default
+// limit express rejected those payloads with a 413 before any handler ran.
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 
 // Add CSP headers to allow frontend connections
 app.use((req, res, next) => {
@@ -268,13 +268,65 @@ async function runMigrations() {
     `);
     console.log('✅ miscellaneous table ready');
 
-    // Alter purchase_orders: drop old status constraint and add new one with RECEIVED and PAID
+    // Alter purchase_orders: drop old status constraint and add new one with RECEIVED, PAID
+    // and 'cancelled'. Logistics owns the tail of this lifecycle once an admin approves:
+    //   approved --> in-progress --> RECEIVED    (terminal; RECEIVED is what counts as an expense)
+    //           \-------------------> cancelled  (terminal)
+    // 'in-progress' predates this and meant nothing — it now means "ongoing delivery".
     try {
       await query(`ALTER TABLE purchase_orders DROP CONSTRAINT IF EXISTS purchase_orders_status_check`);
-      await query(`ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_status_check CHECK (status IN ('pending', 'approved', 'in-progress', 'RECEIVED', 'PAID', 'completed'))`);
-      console.log('✅ purchase_orders status constraint updated (added RECEIVED and PAID)');
+      await query(`ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_status_check CHECK (status IN ('pending', 'approved', 'in-progress', 'RECEIVED', 'PAID', 'completed', 'cancelled'))`);
+      console.log('✅ purchase_orders status constraint updated (added RECEIVED, PAID, cancelled)');
     } catch (err) {
       console.log('ℹ️ purchase_orders constraint update skipped:', err.message);
+    }
+
+    // Who confirmed each step of the delivery, and when. Mirrors the approved_by/approved_at
+    // naming already on this table. Without these, marking an order received would record the
+    // fact but not the accountability.
+    try {
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS in_transit_at TIMESTAMPTZ`);
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS in_transit_by TEXT`);
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS received_at TIMESTAMPTZ`);
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS received_by TEXT`);
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ`);
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS cancelled_by TEXT`);
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS delivery_notes TEXT`);
+      // What the receipt actually put onto the shelf, recorded AT the moment of receipt. This
+      // was previously computed, returned once in the PUT response and thrown away — so the
+      // delivery receipt could only ever be printed from that one response, and the resulting
+      // stock figure was unreconstructable afterwards (production withdraws move it).
+      //
+      // NULL and '[]' mean different things and the document says so: NULL is "received before
+      // this was recorded" (the two live orders), '[]' is "recorded, and nothing was an
+      // inventory item" (a hand-raised order). Printing "nothing was added" for a NULL would
+      // be a lie — both live orders did add stock.
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS received_lines JSONB`);
+      console.log('✅ purchase_orders logistics/delivery columns ready');
+    } catch (err) {
+      console.log('ℹ️ purchase_orders delivery columns skipped:', err.message);
+    }
+
+    // The printed order names four people; approved_by/prepared_by hold display NAMES, which
+    // cannot be joined back to an account for a signature. These ids close that gap.
+    // processed_* is the purchasing employee who turned the request into an order — previously
+    // squeezed into prepared_by, which the document now uses for the requesting employee.
+    try {
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS approved_by_id TEXT`);
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS processed_by TEXT`);
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS processed_by_id INTEGER`);
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS processed_at TIMESTAMPTZ`);
+      // One-time backfill for orders approved before the id existed. Idempotent via IS NULL;
+      // matches on name, the only link those rows have.
+      const bf = await query(
+        `UPDATE purchase_orders po SET approved_by_id = u.id
+           FROM users u
+          WHERE po.approved_by_id IS NULL AND po.approved_by IS NOT NULL AND u.name = po.approved_by`
+      );
+      if (bf.rowCount) console.log(`✅ purchase_orders approved_by_id backfilled (${bf.rowCount} row(s))`);
+      console.log('✅ purchase_orders signatory columns ready');
+    } catch (err) {
+      console.log('ℹ️ purchase_orders signatory columns skipped:', err.message);
     }
 
     // Add order_type column to distinguish Sales Orders from Purchase Orders
@@ -294,87 +346,8 @@ async function runMigrations() {
       console.log('ℹ️ sales_orders constraint update skipped:', err.message);
     }
 
-    // Create gps_locations table
-    await query(`
-      CREATE TABLE IF NOT EXISTS gps_locations (
-        device_id TEXT PRIMARY KEY,
-        lat DOUBLE PRECISION NOT NULL,
-        lng DOUBLE PRECISION NOT NULL,
-        accuracy DOUBLE PRECISION,
-        speed DOUBLE PRECISION,
-        heading DOUBLE PRECISION,
-        device_timestamp TIMESTAMPTZ,
-        last_seen TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
-    console.log('✅ gps_locations table ready');
-
-    // Create vehicles table FIRST — drivers/deliveries below reference vehicles(id),
-    // and runMigrations() (npm run server) is the only migration that runs on Render.
-    // Without this, the drivers CREATE throws "relation vehicles does not exist" and
-    // aborts the whole migration before the CRM tables (suppliers/customers/inquiries) are made.
-    try {
-      await query(`
-        CREATE TABLE IF NOT EXISTS vehicles (
-          id TEXT PRIMARY KEY,
-          unit_name TEXT NOT NULL,
-          vehicle_type TEXT NOT NULL,
-          plate_number TEXT,
-          current_odometer NUMERIC(10,2) DEFAULT 0,
-          tracker_id TEXT,
-          pms_status TEXT DEFAULT 'OK',
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW()
-        )
-      `);
-      console.log('✅ vehicles table ready');
-    } catch (err) { console.log('ℹ️ vehicles table skipped:', err.message); }
-
-    // Create drivers table
-    try {
-      await query(`
-        CREATE TABLE IF NOT EXISTS drivers (
-          id TEXT PRIMARY KEY,
-          driver_name TEXT NOT NULL,
-          contact TEXT NOT NULL,
-          email TEXT,
-          license_number TEXT NOT NULL,
-          license_expiry DATE NOT NULL,
-          assigned_vehicle_id TEXT REFERENCES vehicles(id) ON DELETE SET NULL,
-          status TEXT NOT NULL DEFAULT 'Active',
-          join_date DATE NOT NULL,
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW()
-        )
-      `);
-      console.log('✅ drivers table ready');
-    } catch (err) { console.log('ℹ️ drivers table skipped:', err.message); }
-
-    // Create deliveries table
-    try {
-      await query(`
-        CREATE TABLE IF NOT EXISTS deliveries (
-          id TEXT PRIMARY KEY,
-          so_number TEXT NOT NULL,
-          vehicle_id TEXT REFERENCES vehicles(id) ON DELETE SET NULL,
-          driver_id TEXT REFERENCES drivers(id) ON DELETE SET NULL,
-          customer_name TEXT NOT NULL,
-          customer_address TEXT NOT NULL,
-          delivery_date TIMESTAMPTZ NOT NULL,
-          status TEXT NOT NULL DEFAULT 'Pending',
-          assigned_time TIMESTAMPTZ,
-          picked_up_time TIMESTAMPTZ,
-          in_transit_time TIMESTAMPTZ,
-          arrived_time TIMESTAMPTZ,
-          completed_time TIMESTAMPTZ,
-          proof_of_delivery_url TEXT,
-          notes TEXT,
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW()
-        )
-      `);
-      console.log('✅ deliveries table ready');
-    } catch (err) { console.log('ℹ️ deliveries table skipped:', err.message); }
+    // [removed] Fleet/GPS/Delivery tables (gps_locations, vehicles, drivers, deliveries)
+    // — feature removed; these tables were dropped and are no longer created.
 
     // Add reservation columns to inventory (non-breaking)
     try {
@@ -385,15 +358,20 @@ async function runMigrations() {
       console.log('ℹ️ inventory reservation columns skipped:', err.message);
     }
 
-    // Add delivery linking columns to sales_orders (non-breaking)
+    // Supplier statutory details. The certificate is a scan held as a data-URL in TEXT
+    // (same approach as purchase_requests.checked_signature). It is deliberately NOT
+    // returned by the suppliers list query — see GET /api/suppliers.
     try {
-      await query(`ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS driver_id TEXT REFERENCES drivers(id) ON DELETE SET NULL`);
-      await query(`ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS vehicle_id TEXT REFERENCES vehicles(id) ON DELETE SET NULL`);
-      await query(`ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS delivery_id TEXT`);
-      console.log('✅ sales_orders delivery linking columns ready');
+      await query(`ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS tin TEXT`);
+      await query(`ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS certificate_of_registration TEXT`);
+      await query(`ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS certificate_filename TEXT`);
+      console.log('✅ suppliers TIN/certificate columns ready');
     } catch (err) {
-      console.log('ℹ️ sales_orders delivery columns skipped:', err.message);
+      console.log('ℹ️ suppliers TIN/certificate columns skipped:', err.message);
     }
+
+    // [removed] sales_orders delivery-linking columns (driver_id, vehicle_id, delivery_id)
+    // and driver_accounts/deliveries fleet migrations — feature removed.
 
     // Add migration for approved_by column type change (integer to text)
     try {
@@ -402,30 +380,6 @@ async function runMigrations() {
       console.log('✅ employee_accounts approved_by column migrated to VARCHAR(255)');
     } catch (err) {
       console.log('ℹ️ employee_accounts approved_by column migration skipped:', err.message);
-    }
-
-    // Add migration for driver_accounts approved_by column type change
-    try {
-      await query(`ALTER TABLE driver_accounts ALTER COLUMN approved_by TYPE VARCHAR(255) USING approved_by::VARCHAR(255)`);
-      console.log('✅ driver_accounts approved_by column migrated to VARCHAR(255)');
-    } catch (err) {
-      console.log('ℹ️ driver_accounts approved_by column migration skipped:', err.message);
-    }
-
-    // Add vehicle_id FK column to driver_accounts for GPS ODO tracking
-    try {
-      await query(`ALTER TABLE driver_accounts ADD COLUMN IF NOT EXISTS vehicle_id TEXT REFERENCES vehicles(id) ON DELETE SET NULL`);
-      console.log('✅ driver_accounts vehicle_id column ready');
-    } catch (err) {
-      console.log('ℹ️ driver_accounts vehicle_id migration skipped:', err.message);
-    }
-
-    // Add driver_account_id to deliveries table to link PWA drivers to SO deliveries
-    try {
-      await query(`ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS driver_account_id INTEGER REFERENCES driver_accounts(id) ON DELETE SET NULL`);
-      console.log('✅ deliveries driver_account_id column ready');
-    } catch (err) {
-      console.log('ℹ️ deliveries driver_account_id migration skipped:', err.message);
     }
 
     // ============================================================
@@ -518,22 +472,7 @@ async function runMigrations() {
       console.log('ℹ️ product_lines drop skipped:', err.message);
     }
 
-    // operational_costs — referenced by /api/dashboard/financial-summary but was never created
-    try {
-      await query(`
-        CREATE TABLE IF NOT EXISTS operational_costs (
-          id SERIAL PRIMARY KEY,
-          cost_type TEXT NOT NULL,
-          amount NUMERIC(12,2) NOT NULL,
-          description TEXT,
-          cost_date DATE,
-          related_vehicle_id TEXT,
-          related_employee_id TEXT,
-          created_at TIMESTAMPTZ DEFAULT NOW()
-        )
-      `);
-      console.log('✅ operational_costs table ready');
-    } catch (err) { console.log('ℹ️ operational_costs table skipped:', err.message); }
+    // [removed] operational_costs table — fleet operational-cost tracking removed.
 
     // Nullable links from existing tables to the new directories (non-breaking)
     try {
@@ -563,9 +502,13 @@ async function runMigrations() {
       await query(`ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS customer_contact TEXT`);
       await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_address TEXT`);
       await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS supplier_contact TEXT`);
-      // Backfill existing orders so old/pre-change records show proper header values too
+      // Backfill existing orders so old/pre-change records show proper header values too.
+      // [removed] the prepared_by = 'Kim Karen D. Tagle' backfill — it stamped one real person's
+      // name onto every order that had no preparer, which is the same untruth the print layer
+      // used to add as a default. Dropping the default there only fixed half of it: this wrote
+      // the name into the column, so a hand-raised order would still print it. A blank Prepared
+      // By line is honest. (No live row was ever stamped, so there is nothing to undo.)
       for (const t of ['sales_orders', 'purchase_orders']) {
-        await query(`UPDATE ${t} SET prepared_by = 'Kim Karen D. Tagle' WHERE prepared_by IS NULL OR btrim(prepared_by) = ''`);
         await query(`UPDATE ${t} SET doc_date = created_date WHERE doc_date IS NULL`);
         await query(`UPDATE ${t} SET payment_terms = '30 days from receipt/acceptance' WHERE payment_terms IS NULL OR btrim(payment_terms) = ''`);
       }
@@ -590,6 +533,337 @@ async function runMigrations() {
     } catch (err) {
       console.log('ℹ️ users is_active column skipped:', err.message);
     }
+
+    // The admin's own signature — mountSignatureRoutes('admin', 'users', 'admin') reads and
+    // writes it, and it resolves the Approved By / Supervised By blocks on the printed order.
+    // Every other account table declares this column in its CREATE; `users` is the one table
+    // created by schema.sql instead of here, so it was missed. Without it all four /signatures
+    // routes 500 — and printPurchaseOrder swallows that into a silently unsigned document,
+    // indistinguishable from "nobody has signed yet". The live DB already has the column; this
+    // is a no-op there and closes the trap for any fresh bootstrap.
+    try {
+      await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS signature TEXT`);
+      console.log('✅ users signature column ready');
+    } catch (err) {
+      console.log('ℹ️ users signature column skipped:', err.message);
+    }
+
+    // Projects (admin-created; purchase requests can be charged to a project)
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS projects (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          description TEXT,
+          status TEXT CHECK (status IN ('Active','On Hold','Completed')) DEFAULT 'Active',
+          client TEXT,
+          location TEXT,
+          start_date DATE,
+          end_date DATE,
+          budget_allocation NUMERIC(14,2) DEFAULT 0,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      console.log('✅ projects table ready');
+    } catch (err) { console.log('ℹ️ projects table skipped:', err.message); }
+
+    // Purchase requests (employee-filed via /production portal; line items stored as JSONB)
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS purchase_requests (
+          id TEXT PRIMARY KEY,
+          pr_number TEXT UNIQUE NOT NULL,
+          employee_id INTEGER REFERENCES employee_accounts(id) ON DELETE SET NULL,
+          employee_name TEXT,
+          project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+          needed_by DATE,
+          supplier TEXT,
+          notes TEXT,
+          items JSONB NOT NULL DEFAULT '[]',
+          total NUMERIC(14,2) DEFAULT 0,
+          status TEXT CHECK (status IN ('pending','approved','disapproved')) DEFAULT 'pending',
+          withdrawn BOOLEAN DEFAULT false,
+          reviewed_by TEXT,
+          reviewed_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      console.log('✅ purchase_requests table ready');
+    } catch (err) { console.log('ℹ️ purchase_requests table skipped:', err.message); }
+
+    // Review stage columns + status machine. Flow:
+    //   pending → (accounting) reviewed → (admin) verified → (purchasing raises a PO) ordered
+    //   → (admin approves that PO) approved; disapproved is reachable from the accounting,
+    //   verification or PO-approval gate.
+    // Naming note, three distinct actors on one row:
+    //   checked_*  = Accounting's review (this was Purchasing before the flow change)
+    //   verified_* = the ADMIN's verification of the request itself
+    //   reviewed_* = the ADMIN's approval of the purchase order, which approves the request
+    // CREATE TABLE IF NOT EXISTS won't alter an existing table, so migrate explicitly.
+    try {
+      await query(`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS checked_by TEXT`);
+      await query(`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS checked_at TIMESTAMPTZ`);
+      await query(`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS verified_by TEXT`);
+      await query(`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ`);
+      // Expand the status CHECK for the intermediate 'reviewed', 'verified' and 'ordered' states.
+      await query(`ALTER TABLE purchase_requests DROP CONSTRAINT IF EXISTS purchase_requests_status_check`);
+      await query(`ALTER TABLE purchase_requests ADD CONSTRAINT purchase_requests_status_check CHECK (status IN ('pending','reviewed','verified','ordered','approved','disapproved'))`);
+      // Snapshot of the reviewer's e-signature taken at check time (data-URL).
+      await query(`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS checked_signature TEXT`);
+      // verified_by holds a NAME, which cannot be joined back to an account for a signature.
+      // Deliberately no FK: this is only ever used to LEFT JOIN a signature, and a FK here
+      // would block deleting an admin who once verified something.
+      await query(`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS verified_by_id TEXT`);
+      // The employee's `total` is an ESTIMATE. Purchasing sets the real price when they assign
+      // a supplier; final_total is the sum of the priced lines (ex-VAT), so it compares
+      // like-for-like against `total`. Per-line finals live in the items JSONB alongside the
+      // estimate (finalUnitCost / finalAmount), so nothing is overwritten.
+      await query(`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS final_total NUMERIC(12,2)`);
+      // One-time backfill for requests verified before the column existed. Idempotent via the
+      // IS NULL guard; matches on name, which is the only link those rows have.
+      const bf = await query(
+        `UPDATE purchase_requests pr SET verified_by_id = u.id
+           FROM users u
+          WHERE pr.verified_by_id IS NULL AND pr.verified_by IS NOT NULL AND u.name = pr.verified_by`
+      );
+      if (bf.rowCount) console.log(`✅ purchase_requests verified_by_id backfilled (${bf.rowCount} row(s))`);
+      console.log('✅ purchase_requests review columns/status ready');
+    } catch (err) { console.log('ℹ️ purchase_requests review migration skipped:', err.message); }
+
+    // Purchasing Management accounts — dedicated identities (admin-created) for the /purchasing
+    // portal, independent of the admin-dashboard staff (users) table. Each stores its own
+    // saved e-signature. Mirrors the employee_accounts pattern.
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS purchasing_accounts (
+          id SERIAL PRIMARY KEY,
+          full_name VARCHAR(255) NOT NULL,
+          email VARCHAR(255) UNIQUE NOT NULL,
+          password_hash VARCHAR(255) NOT NULL,
+          phone VARCHAR(50),
+          status VARCHAR(50) DEFAULT 'approved',
+          signature TEXT,
+          created_at TIMESTAMP DEFAULT NOW()
+        )
+      `);
+      console.log('✅ purchasing_accounts table ready');
+    } catch (err) { console.log('ℹ️ purchasing_accounts table skipped:', err.message); }
+
+    // Warehouse accounts — dedicated identities (admin-created) for the /warehouse portal,
+    // independent of the admin-dashboard staff (users) table. Warehouse staff input and
+    // update inventory items. Mirrors the purchasing_accounts pattern.
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS warehouse_accounts (
+          id SERIAL PRIMARY KEY,
+          full_name VARCHAR(255) NOT NULL,
+          email VARCHAR(255) UNIQUE NOT NULL,
+          password_hash VARCHAR(255) NOT NULL,
+          phone VARCHAR(50),
+          status VARCHAR(50) DEFAULT 'approved',
+          signature TEXT,
+          created_at TIMESTAMP DEFAULT NOW()
+        )
+      `);
+      // The table predates the signature column, and CREATE TABLE IF NOT EXISTS won't
+      // retrofit an existing one — so ALTER explicitly.
+      await query(`ALTER TABLE warehouse_accounts ADD COLUMN IF NOT EXISTS signature TEXT`);
+      console.log('✅ warehouse_accounts table ready');
+    } catch (err) { console.log('ℹ️ warehouse_accounts table skipped:', err.message); }
+
+    // Sales accounts — dedicated identities for the /sales portal. Sales staff raise and
+    // print sales orders. Mirrors purchasing_accounts (signature included: they sign SOs).
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS sales_accounts (
+          id SERIAL PRIMARY KEY,
+          full_name VARCHAR(255) NOT NULL,
+          email VARCHAR(255) UNIQUE NOT NULL,
+          password_hash VARCHAR(255) NOT NULL,
+          phone VARCHAR(50),
+          status VARCHAR(50) DEFAULT 'approved',
+          signature TEXT,
+          created_at TIMESTAMP DEFAULT NOW()
+        )
+      `);
+      console.log('✅ sales_accounts table ready');
+    } catch (err) { console.log('ℹ️ sales_accounts table skipped:', err.message); }
+
+    // Logistics accounts — dedicated identities for the /logistics portal. They dispatch and
+    // complete deliveries against approved sales orders.
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS logistics_accounts (
+          id SERIAL PRIMARY KEY,
+          full_name VARCHAR(255) NOT NULL,
+          email VARCHAR(255) UNIQUE NOT NULL,
+          password_hash VARCHAR(255) NOT NULL,
+          phone VARCHAR(50),
+          status VARCHAR(50) DEFAULT 'approved',
+          signature TEXT,
+          created_at TIMESTAMP DEFAULT NOW()
+        )
+      `);
+      console.log('✅ logistics_accounts table ready');
+    } catch (err) { console.log('ℹ️ logistics_accounts table skipped:', err.message); }
+
+    // Deliveries — one row per dispatched sales order, created by the /logistics portal.
+    // Deliberately narrow: no drivers, no vehicles, no GPS. The previous fleet feature was
+    // removed wholesale (see server/remove-fleet.js); this is a fresh, minimal record of
+    // "this order went out, and this is who received it".
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS deliveries (
+          id TEXT PRIMARY KEY,
+          delivery_number TEXT NOT NULL UNIQUE,
+          sales_order_id TEXT REFERENCES sales_orders(id) ON DELETE CASCADE,
+          status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','dispatched','delivered','cancelled')),
+          dispatched_by TEXT,
+          dispatched_at TIMESTAMPTZ,
+          delivered_at TIMESTAMPTZ,
+          received_by TEXT,
+          notes TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      await query(`CREATE INDEX IF NOT EXISTS idx_deliveries_sales_order ON deliveries(sales_order_id)`);
+      console.log('✅ deliveries table ready');
+    } catch (err) { console.log('ℹ️ deliveries table skipped:', err.message); }
+
+    // Accounting accounts — dedicated identities (admin-created) for the /accounting portal.
+    // Accounting is the FIRST gate on a purchase request: they review it (stamping their saved
+    // e-signature onto the PR) before Purchasing raises a PO. Mirrors purchasing_accounts.
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS accounting_accounts (
+          id SERIAL PRIMARY KEY,
+          full_name VARCHAR(255) NOT NULL,
+          email VARCHAR(255) UNIQUE NOT NULL,
+          password_hash VARCHAR(255) NOT NULL,
+          phone VARCHAR(50),
+          status VARCHAR(50) DEFAULT 'approved',
+          signature TEXT,
+          created_at TIMESTAMP DEFAULT NOW()
+        )
+      `);
+      console.log('✅ accounting_accounts table ready');
+    } catch (err) { console.log('ℹ️ accounting_accounts table skipped:', err.message); }
+
+    // Link a purchase order back to the purchase request it fulfils, plus a real approval
+    // record. purchase_orders is created by schema.sql (not here), so ALTER only. NOTE the
+    // table is shared with Sales Orders — discriminated by order_type — so any PR-linked
+    // query must filter order_type='purchase'.
+    try {
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS purchase_request_id TEXT REFERENCES purchase_requests(id) ON DELETE SET NULL`);
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS approved_by TEXT`);
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ`);
+      console.log('✅ purchase_orders PR-link/approval columns ready');
+    } catch (err) { console.log('ℹ️ purchase_orders PR-link migration skipped:', err.message); }
+
+    // Employee saved e-signature (data-URL), used on their purchase-request printouts
+    // in the "Prepared By" block. Mirrors purchasing_accounts.signature.
+    try {
+      await query('ALTER TABLE employee_accounts ADD COLUMN IF NOT EXISTS signature TEXT');
+      console.log('✅ employee_accounts signature column ready');
+    } catch (err) { console.log('ℹ️ employee_accounts signature column skipped:', err.message); }
+
+    // Inventory withdrawal requests (employee ad-hoc withdrawals need admin approval
+    // before any stock is deducted; approval performs the deduction in a transaction).
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS inventory_withdrawal_requests (
+          id TEXT PRIMARY KEY,
+          inventory_id TEXT REFERENCES inventory(id) ON DELETE CASCADE,
+          item_name TEXT,
+          quantity NUMERIC(10,2) NOT NULL,
+          reason TEXT,
+          requested_by_id INTEGER,
+          requested_by_name TEXT,
+          status TEXT CHECK (status IN ('pending','approved','rejected')) DEFAULT 'pending',
+          reviewed_by TEXT,
+          reviewed_at TIMESTAMPTZ,
+          deducted_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      // CREATE TABLE IF NOT EXISTS won't retrofit an existing table, so migrate explicitly.
+      // withdrawal_number gives the receipt something to cite; purchase_request_id groups the
+      // lines of one PR withdrawal so `withdrawn` can flip only once every line is approved;
+      // reviewed_by_id resolves the approving admin's signature (reviewed_by is a display name).
+      await query(`ALTER TABLE inventory_withdrawal_requests ADD COLUMN IF NOT EXISTS withdrawal_number TEXT`);
+      await query(`ALTER TABLE inventory_withdrawal_requests ADD COLUMN IF NOT EXISTS purchase_request_id TEXT`);
+      await query(`ALTER TABLE inventory_withdrawal_requests ADD COLUMN IF NOT EXISTS reviewed_by_id TEXT`);
+      await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_withdrawal_number ON inventory_withdrawal_requests(withdrawal_number)`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_withdrawal_pr ON inventory_withdrawal_requests(purchase_request_id)`);
+
+      // Two-stage approval: the warehouse confirms the stock is physically on the shelf, then
+      // the admin authorises — and only that second step moves stock, so a rejection never has
+      // to put anything back. warehouse_by_id is TEXT because an admin (users.id TEXT) may act
+      // at this stage too, not only a warehouse account (SERIAL).
+      await query(`ALTER TABLE inventory_withdrawal_requests ADD COLUMN IF NOT EXISTS warehouse_by TEXT`);
+      await query(`ALTER TABLE inventory_withdrawal_requests ADD COLUMN IF NOT EXISTS warehouse_by_id TEXT`);
+      await query(`ALTER TABLE inventory_withdrawal_requests ADD COLUMN IF NOT EXISTS warehouse_at TIMESTAMPTZ`);
+      await query(`ALTER TABLE inventory_withdrawal_requests DROP CONSTRAINT IF EXISTS inventory_withdrawal_requests_status_check`);
+      await query(`ALTER TABLE inventory_withdrawal_requests ADD CONSTRAINT inventory_withdrawal_requests_status_check
+                     CHECK (status IN ('pending','warehouse-approved','approved','rejected'))`);
+      // reviewed_by_id was written as NULL for every admin review (the token carried no `id`),
+      // so the receipt's approver signature could never resolve. Recover it by name, the same
+      // idempotent one-shot used for verified_by_id/approved_by_id. Now that requireAuth
+      // normalises the id, new rows record it directly and this stops matching anything.
+      const wbf = await query(
+        `UPDATE inventory_withdrawal_requests w SET reviewed_by_id = u.id
+           FROM users u
+          WHERE w.reviewed_by_id IS NULL AND w.reviewed_by IS NOT NULL AND u.name = w.reviewed_by`
+      );
+      if (wbf.rowCount) console.log(`✅ inventory_withdrawal_requests reviewed_by_id backfilled (${wbf.rowCount} row(s))`);
+      console.log('✅ inventory_withdrawal_requests table ready');
+    } catch (err) { console.log('ℹ️ inventory_withdrawal_requests table skipped:', err.message); }
+
+    // New-item requests. The purchase-request item picker is a strict closed list over
+    // inventory, so production simply cannot request something the warehouse has never
+    // stocked. This is the queue that closes that loop: production asks, the warehouse
+    // creates the item (approval and creation happen in ONE transaction — see the review
+    // route), and the item then becomes selectable like any other.
+    //
+    // Deliberately NOT built on `material_requests`, which looks adjacent but is the wrong
+    // axis (employee→admin, links an EXISTING inventory_id rather than creating one) and has
+    // no guard on 5 of its 6 routes. The shape here copies inventory_withdrawal_requests.
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS inventory_item_requests (
+          id TEXT PRIMARY KEY,
+          request_number TEXT,
+          item_name TEXT NOT NULL,
+          description TEXT,
+          unit TEXT DEFAULT 'pcs',
+          reason TEXT,
+          requested_by_id INTEGER,
+          requested_by_name TEXT,
+          status TEXT CHECK (status IN ('pending','approved','rejected')) DEFAULT 'pending',
+          reviewed_by TEXT,
+          reviewed_by_id INTEGER,
+          reviewed_at TIMESTAMPTZ,
+          -- The item the warehouse created on approval. SET NULL rather than CASCADE: if the
+          -- item is later deleted, the record that it was once requested and approved stands.
+          inventory_id TEXT REFERENCES inventory(id) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_item_request_number ON inventory_item_requests(request_number)`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_item_request_status ON inventory_item_requests(status)`);
+      // reviewed_by_id was declared INTEGER on the assumption the reviewer is always a
+      // warehouse account (SERIAL). But this route also admits admins, whose users.id is TEXT
+      // ('super-admin-owner'). That never blew up only because the admin's id was arriving as
+      // undefined → NULL; the moment the token carries a real id, an admin acceptance would
+      // 500 on invalid integer input. TEXT holds both, as the withdrawal table already does.
+      await query(`ALTER TABLE inventory_item_requests ALTER COLUMN reviewed_by_id TYPE TEXT USING reviewed_by_id::TEXT`);
+      console.log('✅ inventory_item_requests table ready');
+    } catch (err) { console.log('ℹ️ inventory_item_requests table skipped:', err.message); }
 
     console.log('✅ All migrations complete');
   } catch (err) {
@@ -682,7 +956,7 @@ app.post('/api/auth/register', async (req, res) => {
       'INSERT INTO users (id, email, password_hash, name, role, is_super_admin) VALUES ($1, $2, $3, $4, $5, false)',
       [id, email.toLowerCase(), hashedPassword, name, role]
     );
-    const token = signToken({ userId: id, role, email: email.toLowerCase(), name, isSuperAdmin: false });
+    const token = signToken({ id, userId: id, role, email: email.toLowerCase(), name, isSuperAdmin: false });
     res.status(201).json({
       user: { id, email: email.toLowerCase(), name, role, isSuperAdmin: false },
       token,
@@ -745,7 +1019,12 @@ app.post('/api/auth/login', async (req, res) => {
 
     console.log(`✅ Login successful for: ${email.toLowerCase()}`);
     const isSuperAdmin = !!user.is_super_admin;
+    // `id` alongside `userId`: every portal login signs `id` and all shared code reads it, so
+    // omitting it here is what made `req.user.id` undefined for admins. requireAuth normalises
+    // either shape (so existing sessions still work) — this makes new tokens honest.
+    // `userId` stays: four routes still read it.
     const token = signToken({
+      id: user.id,
       userId: user.id,
       role: user.role,
       email: user.email,
@@ -761,163 +1040,82 @@ app.post('/api/auth/login', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-// In-memory cache: deviceId -> latest position (fast reads, backed by DB)
-const mobileLocations = new Map();
-
-// POST /api/phone-location
-app.post('/api/phone-location', async (req, res) => {
-  const { deviceId, lat, lng, accuracy, speed, heading, timestamp } = req.body;
-  if (!deviceId || typeof lat !== 'number' || typeof lng !== 'number') {
-    return res.status(400).json({ error: 'deviceId, lat, lng are required' });
-  }
-  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-    return res.status(400).json({ error: 'Invalid lat/lng range' });
-  }
-
-  const now = Date.now();
-  const locationData = {
-    deviceId: String(deviceId),
-    lat, lng,
-    accuracy: accuracy ?? null,
-    speed: speed ?? null,
-    heading: heading ?? null,
-    timestamp: timestamp || now,
-    lastSeen: now,
-    serverTime: now,
-  };
-
-  // Update in-memory cache
-  mobileLocations.set(String(deviceId), locationData);
-
-  // Persist to DB (upsert) so data survives server restarts
-  try {
-    await query(
-      `INSERT INTO gps_locations (device_id, lat, lng, accuracy, speed, heading, device_timestamp, last_seen)
-       VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0), to_timestamp($8 / 1000.0))
-       ON CONFLICT (device_id) DO UPDATE SET
-         lat = EXCLUDED.lat,
-         lng = EXCLUDED.lng,
-         accuracy = EXCLUDED.accuracy,
-         speed = EXCLUDED.speed,
-         heading = EXCLUDED.heading,
-         device_timestamp = EXCLUDED.device_timestamp,
-         last_seen = EXCLUDED.last_seen`,
-      [String(deviceId), lat, lng, accuracy ?? null, speed ?? null, heading ?? null, timestamp || now, now]
-    );
-  } catch (dbErr) {
-    // Table may not exist yet — create it then retry
-    try {
-      await query(`
-        CREATE TABLE IF NOT EXISTS gps_locations (
-          device_id TEXT PRIMARY KEY,
-          lat DOUBLE PRECISION NOT NULL,
-          lng DOUBLE PRECISION NOT NULL,
-          accuracy DOUBLE PRECISION,
-          speed DOUBLE PRECISION,
-          heading DOUBLE PRECISION,
-          device_timestamp TIMESTAMPTZ,
-          last_seen TIMESTAMPTZ DEFAULT NOW()
-        )
-      `);
-      await query(
-        `INSERT INTO gps_locations (device_id, lat, lng, accuracy, speed, heading, device_timestamp, last_seen)
-         VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0), to_timestamp($8 / 1000.0))
-         ON CONFLICT (device_id) DO UPDATE SET
-           lat = EXCLUDED.lat,
-           lng = EXCLUDED.lng,
-           accuracy = EXCLUDED.accuracy,
-           speed = EXCLUDED.speed,
-           heading = EXCLUDED.heading,
-           device_timestamp = EXCLUDED.device_timestamp,
-           last_seen = EXCLUDED.last_seen`,
-        [String(deviceId), lat, lng, accuracy ?? null, speed ?? null, heading ?? null, timestamp || now, now]
-      );
-    } catch (retryErr) {
-      console.error('[GPS] DB upsert failed:', retryErr.message);
-    }
-  }
-
-  console.log(`[GPS] Device ${deviceId} at ${lat.toFixed(6)}, ${lng.toFixed(6)} - Speed: ${speed || 0} km/h`);
-
-  res.json({ ok: true, timestamp: now, devicesCount: mobileLocations.size });
-});
-
-// GET /api/phone-location/devices - Get all active devices (from DB)
-app.get('/api/phone-location/devices', async (req, res) => {
-  try {
-    // Try DB first (survives restarts), filter last 2 hours
-    const result = await query(`
-      SELECT gl.device_id, gl.lat, gl.lng, gl.accuracy, gl.speed, gl.heading, gl.device_timestamp, gl.last_seen,
-             v.id as vehicle_id, v.unit_name as vehicle_name, v.plate_number,
-             d.driver_name, d.contact as driver_contact,
-             del.id as delivery_id, del.so_number, del.customer_name, del.customer_address, del.status as delivery_status
-      FROM gps_locations gl
-      LEFT JOIN vehicles v ON gl.device_id = v.tracker_id
-      LEFT JOIN drivers d ON v.id = d.assigned_vehicle_id
-      LEFT JOIN deliveries del ON v.id = del.vehicle_id AND del.status IN ('Assigned', 'Picked Up', 'In Transit', 'Arrived')
-      WHERE gl.last_seen >= NOW() - INTERVAL '2 hours'
-      ORDER BY gl.last_seen DESC
-    `);
-
-    // If DB empty, fall back to in-memory cache
-    if (result.rows.length === 0) {
-      const devices = Array.from(mobileLocations.entries()).map(([deviceId, pos]) => ({
-        deviceId,
-        lat: pos.lat,
-        lng: pos.lng,
-        accuracy: pos.accuracy,
-        speed: pos.speed,
-        heading: pos.heading,
-        timestamp: pos.timestamp,
-        lastSeen: pos.timestamp
-      }));
-      res.json({ devices });
-      return;
-    }
-
-    res.json({ devices: result.rows });
-  } catch (err) {
-    console.error('Error fetching GPS devices:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// GET /api/mobile/:deviceId/latest
-app.get('/api/mobile/:deviceId/latest', (req, res) => {
-  const pos = mobileLocations.get(req.params.deviceId);
-  if (!pos) return res.status(404).json({ error: 'No location found for this device' });
-  res.json(pos);
-});
-
-app.get('/api/phone-location/:deviceId/latest', (req, res) => {
-  const pos = mobileLocations.get(req.params.deviceId);
-  if (!pos) return res.status(404).json({ error: 'No location found for this device' });
-  res.json(pos);
-});
-
-// ----- Mobile GPS API (No auth required for mobile app) -----
-app.use('/api/mobile', mobileGPSRouter);
+// [removed] Phone/Mobile GPS endpoints (/api/phone-location*, /api/mobile*) — GPS feature removed.
 
 // ----- Public read-only data endpoints (no auth required for Overview dashboard) -----
+
+// Counts for the admin sidebar's attention badges — only what the admin must action NEXT:
+//   purchase_requests reviewed (awaiting the admin's verify),
+//   purchase_orders   pending  (awaiting the admin's approval),
+//   withdrawals       warehouse-approved (warehouse released, awaiting the admin).
+// Live COUNTs, not notification rows: these are STATES of records, so the count is always
+// correct no matter where a record was actioned — no event plumbing to drift out of sync.
+// One round-trip; the sidebar polls it.
+// requireAuth is explicit because this route is registered BEFORE the global
+// app.use('/api', requireAuth) further down — without it, req.user would be undefined and
+// requireRole would 403 every caller (including a valid admin).
+app.get('/api/admin/queue-counts', requireAuth, requireRole(['admin']), async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT
+         (SELECT COUNT(*) FROM purchase_requests WHERE status = 'reviewed')::int AS purchase_requests,
+         (SELECT COUNT(*) FROM purchase_orders WHERE status = 'pending')::int AS purchase_orders,
+         (SELECT COUNT(*) FROM inventory_withdrawal_requests WHERE status = 'warehouse-approved')::int AS withdrawals`
+    );
+    const row = r.rows[0];
+    res.json({
+      purchaseRequests: row.purchase_requests,
+      purchaseOrders: row.purchase_orders,
+      withdrawals: row.withdrawals,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 app.get('/api/purchase-orders', requireAuth, async (req, res) => {
   try {
     const { startDate, endDate, status } = req.query;
+    // Columns are table-qualified: this now joins purchase_requests, so bare `status` /
+    // `created_date` would be ambiguous.
     let whereClause = 'WHERE 1=1';
     const params = [];
     let paramIndex = 1;
     if (startDate && endDate) {
-      whereClause += ` AND created_date >= $${paramIndex++} AND created_date <= $${paramIndex++}`;
+      whereClause += ` AND po.created_date >= $${paramIndex++} AND po.created_date <= $${paramIndex++}`;
       params.push(startDate, endDate);
     }
     if (status) {
-      whereClause += ` AND status = $${paramIndex++}`;
+      whereClause += ` AND po.status = $${paramIndex++}`;
       params.push(status);
     }
+    // An order only reaches Logistics once an admin has approved it, so a pending one is not
+    // theirs to see. Enforced here rather than in the portal: filtering client-side would still
+    // ship the data. Same approach as the purchasing scope on GET /api/purchase-requests.
+    if (effectiveRole(req.user) === 'logistics') {
+      whereClause += ` AND po.status IN ('approved','in-progress','RECEIVED','cancelled')`;
+    }
     const result = await query(
-      `SELECT id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets, order_type,
-              doc_date, prepared_by, reviewed_by, supplier_address, supplier_contact, payment_terms, terms_and_conditions
-       FROM purchase_orders ${whereClause} ORDER BY created_date DESC`,
+      `SELECT po.id, po.po_number, po.client, po.description, po.amount, po.status, po.created_date, po.delivery_date,
+              po.assigned_assets, po.order_type, po.doc_date, po.prepared_by, po.reviewed_by, po.supplier_address,
+              po.supplier_contact, po.payment_terms, po.terms_and_conditions, po.supplier_id,
+              po.purchase_request_id, po.approved_by, po.approved_at, pr.pr_number, pr.status AS pr_status,
+              po.in_transit_at, po.in_transit_by, po.received_at, po.received_by,
+              po.cancelled_at, po.cancelled_by, po.delivery_notes, po.received_lines,
+              po.processed_by, po.processed_at,
+              -- The printed order names the people who actually acted on the REQUEST: the
+              -- employee who filed it, the accounting staffer who reviewed it, and the admin
+              -- who approved it. All live on purchase_requests, which this query already joins.
+              pr.employee_name AS pr_employee_name, pr.created_at AS pr_created_at,
+              pr.checked_by AS pr_checked_by, pr.checked_at AS pr_checked_at,
+              pr.verified_by AS pr_verified_by, pr.verified_at AS pr_verified_at,
+              s.tin AS supplier_tin
+       FROM purchase_orders po
+       LEFT JOIN purchase_requests pr ON pr.id = po.purchase_request_id
+       LEFT JOIN suppliers s ON s.id = po.supplier_id
+       -- created_at (the real insert TIMESTAMPTZ), not created_date: created_date is a DATE, so
+       -- every order raised on the same day tied and Postgres returned them in arbitrary order —
+       -- the newest was NOT reliably on top. po_number is the deterministic final tiebreaker.
+       -- created_date stays the user-facing "PO Date" (it can be back-dated via doc_date).
+       ${whereClause} ORDER BY po.created_at DESC, po.po_number DESC`,
       params
     );
     res.json(result.rows.map(row => ({
@@ -938,6 +1136,46 @@ app.get('/api/purchase-orders', requireAuth, async (req, res) => {
       supplierContact: row.supplier_contact,
       paymentTerms: row.payment_terms,
       termsAndConditions: row.terms_and_conditions,
+      supplierId: row.supplier_id ?? null,
+      // From the linked supplier record. Null on orders raised before supplier_id was
+      // populated — the printout omits the TIN line rather than showing a blank.
+      supplierTin: row.supplier_tin ?? null,
+      purchaseRequestId: row.purchase_request_id,
+      prNumber: row.pr_number ?? null,
+      // A rejected PO stays 'pending' (its CHECK has no 'disapproved') — the rejection lives on
+      // the request. Without prStatus a consumer cannot tell "awaiting admin" from "rejected".
+      prStatus: row.pr_status ?? null,
+      // The admin's sign-off on the ORDER, which happens after purchasing processes it —
+      // the printed document calls this block "Supervised By". Distinct from verifiedBy
+      // below, which is the admin's earlier approval of the REQUEST.
+      approvedBy: row.approved_by ?? null,
+      approvedAt: row.approved_at ?? null,
+      // The five signatories of the printed document, in the order they act:
+      //   requestedBy (Prepared) → checkedBy (Reviewed) → verifiedBy (Approved)
+      //   → processedBy (Processed) → approvedBy (Supervised)
+      // The first three come from the linked request; a hand-raised order has none of them
+      // and falls back to its own free-text fields.
+      processedBy: row.processed_by ?? null,
+      processedAt: row.processed_at ?? null,
+      requestedBy: row.pr_employee_name ?? null,
+      requestedAt: row.pr_created_at ?? null,
+      checkedBy: row.pr_checked_by ?? null,
+      checkedAt: row.pr_checked_at ?? null,
+      verifiedBy: row.pr_verified_by ?? null,
+      verifiedAt: row.pr_verified_at ?? null,
+      // Logistics' confirmation trail (PUT /api/purchase-orders/:id/delivery).
+      inTransitAt: row.in_transit_at ?? null,
+      inTransitBy: row.in_transit_by ?? null,
+      receivedAt: row.received_at ?? null,
+      receivedBy: row.received_by ?? null,
+      cancelledAt: row.cancelled_at ?? null,
+      cancelledBy: row.cancelled_by ?? null,
+      deliveryNotes: row.delivery_notes ?? null,
+      // What went onto the shelf when this was received, so the delivery receipt can be
+      // reprinted from the list rather than only from the one PUT response. NULL means the
+      // receipt predates this record — NOT that nothing was added; the document distinguishes
+      // the two, because these orders did add stock.
+      receivedLines: row.received_lines ?? null,
     })));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1050,115 +1288,14 @@ app.get('/api/miscellaneous', requireAuth, async (req, res) => {
   }
 });
 
-// GET /api/delivery-metrics (public for overview dashboard)
-app.get('/api/delivery-metrics', requireAuth, async (req, res) => {
-  try {
-    const result = await query(`
-      SELECT 
-        COUNT(*) as total_deliveries,
-        COUNT(CASE WHEN status = 'Pending' THEN 1 END) as pending,
-        COUNT(CASE WHEN status = 'Assigned' THEN 1 END) as assigned,
-        COUNT(CASE WHEN status = 'Picked Up' THEN 1 END) as picked_up,
-        COUNT(CASE WHEN status = 'In Transit' THEN 1 END) as in_transit,
-        COUNT(CASE WHEN status = 'Arrived' THEN 1 END) as arrived,
-        COUNT(CASE WHEN status = 'Completed' THEN 1 END) as completed,
-        COUNT(CASE WHEN status = 'Cancelled' THEN 1 END) as cancelled,
-        COUNT(CASE WHEN completed_time >= NOW() - INTERVAL '24 hours' THEN 1 END) as completed_today,
-        COUNT(CASE WHEN status = 'In Transit' THEN 1 END) as currently_active
-      FROM deliveries
-    `);
-    console.log('[Delivery Metrics] Fetched:', result.rows[0]);
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error('[Delivery Metrics] Error:', err);
-    // If deliveries table doesn't exist, return zeros
-    if (err.message && err.message.includes('deliveries')) {
-      console.log('[Delivery Metrics] Table not found, returning zeros');
-      return res.json({
-        total_deliveries: 0,
-        pending: 0,
-        assigned: 0,
-        picked_up: 0,
-        in_transit: 0,
-        arrived: 0,
-        completed: 0,
-        cancelled: 0,
-        completed_today: 0,
-        currently_active: 0
-      });
-    }
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// GET /api/test-delivery (simple test endpoint)
-app.get('/api/test-delivery', async (req, res) => {
-  try {
-    const result = await query('SELECT COUNT(*) as count FROM deliveries');
-    console.log('[Test] Deliveries count:', result.rows[0]);
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error('[Test] Error:', err);
-    res.json({ error: err.message, count: 0 });
-  }
-});
-
+// [removed] /api/delivery-metrics and /api/test-delivery — Delivery feature removed.
 
 // ----- PUBLIC AUTH ENDPOINTS (no token required) -----
 
-// Employee Registration
-app.post('/api/employee/register', async (req, res) => {
-  try {
-    // TEMP: Trigger migration if needed (for production fix)
-    if (req.body.migrate === 'true') {
-      console.log('🔄 Running migration from employee register endpoint...');
-      await query('ALTER TABLE employee_accounts ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP');
-      await query('ALTER TABLE employee_accounts ADD COLUMN IF NOT EXISTS approved_by INTEGER');
-      await query('ALTER TABLE driver_accounts ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP');
-      await query('ALTER TABLE driver_accounts ADD COLUMN IF NOT EXISTS approved_by INTEGER');
-      return res.json({ success: true, message: 'Migration completed' });
-    }
-
-    const { 
-      full_name, email, password, 
-      department, position, phone 
-    } = req.body;
-    
-    if (!full_name || !email || !password) {
-      return res.status(400).json({ 
-        error: 'Name, email and password required' 
-      });
-    }
-    
-    const existing = await query(
-      'SELECT id FROM employee_accounts WHERE LOWER(email) = LOWER($1)',
-      [email]
-    );
-    if (existing.rows.length > 0) {
-      return res.status(400).json({ 
-        error: 'Email already registered' 
-      });
-    }
-    
-        const hash = await bcrypt.hash(password, 10);
-    
-    const result = await query(
-      `INSERT INTO employee_accounts 
-       (full_name, email, password_hash, department, 
-        position, phone, status)
-       VALUES ($1,$2,$3,$4,$5,$6,'pending')
-       RETURNING id, full_name, email, status`,
-      [full_name, email, hash, department, position, phone]
-    );
-    
-    res.json({ 
-      success: true, 
-      message: 'Registration submitted. Await admin approval.',
-      employee: result.rows[0]
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+// Employee self-registration is disabled — admins now create employee accounts
+// (see POST /api/admin/employees). Kept as a 403 so old clients get a clear message.
+app.post('/api/employee/register', (req, res) => {
+  res.status(403).json({ error: 'Self-registration is disabled — ask your admin to create your account.' });
 });
 
 // Employee Login
@@ -1185,11 +1322,15 @@ app.post('/api/employee/login', async (req, res) => {
     }
     
     if (employee.status === 'rejected') {
-      return res.status(403).json({ 
-        error: 'Account has been rejected' 
+      return res.status(403).json({
+        error: 'Account has been rejected'
       });
     }
-    
+
+    if (employee.status === 'deactivated') {
+      return res.status(403).json({ error: 'This account has been deactivated' });
+    }
+
         const valid = await bcrypt.compare(
       password, employee.password_hash
     );
@@ -1225,114 +1366,121 @@ app.post('/api/employee/login', async (req, res) => {
   }
 });
 
-// Driver Registration
-app.post('/api/driver/register', async (req, res) => {
+// Purchasing Management portal login — its OWN independent auth (separate from the admin
+// dashboard's staff auth). Accounts live in purchasing_accounts, created by an admin.
+// Issues a JWT with role 'purchasing' so it passes the purchasing-only route guards.
+app.post('/api/purchasing/login', async (req, res) => {
   try {
-    const { 
-      full_name, email, password, 
-      phone, license_number 
-    } = req.body;
-    
-    if (!full_name || !email || !password) {
-      return res.status(400).json({ 
-        error: 'Name, email and password required' 
-      });
-    }
-    
-    const existing = await query(
-      'SELECT id FROM driver_accounts WHERE LOWER(email) = LOWER($1)',
-      [email]
+    const { email, password } = req.body;
+    const result = await query('SELECT * FROM purchasing_accounts WHERE LOWER(email) = LOWER($1) LIMIT 1', [email]);
+    if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
+    const acct = result.rows[0];
+    if (acct.status === 'deactivated') return res.status(403).json({ error: 'This account has been deactivated' });
+    const valid = await bcrypt.compare(password, acct.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+    const token = jwt.sign(
+      { id: acct.id, email: acct.email, role: 'purchasing', name: acct.full_name },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
     );
-    if (existing.rows.length > 0) {
-      return res.status(400).json({ 
-        error: 'Email already registered' 
-      });
-    }
-    
-        const hash = await bcrypt.hash(password, 10);
-    
-    const result = await query(
-      `INSERT INTO driver_accounts 
-       (full_name, email, password_hash, 
-        phone, license_number, status)
-       VALUES ($1,$2,$3,$4,$5,'pending')
-       RETURNING id, full_name, email, status`,
-      [full_name, email, hash, phone, license_number]
-    );
-    
-    res.json({ 
-      success: true,
-      message: 'Registration submitted. Await admin approval.',
-      driver: result.rows[0]
-    });
+    res.json({ token, purchasing: { id: acct.id, full_name: acct.full_name, email: acct.email, phone: acct.phone } });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Driver Login
-app.post('/api/driver/login', async (req, res) => {
+// Warehouse portal login — its OWN independent auth (separate from the admin dashboard's
+// staff auth). Accounts live in warehouse_accounts, created by an admin. Issues a JWT with
+// role 'warehouse' so it passes the warehouse-scoped route guards (inventory create/update).
+app.post('/api/warehouse/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    const result = await query(
-      'SELECT * FROM driver_accounts WHERE LOWER(email) = LOWER($1) LIMIT 1',
-      [email]
-    );
-    
-    if (result.rows.length === 0) {
-      return res.status(401).json({ 
-        error: 'Invalid credentials' 
-      });
-    }
-    
-    const driver = result.rows[0];
-    
-    if (driver.status === 'pending') {
-      return res.status(403).json({ 
-        error: 'Account pending admin approval' 
-      });
-    }
-    
-    if (driver.status === 'rejected') {
-      return res.status(403).json({ 
-        error: 'Account has been rejected' 
-      });
-    }
-    
-        const valid = await bcrypt.compare(
-      password, driver.password_hash
-    );
-    if (!valid) {
-      return res.status(401).json({ 
-        error: 'Invalid credentials' 
-      });
-    }
-    
-        const token = jwt.sign(
-      { 
-        id: driver.id, 
-        email: driver.email,
-        role: 'driver',
-        name: driver.full_name
-      },
+    const result = await query('SELECT * FROM warehouse_accounts WHERE LOWER(email) = LOWER($1) LIMIT 1', [email]);
+    if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
+    const acct = result.rows[0];
+    if (acct.status === 'deactivated') return res.status(403).json({ error: 'This account has been deactivated' });
+    const valid = await bcrypt.compare(password, acct.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+    const token = jwt.sign(
+      { id: acct.id, email: acct.email, role: 'warehouse', name: acct.full_name },
       process.env.JWT_SECRET,
       { expiresIn: '24h' }
     );
-    
-    res.json({ 
-      token,
-      driver: {
-        id: driver.id,
-        full_name: driver.full_name,
-        email: driver.email,
-        phone: driver.phone,
-        vehicle_assigned: driver.vehicle_assigned
-      }
-    });
+    res.json({ token, warehouse: { id: acct.id, full_name: acct.full_name, email: acct.email, phone: acct.phone } });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Accounting portal login — its OWN independent auth (separate from the admin dashboard's
+// staff auth). Accounts live in accounting_accounts, created by an admin. Issues a JWT with
+// role 'accounting' so it passes the accounting-scoped guards (PR review, projects).
+app.post('/api/accounting/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const result = await query('SELECT * FROM accounting_accounts WHERE LOWER(email) = LOWER($1) LIMIT 1', [email]);
+    if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
+    const acct = result.rows[0];
+    if (acct.status === 'deactivated') return res.status(403).json({ error: 'This account has been deactivated' });
+    const valid = await bcrypt.compare(password, acct.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+    const token = jwt.sign(
+      { id: acct.id, email: acct.email, role: 'accounting', name: acct.full_name },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    res.json({ token, accounting: { id: acct.id, full_name: acct.full_name, email: acct.email, phone: acct.phone } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Sales portal login — its OWN independent auth. Accounts live in sales_accounts, created by
+// an admin. Issues a JWT with role 'sales' so it passes the sales-order write guards.
+app.post('/api/sales/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const result = await query('SELECT * FROM sales_accounts WHERE LOWER(email) = LOWER($1) LIMIT 1', [email]);
+    if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
+    const acct = result.rows[0];
+    if (acct.status === 'deactivated') return res.status(403).json({ error: 'This account has been deactivated' });
+    const valid = await bcrypt.compare(password, acct.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+    const token = jwt.sign(
+      { id: acct.id, email: acct.email, role: 'sales', name: acct.full_name },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    res.json({ token, sales: { id: acct.id, full_name: acct.full_name, email: acct.email, phone: acct.phone } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Logistics portal login — its OWN independent auth. Accounts live in logistics_accounts,
+// created by an admin. Issues a JWT with role 'logistics' for the delivery routes.
+app.post('/api/logistics/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const result = await query('SELECT * FROM logistics_accounts WHERE LOWER(email) = LOWER($1) LIMIT 1', [email]);
+    if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
+    const acct = result.rows[0];
+    if (acct.status === 'deactivated') return res.status(403).json({ error: 'This account has been deactivated' });
+    const valid = await bcrypt.compare(password, acct.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+    const token = jwt.sign(
+      { id: acct.id, email: acct.email, role: 'logistics', name: acct.full_name },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    res.json({ token, logistics: { id: acct.id, full_name: acct.full_name, email: acct.email, phone: acct.phone } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// [removed] Driver registration + login (/api/driver/register, /api/driver/login)
+// — Driver Portal feature removed.
 
 // ----- MANUAL MIGRATION ENDPOINT (for production) -----
 
@@ -1344,18 +1492,14 @@ app.post('/api/admin/migrate-approval-columns', requireAdmin, async (req, res) =
     // Add missing approval columns to existing tables
     await query('ALTER TABLE employee_accounts ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP');
     await query('ALTER TABLE employee_accounts ADD COLUMN IF NOT EXISTS approved_by INTEGER');
-    await query('ALTER TABLE driver_accounts ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP');
-    await query('ALTER TABLE driver_accounts ADD COLUMN IF NOT EXISTS approved_by INTEGER');
-    
+
     console.log('✅ Approval columns migration completed successfully');
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Database migration completed successfully',
       columns_added: [
         'employee_accounts.approved_at',
-        'employee_accounts.approved_by', 
-        'driver_accounts.approved_at',
-        'driver_accounts.approved_by'
+        'employee_accounts.approved_by'
       ]
     });
   } catch (err) {
@@ -1375,18 +1519,14 @@ app.get('/api/admin/migrate-approval-columns', requireAdmin, async (req, res) =>
     // Add missing approval columns to existing tables
     await query('ALTER TABLE employee_accounts ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP');
     await query('ALTER TABLE employee_accounts ADD COLUMN IF NOT EXISTS approved_by INTEGER');
-    await query('ALTER TABLE driver_accounts ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP');
-    await query('ALTER TABLE driver_accounts ADD COLUMN IF NOT EXISTS approved_by INTEGER');
-    
+
     console.log('✅ Approval columns migration completed successfully');
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Database migration completed successfully',
       columns_added: [
         'employee_accounts.approved_at',
-        'employee_accounts.approved_by', 
-        'driver_accounts.approved_at',
-        'driver_accounts.approved_by'
+        'employee_accounts.approved_by'
       ]
     });
   } catch (err) {
@@ -1398,149 +1538,9 @@ app.get('/api/admin/migrate-approval-columns', requireAdmin, async (req, res) =>
   }
 });
 
-// --- DRIVER GPS ENDPOINTS (No Auth Required) ---
-
-// Haversine distance in meters
-function haversineMeters(lat1, lon1, lat2, lon2) {
-  const R = 6371000;
-  const φ1 = lat1 * Math.PI / 180;
-  const φ2 = lat2 * Math.PI / 180;
-  const Δφ = (lat2 - lat1) * Math.PI / 180;
-  const Δλ = (lon2 - lon1) * Math.PI / 180;
-  const a = Math.sin(Δφ/2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-// Send driver GPS location + auto-update ODO
-app.post('/api/driver/location', async (req, res) => {
-  try {
-    const { driver_id, driver_name, latitude, longitude, accuracy, speed, heading } = req.body;
-
-    // Get previous location for this driver
-    const prev = await query(
-      `SELECT latitude, longitude FROM driver_locations
-       WHERE driver_id = $1
-       ORDER BY timestamp DESC LIMIT 1`,
-      [driver_id]
-    );
-
-    // Insert new location
-    await query(
-      `INSERT INTO driver_locations
-       (driver_id, driver_name, latitude, longitude, accuracy, speed, heading)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [driver_id, driver_name, latitude, longitude, accuracy, speed, heading]
-    );
-
-    // Calculate distance and update vehicle ODO if driver has a vehicle assigned
-    if (prev.rows.length > 0) {
-      const distMeters = haversineMeters(
-        parseFloat(prev.rows[0].latitude), parseFloat(prev.rows[0].longitude),
-        parseFloat(latitude), parseFloat(longitude)
-      );
-      const distKm = distMeters / 1000;
-
-      // Only count if movement is realistic (< 2km between pings to filter GPS jumps)
-      if (distKm > 0.005 && distKm < 2) {
-        const driverRow = await query(
-          `SELECT vehicle_id FROM driver_accounts WHERE id = $1`,
-          [driver_id]
-        );
-        if (driverRow.rows.length > 0 && driverRow.rows[0].vehicle_id) {
-          const vehicleId = driverRow.rows[0].vehicle_id;
-          await query(
-            `UPDATE vehicles SET current_odometer = current_odometer + $1, updated_at = NOW() WHERE id = $2`,
-            [distKm, vehicleId]
-          );
-          await query(
-            `INSERT INTO odometer_logs (id, vehicle_id, odometer, source)
-             SELECT $1, $2, current_odometer, 'gps' FROM vehicles WHERE id = $2`,
-            ['OL-GPS-' + Date.now() + '-' + driver_id, vehicleId]
-          );
-        }
-      }
-    }
-
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Get latest location of all active drivers (admin)
-app.get('/api/driver/locations/live', requireAuth, async (req, res) => {
-  try {
-    const result = await query(
-      `SELECT DISTINCT ON (dl.driver_id)
-        dl.driver_id, dl.driver_name,
-        dl.latitude, dl.longitude, dl.speed, dl.timestamp,
-        da.vehicle_id,
-        v.unit_name as vehicle_name, v.plate_number,
-        v.current_odometer
-       FROM driver_locations dl
-       LEFT JOIN driver_accounts da ON da.id = dl.driver_id
-       LEFT JOIN vehicles v ON v.id = da.vehicle_id
-       WHERE dl.timestamp > NOW() - INTERVAL '30 minutes'
-       ORDER BY dl.driver_id, dl.timestamp DESC`
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Admin: assign vehicle to a driver account
-app.put('/api/admin/drivers/:id/assign-vehicle', requireAdmin, async (req, res) => {
-  try {
-    const { vehicle_id } = req.body;
-    // Ensure vehicle_id column exists
-    await query(`ALTER TABLE driver_accounts ADD COLUMN IF NOT EXISTS vehicle_id TEXT REFERENCES vehicles(id) ON DELETE SET NULL`).catch(() => {});
-    await query(
-      `UPDATE driver_accounts SET vehicle_id = $1 WHERE id = $2 RETURNING *`,
-      [vehicle_id || null, req.params.id]
-    );
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Driver: get assigned vehicle info
-app.get('/api/driver/:id/vehicle', requireAuth, async (req, res) => {
-  try {
-    const result = await query(
-      `SELECT v.id, v.unit_name, v.plate_number, v.current_odometer, v.vehicle_type
-       FROM driver_accounts da
-       LEFT JOIN vehicles v ON v.id = da.vehicle_id
-       WHERE da.id = $1`,
-      [req.params.id]
-    );
-    if (!result.rows[0] || !result.rows[0].id) {
-      return res.json(null);
-    }
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Admin: get driver accounts with assigned vehicle info
-app.get('/api/admin/drivers/accounts', requireAdmin, async (req, res) => {
-  try {
-    const result = await query(
-      `SELECT da.id, da.full_name, da.email, da.phone,
-        da.license_number, da.vehicle_id, da.status, da.created_at,
-        v.unit_name as vehicle_name, v.plate_number, v.current_odometer
-       FROM driver_accounts da
-       LEFT JOIN vehicles v ON v.id = da.vehicle_id
-       WHERE da.status = 'approved'
-       ORDER BY da.full_name ASC`
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// [removed] Driver GPS location + vehicle-assignment endpoints (/api/driver/location,
+// /api/driver/locations/live, /api/admin/drivers/:id/assign-vehicle, /api/driver/:id/vehicle,
+// /api/admin/drivers/accounts) — Driver Portal / GPS feature removed.
 
 // ----- All routes below require auth -----
 app.use('/api', requireAuth);
@@ -1970,29 +1970,13 @@ app.get('/api/dashboard/financial-summary', async (req, res) => {
       AND DATE_TRUNC('month', transaction_date) = DATE_TRUNC('month', CURRENT_DATE)
     `);
 
-    const fuel = await query(`
-      SELECT COALESCE(SUM(amount), 0) as total
-      FROM operational_costs
-      WHERE cost_type = 'FUEL' AND DATE_TRUNC('month', cost_date) = DATE_TRUNC('month', CURRENT_DATE)
-    `);
-
-    const maintenance = await query(`
-      SELECT COALESCE(SUM(total_cost), 0) as total
-      FROM maintenance_records
-      WHERE DATE_TRUNC('month', service_date) = DATE_TRUNC('month', CURRENT_DATE)
-    `);
-
-    const salaries = await query(`
-      SELECT COALESCE(SUM(amount), 0) as total
-      FROM operational_costs
-      WHERE cost_type = 'SALARY' AND DATE_TRUNC('month', cost_date) = DATE_TRUNC('month', CURRENT_DATE)
-    `);
-
+    // Fleet operating-cost lines (fuel / maintenance / salaries) were sourced from
+    // operational_costs + maintenance_records, which were removed with the Fleet feature.
     const totalRevenue = parseFloat(revenue.rows[0].total);
     const totalCogs = parseFloat(cogs.rows[0].total);
-    const totalFuel = parseFloat(fuel.rows[0].total);
-    const totalMaintenance = parseFloat(maintenance.rows[0].total);
-    const totalSalaries = parseFloat(salaries.rows[0].total);
+    const totalFuel = 0;
+    const totalMaintenance = 0;
+    const totalSalaries = 0;
 
     const grossProfit = totalRevenue - totalCogs;
     const totalOperatingCosts = totalFuel + totalMaintenance + totalSalaries;
@@ -2026,47 +2010,7 @@ app.get('/api/dashboard/financial-summary', async (req, res) => {
   }
 });
 
-/**
- * FIX #6: Record Operational Costs
- */
-app.post('/api/operational-costs', async (req, res) => {
-  const { cost_type, amount, description, cost_date, related_vehicle_id, related_employee_id } = req.body;
-
-  try {
-    if (!['FUEL', 'MAINTENANCE', 'SALARY', 'UTILITIES', 'OTHER'].includes(cost_type)) {
-      return res.status(400).json({ error: 'Invalid cost type' });
-    }
-
-    if (amount <= 0) {
-      return res.status(400).json({ error: 'Amount must be positive' });
-    }
-
-    const result = await query(
-      `INSERT INTO operational_costs 
-       (cost_type, amount, description, cost_date, related_vehicle_id, related_employee_id)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING *`,
-      [cost_type, amount, description, cost_date, related_vehicle_id, related_employee_id]
-    );
-
-    await query(
-      `INSERT INTO financial_transactions 
-       (transaction_type, amount, transaction_date, description, status)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [cost_type, amount, cost_date, description, 'CONFIRMED']
-    );
-
-    res.json({
-      success: true,
-      message: 'Operational cost recorded',
-      data: result.rows[0]
-    });
-
-  } catch (error) {
-    console.error('Error recording operational cost:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+// [removed] POST /api/operational-costs — fleet operational-cost tracking removed.
 
 /**
  * FIX #7: Comprehensive Business Logic Validation
@@ -2121,269 +2065,8 @@ app.get('/api/validate/business-logic', async (req, res) => {
 
 console.log('🔧 Business logic API fixes loaded successfully');
 
-// ----- Fleet Management Routes -----
-app.get('/api/fleet/vehicles', getVehicles);
-app.get('/api/fleet/vehicles/:id', getVehicle);
-app.post('/api/fleet/vehicles', createVehicle);
-app.put('/api/fleet/vehicles/:id', updateVehicle);
-app.delete('/api/fleet/vehicles/:id', deleteVehicle);
-app.get('/api/fleet/vehicles/:id/odometer-logs', getOdometerLogs);
-app.post('/api/fleet/vehicles/:id/odometer', logOdometer);
-app.get('/api/fleet/vehicles/:id/maintenance', getMaintenance);
-app.post('/api/fleet/vehicles/:id/maintenance', createMaintenance);
-app.get('/api/fleet/vehicles/:id/purchase-orders', getVehiclePOs);
-app.post('/api/fleet/vehicles/:id/purchase-orders', createVehiclePO);
-app.get('/api/fleet/pms-reminders', getPmsReminders);
-
-// ----- Driver Management API -----
-
-// GET /api/drivers
-app.get('/api/drivers', async (req, res) => {
-  try {
-    const result = await query(`
-      SELECT d.*, v.unit_name as vehicle_name, v.plate_number
-      FROM drivers d
-      LEFT JOIN vehicles v ON d.assigned_vehicle_id = v.id
-      ORDER BY d.driver_name ASC
-    `);
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// GET /api/drivers/:id
-app.get('/api/drivers/:id', async (req, res) => {
-  try {
-    const result = await query(`
-      SELECT d.*, v.unit_name as vehicle_name, v.plate_number
-      FROM drivers d
-      LEFT JOIN vehicles v ON d.assigned_vehicle_id = v.id
-      WHERE d.id = $1
-    `, [req.params.id]);
-    if (!result.rows[0]) return res.status(404).json({ error: 'Driver not found' });
-    const deliveries = await query(
-      `SELECT id, so_number, customer_name, status, delivery_date, completed_time FROM deliveries WHERE driver_id = $1 ORDER BY created_at DESC LIMIT 20`,
-      [req.params.id]
-    );
-    res.json({ ...result.rows[0], recentDeliveries: deliveries.rows });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST /api/drivers
-app.post('/api/drivers', requireAdmin, async (req, res) => {
-  try {
-    const { driver_name, contact, email, license_number, license_expiry, assigned_vehicle_id, status, join_date } = req.body;
-    if (!driver_name || !contact || !license_number || !license_expiry || !join_date) {
-      return res.status(400).json({ error: 'driver_name, contact, license_number, license_expiry, join_date are required' });
-    }
-    const id = 'DRV-' + Date.now();
-    await query(
-      `INSERT INTO drivers (id, driver_name, contact, email, license_number, license_expiry, assigned_vehicle_id, status, join_date)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [id, driver_name, contact, email || null, license_number, license_expiry, assigned_vehicle_id || null, status || 'Active', join_date]
-    );
-    const result = await query('SELECT * FROM drivers WHERE id = $1', [id]);
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// PUT /api/drivers/:id
-app.put('/api/drivers/:id', requireAdmin, async (req, res) => {
-  try {
-    const { driver_name, contact, email, license_number, license_expiry, assigned_vehicle_id, status, join_date } = req.body;
-    await query(
-      `UPDATE drivers SET driver_name=$1, contact=$2, email=$3, license_number=$4, license_expiry=$5,
-       assigned_vehicle_id=$6, status=$7, join_date=$8, updated_at=NOW() WHERE id=$9`,
-      [driver_name, contact, email || null, license_number, license_expiry, assigned_vehicle_id || null, status, join_date, req.params.id]
-    );
-    const result = await query('SELECT * FROM drivers WHERE id = $1', [req.params.id]);
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// DELETE /api/drivers/:id
-app.delete('/api/drivers/:id', requireAdmin, async (req, res) => {
-  try {
-    await query('DELETE FROM drivers WHERE id = $1', [req.params.id]);
-    res.json({ message: 'Driver deleted' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// PUT /api/drivers/:id/assign-vehicle
-app.put('/api/drivers/:id/assign-vehicle', requireAdmin, async (req, res) => {
-  try {
-    const { vehicle_id } = req.body;
-    await query('UPDATE drivers SET assigned_vehicle_id=$1, updated_at=NOW() WHERE id=$2', [vehicle_id || null, req.params.id]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ----- Delivery Management API -----
-
-// GET /api/deliveries
-app.get('/api/deliveries', async (req, res) => {
-  try {
-    const { status, driver_id, vehicle_id } = req.query;
-    let where = 'WHERE 1=1';
-    const params = [];
-    if (status) { params.push(status); where += ` AND del.status = $${params.length}`; }
-    if (driver_id) { params.push(driver_id); where += ` AND del.driver_id = $${params.length}`; }
-    if (vehicle_id) { params.push(vehicle_id); where += ` AND del.vehicle_id = $${params.length}`; }
-    const result = await query(`
-      SELECT del.*,
-        d.driver_name, d.contact as driver_contact,
-        v.unit_name as vehicle_name, v.plate_number
-      FROM deliveries del
-      LEFT JOIN drivers d ON del.driver_id = d.id
-      LEFT JOIN vehicles v ON del.vehicle_id = v.id
-      ${where}
-      ORDER BY del.created_at DESC
-    `, params);
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// GET /api/deliveries/:id
-app.get('/api/deliveries/:id', async (req, res) => {
-  try {
-    const result = await query(`
-      SELECT del.*,
-        d.driver_name, d.contact as driver_contact, d.license_number,
-        v.unit_name as vehicle_name, v.plate_number, v.vehicle_type
-      FROM deliveries del
-      LEFT JOIN drivers d ON del.driver_id = d.id
-      LEFT JOIN vehicles v ON del.vehicle_id = v.id
-      WHERE del.id = $1
-    `, [req.params.id]);
-    if (!result.rows[0]) return res.status(404).json({ error: 'Delivery not found' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST /api/deliveries
-app.post('/api/deliveries', requireAdmin, async (req, res) => {
-  try {
-    const { so_number, vehicle_id, driver_account_id, customer_name, customer_address, delivery_date, notes } = req.body;
-        
-    if (!so_number || !customer_name || !customer_address || !delivery_date) {
-      return res.status(400).json({ error: 'so_number, customer_name, customer_address, delivery_date are required' });
-    }
-
-    // Check if delivery already exists for this SO
-    const existing = await query('SELECT id FROM deliveries WHERE so_number = $1', [so_number]);
-    if (existing.rows.length > 0) {
-      return res.status(400).json({ error: 'Delivery already exists for this sales order' });
-    }
-    const id = 'DEL-' + Date.now();
-    const now = new Date();
-    await query(
-      `INSERT INTO deliveries (id, so_number, vehicle_id, driver_account_id, customer_name, customer_address, delivery_date, status, assigned_time, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-      [id, so_number, vehicle_id || null, driver_account_id || null, customer_name, customer_address, delivery_date,
-       (driver_account_id || vehicle_id) ? 'Assigned' : 'Pending',
-       (driver_account_id || vehicle_id) ? now : null, notes || null]
-    );
-    // Update SO with delivery link (only update delivery_id and status)
-    await query(
-      `UPDATE sales_orders SET delivery_id=$1, status='Assigned', updated_at=NOW() WHERE so_number=$2`,
-      [id, so_number]
-    );
-    const result = await query('SELECT * FROM deliveries WHERE id = $1', [id]);
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// PUT /api/deliveries/:id
-app.put('/api/deliveries/:id', requireAdmin, async (req, res) => {
-  try {
-    const { vehicle_id, driver_id, delivery_date, notes } = req.body;
-    await query(
-      `UPDATE deliveries SET vehicle_id=$1, driver_id=$2, delivery_date=$3, notes=$4, updated_at=NOW() WHERE id=$5`,
-      [vehicle_id || null, driver_id || null, delivery_date, notes || null, req.params.id]
-    );
-    const result = await query('SELECT * FROM deliveries WHERE id = $1', [req.params.id]);
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// PUT /api/deliveries/:id/status
-app.put('/api/deliveries/:id/status', async (req, res) => {
-  try {
-    const { status, notes, proof_of_delivery_url } = req.body;
-    const validStatuses = ['Pending', 'Assigned', 'Picked Up', 'In Transit', 'Arrived', 'Completed', 'Cancelled'];
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
-    }
-    const now = new Date();
-    const timeField = {
-      'Assigned': 'assigned_time',
-      'Picked Up': 'picked_up_time',
-      'In Transit': 'in_transit_time',
-      'Arrived': 'arrived_time',
-      'Completed': 'completed_time',
-    }[status];
-    let updateQuery = `UPDATE deliveries SET status=$1, updated_at=NOW()`;
-    const params = [status];
-    if (timeField) { params.push(now); updateQuery += `, ${timeField}=$${params.length}`; }
-    if (notes) { params.push(notes); updateQuery += `, notes=$${params.length}`; }
-    if (proof_of_delivery_url) { params.push(proof_of_delivery_url); updateQuery += `, proof_of_delivery_url=$${params.length}`; }
-    params.push(req.params.id);
-    updateQuery += ` WHERE id=$${params.length}`;
-    await query(updateQuery, params);
-
-    // Sync SO status
-    const delivery = await query('SELECT so_number FROM deliveries WHERE id=$1', [req.params.id]);
-    if (delivery.rows[0]) {
-      const soStatus = status === 'Completed' ? 'completed' : status === 'Cancelled' ? 'pending' : status;
-      await query(`UPDATE sales_orders SET status=$1, updated_at=NOW() WHERE so_number=$2`, [soStatus, delivery.rows[0].so_number]);
-      
-      // If completed, release any reserved inventory (simple SO system - no line items)
-      if (status === 'Completed') {
-                // In a full system, we would deduct specific line items here
-        // For now, we'll just note that inventory should be managed manually
-      }
-    }
-    const result = await query('SELECT * FROM deliveries WHERE id=$1', [req.params.id]);
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// GET /api/deliveries/driver/:driverId
-app.get('/api/deliveries/driver/:driverId', async (req, res) => {
-  try {
-    const result = await query(
-      `SELECT del.*, v.unit_name as vehicle_name FROM deliveries del
-       LEFT JOIN vehicles v ON del.vehicle_id = v.id
-       WHERE del.driver_id = $1 ORDER BY del.created_at DESC`,
-      [req.params.driverId]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
+// [removed] Fleet Management, Driver Management, and Delivery Management routes
+// — Fleet/GPS/Delivery feature removed.
 
 // ----- Inventory Reservation API -----
 
@@ -2431,61 +2114,8 @@ app.put('/api/inventory/:id/deduct', requireRole(['admin','purchasing','office_a
   }
 });
 
-// DELETE /api/vehicles (admin only - clear all vehicles)
-app.delete('/api/vehicles', requireAdmin, async (req, res) => {
-  try {
-    await query('DELETE FROM vehicles');
-    res.json({ message: 'All vehicles cleared' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// DELETE /api/maintenance (admin only - clear all maintenance records)
-app.delete('/api/maintenance', requireAdmin, async (req, res) => {
-  try {
-    await query('DELETE FROM maintenance_records');
-    res.json({ message: 'All maintenance records cleared' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// DELETE /api/odometer-logs (admin only - clear all odometer logs)
-app.delete('/api/odometer-logs', requireAdmin, async (req, res) => {
-  try {
-    await query('DELETE FROM odometer_logs');
-    res.json({ message: 'All odometer logs cleared' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/fleet/seed', async (req, res) => {
-  if (process.env.NODE_ENV !== 'development' || process.env.ALLOW_SEED !== 'true') {
-    return res.status(403).json({ error: 'Seeding disabled' });
-  }
-  try { await seedFleet(); res.json({ message: 'Fleet seeded' }); }
-  catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// Admin-only fleet clear
-app.post('/api/fleet/admin/clear', requireAdmin, async (req, res) => {
-  try {
-    await query('TRUNCATE TABLE transactions RESTART IDENTITY CASCADE');
-    await query('TRUNCATE TABLE purchase_orders RESTART IDENTITY CASCADE');
-    await query('TRUNCATE TABLE maintenance_records RESTART IDENTITY CASCADE');
-    await query('TRUNCATE TABLE odometer_logs RESTART IDENTITY CASCADE');
-    await query('TRUNCATE TABLE purchase_order_items RESTART IDENTITY CASCADE');
-    await query('TRUNCATE TABLE fleet_purchase_orders RESTART IDENTITY CASCADE');
-    await query('TRUNCATE TABLE vehicles RESTART IDENTITY CASCADE');
-    res.json({ message: 'All fleet data cleared' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-console.log('Fleet admin clear route registered: POST /api/fleet/admin/clear');
+// [removed] Fleet bulk-clear routes (vehicles/maintenance/odometer-logs), /api/fleet/seed,
+// and /api/fleet/admin/clear — Fleet feature removed.
 
 // ----- Super admin only: admin approval requests -----
 // GET /api/admin-requests
@@ -2790,10 +2420,43 @@ app.post('/api/purchase-orders', requireRole(['admin','purchasing','office_admin
       otherCharges,
       vatAmount,
       totalAmount,
-      orderType
+      orderType,
+      purchaseRequestId,
+      supplierId
     } = req.body;
     const id = `PO-${Date.now()}`;
-    
+
+    // A PO raised against a purchase request may only follow Accounting's review, and a
+    // request may only have one PO. Enforced here so the flow can't be skipped or doubled.
+    let prItems = null;
+    if (purchaseRequestId) {
+      const pr = await query('SELECT status, items FROM purchase_requests WHERE id = $1', [purchaseRequestId]);
+      if (!pr.rows[0]) return res.status(404).json({ error: 'Purchase request not found' });
+      if (pr.rows[0].status !== 'verified') {
+        return res.status(400).json({ error: 'This request must be reviewed by Accounting and verified by an admin before a purchase order can be raised' });
+      }
+      const dupe = await query(
+        `SELECT id FROM purchase_orders WHERE purchase_request_id = $1 AND COALESCE(order_type,'purchase') <> 'sales' LIMIT 1`,
+        [purchaseRequestId]
+      );
+      if (dupe.rows[0]) return res.status(400).json({ error: 'A purchase order already exists for this request' });
+
+      // Purchasing prices the request as they raise the order, so the order's lines ARE the
+      // final pricing. They are mirrored back onto the request (beside the estimate) rather
+      // than replacing it. Position-matched, so a mismatched count is rejected outright — a
+      // silent skip would leave the request looking unpriced with no explanation.
+      prItems = Array.isArray(pr.rows[0].items) ? pr.rows[0].items : [];
+      const lines = Array.isArray(lineItems) ? lineItems : [];
+      if (lines.length !== prItems.length) {
+        return res.status(400).json({ error: `Priced lines (${lines.length}) do not match the request's items (${prItems.length})` });
+      }
+      prItems = prItems.map((it, i) => ({
+        ...it,
+        finalUnitCost: Number(lines[i]?.unitCost) || 0,
+        finalAmount: Number(lines[i]?.amount) || 0,
+      }));
+    }
+
     // Generate automatic PO number: KTCI-YYYY-NNNN
     const currentYear = new Date().getFullYear();
     const lastPO = await query(
@@ -2827,17 +2490,51 @@ VAT Amount: ${vatAmount || 0}
 Total Amount: ${totalAmount || amount}
 Terms & Conditions: ${termsAndConditions || 'Standard terms apply'}`;
     
-    await query(
-      `INSERT INTO purchase_orders (id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets, order_type,
-        doc_date, prepared_by, reviewed_by, supplier_address, supplier_contact, payment_terms, terms_and_conditions)
-       VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
-      [id, poNumber, client || customerName, extendedDescription, amount || totalAmount, finalCreatedDate, deliveryDate, assignedAssets, orderType || null,
-       poDate || finalCreatedDate, preparedBy || 'Kim Karen D. Tagle', reviewedBy || null, customerAddress || null, customerContact || null,
-       paymentTerms || '30 days from receipt/acceptance', termsAndConditions || null]
-    );
+    // A PR-linked order is always a purchase (the table is shared with Sales Orders).
+    const finalOrderType = purchaseRequestId ? 'purchase' : (orderType || null);
+
+    // The order insert and the request's advance to 'ordered' must succeed or fail together.
+    // Previously two loose queries: if the second failed, the order existed while the request
+    // stayed 'verified' — and the duplicate guard above then blocked ever retrying it.
+    const client_ = await getClient();
+    try {
+      await client_.query('BEGIN');
+      // processed_* is whoever raised this order — taken from the TOKEN, never the body. On a
+      // PR-linked order the printed document uses it for "Processed By" and takes "Prepared By"
+      // from the request's employee instead; prepared_by stays for hand-raised orders, which
+      // have no request behind them.
+      const processedById = effectiveRole(req.user) === 'purchasing' ? (req.user?.id ?? null) : null;
+      await client_.query(
+        `INSERT INTO purchase_orders (id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets, order_type,
+          doc_date, prepared_by, reviewed_by, supplier_address, supplier_contact, payment_terms, terms_and_conditions, purchase_request_id, supplier_id,
+          processed_by, processed_by_id, processed_at)
+         VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW())`,
+        [id, poNumber, client || customerName, extendedDescription, amount || totalAmount, finalCreatedDate, deliveryDate, assignedAssets, finalOrderType,
+         poDate || finalCreatedDate, preparedBy || null, reviewedBy || null, customerAddress || null, customerContact || null,
+         paymentTerms || '30 days from receipt/acceptance', termsAndConditions || null, purchaseRequestId || null, supplierId || null,
+         req.user?.name || null, processedById]
+      );
+
+      // Advance the request to 'ordered' so Purchasing can see it's handled and the employee
+      // sees real progress. The PR reaches 'approved' only when an admin approves this PO.
+      // final_total is the priced subtotal (ex-VAT) so it compares like-for-like with `total`.
+      if (purchaseRequestId) {
+        await client_.query(
+          `UPDATE purchase_requests SET status='ordered', items=$1::jsonb, final_total=$2, updated_at=NOW() WHERE id=$3`,
+          [JSON.stringify(prItems), Number(subTotal) || 0, purchaseRequestId]
+        );
+      }
+      await client_.query('COMMIT');
+    } catch (e) {
+      await client_.query('ROLLBACK');
+      throw e;
+    } finally {
+      client_.release();
+    }
+
     const result = await query(
       `SELECT id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets, order_type,
-              doc_date, prepared_by, reviewed_by, supplier_address, supplier_contact, payment_terms, terms_and_conditions
+              doc_date, prepared_by, reviewed_by, supplier_address, supplier_contact, payment_terms, terms_and_conditions, purchase_request_id
        FROM purchase_orders WHERE id = $1`,
       [id]
     );
@@ -2860,9 +2557,224 @@ Terms & Conditions: ${termsAndConditions || 'Standard terms apply'}`;
       supplierContact: row.supplier_contact,
       paymentTerms: row.payment_terms,
       termsAndConditions: row.terms_and_conditions,
+      purchaseRequestId: row.purchase_request_id,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin approval of a purchase order — the FINAL gate of the request flow. Approving the PO
+// is what flips its linked purchase request to 'approved' (which is what unlocks the
+// employee's stock withdrawal), so both writes happen in ONE transaction: a PO marked
+// approved while its PR stayed behind would silently strand the request.
+app.put('/api/purchase-orders/:id/approve', requireRole(['admin']), async (req, res) => {
+  const client = await getClient();
+  try {
+    const { status } = req.body;
+    if (!['approved', 'disapproved'].includes(status)) {
+      return res.status(400).json({ error: "status must be 'approved' or 'disapproved'" });
+    }
+    await client.query('BEGIN');
+    const cur = await client.query('SELECT purchase_request_id, status FROM purchase_orders WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (!cur.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Purchase order not found' }); }
+
+    // purchase_orders.status has no 'disapproved' in its CHECK; a rejected PO stays 'pending'
+    // and the rejection is carried by the request instead.
+    const poStatus = status === 'approved' ? 'approved' : 'pending';
+    // approved_by_id is what resolves this admin's signature on the printed order —
+    // approved_by alone is a display name and cannot be joined on.
+    const po = await client.query(
+      `UPDATE purchase_orders SET status=$1, approved_by=$2, approved_by_id=$3, approved_at=NOW(), updated_at=NOW() WHERE id=$4 RETURNING *`,
+      [poStatus, req.user?.name || 'Admin', req.user?.id ?? null, req.params.id]
+    );
+
+    const prId = cur.rows[0].purchase_request_id;
+    if (prId) {
+      await client.query(
+        `UPDATE purchase_requests SET status=$1, reviewed_by=$2, reviewed_at=NOW(), updated_at=NOW() WHERE id=$3`,
+        [status, req.user?.name || 'Admin', prId]
+      );
+    }
+    await client.query('COMMIT');
+    const row = po.rows[0];
+    res.json({
+      id: row.id,
+      poNumber: row.po_number,
+      status: row.status,
+      approvedBy: row.approved_by,
+      approvedAt: row.approved_at,
+      purchaseRequestId: row.purchase_request_id,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// A purchase order's line items live as a one-line JSON blob inside its `description`
+// ("Line Items: [...]"), not in a table. Parsed line-wise rather than by regex so a bracket
+// inside an item description can't truncate the match. Mirrors parseLineItems in
+// src/app/lib/orderPrint.ts — the print template reads the same blob.
+function parsePOLineItems(description) {
+  const hit = String(description || '').split('\n').find((l) => l.trimStart().startsWith('Line Items:'));
+  if (!hit) return [];
+  try {
+    const parsed = JSON.parse(hit.trimStart().slice('Line Items:'.length).trim());
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+}
+
+// Add a received order's lines to stock, inside the caller's transaction.
+//
+// Resolution is by inventoryId — carried from the employee's picker through the request onto
+// the order — falling back to a case-insensitive name match for lines filed before the id was
+// carried. An unresolvable line throws: the goods physically arrived, but we cannot say what
+// they are, and silently skipping would understate stock with no trace.
+//
+// Cost is a weighted average: (onHandQty*onHandCost + recvQty*recvCost) / totalQty. Overwriting
+// with the latest price would revalue stock we already owned at a price we never paid for it.
+async function receiveLinesIntoInventory(client, lines) {
+  const applied = [];
+  for (const line of lines) {
+    const name = String(line?.description || '').trim();
+    const qty = Number(line?.quantity) || 0;
+    const cost = Number(line?.unitCost ?? line?.unitPrice) || 0;
+    if (!name) continue;
+
+    // FOR UPDATE: two receipts touching the same item must not interleave their read-modify-write.
+    let row;
+    if (line?.inventoryId) {
+      row = (await client.query('SELECT id, item_name, quantity, unit_cost FROM inventory WHERE id = $1 FOR UPDATE', [line.inventoryId])).rows[0];
+    }
+    if (!row) {
+      row = (await client.query('SELECT id, item_name, quantity, unit_cost FROM inventory WHERE LOWER(item_name) = LOWER($1) FOR UPDATE', [name])).rows[0];
+    }
+    if (!row) {
+      const e = new Error(`"${name}" is no longer in inventory — it may have been renamed. Nothing was added; fix the item and try again.`);
+      e.statusCode = 400;
+      throw e;
+    }
+
+    const onHandQty = parseFloat(row.quantity) || 0;
+    const onHandCost = parseFloat(row.unit_cost) || 0;
+    const newQty = onHandQty + qty;
+    const newCost = newQty > 0 ? (onHandQty * onHandCost + qty * cost) / newQty : cost;
+
+    await client.query('UPDATE inventory SET quantity = $1, unit_cost = $2, updated_at = NOW() WHERE id = $3', [newQty, newCost, row.id]);
+    applied.push({ inventoryId: row.id, itemName: row.item_name, added: qty, newQuantity: newQty, newUnitCost: Math.round(newCost * 100) / 100 });
+  }
+  return applied;
+}
+
+// Logistics' confirmation of an inbound delivery — the tail of the purchase-order lifecycle,
+// which previously stopped dead at 'approved'.
+//
+//   approved --> in-progress --> RECEIVED    (terminal)
+//           \-------------------> cancelled  (terminal)
+//
+// RECEIVED is not cosmetic: /purchase-orders?status=RECEIVED is what the Business Overview
+// counts as an expense (src/app/api/overview.ts). Before this route the only way to reach it
+// was an admin hand-picking it in the edit modal, so expenses depended on manual data entry.
+//
+// Deliberately does NOT touch the linked purchase request, unlike the approve route above:
+// cancelling records that THIS order fell through, not that the request was wrong — the
+// employee's withdrawal unlock survives.
+app.put('/api/purchase-orders/:id/delivery', requireRole(['admin', 'logistics']), async (req, res) => {
+  const client = await getClient();
+  try {
+    const { status, receivedBy, notes } = req.body;
+    if (!['in-progress', 'RECEIVED', 'cancelled'].includes(status)) {
+      return res.status(400).json({ error: "status must be 'in-progress', 'RECEIVED' or 'cancelled'" });
+    }
+    // Receiving moves stock, so the status change and the inventory writes must be one unit:
+    // a receipt recorded without its stock (or vice versa) is unrecoverable — RECEIVED is
+    // terminal, so there is no retry. FOR UPDATE also serialises two concurrent receipts.
+    await client.query('BEGIN');
+    const cur = await client.query('SELECT status, description, purchase_request_id FROM purchase_orders WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (!cur.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Purchase order not found' }); }
+    const from = cur.rows[0].status;
+
+    const reject = async (msg) => { await client.query('ROLLBACK'); return res.status(400).json({ error: msg }); };
+    if (from === 'RECEIVED' || from === 'cancelled') {
+      return reject(`This order is already ${from === 'RECEIVED' ? 'received' : 'cancelled'}`);
+    }
+    // Only an approved order reaches Logistics at all — a pending one hasn't been authorised.
+    if (status === 'in-progress' && from !== 'approved') {
+      return reject('Only an approved purchase order can be marked as an ongoing delivery');
+    }
+    // Goods sometimes just turn up without anyone flagging them in transit first, so RECEIVED
+    // is reachable straight from 'approved' as well as from 'in-progress'.
+    if ((status === 'RECEIVED' || status === 'cancelled') && !['approved', 'in-progress'].includes(from)) {
+      return reject('Only an approved or in-transit purchase order can be updated');
+    }
+    if (status === 'RECEIVED' && !String(receivedBy || '').trim()) {
+      // Who signed for it is the whole point of the record — mirrors PUT /api/deliveries/:id.
+      return reject('Who received the delivery is required');
+    }
+
+    const actor = req.user?.name || 'Logistics';
+    let applied = [];
+    let r;
+    if (status === 'in-progress') {
+      r = await client.query(
+        `UPDATE purchase_orders SET status='in-progress', in_transit_by=$1, in_transit_at=NOW(),
+           delivery_notes=COALESCE($2, delivery_notes), updated_at=NOW() WHERE id=$3 RETURNING *`,
+        [actor, orNull(notes), req.params.id]
+      );
+    } else if (status === 'RECEIVED') {
+      // Stock only moves for an order raised against a purchase request: those lines came from
+      // the employee's inventory picker, so each one IS an inventory item. An order created by
+      // hand (Purchase Orders ▸ New) has free-text lines — services, one-offs, "1 Lot" — which
+      // are not inventory and must not be invented as items, nor block the receipt.
+      if (cur.rows[0].purchase_request_id) {
+        applied = await receiveLinesIntoInventory(client, parsePOLineItems(cur.rows[0].description));
+      }
+      // Stored, not just returned: the delivery receipt has to be printable again later, and
+      // `new_quantity` is a snapshot of stock at receipt that cannot be recomputed once
+      // production starts withdrawing. Written in the same transaction as the stock it
+      // describes, so the record and the movement cannot disagree. '[]' for a hand-raised
+      // order is a real answer — nothing was an inventory item — and distinct from NULL.
+      r = await client.query(
+        `UPDATE purchase_orders SET status='RECEIVED', received_by=$1, received_at=NOW(),
+           delivery_notes=COALESCE($2, delivery_notes), received_lines=$3::jsonb, updated_at=NOW()
+         WHERE id=$4 RETURNING *`,
+        [String(receivedBy).trim(), orNull(notes), JSON.stringify(applied), req.params.id]
+      );
+    } else {
+      r = await client.query(
+        `UPDATE purchase_orders SET status='cancelled', cancelled_by=$1, cancelled_at=NOW(),
+           delivery_notes=COALESCE($2, delivery_notes), updated_at=NOW() WHERE id=$3 RETURNING *`,
+        [actor, orNull(notes), req.params.id]
+      );
+    }
+    await client.query('COMMIT');
+    const row = r.rows[0];
+    res.json({
+      id: row.id,
+      poNumber: row.po_number,
+      status: row.status,
+      inTransitAt: row.in_transit_at ?? null,
+      inTransitBy: row.in_transit_by ?? null,
+      receivedAt: row.received_at ?? null,
+      receivedBy: row.received_by ?? null,
+      cancelledAt: row.cancelled_at ?? null,
+      cancelledBy: row.cancelled_by ?? null,
+      deliveryNotes: row.delivery_notes ?? null,
+      // What this receipt did to stock, so the portal can say so rather than leave the user
+      // wondering whether inventory moved.
+      inventoryApplied: applied,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    // An unresolvable line is the caller's problem to fix, not a server fault.
+    if (err.statusCode === 400) return res.status(400).json({ error: err.message });
+    console.error('purchase-order delivery error:', err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
@@ -2906,9 +2818,17 @@ app.delete('/api/purchase-orders/:id', requireRole(['admin','purchasing','office
   }
 });
 
-// PATCH /api/purchase-orders/:id (admin only)
+// PATCH /api/purchase-orders/:id — general edit for admin/purchasing/office_admin.
+// Approval is NOT done here: `status` is admin-only, because this route is open to
+// purchasing and they must not be able to approve their own purchase orders. Everyone
+// (including admins) should use PUT /:id/approve, which records the approver and flips
+// the linked purchase request in the same transaction.
 app.patch('/api/purchase-orders/:id', requireRole(['admin','purchasing','office_admin']), async (req, res) => {
   try {
+    const isAdmin = effectiveRole(req.user) === 'admin' || effectiveRole(req.user) === 'owner';
+    if (req.body.status !== undefined && !isAdmin) {
+      return res.status(403).json({ error: 'Only an admin can change a purchase order status' });
+    }
     const cols = {
       status: req.body.status,
       description: req.body.description,
@@ -3079,7 +2999,10 @@ app.post('/api/transactions', requireAdmin, async (req, res) => {
 // registration (~line 1012), so this second one (with driver/vehicle/delivery
 // joins) was unreachable. If those enriched fields are needed later, merge the
 // join into the live handler rather than re-adding a shadow route.)
-app.post('/api/sales-orders', requireAdmin, async (req, res) => {
+// requireRole, not requireAdmin: the /sales portal raises these. Note requireAdmin also
+// excludes the owner (it tests role === 'admin' literally), so this widens access to the
+// super-admin too.
+app.post('/api/sales-orders', requireRole(['admin', 'sales']), async (req, res) => {
   try {
     const {
       soNumber,
@@ -3295,7 +3218,7 @@ app.delete('/api/miscellaneous-expenses/:id', requireRole(['admin','bookkeeper',
 });
 
 // PATCH /api/sales-orders/:id (admin only)
-app.patch('/api/sales-orders/:id', requireAdmin, async (req, res) => {
+app.patch('/api/sales-orders/:id', requireRole(['admin', 'sales']), async (req, res) => {
   try {
     const { status, description } = req.body;
     // Editable pricing/CRM fields (Phase 7e): owner sets the client price on the SO itself.
@@ -3380,7 +3303,7 @@ app.patch('/api/sales-orders/:id', requireAdmin, async (req, res) => {
 });
 
 // DELETE /api/sales-orders/:id (admin only)
-app.delete('/api/sales-orders/:id', requireAdmin, async (req, res) => {
+app.delete('/api/sales-orders/:id', requireRole(['admin', 'sales']), async (req, res) => {
   const start = Date.now();
   try {
     console.log(`🗑️  Deleting sales order ${req.params.id}`);
@@ -3402,11 +3325,116 @@ app.delete('/api/sales-orders/:id', requireAdmin, async (req, res) => {
   } catch (err) {
     const duration = Date.now() - start;
     console.error(`❌ Failed to delete sales order after ${duration}ms:`, err.message);
-    res.status(500).json({ 
+    res.status(500).json({
       error: err.message,
       duration: `${duration}ms`
     });
   }
+});
+
+// ─── Deliveries API (the /logistics portal) ────────────────────────────────
+// One delivery row per dispatched sales order. Deliberately narrow — no drivers, vehicles
+// or GPS; that fleet feature was removed wholesale (server/remove-fleet.js) and is not
+// being rebuilt here. An approved sales order with no row is implicitly "pending".
+function mapDelivery(r) {
+  return r && {
+    id: r.id,
+    deliveryNumber: r.delivery_number,
+    salesOrderId: r.sales_order_id,
+    status: r.status,
+    dispatchedBy: r.dispatched_by ?? null,
+    dispatchedAt: r.dispatched_at ?? null,
+    deliveredAt: r.delivered_at ?? null,
+    receivedBy: r.received_by ?? null,
+    notes: r.notes ?? null,
+    createdAt: r.created_at,
+    // Joined from sales_orders so the portal can render a job without a second fetch.
+    soNumber: r.so_number ?? null,
+    client: r.client ?? null,
+    customerAddress: r.customer_address ?? null,
+    customerContact: r.customer_contact ?? null,
+    amount: r.amount === null || r.amount === undefined ? null : parseFloat(r.amount),
+    soStatus: r.so_status ?? null,
+    deliveryDate: r.delivery_date ?? null,
+  };
+}
+
+app.get('/api/deliveries', requireRole(['admin', 'logistics']), async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT d.*, so.so_number, so.client, so.customer_address, so.customer_contact,
+              so.amount, so.status AS so_status, so.delivery_date
+       FROM deliveries d
+       LEFT JOIN sales_orders so ON so.id = d.sales_order_id
+       ORDER BY d.created_at DESC`
+    );
+    res.json(r.rows.map(mapDelivery));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Dispatch — creates the delivery record for a sales order.
+app.post('/api/deliveries', requireRole(['admin', 'logistics']), async (req, res) => {
+  try {
+    const { salesOrderId, notes } = req.body;
+    if (!salesOrderId) return res.status(400).json({ error: 'A sales order is required' });
+
+    const so = await query('SELECT id, status FROM sales_orders WHERE id = $1', [salesOrderId]);
+    if (!so.rows[0]) return res.status(404).json({ error: 'Sales order not found' });
+    if (so.rows[0].status !== 'approved') {
+      return res.status(400).json({ error: 'Only an approved sales order can be dispatched' });
+    }
+    const dupe = await query(`SELECT id FROM deliveries WHERE sales_order_id = $1 AND status <> 'cancelled' LIMIT 1`, [salesOrderId]);
+    if (dupe.rows[0]) return res.status(400).json({ error: 'This sales order already has a delivery' });
+
+    // DR-YYYY-NNNN, same recipe as pr_number.
+    const year = new Date().getFullYear();
+    const last = await query(`SELECT delivery_number FROM deliveries WHERE delivery_number LIKE $1 ORDER BY delivery_number DESC LIMIT 1`, [`DR-${year}-%`]);
+    let counter = 1;
+    if (last.rows[0]) { const n = parseInt(last.rows[0].delivery_number.split('-')[2], 10); if (!isNaN(n)) counter = n + 1; }
+    const deliveryNumber = `DR-${year}-${String(counter).padStart(4, '0')}`;
+    const id = `DEL-${Date.now()}`;
+
+    try {
+      await query(
+        `INSERT INTO deliveries (id, delivery_number, sales_order_id, status, dispatched_by, dispatched_at, notes)
+         VALUES ($1, $2, $3, 'dispatched', $4, NOW(), $5)`,
+        [id, deliveryNumber, salesOrderId, req.user?.name || 'Logistics', orNull(notes)]
+      );
+    } catch (e) {
+      if (e.code === '23505') return res.status(409).json({ error: 'That delivery number was just taken — try again' });
+      throw e;
+    }
+    const r = await query('SELECT * FROM deliveries WHERE id = $1', [id]);
+    res.status(201).json(mapDelivery(r.rows[0]));
+  } catch (err) { console.error('delivery create error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// Complete or cancel a delivery.
+app.put('/api/deliveries/:id', requireRole(['admin', 'logistics']), async (req, res) => {
+  try {
+    const { status, receivedBy, notes } = req.body;
+    if (!['delivered', 'cancelled'].includes(status)) {
+      return res.status(400).json({ error: "status must be 'delivered' or 'cancelled'" });
+    }
+    const cur = await query('SELECT status FROM deliveries WHERE id = $1', [req.params.id]);
+    if (!cur.rows[0]) return res.status(404).json({ error: 'Delivery not found' });
+    if (cur.rows[0].status === 'delivered') return res.status(400).json({ error: 'This delivery is already completed' });
+
+    if (status === 'delivered') {
+      if (!String(receivedBy || '').trim()) return res.status(400).json({ error: 'Who received the delivery is required' });
+      const r = await query(
+        `UPDATE deliveries SET status='delivered', received_by=$1, delivered_at=NOW(), notes=COALESCE($2, notes), updated_at=NOW()
+         WHERE id=$3 RETURNING *`,
+        [String(receivedBy).trim(), orNull(notes), req.params.id]
+      );
+      return res.json(mapDelivery(r.rows[0]));
+    }
+    const r = await query(
+      `UPDATE deliveries SET status='cancelled', notes=COALESCE($1, notes), updated_at=NOW() WHERE id=$2 RETURNING *`,
+      [orNull(notes), req.params.id]
+    );
+    res.json(mapDelivery(r.rows[0]));
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ─── Inventory API ─────────────────────────────────────────
@@ -3414,28 +3442,60 @@ app.delete('/api/sales-orders/:id', requireAdmin, async (req, res) => {
 // (Removed a dead duplicate GET /api/inventory — Express serves the earlier
 // registration (~line 1060), so this second one was unreachable.)
 
-// POST /api/inventory (admin only)
-app.post('/api/inventory', requireRole(['admin','purchasing','office_admin']), async (req, res) => {
+// ITM-YYYY-NNNN. Shared by POST /api/inventory and the item-request review route, which
+// also creates inventory rows — one generator so the two cannot drift apart.
+//
+// Takes a `db` (the pool's `query`, or a transaction client) so the review route can read the
+// last code inside its own transaction. Reads-then-inserts without a lock, so two concurrent
+// adds can still collide: both callers catch 23505 and report a conflict rather than a 500.
+async function nextItemCode(db) {
+  const year = new Date().getFullYear();
+  const last = await db(
+    `SELECT item_code FROM inventory WHERE item_code LIKE $1 ORDER BY item_code DESC LIMIT 1`,
+    [`ITM-${year}-%`]
+  );
+  let counter = 1;
+  if (last.rows[0]) { const n = parseInt(last.rows[0].item_code.split('-')[2], 10); if (!isNaN(n)) counter = n + 1; }
+  return `ITM-${year}-${String(counter).padStart(4, '0')}`;
+}
+
+// POST /api/inventory (admin/purchasing/office_admin/warehouse)
+app.post('/api/inventory', requireRole(['admin','purchasing','office_admin','warehouse']), async (req, res) => {
   try {
-    const { 
-      itemCode, 
-      itemName, 
-      description, 
-      quantity, 
-      unit = 'pieces', 
-      unitCost, 
-      location, 
-      supplier 
+    const {
+      itemCode,
+      itemName,
+      description,
+      quantity = 0,
+      unit = 'pieces',
+      unitCost = 0,
+      location,
+      supplier
     } = req.body;
     
+    if (!String(itemName || '').trim()) return res.status(400).json({ error: 'Item name is required' });
+
+    // The warehouse portal no longer asks staff to invent a code, so generate ITM-YYYY-NNNN
+    // when none is supplied. Only when absent: the admin's own item modal sends its own code.
+    // item_code is NOT NULL UNIQUE, so a blank one used to surface as a raw 500.
+    let finalItemCode = String(itemCode || '').trim();
+    if (!finalItemCode) finalItemCode = await nextItemCode(query);
+
     const id = `INV-${Date.now()}`;
     const defaultReorderLevel = 10; // Set default reorder level internally
-    
-    await query(
-      `INSERT INTO inventory (id, item_code, item_name, description, quantity, unit, reorder_level, unit_cost, location, supplier)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-      [id, itemCode, itemName, description, quantity, unit, defaultReorderLevel, unitCost, location, supplier]
-    );
+
+    try {
+      await query(
+        `INSERT INTO inventory (id, item_code, item_name, description, quantity, unit, reorder_level, unit_cost, location, supplier)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [id, finalItemCode, itemName, description, quantity, unit, defaultReorderLevel, unitCost, location, supplier]
+      );
+    } catch (e) {
+      // 23505 = unique_violation. The generator reads-then-inserts without a lock, so two
+      // concurrent adds can land on the same number; report it as a conflict, not a 500.
+      if (e.code === '23505') return res.status(409).json({ error: `Item code ${finalItemCode} is already taken — try again` });
+      throw e;
+    }
     
     const result = await query(
       `SELECT id, item_code, item_name, description, quantity, unit, unit_cost, location, supplier
@@ -3462,8 +3522,8 @@ app.post('/api/inventory', requireRole(['admin','purchasing','office_admin']), a
   }
 });
 
-// PATCH /api/inventory/:id (admin only)
-app.patch('/api/inventory/:id', requireRole(['admin','purchasing','office_admin']), async (req, res) => {
+// PATCH /api/inventory/:id (admin/purchasing/office_admin/warehouse)
+app.patch('/api/inventory/:id', requireRole(['admin','purchasing','office_admin','warehouse']), async (req, res) => {
   try {
     const { itemName, description, quantity, unit, reorderLevel, unitCost, location, supplier } = req.body;
     const updates = [];
@@ -3688,115 +3748,7 @@ app.delete('/api/miscellaneous/:id', requireRole(['admin','bookkeeper','office_a
   }
 });
 
-// ─── Traccar GPS Tracking ──────────────────────────────────
-// DISABLED: Using LocalStorage GPS system instead of Traccar server
-// All Traccar API routes are commented out to prevent 502 errors
-
-/*
-// GET /api/traccar/status - check if Traccar server is reachable
-app.get('/api/traccar/status', async (req, res) => {
-  try {
-    const status = await checkConnection();
-    res.json(status);
-  } catch (err) {
-    res.status(502).json({ error: 'Traccar: ' + err.message });
-  }
-});
-
-// GET /api/traccar/devices - list all GPS devices from Traccar
-app.get('/api/traccar/devices', async (req, res) => {
-  try {
-    const devices = await getDevices();
-    res.json(devices);
-  } catch (err) {
-    res.status(502).json({ error: 'Traccar: ' + err.message });
-  }
-});
-
-// GET /api/traccar/devices/:id - get a single device
-app.get('/api/traccar/devices/:id', async (req, res) => {
-  try {
-    const device = await getDevice(parseInt(req.params.id, 10));
-    if (!device) return res.status(404).json({ error: 'Device not found in Traccar' });
-    res.json(device);
-  } catch (err) {
-    res.status(502).json({ error: 'Traccar: ' + err.message });
-  }
-});
-
-// POST /api/traccar/devices - register a new GPS device (admin only)
-app.post('/api/traccar/devices', requireAdmin, async (req, res) => {
-  try {
-    const { name, uniqueId, category } = req.body;
-    if (!name || !uniqueId) {
-      return res.status(400).json({ error: 'Name and uniqueId are required' });
-    }
-    const device = await createDevice({ name, uniqueId, category });
-    res.status(201).json(device);
-  } catch (err) {
-    res.status(502).json({ error: 'Traccar: ' + err.message });
-  }
-});
-
-// PUT /api/traccar/devices/:id - update a GPS device (admin only)
-app.put('/api/traccar/devices/:id', requireAdmin, async (req, res) => {
-  try {
-    const device = await updateDevice(parseInt(req.params.id, 10), req.body);
-    res.json(device);
-  } catch (err) {
-    res.status(502).json({ error: 'Traccar: ' + err.message });
-  }
-});
-
-// DELETE /api/traccar/devices/:id - remove a GPS device (admin only)
-app.delete('/api/traccar/devices/:id', requireAdmin, async (req, res) => {
-  try {
-    await deleteDevice(parseInt(req.params.id, 10));
-    res.json({ message: 'Device deleted' });
-  } catch (err) {
-    res.status(502).json({ error: 'Traccar: ' + err.message });
-  }
-});
-
-// GET /api/traccar/positions - latest positions for all devices (or ?deviceId=X)
-app.get('/api/traccar/positions', async (req, res) => {
-  try {
-    const positions = await getPositions(req.query.deviceId);
-    res.json(positions);
-  } catch (err) {
-    res.status(502).json({ error: 'Traccar: ' + err.message });
-  }
-});
-
-// GET /api/traccar/positions/history?deviceId=X&from=ISO&to=ISO
-app.get('/api/traccar/positions/history', async (req, res) => {
-  try {
-    const { deviceId, from, to } = req.query;
-    if (!deviceId || !from || !to) {
-      return res.status(400).json({ error: 'deviceId, from, and to are required' });
-    }
-    const positions = await getPositionHistory(deviceId, from, to);
-    res.json(positions);
-  } catch (err) {
-    res.status(502).json({ error: 'Traccar: ' + err.message });
-  }
-});
-
-// GET /api/traccar/geofences
-app.get('/api/traccar/geofences', async (req, res) => {
-  try {
-    const geofences = await getGeofences();
-    res.json(geofences);
-  } catch (err) {
-    res.status(502).json({ error: 'Traccar: ' + err.message });
-  }
-});
-
-// GET /api/traccar/ws-info - returns WebSocket connection info for the frontend
-app.get('/api/traccar/ws-info', async (req, res) => {
-  res.json({ wsUrl: getTraccarWsUrl(), authHeader });
-});
-*/
+// [removed] Traccar GPS Tracking routes — GPS/fleet feature removed.
 
 // POST /api/init - create tables and seed (convenience endpoint)
 app.post('/api/init', requireRole(['admin']), async (req, res) => {
@@ -3968,195 +3920,7 @@ app.delete('/api/material-requests/:id', async (req, res) => {
   }
 });
 
-// --- DRIVER DELIVERY ENDPOINTS ---
-
-// Get deliveries for driver (SO-linked + legacy)
-app.get('/api/driver/:id/deliveries', async (req, res) => {
-  try {
-        
-    // Main deliveries table (SO-linked, dispatched via Delivery Management)
-    const soDeliveries = await query(
-      `SELECT DISTINCT
-        d.id, d.so_number as delivery_number,
-        d.customer_name, d.customer_address as delivery_address,
-        d.status, d.notes, d.delivery_date as assigned_at,
-        d.picked_up_time, d.in_transit_time, d.arrived_time, d.completed_time,
-        d.created_at,
-        v.unit_name as vehicle_name, v.plate_number,
-        'so_delivery' as source
-       FROM deliveries d
-       LEFT JOIN vehicles v ON v.id = d.vehicle_id
-       WHERE d.driver_account_id = $1
-         AND d.status NOT IN ('Completed','Cancelled')
-       ORDER BY d.created_at DESC`,
-      [req.params.id]
-    );
-    
-    
-    // Return only SO-linked deliveries (ignore legacy premade data)
-    res.json(soDeliveries.rows);
-  } catch (err) {
-    console.error('❌ Driver deliveries error:', err);
-    console.error('❌ SQL Error details:', err.message);
-    console.error('❌ Stack:', err.stack);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Get ALL deliveries (admin)
-app.get('/api/deliveries', async (req, res) => {
-  try {
-    const result = await query(
-      `SELECT d.*, da.full_name as driver_name
-       FROM driver_deliveries d
-       LEFT JOIN driver_accounts da 
-         ON d.driver_id = da.id
-       ORDER BY d.assigned_at DESC`
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Create delivery (admin assigns to driver)
-app.post('/api/deliveries', async (req, res) => {
-  try {
-    const {
-      driver_id, customer_name,
-      delivery_address, items, notes
-    } = req.body;
-    
-    const delNum = 'DEL-' + Date.now();
-    
-    const result = await query(
-      `INSERT INTO driver_deliveries
-       (driver_id, delivery_number, customer_name,
-        delivery_address, items, status, notes)
-       VALUES ($1,$2,$3,$4,$5,'pending',$6)
-       RETURNING *`,
-      [driver_id, delNum, customer_name,
-       delivery_address, items, notes]
-    );
-    
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Update legacy driver_deliveries status (driver updates)
-app.put('/api/driver-deliveries/:id/status', async (req, res) => {
-  try {
-    const { status, notes } = req.body;
-    
-    const timeFields = {
-      'pickup': 'pickup_at',
-      'on_the_way': 'on_the_way_at',
-      'delivered': 'delivered_at',
-      'going_back': 'going_back_at',
-      'done': 'done_at'
-    };
-    
-    const timeField = timeFields[status];
-    
-    const queryStr = timeField
-      ? `UPDATE driver_deliveries 
-         SET status=$1, ${timeField}=NOW(), 
-             notes=COALESCE($2,notes)
-         WHERE id=$3 RETURNING *`
-      : `UPDATE driver_deliveries 
-         SET status=$1, 
-             notes=COALESCE($2,notes)
-         WHERE id=$3 RETURNING *`;
-    
-    const result = await query(queryStr, 
-      [status, notes, req.params.id]
-    );
-    
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// --- DRIVER CHAT ENDPOINTS ---
-
-// Send message
-app.post('/api/driver/messages', async (req, res) => {
-  try {
-    const {
-      driver_id, driver_name,
-      sender_type, message,
-      image_url, file_url, file_name
-    } = req.body;
-    
-    const result = await query(
-      `INSERT INTO driver_messages
-       (driver_id, driver_name, sender_type,
-        message, image_url, file_url, file_name)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
-       RETURNING *`,
-      [driver_id, driver_name, sender_type,
-       message, image_url, file_url, file_name]
-    );
-    
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Get messages for a driver
-app.get('/api/driver/:id/messages', async (req, res) => {
-  try {
-    const result = await query(
-      `SELECT * FROM driver_messages
-       WHERE driver_id = $1
-       ORDER BY created_at ASC`,
-      [req.params.id]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Get ALL driver chats (admin - grouped by driver)
-app.get('/api/driver/messages/all', async (req, res) => {
-  try {
-    const result = await query(
-      `SELECT DISTINCT ON (driver_id)
-        driver_id, driver_name,
-        message, created_at,
-        COUNT(*) FILTER (
-          WHERE is_read = false 
-          AND sender_type = 'driver'
-        ) OVER (PARTITION BY driver_id) as unread_count
-       FROM driver_messages
-       ORDER BY driver_id, created_at DESC`
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Mark messages as read
-app.put('/api/driver/:id/messages/read', async (req, res) => {
-  try {
-    await query(
-      `UPDATE driver_messages 
-       SET is_read = true
-       WHERE driver_id = $1 
-       AND sender_type = 'driver'`,
-      [req.params.id]
-    );
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// [removed] Driver delivery + driver chat endpoints — Driver Portal feature removed.
 
 // --- ADMIN USER MANAGEMENT ENDPOINTS ---
 
@@ -4218,6 +3982,57 @@ app.get('/api/admin/employees', requireAdmin, async (req, res) => {
     );
     res.json(result.rows);
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin CREATES an employee account (replaces employee self-registration).
+// Created accounts are 'approved' immediately so they can log into /production.
+app.post('/api/admin/employees', requireAdmin, async (req, res) => {
+  try {
+    const { full_name, email, password, department, position, phone } = req.body;
+    if (!full_name || !email || !password) {
+      return res.status(400).json({ error: 'Name, email and password are required' });
+    }
+    if (String(password).length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+    const existing = await query('SELECT id FROM employee_accounts WHERE LOWER(email) = LOWER($1)', [email]);
+    if (existing.rows.length > 0) return res.status(400).json({ error: 'Email already registered' });
+
+    const hash = await bcrypt.hash(password, 10);
+    const result = await query(
+      `INSERT INTO employee_accounts (full_name, email, password_hash, department, position, phone, status, approved_at, approved_by)
+       VALUES ($1,$2,$3,$4,$5,$6,'approved',NOW(),$7)
+       RETURNING id, full_name, email, department, position, phone, status, created_at`,
+      [full_name, email, hash, department || null, position || null, phone || null, req.user?.name || 'Admin']
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error('employee create error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin updates an employee account: profile fields, activate/deactivate, optional password reset.
+app.patch('/api/admin/employees/:id', requireAdmin, async (req, res) => {
+  try {
+    const b = req.body;
+    const cols = { full_name: b.full_name, email: b.email, department: b.department, position: b.position, phone: b.phone, status: b.status };
+    const sets = []; const params = []; let i = 1;
+    for (const [k, v] of Object.entries(cols)) { if (v !== undefined) { sets.push(`${k} = $${i++}`); params.push(v === '' ? null : v); } }
+    if (b.password) { sets.push(`password_hash = $${i++}`); params.push(await bcrypt.hash(b.password, 10)); }
+    if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
+    params.push(req.params.id);
+    const r = await query(
+      `UPDATE employee_accounts SET ${sets.join(', ')} WHERE id = $${params.length}
+       RETURNING id, full_name, email, department, position, phone, status, created_at`,
+      params
+    );
+    if (!r.rows[0]) return res.status(404).json({ error: 'Employee not found' });
+    res.json(r.rows[0]);
+  } catch (err) {
+    console.error('employee update error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -4302,101 +4117,105 @@ console.log(`🔍 Employee review request: ID=${req.params.id}, status=${status}
   }
 });
 
-// Get all pending driver registrations
-app.get('/api/admin/drivers/pending', requireAdmin, async (req, res) => {
+// Permanently delete an employee account. purchase_requests.employee_id is
+// ON DELETE SET NULL (history survives via employee_name), but material_requests
+// has a RESTRICT FK, so null those out first inside a transaction.
+app.delete('/api/admin/employees/:id', requireAdmin, async (req, res) => {
+  const client = await getClient();
   try {
-    const result = await query(
-      `SELECT id, full_name, email, phone,
-        license_number, status, created_at
-       FROM driver_accounts
-       WHERE status = 'pending'
-       ORDER BY created_at DESC`
-    );
-    res.json(result.rows);
+    await client.query('BEGIN');
+    await client.query('UPDATE material_requests SET employee_id = NULL WHERE employee_id = $1', [req.params.id]);
+    const r = await client.query('DELETE FROM employee_accounts WHERE id = $1', [req.params.id]);
+    if (!r.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Employee not found' });
+    }
+    await client.query('COMMIT');
+    res.json({ message: 'Employee deleted', id: req.params.id });
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('employee delete error:', err);
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
-// Get ALL drivers
-app.get('/api/admin/drivers', requireAdmin, async (req, res) => {
-  try {
-    const result = await query(
-      `SELECT id, full_name, email, phone,
-        license_number, vehicle_assigned,
-        status, created_at
-       FROM driver_accounts
-       ORDER BY created_at DESC`
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Approve or reject driver
-app.put('/api/admin/drivers/:id/review', requireAdmin, async (req, res) => {
-  try {
-    const { status, reviewed_by } = req.body;
-    
-    // First, ensure approved_by column can store text
+// ===== Admin management of the portal account tables =====
+// purchasing / warehouse / accounting / sales / logistics all have the identical shape
+// (full_name, email, password_hash, phone, status, signature), so they share one mount
+// instead of five copies. /api/admin/employees stays hand-written — it carries extra
+// department/position fields.
+// Table names are hardcoded literals per call, never user input.
+function mountAccountAdminRoutes(path, table, label) {
+  app.get(`/api/admin/${path}`, requireAdmin, async (req, res) => {
     try {
-      await query('ALTER TABLE driver_accounts ALTER COLUMN approved_by TYPE TEXT');
-    } catch (err) {
-      // Column might already be TEXT or doesn't exist, continue
-    }
-    
-    const result = await query(
-      `UPDATE driver_accounts
-       SET status=$1, approved_by=$2,
-           approved_at=NOW()
-       WHERE id=$3 RETURNING *`,
-      [status, reviewed_by, req.params.id]
-    );
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+      const result = await query(
+        `SELECT id, full_name, email, phone, status, (signature IS NOT NULL) AS has_signature, created_at
+         FROM ${table} ORDER BY created_at DESC`
+      );
+      res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
 
-// --- FILE UPLOAD ENDPOINT ---
+  app.post(`/api/admin/${path}`, requireAdmin, async (req, res) => {
+    try {
+      const { full_name, email, password, phone } = req.body;
+      if (!full_name || !email || !password) return res.status(400).json({ error: 'Name, email and password are required' });
+      if (String(password).length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+      const existing = await query(`SELECT id FROM ${table} WHERE LOWER(email) = LOWER($1)`, [email]);
+      if (existing.rows.length > 0) return res.status(400).json({ error: 'Email already registered' });
+      const hash = await bcrypt.hash(password, 10);
+      const result = await query(
+        `INSERT INTO ${table} (full_name, email, password_hash, phone, status)
+         VALUES ($1,$2,$3,$4,'approved')
+         RETURNING id, full_name, email, phone, status, created_at`,
+        [full_name, email, hash, phone || null]
+      );
+      res.status(201).json(result.rows[0]);
+    } catch (err) { console.error(`${path} create error:`, err); res.status(500).json({ error: err.message }); }
+  });
 
-// File upload for driver messages
-app.post('/api/driver/messages/upload', upload.single('file'), async (req, res) => {
-  try {
-    const { driver_id, driver_name, sender_type } = req.body;
-    const file = req.file;
-    
-    if (!file) {
-      return res.status(400).json({ 
-        error: 'No file uploaded' 
-      });
-    }
-    
-    const isImage = file.mimetype.startsWith('image/');
-    const fileUrl = `/uploads/${file.filename}`;
-    
-    const result = await query(
-      `INSERT INTO driver_messages
-       (driver_id, driver_name, sender_type,
-        image_url, file_url, file_name)
-       VALUES ($1,$2,$3,$4,$5,$6)
-       RETURNING *`,
-      [
-        driver_id, driver_name, sender_type,
-        isImage ? fileUrl : null,
-        !isImage ? fileUrl : null,
-        file.originalname
-      ]
-    );
-    
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+  app.patch(`/api/admin/${path}/:id`, requireAdmin, async (req, res) => {
+    try {
+      const b = req.body;
+      const cols = { full_name: b.full_name, email: b.email, phone: b.phone, status: b.status };
+      const sets = []; const params = []; let i = 1;
+      for (const [k, v] of Object.entries(cols)) { if (v !== undefined) { sets.push(`${k} = $${i++}`); params.push(v === '' ? null : v); } }
+      if (b.password) {
+        if (String(b.password).length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+        sets.push(`password_hash = $${i++}`); params.push(await bcrypt.hash(b.password, 10));
+      }
+      if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
+      params.push(req.params.id);
+      const r = await query(
+        `UPDATE ${table} SET ${sets.join(', ')} WHERE id = $${params.length}
+         RETURNING id, full_name, email, phone, status, created_at`,
+        params
+      );
+      if (!r.rows[0]) return res.status(404).json({ error: `${label} account not found` });
+      res.json(r.rows[0]);
+    } catch (err) { console.error(`${path} update error:`, err); res.status(500).json({ error: err.message }); }
+  });
 
-// Serve uploaded files
+  app.delete(`/api/admin/${path}/:id`, requireAdmin, async (req, res) => {
+    try {
+      const r = await query(`DELETE FROM ${table} WHERE id = $1`, [req.params.id]);
+      if (!r.rowCount) return res.status(404).json({ error: `${label} account not found` });
+      res.json({ message: `${label} account deleted`, id: req.params.id });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+}
+mountAccountAdminRoutes('purchasing', 'purchasing_accounts', 'Purchasing');
+mountAccountAdminRoutes('warehouse', 'warehouse_accounts', 'Warehouse');
+mountAccountAdminRoutes('accounting', 'accounting_accounts', 'Accounting');
+mountAccountAdminRoutes('sales', 'sales_accounts', 'Sales');
+mountAccountAdminRoutes('logistics', 'logistics_accounts', 'Logistics');
+
+// [removed] Driver-account admin routes (/api/admin/drivers*) and driver message
+// file upload — Driver Portal feature removed.
+
+// Serve uploaded files (retained for any legacy attachments)
 app.use('/uploads', express.static(uploadDir));
 
 
@@ -4555,12 +4374,21 @@ const orNull = (v) => (v === undefined || v === '' ? null : v);
 
 // camelCase <-> snake_case row mappers
 function mapSupplier(r) {
-  return r && {
+  if (!r) return r;
+  const out = {
     id: r.id, name: r.name, type: r.type, productsSupplied: r.products_supplied,
     contactPerson: r.contact_person, phone: r.phone, email: r.email, location: r.location,
     paymentTerms: r.payment_terms, priceLevel: r.price_level, reliability: r.reliability,
-    lastOrdered: r.last_ordered, notes: r.notes, createdAt: r.created_at, updatedAt: r.updated_at,
+    lastOrdered: r.last_ordered, notes: r.notes, tin: r.tin,
+    certificateFilename: r.certificate_filename ?? null,
+    createdAt: r.created_at, updatedAt: r.updated_at,
   };
+  // The list query selects a has_certificate flag instead of the scan itself; single-row
+  // reads (SELECT *) carry the column. Only surface what the row actually contains, so a
+  // list response never drags a base64 document along.
+  if (r.has_certificate !== undefined) out.hasCertificate = r.has_certificate;
+  else if (r.certificate_of_registration !== undefined) out.hasCertificate = !!r.certificate_of_registration;
+  return out;
 }
 function mapCustomer(r) {
   return r && {
@@ -4568,6 +4396,51 @@ function mapCustomer(r) {
     email: r.email, location: r.location, whatTheyBuy: r.what_they_buy, source: r.source,
     status: r.status, lastContact: r.last_contact, notes: r.notes,
     createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+function mapProject(r) {
+  return r && {
+    id: r.id, name: r.name, description: r.description, status: r.status,
+    client: r.client, location: r.location, startDate: r.start_date, endDate: r.end_date,
+    budgetAllocation: r.budget_allocation === null ? 0 : parseFloat(r.budget_allocation),
+    createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+function mapPurchaseRequest(r) {
+  if (!r) return r;
+  return {
+    id: r.id, prNumber: r.pr_number, employeeId: r.employee_id, employeeName: r.employee_name,
+    projectId: r.project_id, projectName: r.project_name ?? null,
+    neededBy: r.needed_by, supplier: r.supplier, notes: r.notes,
+    items: Array.isArray(r.items) ? r.items : (r.items || []),
+    total: r.total === null ? 0 : parseFloat(r.total),
+    // The employee's estimate is `total`; `finalTotal` is what Purchasing actually priced it
+    // at (null until they raise the order). Both are kept so the gap stays visible.
+    finalTotal: r.final_total === null || r.final_total === undefined ? null : parseFloat(r.final_total),
+    status: r.status, withdrawn: r.withdrawn,
+    reviewedBy: r.reviewed_by, reviewedAt: r.reviewed_at,
+    checkedBy: r.checked_by ?? null, checkedAt: r.checked_at ?? null,
+    checkedSignature: r.checked_signature ?? null,
+    verifiedBy: r.verified_by ?? null, verifiedAt: r.verified_at ?? null,
+    createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+function mapWithdrawalRequest(r) {
+  if (!r) return r;
+  return {
+    id: r.id, withdrawalNumber: r.withdrawal_number ?? null,
+    inventoryId: r.inventory_id, itemName: r.item_name,
+    quantity: r.quantity === null ? 0 : parseFloat(r.quantity), reason: r.reason,
+    requestedById: r.requested_by_id, requestedByName: r.requested_by_name,
+    // Set when this withdrawal is one line of a purchase-request fulfilment; null for ad-hoc.
+    purchaseRequestId: r.purchase_request_id ?? null,
+    prNumber: r.pr_number ?? null,
+    status: r.status, reviewedBy: r.reviewed_by, reviewedAt: r.reviewed_at,
+    // The warehouse's release — the first of the two approvals. reviewedBy/reviewedAt above
+    // are the admin's, the second one, which is what actually moves stock.
+    warehouseBy: r.warehouse_by ?? null, warehouseAt: r.warehouse_at ?? null,
+    deductedAt: r.deducted_at, createdAt: r.created_at, updatedAt: r.updated_at,
+    unit: r.unit ?? null,
   };
 }
 function mapInquiry(r) {
@@ -4593,7 +4466,17 @@ app.get('/api/suppliers', async (req, res) => {
     const where = ['1=1']; const params = []; let i = 1;
     if (search) { where.push(`(LOWER(name) LIKE $${i} OR LOWER(COALESCE(contact_person,'')) LIKE $${i} OR LOWER(COALESCE(products_supplied,'')) LIKE $${i})`); params.push(`%${String(search).toLowerCase()}%`); i++; }
     if (type) { where.push(`type = $${i++}`); params.push(type); }
-    const r = await query(`SELECT * FROM suppliers WHERE ${where.join(' AND ')} ORDER BY name ASC`, params);
+    // Explicit columns, NOT `SELECT *`: certificate_of_registration holds a base64 scan and
+    // would otherwise be dragged into every row of every list response. Callers get a flag
+    // and fetch the document itself from /suppliers/:id/certificate when they need it.
+    const r = await query(
+      `SELECT id, name, type, products_supplied, contact_person, phone, email, location,
+              payment_terms, price_level, reliability, last_ordered, notes, tin,
+              certificate_filename, (certificate_of_registration IS NOT NULL) AS has_certificate,
+              created_at, updated_at
+       FROM suppliers WHERE ${where.join(' AND ')} ORDER BY name ASC`,
+      params
+    );
     res.json(r.rows.map(mapSupplier));
   } catch (err) { console.error('suppliers list error:', err); res.status(500).json({ error: err.message }); }
 });
@@ -4604,13 +4487,49 @@ app.get('/api/suppliers/:id', async (req, res) => {
     res.json(mapSupplier(r.rows[0]));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+// ---- Certificate of registration (scan held as a data-URL) ----
+// Kept off POST/PATCH deliberately: the admin supplier form PATCHes its whole state, so a
+// document living in that payload would re-upload on every unrelated edit.
+app.get('/api/suppliers/:id/certificate', requireRole(['owner','admin','purchasing','office_admin']), async (req, res) => {
+  try {
+    const r = await query('SELECT certificate_of_registration, certificate_filename FROM suppliers WHERE id = $1', [req.params.id]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Supplier not found' });
+    res.json({ certificate: r.rows[0].certificate_of_registration || null, filename: r.rows[0].certificate_filename || null });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.put('/api/suppliers/:id/certificate', requireRole(['owner','admin','purchasing','office_admin']), async (req, res) => {
+  try {
+    const cert = req.body?.certificate;
+    if (typeof cert !== 'string' || !/^data:(image\/(png|jpeg)|application\/pdf);base64,/.test(cert)) {
+      return res.status(400).json({ error: 'A PNG, JPEG or PDF certificate is required' });
+    }
+    if (cert.length > 5_000_000) return res.status(400).json({ error: 'Certificate file is too large' });
+    const r = await query(
+      'UPDATE suppliers SET certificate_of_registration = $1, certificate_filename = $2, updated_at = NOW() WHERE id = $3 RETURNING id',
+      [cert, orNull(req.body?.filename), req.params.id]
+    );
+    if (!r.rows[0]) return res.status(404).json({ error: 'Supplier not found' });
+    res.json({ message: 'Certificate saved', filename: req.body?.filename || null });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.delete('/api/suppliers/:id/certificate', requireRole(['owner','admin','purchasing','office_admin']), async (req, res) => {
+  try {
+    const r = await query(
+      'UPDATE suppliers SET certificate_of_registration = NULL, certificate_filename = NULL, updated_at = NOW() WHERE id = $1 RETURNING id',
+      [req.params.id]
+    );
+    if (!r.rows[0]) return res.status(404).json({ error: 'Supplier not found' });
+    res.json({ message: 'Certificate removed' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 app.post('/api/suppliers', requireRole(['owner','admin','purchasing','office_admin']), async (req, res) => {
   try {
     const b = req.body; const id = newId('SUP');
     const r = await query(
-      `INSERT INTO suppliers (id,name,type,products_supplied,contact_person,phone,email,location,payment_terms,price_level,reliability,last_ordered,notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
-      [id, b.name, orNull(b.type), orNull(b.productsSupplied), orNull(b.contactPerson), orNull(b.phone), orNull(b.email), orNull(b.location), orNull(b.paymentTerms), orNull(b.priceLevel), orNull(b.reliability), orNull(b.lastOrdered), orNull(b.notes)]
+      `INSERT INTO suppliers (id,name,type,products_supplied,contact_person,phone,email,location,payment_terms,price_level,reliability,last_ordered,notes,tin)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+      [id, b.name, orNull(b.type), orNull(b.productsSupplied), orNull(b.contactPerson), orNull(b.phone), orNull(b.email), orNull(b.location), orNull(b.paymentTerms), orNull(b.priceLevel), orNull(b.reliability), orNull(b.lastOrdered), orNull(b.notes), orNull(b.tin)]
     );
     res.status(201).json(mapSupplier(r.rows[0]));
   } catch (err) { console.error('supplier create error:', err); res.status(500).json({ error: err.message }); }
@@ -4618,7 +4537,8 @@ app.post('/api/suppliers', requireRole(['owner','admin','purchasing','office_adm
 app.patch('/api/suppliers/:id', requireRole(['owner','admin','purchasing','office_admin']), async (req, res) => {
   try {
     const b = req.body;
-    const cols = { name:b.name, type:b.type, products_supplied:b.productsSupplied, contact_person:b.contactPerson, phone:b.phone, email:b.email, location:b.location, payment_terms:b.paymentTerms, price_level:b.priceLevel, reliability:b.reliability, last_ordered:b.lastOrdered, notes:b.notes };
+    // certificate_of_registration is intentionally absent — it has its own route.
+    const cols = { name:b.name, type:b.type, products_supplied:b.productsSupplied, contact_person:b.contactPerson, phone:b.phone, email:b.email, location:b.location, payment_terms:b.paymentTerms, price_level:b.priceLevel, reliability:b.reliability, last_ordered:b.lastOrdered, notes:b.notes, tin:b.tin };
     const sets = []; const params = []; let i = 1;
     for (const [k, v] of Object.entries(cols)) { if (v !== undefined) { sets.push(`${k} = $${i++}`); params.push(orNull(v)); } }
     if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
@@ -4686,6 +4606,696 @@ app.delete('/api/customers/:id', requireRole(['owner','admin']), async (req, res
     if (!r.rowCount) return res.status(404).json({ error: 'Customer not found' });
     res.json({ message: 'Customer deleted', id: req.params.id });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ====================== PROJECTS ======================
+// Read: any authenticated user (employees need it for the purchase-request project picker).
+// Writes: owner/admin.
+app.get('/api/projects', async (req, res) => {
+  try {
+    const { search, status } = req.query;
+    const where = ['1=1']; const params = []; let i = 1;
+    if (search) { where.push(`(LOWER(name) LIKE $${i} OR LOWER(COALESCE(client,'')) LIKE $${i})`); params.push(`%${String(search).toLowerCase()}%`); i++; }
+    if (status) { where.push(`status = $${i++}`); params.push(status); }
+    const r = await query(`SELECT * FROM projects WHERE ${where.join(' AND ')} ORDER BY name ASC`, params);
+    res.json(r.rows.map(mapProject));
+  } catch (err) { console.error('projects list error:', err); res.status(500).json({ error: err.message }); }
+});
+app.get('/api/projects/:id', async (req, res) => {
+  try {
+    const r = await query('SELECT * FROM projects WHERE id = $1', [req.params.id]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Project not found' });
+    res.json(mapProject(r.rows[0]));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.post('/api/projects', requireRole(['owner','admin','accounting']), async (req, res) => {
+  try {
+    const b = req.body;
+    if (!b.name || !String(b.name).trim()) return res.status(400).json({ error: 'Project name is required' });
+    const id = newId('PRJ');
+    const r = await query(
+      `INSERT INTO projects (id,name,description,status,client,location,start_date,end_date,budget_allocation)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [id, b.name, orNull(b.description), orNull(b.status) || 'Active', orNull(b.client), orNull(b.location), orNull(b.startDate), orNull(b.endDate), Number(b.budgetAllocation) || 0]
+    );
+    res.status(201).json(mapProject(r.rows[0]));
+  } catch (err) { console.error('project create error:', err); res.status(500).json({ error: err.message }); }
+});
+app.patch('/api/projects/:id', requireRole(['owner','admin','accounting']), async (req, res) => {
+  try {
+    const b = req.body;
+    const cols = { name:b.name, description:b.description, status:b.status, client:b.client, location:b.location, start_date:b.startDate, end_date:b.endDate, budget_allocation:b.budgetAllocation };
+    const sets = []; const params = []; let i = 1;
+    for (const [k, v] of Object.entries(cols)) {
+      if (v !== undefined) { sets.push(`${k} = $${i++}`); params.push(k === 'budget_allocation' ? (Number(v) || 0) : orNull(v)); }
+    }
+    if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
+    sets.push('updated_at = NOW()'); params.push(req.params.id);
+    const r = await query(`UPDATE projects SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`, params);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Project not found' });
+    res.json(mapProject(r.rows[0]));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.delete('/api/projects/:id', requireRole(['owner','admin','accounting']), async (req, res) => {
+  try {
+    const r = await query('DELETE FROM projects WHERE id = $1', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Project not found' });
+    res.json({ message: 'Project deleted', id: req.params.id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ====================== PURCHASE REQUESTS ======================
+// Employees file/read their own; admins list all + review. Inventory withdrawal below.
+app.post('/api/purchase-requests', requireAuth, async (req, res) => {
+  try {
+    const b = req.body;
+    const items = Array.isArray(b.items) ? b.items.filter((it) => it && String(it.description || '').trim() && Number(it.quantity) > 0) : [];
+    if (items.length === 0) return res.status(400).json({ error: 'At least one item with a description and quantity is required' });
+    const total = items.reduce((t, it) => t + (Number(it.quantity) || 0) * (Number(it.unitCost) || 0), 0);
+
+    // Requester identity comes from the token, never the client body.
+    const employeeId = req.user?.id ?? null;
+    const employeeName = req.user?.name || 'Unknown';
+
+    // Generate PR-YYYY-#### from the current max.
+    const year = new Date().getFullYear();
+    const last = await query(`SELECT pr_number FROM purchase_requests WHERE pr_number LIKE $1 ORDER BY pr_number DESC LIMIT 1`, [`PR-${year}-%`]);
+    let counter = 1;
+    if (last.rows[0]) { const n = parseInt(last.rows[0].pr_number.split('-')[2], 10); if (!isNaN(n)) counter = n + 1; }
+    const prNumber = `PR-${year}-${String(counter).padStart(4, '0')}`;
+
+    const id = newId('PR');
+    const r = await query(
+      `INSERT INTO purchase_requests (id, pr_number, employee_id, employee_name, project_id, needed_by, supplier, notes, items, total, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,'pending') RETURNING *`,
+      [id, prNumber, employeeId, employeeName, orNull(b.projectId), orNull(b.neededBy), orNull(b.supplier), orNull(b.notes), JSON.stringify(items), total]
+    );
+    res.status(201).json(mapPurchaseRequest(r.rows[0]));
+  } catch (err) { console.error('purchase-request create error:', err); res.status(500).json({ error: err.message }); }
+});
+app.get('/api/purchase-requests/mine', requireAuth, async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT pr.*, p.name AS project_name FROM purchase_requests pr
+       LEFT JOIN projects p ON p.id = pr.project_id
+       WHERE pr.employee_id = $1 ORDER BY pr.created_at DESC, pr.pr_number DESC`,
+      [req.user?.id ?? null]
+    );
+    res.json(r.rows.map(mapPurchaseRequest));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+// Shared by the admin dashboard (staff admin/owner) AND the purchasing portal (role 'purchasing').
+app.get('/api/purchase-requests', requireRole(['admin', 'purchasing', 'accounting']), async (req, res) => {
+  try {
+    const { status } = req.query;
+    const where = ['1=1']; const params = []; let i = 1;
+    if (status) { where.push(`pr.status = $${i++}`); params.push(status); }
+    // Purchasing only acts on requests Accounting has already checked, so a pending one is
+    // not theirs to see. Enforced here rather than in the UI: hiding it client-side would
+    // still ship the data. Admin and accounting are unaffected.
+    if (effectiveRole(req.user) === 'purchasing') where.push(`pr.status <> 'pending'`);
+    const r = await query(
+      `SELECT pr.*, p.name AS project_name FROM purchase_requests pr
+       LEFT JOIN projects p ON p.id = pr.project_id
+       -- created_at is a real TIMESTAMPTZ so this is already newest-first; pr_number is a
+       -- deterministic tiebreaker for the theoretical same-instant case, giving a total order.
+       WHERE ${where.join(' AND ')} ORDER BY pr.created_at DESC, pr.pr_number DESC`,
+      params
+    );
+    res.json(r.rows.map(mapPurchaseRequest));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Signatures for ONE request, fetched on demand at print time.
+//
+// Deliberately not part of GET /api/purchase-requests: a signature is ~20KB of base64, so
+// joining it onto the list would add ~20KB per row (see the same reasoning behind the explicit
+// column list on /api/suppliers, which keeps certificate scans out of that list).
+//
+// The preparer's signature is read LIVE from their account rather than snapshotted onto the
+// request, matching what the production portal already prints for its own Prepared By block
+// (RequestsPage.tsx) — snapshotting here would make the two documents disagree for the same PR.
+// checked_signature IS a snapshot, because it is proof of a review that happened at a moment.
+// 'employee' is admitted so production can print its own request fully signed — but scoped
+// below to requests they filed. Without that check any employee could pull the signature
+// images off any request by id, which is precisely what the role guard exists to prevent.
+app.get('/api/purchase-requests/:id/signatures', requireRole(['admin', 'accounting', 'purchasing', 'employee']), async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT pr.employee_id, pr.checked_signature, e.signature AS prepared_signature, a.signature AS approved_signature
+         FROM purchase_requests pr
+         LEFT JOIN employee_accounts e ON e.id = pr.employee_id
+         LEFT JOIN users a ON a.id = pr.verified_by_id
+        WHERE pr.id = $1`,
+      [req.params.id]
+    );
+    if (!r.rows[0]) return res.status(404).json({ error: 'Purchase request not found' });
+    if (effectiveRole(req.user) === 'employee' && r.rows[0].employee_id !== (req.user?.id ?? null)) {
+      return res.status(403).json({ error: 'You can only view signatures on your own purchase requests' });
+    }
+    res.json({
+      preparedSignature: r.rows[0].prepared_signature || null,
+      checkedSignature: r.rows[0].checked_signature || null,
+      approvedSignature: r.rows[0].approved_signature || null,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// The four signatures on a printed purchase order, fetched on demand at print time. Kept off
+// GET /api/purchase-orders for the same reason as the request ones: ~20KB of base64 each would
+// otherwise ride on every row of every list.
+//
+// Prepared / Processed / Approved resolve LIVE from their accounts by id, so saving a signature
+// later completes documents already issued. Reviewed is the snapshot taken at accounting's
+// review — that one is proof of a moment, not of a person.
+//
+// A hand-raised order (no purchase request) has no employee and no accounting review; those
+// blocks come back null and print as blank ruled lines.
+app.get('/api/purchase-orders/:id/signatures', requireRole(['admin', 'purchasing', 'logistics']), async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT e.signature  AS prepared_signature,
+              pr.checked_signature AS reviewed_signature,
+              v.signature  AS approved_signature,
+              pc.signature AS processed_signature,
+              u.signature  AS supervised_signature
+         FROM purchase_orders po
+         LEFT JOIN purchase_requests pr ON pr.id = po.purchase_request_id
+         LEFT JOIN employee_accounts e ON e.id = pr.employee_id
+         LEFT JOIN users v ON v.id = pr.verified_by_id
+         LEFT JOIN purchasing_accounts pc ON pc.id = po.processed_by_id
+         LEFT JOIN users u ON u.id = po.approved_by_id
+        WHERE po.id = $1`,
+      [req.params.id]
+    );
+    if (!r.rows[0]) return res.status(404).json({ error: 'Purchase order not found' });
+    res.json({
+      preparedSignature: r.rows[0].prepared_signature || null,
+      reviewedSignature: r.rows[0].reviewed_signature || null,
+      // The admin who approved the REQUEST (pr.verified_by_id) — not the one who approved the
+      // order. Approval of the request is what lets purchasing raise the order at all, so it
+      // precedes Processed By on the document; the order's own approval is Supervised By.
+      approvedSignature: r.rows[0].approved_signature || null,
+      processedSignature: r.rows[0].processed_signature || null,
+      supervisedSignature: r.rows[0].supervised_signature || null,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ---- Portal e-signatures --------------------------------------------------------------
+// Six identical GET/PUT pairs (one per portal role) collapsed into one mount. The table name
+// is a hardcoded literal per call, never user input. Behaviour is unchanged: role-scoped,
+// keyed to req.user.id, data-URL validated, 2M-character cap.
+function mountSignatureRoutes(path, table, role) {
+  app.get(`/api/${path}/signature`, requireRole([role]), async (req, res) => {
+    try {
+      const r = await query(`SELECT signature FROM ${table} WHERE id = $1`, [req.user?.id]);
+      res.json({ signature: r.rows[0]?.signature || null });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+  app.put(`/api/${path}/signature`, requireRole([role]), async (req, res) => {
+    try {
+      const sig = req.body?.signature;
+      if (typeof sig !== 'string' || !/^data:image\/(png|jpeg);base64,/.test(sig)) {
+        return res.status(400).json({ error: 'A PNG or JPEG image signature is required' });
+      }
+      if (sig.length > 2_000_000) return res.status(400).json({ error: 'Signature image is too large' });
+      const r = await query(`UPDATE ${table} SET signature = $1 WHERE id = $2`, [sig, req.user?.id]);
+      // This route used to echo the signature back unconditionally. When req.user.id was
+      // undefined the UPDATE matched zero rows, so it reported success and saved nothing —
+      // the pad said "Signature saved" and the drawing vanished on reload. Never report a
+      // write that did not happen.
+      if (!r.rowCount) return res.status(404).json({ error: 'Your account could not be found — sign out and back in' });
+      res.json({ signature: sig });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+}
+mountSignatureRoutes('purchasing', 'purchasing_accounts', 'purchasing');
+mountSignatureRoutes('accounting', 'accounting_accounts', 'accounting');
+mountSignatureRoutes('employee', 'employee_accounts', 'employee');
+mountSignatureRoutes('warehouse', 'warehouse_accounts', 'warehouse');
+// The admin dashboard's own staff identity lives in `users`, not a portal accounts table.
+// requireRole(['admin']) also admits 'owner', so a super-admin can sign too.
+mountSignatureRoutes('admin', 'users', 'admin');
+mountSignatureRoutes('sales', 'sales_accounts', 'sales');
+mountSignatureRoutes('logistics', 'logistics_accounts', 'logistics');
+
+// Accounting review — the FIRST gate. An accounting-portal account marks a pending request
+// 'reviewed' (unlocking Purchasing to raise a PO) or rejects it. Plain admins CANNOT review;
+// 'owner' is kept only as an emergency override. On 'reviewed' the accounting account's saved
+// e-signature is snapshotted onto the request as proof of check.
+// [replaced] /purchase-requests/:id/purchasing-review — Purchasing no longer checks PRs; they
+// raise a purchase order against an already-reviewed request instead (POST /api/purchase-orders).
+app.put('/api/purchase-requests/:id/accounting-review', requireRole(['accounting', 'owner']), async (req, res) => {
+  try {
+    const { action } = req.body;
+    if (!['reviewed', 'rejected'].includes(action)) return res.status(400).json({ error: "action must be 'reviewed' or 'rejected'" });
+    const cur = await query('SELECT status FROM purchase_requests WHERE id = $1', [req.params.id]);
+    if (!cur.rows[0]) return res.status(404).json({ error: 'Purchase request not found' });
+    if (cur.rows[0].status !== 'pending') return res.status(400).json({ error: 'Only pending requests can be reviewed by Accounting' });
+    if (action === 'reviewed') {
+      // Snapshot the reviewer's signature (accounting accounts only; owner override has none).
+      let signature = null;
+      if (req.user?.role === 'accounting' && req.user?.id) {
+        const sig = await query('SELECT signature FROM accounting_accounts WHERE id = $1', [req.user.id]);
+        signature = sig.rows[0]?.signature || null;
+      }
+      const r = await query(
+        `UPDATE purchase_requests SET status='reviewed', checked_by=$1, checked_at=NOW(), checked_signature=$2, updated_at=NOW() WHERE id=$3 RETURNING *`,
+        [req.user?.name || 'Accounting', signature, req.params.id]
+      );
+      return res.json(mapPurchaseRequest(r.rows[0]));
+    }
+    const r = await query(
+      `UPDATE purchase_requests SET status='disapproved', checked_by=$1, checked_at=NOW(), updated_at=NOW() WHERE id=$2 RETURNING *`,
+      [req.user?.name || 'Accounting', req.params.id]
+    );
+    res.json(mapPurchaseRequest(r.rows[0]));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Admin verification — the SECOND gate, between Accounting's review and Purchasing's order.
+// Only an already-'reviewed' request can be verified; verifying is what lets Purchasing assign
+// a supplier (POST /api/purchase-orders requires status='verified'). This is distinct from the
+// admin's LATER approval of the resulting purchase order, which is what approves the request.
+app.put('/api/purchase-requests/:id/verify', requireRole(['admin']), async (req, res) => {
+  try {
+    const { action } = req.body;
+    if (!['verified', 'rejected'].includes(action)) return res.status(400).json({ error: "action must be 'verified' or 'rejected'" });
+    const cur = await query('SELECT status FROM purchase_requests WHERE id = $1', [req.params.id]);
+    if (!cur.rows[0]) return res.status(404).json({ error: 'Purchase request not found' });
+    if (cur.rows[0].status !== 'reviewed') {
+      return res.status(400).json({ error: 'Only requests already reviewed by Accounting can be verified' });
+    }
+    const status = action === 'verified' ? 'verified' : 'disapproved';
+    // verified_by_id is what lets the printed "Approved By" block resolve this admin's
+    // signature — verified_by alone is a display name and cannot be joined on.
+    const r = await query(
+      `UPDATE purchase_requests SET status=$1, verified_by=$2, verified_by_id=$3, verified_at=NOW(), updated_at=NOW() WHERE id=$4 RETURNING *`,
+      [status, req.user?.name || 'Admin', req.user?.id ?? null, req.params.id]
+    );
+    res.json(mapPurchaseRequest(r.rows[0]));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// [removed] PUT /api/purchase-requests/:id/review — the admin no longer approves the PR
+// directly. Approval now happens on the purchase order (PUT /api/purchase-orders/:id/approve),
+// which flips its linked PR to approved/disapproved in the same transaction.
+// [removed] PUT /api/purchase-requests/:id/withdrawn — see the note by the withdrawal routes.
+// `withdrawn` is now set by PUT /api/inventory-withdrawals/:id/review, in the same transaction
+// as the stock deduction, and only once every line of the request has been approved.
+
+// Employee ad-hoc withdrawal — no longer deducts on the spot. Creates a PENDING
+// withdrawal request that an admin must approve (approval performs the deduction).
+app.post('/api/inventory/:id/withdraw', requireAuth, async (req, res) => {
+  try {
+    const qty = Number(req.body.quantity);
+    if (!qty || qty <= 0) return res.status(400).json({ error: 'A positive quantity is required' });
+    const item = await query('SELECT id, item_name, quantity, unit FROM inventory WHERE id = $1', [req.params.id]);
+    if (!item.rows[0]) return res.status(404).json({ error: 'Inventory item not found' });
+    // Advisory only — stock is re-checked against a locked row at approval time, which is the
+    // check that counts. This one just fails fast on an obviously impossible request.
+    if (qty > parseFloat(item.rows[0].quantity)) return res.status(400).json({ error: 'Cannot withdraw more than available stock' });
+
+    // One live request per purchase-request line. Without this the production screen could
+    // raise a second full set of withdrawals for the same PR — the button was gated only on
+    // `withdrawn`, which doesn't flip until every line is approved — and approving both would
+    // deduct the stock TWICE, each passing its own locked re-check. Enforced here rather than
+    // in the UI for the same reason the deduct-fulfill hole was closed: a client-side check is
+    // not a check. A rejected line stays re-requestable.
+    if (req.body.purchaseRequestId) {
+      const dupe = await query(
+        `SELECT withdrawal_number, status FROM inventory_withdrawal_requests
+          WHERE purchase_request_id = $1 AND inventory_id = $2 AND status <> 'rejected' LIMIT 1`,
+        [req.body.purchaseRequestId, req.params.id]
+      );
+      if (dupe.rows[0]) {
+        return res.status(409).json({
+          error: `${item.rows[0].item_name} has already been requested on this purchase request (${dupe.rows[0].withdrawal_number}, ${dupe.rows[0].status})`,
+        });
+      }
+    }
+
+    // WD-YYYY-NNNN, same recipe as pr_number. Gives the receipt a number to cite.
+    const year = new Date().getFullYear();
+    const last = await query(`SELECT withdrawal_number FROM inventory_withdrawal_requests WHERE withdrawal_number LIKE $1 ORDER BY withdrawal_number DESC LIMIT 1`, [`WD-${year}-%`]);
+    let counter = 1;
+    if (last.rows[0]) { const n = parseInt(last.rows[0].withdrawal_number.split('-')[2], 10); if (!isNaN(n)) counter = n + 1; }
+    const withdrawalNumber = `WD-${year}-${String(counter).padStart(4, '0')}`;
+
+    const id = newId('WDR');
+    try {
+      await query(
+        `INSERT INTO inventory_withdrawal_requests
+           (id, withdrawal_number, inventory_id, item_name, quantity, reason, requested_by_id, requested_by_name, purchase_request_id, status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending')`,
+        [id, withdrawalNumber, req.params.id, item.rows[0].item_name, qty, orNull(req.body.reason),
+         req.user?.id ?? null, req.user?.name || 'Unknown', orNull(req.body.purchaseRequestId)]
+      );
+      // Re-read through the joined SELECT rather than using RETURNING *: a bare row has no
+      // pr_number or unit, so the created object would differ in shape from the same row in
+      // the list — the caller would silently lose them until the next refetch.
+      const r = await query(`${WITHDRAWAL_SELECT} WHERE w.id = $1`, [id]);
+      res.status(201).json(mapWithdrawalRequest(r.rows[0]));
+    } catch (e) {
+      if (e.code === '23505') return res.status(409).json({ error: 'That withdrawal number was just taken — try again' });
+      throw e;
+    }
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// [removed] POST /api/inventory/:id/deduct-fulfill — it deducted stock immediately when an
+// employee "fulfilled" an approved purchase request, on the reasoning that the request had
+// already been approved. But it was requireAuth-only, took no purchase-request id, and had no
+// transaction or row lock: any authenticated caller could deduct any quantity of any item, and
+// nothing tied a call to an approved request. Double-withdrawal was prevented only by a
+// client-side `!req.withdrawn` check. Every withdrawal now goes through the approval queue
+// above, which locks both rows and re-checks stock.
+// [removed] PUT /api/purchase-requests/:id/withdrawn — the client asked the server to trust
+// that it had finished deducting. `withdrawn` is now set by the review route, and only once
+// every line of that request has actually been approved.
+
+// ---- Inventory withdrawal requests (approval queue) ----
+// Employee's own withdrawal requests.
+// Joined so a row can render (and print) without a second fetch. Signatures are NOT joined —
+// they are ~20KB each and would bloat every list row; see the /signatures route below.
+const WITHDRAWAL_SELECT = `
+  SELECT w.*, pr.pr_number, i.unit
+    FROM inventory_withdrawal_requests w
+    LEFT JOIN purchase_requests pr ON pr.id = w.purchase_request_id
+    LEFT JOIN inventory i ON i.id = w.inventory_id`;
+
+app.get('/api/inventory-withdrawals/mine', requireAuth, async (req, res) => {
+  try {
+    const r = await query(`${WITHDRAWAL_SELECT} WHERE w.requested_by_id = $1 ORDER BY w.created_at DESC`, [req.user?.id ?? null]);
+    res.json(r.rows.map(mapWithdrawalRequest));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Admin review list (optional ?status= filter).
+// Both approvers share this queue; each portal filters by the stage it acts on.
+app.get('/api/inventory-withdrawals', requireRole(['admin', 'warehouse']), async (req, res) => {
+  try {
+    const { status } = req.query;
+    const where = []; const params = []; let i = 1;
+    if (status) { where.push(`w.status = $${i++}`); params.push(status); }
+    const sql = `${WITHDRAWAL_SELECT} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY w.created_at DESC`;
+    const r = await query(sql, params);
+    res.json(r.rows.map(mapWithdrawalRequest));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Signatures for ONE withdrawal, fetched on demand at print time — kept off the list for the
+// same reason as the purchase-request ones: ~20KB of base64 per row.
+// Requester and approver are both resolved LIVE from their accounts (by id), so saving a
+// signature later retroactively completes receipts already issued.
+// The warehouse's release joins on a TEXT column, so cast the SERIAL id to match rather than
+// the other way round — warehouse_by_id also holds a users.id when an admin releases it.
+app.get('/api/inventory-withdrawals/:id/signatures', requireAuth, async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT e.signature AS requested_signature,
+              COALESCE(wa.signature, wu.signature) AS released_signature,
+              u.signature AS approved_signature
+         FROM inventory_withdrawal_requests w
+         LEFT JOIN employee_accounts e ON e.id = w.requested_by_id
+         LEFT JOIN warehouse_accounts wa ON wa.id::TEXT = w.warehouse_by_id
+         LEFT JOIN users wu ON wu.id = w.warehouse_by_id
+         LEFT JOIN users u ON u.id = w.reviewed_by_id
+        WHERE w.id = $1`,
+      [req.params.id]
+    );
+    if (!r.rows[0]) return res.status(404).json({ error: 'Withdrawal request not found' });
+    res.json({
+      requestedSignature: r.rows[0].requested_signature || null,
+      releasedSignature: r.rows[0].released_signature || null,
+      approvedSignature: r.rows[0].approved_signature || null,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Two-stage approval, in order:
+//   pending            → the WAREHOUSE confirms the stock is physically on the shelf
+//   warehouse-approved → the ADMIN authorises, and only THAT deducts the stock
+// Stock moves once, at the end, so a rejection never has to put anything back — which is why
+// the admin is last even though the warehouse is the one holding the goods. Either stage can
+// reject, and rejection is terminal.
+app.put('/api/inventory-withdrawals/:id/review', requireRole(['admin', 'warehouse']), async (req, res) => {
+  const { status } = req.body;
+  if (!['warehouse-approved', 'approved', 'rejected'].includes(status)) {
+    return res.status(400).json({ error: "status must be 'warehouse-approved', 'approved' or 'rejected'" });
+  }
+  const role = effectiveRole(req.user);
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const wr = await client.query(`SELECT * FROM inventory_withdrawal_requests WHERE id = $1 FOR UPDATE`, [req.params.id]);
+    if (!wr.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Withdrawal request not found' }); }
+    const from = wr.rows[0].status;
+    if (from === 'approved' || from === 'rejected') { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Already reviewed' }); }
+
+    // Stage gates. An admin must not be able to skip the warehouse: the warehouse check is
+    // what establishes the stock is really there, and the admin's screen can't see the shelf.
+    if (status === 'warehouse-approved' && from !== 'pending') {
+      await client.query('ROLLBACK'); return res.status(400).json({ error: 'The warehouse has already released this request' });
+    }
+    if (status === 'approved') {
+      if (role === 'warehouse') {
+        await client.query('ROLLBACK'); return res.status(403).json({ error: 'The warehouse releases a request; only an admin approves it' });
+      }
+      if (from !== 'warehouse-approved') {
+        await client.query('ROLLBACK'); return res.status(400).json({ error: 'The warehouse must release this request before it can be approved' });
+      }
+    }
+
+    // The warehouse's release — no stock moves here, only the record of who confirmed it.
+    if (status === 'warehouse-approved') {
+      await client.query(
+        `UPDATE inventory_withdrawal_requests SET status='warehouse-approved', warehouse_by=$1, warehouse_by_id=$2, warehouse_at=NOW(), updated_at=NOW() WHERE id=$3`,
+        [req.user?.name || 'Warehouse', req.user?.id ?? null, req.params.id]
+      );
+      const upd = await client.query(`${WITHDRAWAL_SELECT} WHERE w.id = $1`, [req.params.id]);
+      await client.query('COMMIT');
+      return res.json(mapWithdrawalRequest(upd.rows[0]));
+    }
+
+    if (status === 'approved') {
+      const qty = parseFloat(wr.rows[0].quantity);
+      const item = await client.query('SELECT quantity FROM inventory WHERE id = $1 FOR UPDATE', [wr.rows[0].inventory_id]);
+      if (!item.rows[0]) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Inventory item no longer exists' }); }
+      if (qty > parseFloat(item.rows[0].quantity)) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Cannot approve — exceeds available stock' }); }
+      await client.query('UPDATE inventory SET quantity = quantity - $1, updated_at = NOW() WHERE id = $2', [qty, wr.rows[0].inventory_id]);
+      await client.query(
+        `UPDATE inventory_withdrawal_requests SET status='approved', reviewed_by=$1, reviewed_by_id=$2, reviewed_at=NOW(), deducted_at=NOW(), updated_at=NOW() WHERE id=$3`,
+        [req.user?.name || 'Admin', req.user?.id ?? null, req.params.id]
+      );
+      // Re-read joined, not RETURNING *: the admin screen merges this response over the row it
+      // already has, so a bare row would null out pr_number/unit on screen the moment you approve.
+      const upd = await client.query(`${WITHDRAWAL_SELECT} WHERE w.id = $1`, [req.params.id]);
+
+      // A purchase-request withdrawal raises one request per line. The request counts as
+      // withdrawn only when every one of its lines has actually been approved — a partial
+      // approval must not unlock it. Set here, in the same transaction as the deduction:
+      // the old client-side PUT /withdrawn asked the server to take its word for it.
+      const prId = wr.rows[0].purchase_request_id;
+      if (prId) {
+        const left = await client.query(
+          `SELECT COUNT(*)::int AS n FROM inventory_withdrawal_requests WHERE purchase_request_id = $1 AND status <> 'approved'`,
+          [prId]
+        );
+        if (left.rows[0].n === 0) {
+          await client.query(`UPDATE purchase_requests SET withdrawn=true, updated_at=NOW() WHERE id=$1`, [prId]);
+        }
+      }
+      await client.query('COMMIT');
+      return res.json(mapWithdrawalRequest(upd.rows[0]));
+    }
+
+    // Rejection, from either stage — terminal, and moves no stock. Recorded in reviewed_* even
+    // when the warehouse is the one refusing, so "who ended this and when" has one home.
+    await client.query(
+      `UPDATE inventory_withdrawal_requests SET status='rejected', reviewed_by=$1, reviewed_by_id=$2, reviewed_at=NOW(), updated_at=NOW() WHERE id=$3`,
+      [req.user?.name || (role === 'warehouse' ? 'Warehouse' : 'Admin'), req.user?.id ?? null, req.params.id]
+    );
+    const upd = await client.query(`${WITHDRAWAL_SELECT} WHERE w.id = $1`, [req.params.id]);
+    await client.query('COMMIT');
+    res.json(mapWithdrawalRequest(upd.rows[0]));
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('withdrawal review error:', err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ---- New-item requests (production → warehouse) ---------------------------------------
+// The purchase-request item picker only offers items that already exist in inventory, so
+// production had no way to ask for one that doesn't. This queue is that path: they request,
+// the warehouse creates the item, and it becomes selectable like any other.
+//
+// Joined so a row can render without a second fetch — item_code is what production needs to
+// see once the request lands, and it lives on the created inventory row, not here.
+const ITEM_REQUEST_SELECT = `
+  SELECT r.*, i.item_code
+    FROM inventory_item_requests r
+    LEFT JOIN inventory i ON i.id = r.inventory_id`;
+
+const mapItemRequest = (r) => ({
+  id: r.id,
+  requestNumber: r.request_number ?? null,
+  itemName: r.item_name,
+  description: r.description ?? null,
+  unit: r.unit ?? null,
+  reason: r.reason ?? null,
+  requestedById: r.requested_by_id ?? null,
+  requestedByName: r.requested_by_name ?? null,
+  status: r.status,
+  reviewedBy: r.reviewed_by ?? null,
+  reviewedAt: r.reviewed_at ?? null,
+  inventoryId: r.inventory_id ?? null,
+  itemCode: r.item_code ?? null,
+  createdAt: r.created_at,
+});
+
+// Anyone signed in may ask for an item; only the warehouse (or an admin) may create it.
+app.post('/api/item-requests', requireAuth, async (req, res) => {
+  try {
+    const itemName = String(req.body.itemName || '').trim();
+    if (!itemName) return res.status(400).json({ error: 'An item name is required' });
+
+    // The picker matches on name, so a duplicate would be indistinguishable from the real
+    // item and split its stock across two rows. Point them at the one that already exists.
+    const dupe = await query(`SELECT item_code FROM inventory WHERE LOWER(item_name) = LOWER($1) LIMIT 1`, [itemName]);
+    if (dupe.rows[0]) {
+      return res.status(409).json({ error: `"${itemName}" is already in inventory as ${dupe.rows[0].item_code} — pick it from the list instead` });
+    }
+    // Likewise, don't let the same item be asked for twice while the first ask is still open.
+    const open = await query(
+      `SELECT request_number FROM inventory_item_requests WHERE LOWER(item_name) = LOWER($1) AND status = 'pending' LIMIT 1`, [itemName]);
+    if (open.rows[0]) {
+      return res.status(409).json({ error: `"${itemName}" has already been requested (${open.rows[0].request_number}) and is awaiting the warehouse` });
+    }
+
+    // IR-YYYY-NNNN — the same recipe as PR-, WD- and ITM-.
+    const year = new Date().getFullYear();
+    const last = await query(
+      `SELECT request_number FROM inventory_item_requests WHERE request_number LIKE $1 ORDER BY request_number DESC LIMIT 1`,
+      [`IR-${year}-%`]
+    );
+    let counter = 1;
+    if (last.rows[0]) { const n = parseInt(last.rows[0].request_number.split('-')[2], 10); if (!isNaN(n)) counter = n + 1; }
+    const requestNumber = `IR-${year}-${String(counter).padStart(4, '0')}`;
+
+    const id = newId('ITR');
+    try {
+      await query(
+        `INSERT INTO inventory_item_requests
+           (id, request_number, item_name, description, unit, reason, requested_by_id, requested_by_name, status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending')`,
+        [id, requestNumber, itemName, orNull(req.body.description), req.body.unit || 'pcs', orNull(req.body.reason),
+         req.user?.id ?? null, req.user?.name || 'Unknown']
+      );
+      const r = await query(`${ITEM_REQUEST_SELECT} WHERE r.id = $1`, [id]);
+      res.status(201).json(mapItemRequest(r.rows[0]));
+    } catch (e) {
+      if (e.code === '23505') return res.status(409).json({ error: 'That request number was just taken — try again' });
+      throw e;
+    }
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// The requester's own asks — how they learn the item has landed.
+app.get('/api/item-requests/mine', requireAuth, async (req, res) => {
+  try {
+    const r = await query(`${ITEM_REQUEST_SELECT} WHERE r.requested_by_id = $1 ORDER BY r.created_at DESC`, [req.user?.id ?? null]);
+    res.json(r.rows.map(mapItemRequest));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// The warehouse queue (optional ?status= filter).
+app.get('/api/item-requests', requireRole(['admin', 'warehouse']), async (req, res) => {
+  try {
+    const { status } = req.query;
+    const where = []; const params = []; let i = 1;
+    if (status) { where.push(`r.status = $${i++}`); params.push(status); }
+    const sql = `${ITEM_REQUEST_SELECT} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY r.created_at DESC`;
+    const r = await query(sql, params);
+    res.json(r.rows.map(mapItemRequest));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Warehouse accept/decline. Accepting CREATES the inventory item, here, in the same
+// transaction that marks the request approved — rather than having the client call
+// POST /inventory and then flip the request. Two calls would strand an item whenever the
+// second failed, and the retry would create a second one.
+app.put('/api/item-requests/:id/review', requireRole(['admin', 'warehouse']), async (req, res) => {
+  const { status } = req.body;
+  if (!['approved', 'rejected'].includes(status)) return res.status(400).json({ error: 'status must be approved or rejected' });
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const rr = await client.query(`SELECT * FROM inventory_item_requests WHERE id = $1 FOR UPDATE`, [req.params.id]);
+    if (!rr.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Item request not found' }); }
+    if (rr.rows[0].status !== 'pending') { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Already reviewed' }); }
+
+    if (status === 'approved') {
+      // The warehouse may correct what production typed before it becomes a permanent row.
+      const itemName = String(req.body.itemName || rr.rows[0].item_name || '').trim();
+      if (!itemName) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'An item name is required' }); }
+      const unit = req.body.unit || rr.rows[0].unit || 'pcs';
+      const quantity = Number(req.body.quantity) || 0;
+      if (quantity < 0) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Starting quantity cannot be negative' }); }
+
+      // Re-check under the transaction: the name was free when the request was raised, but
+      // the warehouse may have added it by hand in the meantime.
+      const dupe = await client.query(`SELECT item_code FROM inventory WHERE LOWER(item_name) = LOWER($1) LIMIT 1`, [itemName]);
+      if (dupe.rows[0]) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: `"${itemName}" already exists as ${dupe.rows[0].item_code}` });
+      }
+
+      const itemCode = await nextItemCode((sql, params) => client.query(sql, params));
+      const invId = `INV-${Date.now()}`;
+      try {
+        await client.query(
+          `INSERT INTO inventory (id, item_code, item_name, description, quantity, unit, reorder_level, unit_cost)
+           VALUES ($1,$2,$3,$4,$5,$6,10,0)`,
+          [invId, itemCode, itemName, orNull(rr.rows[0].description), quantity, unit]
+        );
+      } catch (e) {
+        await client.query('ROLLBACK');
+        if (e.code === '23505') return res.status(409).json({ error: `Item code ${itemCode} was just taken — try again` });
+        throw e;
+      }
+      await client.query(
+        `UPDATE inventory_item_requests
+            SET status='approved', item_name=$1, unit=$2, inventory_id=$3,
+                reviewed_by=$4, reviewed_by_id=$5, reviewed_at=NOW(), updated_at=NOW()
+          WHERE id=$6`,
+        [itemName, unit, invId, req.user?.name || 'Warehouse', req.user?.id ?? null, req.params.id]
+      );
+      // Re-read joined, not RETURNING *: the queue merges this over the row it already holds,
+      // and a bare row carries no item_code — the one thing the requester is waiting for.
+      const upd = await client.query(`${ITEM_REQUEST_SELECT} WHERE r.id = $1`, [req.params.id]);
+      await client.query('COMMIT');
+      return res.json(mapItemRequest(upd.rows[0]));
+    }
+
+    await client.query(
+      `UPDATE inventory_item_requests SET status='rejected', reviewed_by=$1, reviewed_by_id=$2, reviewed_at=NOW(), updated_at=NOW() WHERE id=$3`,
+      [req.user?.name || 'Warehouse', req.user?.id ?? null, req.params.id]
+    );
+    const upd = await client.query(`${ITEM_REQUEST_SELECT} WHERE r.id = $1`, [req.params.id]);
+    await client.query('COMMIT');
+    res.json(mapItemRequest(upd.rows[0]));
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('item request review error:', err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
 });
 
 // ====================== INQUIRIES / QUOTATIONS ======================
@@ -4831,7 +5441,7 @@ app.post('/api/staff', requireSuperAdmin, async (req, res) => {
   try {
     const { email, name, password, role } = req.body;
     if (!email || !name || !password || !role) return res.status(400).json({ error: 'email, name, password, role are required' });
-    if (!['admin','bookkeeper','purchasing','office_admin'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
+    if (!['admin','bookkeeper','office_admin'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
     const exists = await query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
     if (exists.rows[0]) return res.status(409).json({ error: 'An account with that email already exists' });
     const id = `staff-${Date.now()}`;
@@ -4851,7 +5461,7 @@ app.patch('/api/staff/:id', requireSuperAdmin, async (req, res) => {
     const sets = []; const params = []; let i = 1;
     if (name !== undefined) { sets.push(`name = $${i++}`); params.push(name); }
     if (role !== undefined) {
-      if (!['admin','bookkeeper','purchasing','office_admin'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
+      if (!['admin','bookkeeper','office_admin'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
       sets.push(`role = $${i++}`); params.push(role);
     }
     if (isActive !== undefined) { sets.push(`is_active = $${i++}`); params.push(!!isActive); }
@@ -4863,6 +5473,28 @@ app.patch('/api/staff/:id', requireSuperAdmin, async (req, res) => {
     const u = r.rows[0];
     res.json({ id:u.id, email:u.email, name:u.name, role:u.role, isActive:u.is_active });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+// Permanently delete a staff account. Super admins are protected (is_super_admin = false
+// guard). admin_approval_requests.decided_by is a RESTRICT FK, so null it first.
+app.delete('/api/staff/:id', requireSuperAdmin, async (req, res) => {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    await client.query('UPDATE admin_approval_requests SET decided_by = NULL WHERE decided_by = $1', [req.params.id]);
+    const r = await client.query('DELETE FROM users WHERE id = $1 AND is_super_admin = false', [req.params.id]);
+    if (!r.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Staff account not found (or is a super admin)' });
+    }
+    await client.query('COMMIT');
+    res.json({ message: 'Staff account deleted', id: req.params.id });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('staff delete error:', err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
 });
 
 // Create new tables before starting server

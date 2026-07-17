@@ -222,11 +222,16 @@ export async function fetchOrderSummary(period: TimePeriod, customRange?: DateRa
     const purchaseOrders = await fetchApi(`/purchase-orders?startDate=${range.startDate}&endDate=${range.endDate}`);
     const poArray = Array.isArray(purchaseOrders) ? purchaseOrders : [];
 
+    // Statuses past 'approved' are set by Logistics (PUT /api/purchase-orders/:id/delivery):
+    // 'in-progress' = ongoing delivery, 'RECEIVED' = arrived, 'cancelled' = never coming.
     const purchaseOrderSummary = {
       total: poArray.length,
       received: poArray.filter((po: any) => po.status === 'RECEIVED').length,
-      pending: poArray.filter((po: any) => ['pending', 'approved'].includes(po.status)).length,
-      overdue: poArray.filter((po: any) => po.deliveryDate < today && po.status !== 'RECEIVED').length,
+      // An order in transit is still outstanding — it belongs with pending, not nowhere.
+      pending: poArray.filter((po: any) => ['pending', 'approved', 'in-progress'].includes(po.status)).length,
+      // A cancelled order is not late, it is dead. Without excluding it, every cancelled order
+      // past its delivery date would report as overdue forever.
+      overdue: poArray.filter((po: any) => po.deliveryDate < today && !['RECEIVED', 'cancelled'].includes(po.status)).length,
       totalAmount: poArray.filter((po: any) => po.status === 'RECEIVED').reduce((sum: number, po: any) => sum + (po.amount || 0), 0)
     };
 
@@ -259,48 +264,19 @@ export async function fetchOrderSummary(period: TimePeriod, customRange?: DateRa
       totalAmount: miscArray.reduce((sum: number, item: any) => sum + (item.amount || 0), 0)
     };
 
-    // Fetch Delivery Metrics
-    let deliveryMetrics: any = {};
-    try {
-      // Test simple endpoint first
-      const test = await fetchApi('/test-delivery');
-      console.log('[Overview] Test endpoint:', test);
-      
-      const deliveries = await fetchApi('/delivery-metrics') as any;
-      console.log('[Overview] Delivery metrics fetched:', deliveries);
-      console.log('[Overview] Delivery metrics total:', deliveries?.total_deliveries);
-      console.log('[Overview] Delivery metrics completed:', deliveries?.completed);
-      console.log('[Overview] Delivery metrics in_transit:', deliveries?.in_transit);
-      
-      // Convert string values to numbers for proper display
-      deliveryMetrics = {
-        total: parseInt(deliveries?.total_deliveries || '0'),
-        pending: parseInt(deliveries?.pending || '0'),
-        assigned: parseInt(deliveries?.assigned || '0'),
-        pickedUp: parseInt(deliveries?.picked_up || '0'),
-        inTransit: parseInt(deliveries?.in_transit || '0'),
-        arrived: parseInt(deliveries?.arrived || '0'),
-        completed: parseInt(deliveries?.completed || '0'),
-        cancelled: parseInt(deliveries?.cancelled || '0'),
-        completedToday: parseInt(deliveries?.completed_today || '0'),
-        currentlyActive: parseInt(deliveries?.currently_active || '0')
-      };
-      console.log('[Overview] Converted delivery metrics:', deliveryMetrics);
-    } catch (err) {
-      console.error('[Overview] Failed to fetch delivery metrics:', err);
-      deliveryMetrics = {
-        total: 0,
-        pending: 0,
-        assigned: 0,
-        pickedUp: 0,
-        inTransit: 0,
-        arrived: 0,
-        completed: 0,
-        cancelled: 0,
-        completedToday: 0,
-        currentlyActive: 0
-      };
-    }
+    // Delivery metrics removed with the Fleet/Delivery feature — always zero.
+    const deliveryMetrics: any = {
+      total: 0,
+      pending: 0,
+      assigned: 0,
+      pickedUp: 0,
+      inTransit: 0,
+      arrived: 0,
+      completed: 0,
+      cancelled: 0,
+      completedToday: 0,
+      currentlyActive: 0
+    };
 
     // Calculate pending approval across all modules
     const pendingApproval = {

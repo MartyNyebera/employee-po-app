@@ -6,10 +6,6 @@ import { BusinessOverview } from './BusinessOverview';
 import { AssetDetails } from './AssetDetails';
 import { PurchaseOrdersList } from './PurchaseOrdersList';
 import { TransactionsList } from './TransactionsList';
-import { WorkingMap } from './WorkingMap';
-import { FleetList } from './FleetList';
-import { VehicleDetails } from './VehicleDetails';
-import { PMSReminders } from './PMSReminders';
 import { PurchaseOrderList } from './PurchaseOrderList';
 import { InventoryList } from './InventoryList';
 interface DashboardProps {
@@ -17,7 +13,7 @@ interface DashboardProps {
   onLogout: () => void;
 }
 
-type View = 'home' | 'assets' | 'orders' | 'transactions' | 'gps' | 'fleet' | 'pms' | 'purchase-orders' | 'inventory';
+type View = 'home' | 'assets' | 'orders' | 'transactions' | 'purchase-orders' | 'inventory';
 
 export function Dashboard({ userName, onLogout }: DashboardProps) {
   // Enable auto-logout when app is closed
@@ -25,7 +21,6 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
   
   const [currentView, setCurrentView] = useState<View>('home');
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
-  const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   
   const fetchedTabs = useRef<Set<string>>(new Set());
@@ -37,9 +32,6 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
 
   const handleViewChange = (view: View) => {
     console.log('[Dashboard] Changing view to:', view);
-    if (view === 'gps') {
-      console.log('[Dashboard] GPS tab clicked - rendering LiveVehicleMap');
-    }
     setCurrentView(view);
   };
 
@@ -63,38 +55,6 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
       return <TransactionsList isAdmin={false} />;
     }
     
-    if (currentView === 'gps') {
-      return (
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-          <div style={{ padding: '12px 16px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '14px', color: '#64748b' }}>📱 Open this on your phone to start tracking:</span>
-            <a 
-              href="https://martynyebera.github.io/employee-po-app/tracker.html" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              style={{ fontSize: '12px', padding: '6px 12px', background: '#2563eb', color: 'white', textDecoration: 'none', borderRadius: '6px' }}
-            >
-              Open Tracker
-            </a>
-          </div>
-          <div style={{ flex: 1 }}>
-            <WorkingMap />
-          </div>
-        </div>
-      );
-    }
-
-    if (currentView === 'fleet') {
-      if (selectedVehicleId) {
-        return <VehicleDetails vehicleId={selectedVehicleId} onBack={() => setSelectedVehicleId(null)} />;
-      }
-      return <FleetList onSelectVehicle={(id) => setSelectedVehicleId(id)} />;
-    }
-
-    if (currentView === 'pms') {
-      return <PMSReminders onSelectVehicle={(id) => { setSelectedVehicleId(id); setCurrentView('fleet'); }} />;
-    }
-
     if (currentView === 'purchase-orders') {
       return <PurchaseOrderList isAdmin={false} />;
     }
@@ -109,9 +69,6 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
 
   const navItems = [
     { id: 'home', label: 'Overview', icon: Home },
-    { id: 'fleet', label: 'Fleet', icon: Truck },
-    { id: 'pms', label: 'PMS Reminders', icon: Wrench },
-    { id: 'gps', label: 'GPS Tracking', icon: MapPin },
     { id: 'orders', label: 'Sales Order', icon: FileText },
     { id: 'purchase-orders', label: 'Purchase Order', icon: ShoppingCart },
     { id: 'inventory', label: 'Inventory', icon: Package },
@@ -190,7 +147,7 @@ export function Dashboard({ userName, onLogout }: DashboardProps) {
         </nav>
 
         {/* Content Area */}
-        <div className={`flex-1 ${currentView === 'gps' ? 'overflow-hidden flex flex-col' : 'overflow-auto'}`}>
+        <div className="flex-1 overflow-auto">
           {renderView()}
         </div>
       </main>

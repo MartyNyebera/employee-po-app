@@ -133,36 +133,11 @@ export function EmployeeLogin() {
           <div className="w-full max-w-md border-0 shadow-2xl shadow-slate-300/20 bg-white/95 backdrop-blur-sm rounded-2xl border border-slate-200/50 overflow-hidden">
             
             
-            {/* Tab Switcher */}
+            {/* Sign-in only — accounts are created by an admin (no self-registration) */}
             <div className="flex border-b border-slate-200 bg-white">
-              <button
-                onClick={() => {
-                  setMode('login');
-                  setError('');
-                  setSuccess('');
-                }}
-                className={`flex-1 py-4 text-sm font-medium transition-all duration-200 ${
-                  mode === 'login'
-                    ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50/50'
-                    : 'text-slate-700 hover:text-slate-800 hover:bg-slate-50'
-                }`}
-              >
+              <div className="flex-1 py-4 text-sm font-medium text-blue-600 border-b-2 border-blue-600 bg-blue-50/50 text-center">
                 Sign In
-              </button>
-              <button
-                onClick={() => {
-                  setMode('register');
-                  setError('');
-                  setSuccess('');
-                }}
-                className={`flex-1 py-4 text-sm font-medium transition-all duration-200 ${
-                  mode === 'register'
-                    ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50/50'
-                    : 'text-slate-700 hover:text-slate-800 hover:bg-slate-50'
-                }`}
-              >
-                Register
-              </button>
+              </div>
             </div>
 
             {/* Form Area */}

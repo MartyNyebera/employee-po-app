@@ -30,17 +30,22 @@ const BASE_ACCESS: Record<string, Partial<Record<Role, Access>>> = {
   inquiries:        { owner: 'manage', admin: 'manage', bookkeeper: 'none',   purchasing: 'manage' },
   inventory:        { owner: 'manage', admin: 'manage', bookkeeper: 'view',   purchasing: 'manage' },
   'request-form':   { owner: 'manage', admin: 'manage', bookkeeper: 'none',   purchasing: 'manage' },
-  // Fleet / ops — owner + admin only
-  fleet:                { owner: 'manage', admin: 'manage' },
-  pms:                  { owner: 'manage', admin: 'manage' },
-  gps:                  { owner: 'manage', admin: 'manage' },
-  deliveries:           { owner: 'manage', admin: 'manage' },
-  'delivery-management':{ owner: 'manage', admin: 'manage' },
-  drivers:              { owner: 'manage', admin: 'manage' },
-  'driver-vehicles':    { owner: 'manage', admin: 'manage' },
+  // Ops — owner + admin only
   transactions:         { owner: 'manage', admin: 'manage' },
-  'employee-approvals': { owner: 'manage', admin: 'manage' },
-  'driver-approvals':   { owner: 'manage', admin: 'manage' },
+  'employee-accounts':  { owner: 'manage', admin: 'manage' },
+  'purchasing-accounts':{ owner: 'manage', admin: 'manage' },
+  'warehouse-accounts': { owner: 'manage', admin: 'manage' },
+  'accounting-accounts':{ owner: 'manage', admin: 'manage' },
+  'sales-accounts':     { owner: 'manage', admin: 'manage' },
+  'logistics-accounts': { owner: 'manage', admin: 'manage' },
+  projects:             { owner: 'manage', admin: 'manage' },
+  // Purchasing reviews requests in the dedicated /purchasing portal, not the admin
+  // dashboard — so this admin-side module stays owner/admin only.
+  'purchase-requests':  { owner: 'manage', admin: 'manage' },
+  'withdrawal-requests':{ owner: 'manage', admin: 'manage' },
+  // Your own e-signature. Owner/admin only, matching the server guard on
+  // GET/PUT /api/admin/signature (requireRole(['admin']), which also admits owner).
+  signature:            { owner: 'manage', admin: 'manage' },
   // Owner only
   requests:         { owner: 'manage' },
   staff:            { owner: 'manage' },

@@ -53,6 +53,7 @@ export function requireAuth(req, res, next) {
     if (!process.env.DATABASE_URL && process.env.NODE_ENV !== 'production') {
       req.user = {
         userId: 'mock-user-id',
+        id: 'mock-user-id', // carries both, like a real token does after normalisation below
         role: 'admin', // Default to admin for testing
         email: 'mock@admin.com',
         name: 'Mock Admin',
@@ -62,7 +63,14 @@ export function requireAuth(req, res, next) {
     }
     return res.status(401).json({ error: 'Unauthorized' });
   }
-  req.user = payload;
+  // Normalise the id claim. The admin/staff login signs `userId`; all six portal logins sign
+  // `id` — and every shared route reads `req.user.id`. So for an admin it was `undefined`,
+  // which node-postgres turns into NULL: `WHERE id = NULL` matches nothing and every
+  // `*_by_id` write stored NULL, all without raising a single error. That is why the admin's
+  // signature silently refused to save, and why the admin's signature could never resolve on
+  // a printed document. Fixing it here rather than at each of the 19 call sites also means
+  // tokens already issued keep working — no forced re-login.
+  req.user = { ...payload, id: payload.id ?? payload.userId };
   next();
 }
 

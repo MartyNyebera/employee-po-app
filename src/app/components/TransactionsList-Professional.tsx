@@ -59,13 +59,13 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
       case 'fuel':
         return <Fuel style={{ width: '16px', height: '16px', color: '#d97706' }} />;
       case 'maintenance':
-        return <Wrench style={{ width: '16px', height: '16px', color: '#2563eb' }} />;
+        return <Wrench style={{ width: '16px', height: '16px', color: '#d1b01b' }} />;
       case 'parts':
-        return <Package style={{ width: '16px', height: '16px', color: '#8b5cf6' }} />;
+        return <Package style={{ width: '16px', height: '16px', color: '#d1b01b' }} />;
       case 'rental':
         return <TruckIcon style={{ width: '16px', height: '16px', color: '#059669' }} />;
       default:
-        return <Receipt style={{ width: '16px', height: '16px', color: '#6b7280' }} />;
+        return <Receipt style={{ width: '16px', height: '16px', color: '#5a5a5a' }} />;
     }
   };
 
@@ -77,13 +77,13 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
         borderColor: '#fed7aa'
       },
       'maintenance': { 
-        color: '#2563eb', 
-        bgColor: '#dbeafe', 
-        borderColor: '#93c5fd'
+        color: '#d1b01b', 
+        bgColor: '#ececec', 
+        borderColor: '#e3ca63'
       },
       'parts': { 
-        color: '#8b5cf6', 
-        bgColor: '#ede9fe', 
+        color: '#d1b01b', 
+        bgColor: '#ececec', 
         borderColor: '#c4b5fd'
       },
       'rental': { 
@@ -109,7 +109,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
         color: config.color,
         backgroundColor: config.bgColor,
         border: `1px solid ${config.borderColor}`,
-        fontFamily: 'Inter, sans-serif'
+        fontFamily: 'Poppins, sans-serif'
       }}>
         {type.charAt(0).toUpperCase() + type.slice(1)}
       </div>
@@ -158,15 +158,15 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
           width: '40px',
           height: '40px',
           borderRadius: '50%',
-          border: '4px solid #e5e7eb',
+          border: '4px solid #d6d6d6',
           borderTopColor: '#f97316',
           animation: 'spin 1s linear infinite'
         }} />
         <div style={{
           fontSize: '16px',
           fontWeight: '500',
-          color: '#6b7280',
-          fontFamily: 'Inter, sans-serif'
+          color: '#5a5a5a',
+          fontFamily: 'Poppins, sans-serif'
         }}>
           Loading transactions...
         </div>
@@ -201,7 +201,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
             fontWeight: '600',
             color: '#dc2626',
             margin: '0 0 8px 0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             Error Loading Transactions
           </h3>
@@ -209,7 +209,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
             fontSize: '14px',
             color: '#7f1d1d',
             margin: '0 0 16px 0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             {error}
           </p>
@@ -223,7 +223,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
               color: 'white',
               fontSize: '14px',
               fontWeight: '500',
-              fontFamily: 'Inter, sans-serif',
+              fontFamily: 'Poppins, sans-serif',
               cursor: 'pointer',
               transition: 'all 0.2s ease'
             }}
@@ -244,7 +244,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
   return (
     <div style={{
       padding: '32px',
-      fontFamily: 'Inter, sans-serif',
+      fontFamily: 'Poppins, sans-serif',
       backgroundColor: '#ffffff',
       minHeight: '100vh'
     }}>
@@ -276,17 +276,17 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
             <h1 style={{
               fontSize: '28px',
               fontWeight: '700',
-              color: '#111827',
+              color: '#000000',
               margin: '0 0 8px 0',
-              fontFamily: 'Plus Jakarta Sans, Inter, sans-serif'
+              fontFamily: 'Poppins, sans-serif'
             }}>
               Miscellaneous Transactions
             </h1>
             <p style={{
               fontSize: '14px',
-              color: '#6b7280',
+              color: '#5a5a5a',
               margin: '0',
-              fontFamily: 'Inter, sans-serif'
+              fontFamily: 'Poppins, sans-serif'
             }}>
               Track miscellaneous transactions and entries
             </p>
@@ -303,7 +303,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
               border: 'none',
               fontSize: '14px',
               fontWeight: '500',
-              fontFamily: 'Inter, sans-serif',
+              fontFamily: 'Poppins, sans-serif',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
@@ -332,7 +332,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
       }}>
         <div style={{
           background: '#ffffff',
-          border: '1px solid #e5e7eb',
+          border: '1px solid #d6d6d6',
           borderRadius: '16px',
           padding: '24px',
           boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -368,18 +368,18 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
           <h3 style={{
             fontSize: '32px',
             fontWeight: '700',
-            color: '#111827',
+            color: '#000000',
             margin: '0 0 8px 0',
-            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             {formatCurrency(totalAmount)}
           </h3>
           <p style={{
             fontSize: '14px',
             fontWeight: '500',
-            color: '#6b7280',
+            color: '#5a5a5a',
             margin: '0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             Total Amount
           </p>
@@ -429,7 +429,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
               fontWeight: '600',
               color: '#d97706',
               backgroundColor: '#fffbeb',
-              fontFamily: 'Inter, sans-serif'
+              fontFamily: 'Poppins, sans-serif'
             }}>
               Fuel
             </div>
@@ -439,7 +439,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
             fontWeight: '700',
             color: '#d97706',
             margin: '0 0 8px 0',
-            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             {formatCurrency(fuelAmount)}
           </h3>
@@ -448,7 +448,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
             fontWeight: '500',
             color: '#78350f',
             margin: '0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             Fuel Expenses
           </p>
@@ -456,7 +456,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
 
         <div style={{
           background: '#ffffff',
-          border: '1px solid #dbeafe',
+          border: '1px solid #d6d6d6',
           borderRadius: '16px',
           padding: '24px',
           boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -481,12 +481,12 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
               width: '48px',
               height: '48px',
               borderRadius: '12px',
-              backgroundColor: '#dbeafe',
+              backgroundColor: '#ececec',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <Wrench style={{ width: '24px', height: '24px', color: '#2563eb' }} />
+              <Wrench style={{ width: '24px', height: '24px', color: '#d1b01b' }} />
             </div>
             <div style={{
               display: 'flex',
@@ -496,9 +496,9 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
               borderRadius: '6px',
               fontSize: '12px',
               fontWeight: '600',
-              color: '#2563eb',
-              backgroundColor: '#dbeafe',
-              fontFamily: 'Inter, sans-serif'
+              color: '#d1b01b',
+              backgroundColor: '#ececec',
+              fontFamily: 'Poppins, sans-serif'
             }}>
               Maintenance
             </div>
@@ -506,18 +506,18 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
           <h3 style={{
             fontSize: '32px',
             fontWeight: '700',
-            color: '#2563eb',
+            color: '#d1b01b',
             margin: '0 0 8px 0',
-            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             {formatCurrency(maintenanceAmount)}
           </h3>
           <p style={{
             fontSize: '14px',
             fontWeight: '500',
-            color: '#1e40af',
+            color: '#7a6a0c',
             margin: '0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             Maintenance
           </p>
@@ -525,7 +525,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
 
         <div style={{
           background: '#ffffff',
-          border: '1px solid #ede9fe',
+          border: '1px solid #d6d6d6',
           borderRadius: '16px',
           padding: '24px',
           boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -550,12 +550,12 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
               width: '48px',
               height: '48px',
               borderRadius: '12px',
-              backgroundColor: '#ede9fe',
+              backgroundColor: '#ececec',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <Package style={{ width: '24px', height: '24px', color: '#8b5cf6' }} />
+              <Package style={{ width: '24px', height: '24px', color: '#d1b01b' }} />
             </div>
             <div style={{
               display: 'flex',
@@ -565,9 +565,9 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
               borderRadius: '6px',
               fontSize: '12px',
               fontWeight: '600',
-              color: '#8b5cf6',
-              backgroundColor: '#ede9fe',
-              fontFamily: 'Inter, sans-serif'
+              color: '#d1b01b',
+              backgroundColor: '#ececec',
+              fontFamily: 'Poppins, sans-serif'
             }}>
               Parts
             </div>
@@ -575,18 +575,18 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
           <h3 style={{
             fontSize: '32px',
             fontWeight: '700',
-            color: '#8b5cf6',
+            color: '#d1b01b',
             margin: '0 0 8px 0',
-            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             {formatCurrency(partsAmount)}
           </h3>
           <p style={{
             fontSize: '14px',
             fontWeight: '500',
-            color: '#5b21b6',
+            color: '#4d4308',
             margin: '0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             Parts
           </p>
@@ -596,7 +596,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
       {/* FILTERS */}
       <div style={{
         background: '#ffffff',
-        border: '1px solid #e5e7eb',
+        border: '1px solid #d6d6d6',
         borderRadius: '16px',
         padding: '24px',
         boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -613,11 +613,11 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
             alignItems: 'center',
             gap: '8px'
           }}>
-            <Filter style={{ width: '16px', height: '16px', color: '#6b7280' }} />
+            <Filter style={{ width: '16px', height: '16px', color: '#5a5a5a' }} />
             <span style={{
               fontSize: '14px',
-              color: '#6b7280',
-              fontFamily: 'Inter, sans-serif'
+              color: '#5a5a5a',
+              fontFamily: 'Poppins, sans-serif'
             }}>
               Filter
             </span>
@@ -628,9 +628,9 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
             style={{
               padding: '12px 40px 12px 16px',
               borderRadius: '8px',
-              border: '1px solid #e5e7eb',
+              border: '1px solid #d6d6d6',
               fontSize: '14px',
-              fontFamily: 'Inter, sans-serif',
+              fontFamily: 'Poppins, sans-serif',
               appearance: 'none',
               backgroundColor: 'white',
               cursor: 'pointer',
@@ -641,7 +641,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
               e.currentTarget.style.boxShadow = '0 0 0 3px rgba(249, 115, 22, 0.1)';
             }}
             onBlur={(e) => {
-              e.currentTarget.style.borderColor = '#e5e7eb';
+              e.currentTarget.style.borderColor = '#d6d6d6';
               e.currentTarget.style.boxShadow = 'none';
             }}
           >
@@ -657,9 +657,9 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
             style={{
               padding: '12px 40px 12px 16px',
               borderRadius: '8px',
-              border: '1px solid #e5e7eb',
+              border: '1px solid #d6d6d6',
               fontSize: '14px',
-              fontFamily: 'Inter, sans-serif',
+              fontFamily: 'Poppins, sans-serif',
               appearance: 'none',
               backgroundColor: 'white',
               cursor: 'pointer',
@@ -670,7 +670,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
               e.currentTarget.style.boxShadow = '0 0 0 3px rgba(249, 115, 22, 0.1)';
             }}
             onBlur={(e) => {
-              e.currentTarget.style.borderColor = '#e5e7eb';
+              e.currentTarget.style.borderColor = '#d6d6d6';
               e.currentTarget.style.boxShadow = 'none';
             }}
           >
@@ -686,7 +686,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
       {filteredTransactions.length === 0 ? (
         <div style={{
           background: '#ffffff',
-          border: '1px solid #e5e7eb',
+          border: '1px solid #d6d6d6',
           borderRadius: '16px',
           padding: '48px',
           textAlign: 'center',
@@ -695,24 +695,24 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
           <Receipt style={{ 
             width: '64px', 
             height: '64px', 
-            color: '#d1d5db',
+            color: '#c9c9c9',
             marginBottom: '16px',
             margin: '0 auto 16px'
           }} />
           <h3 style={{
             fontSize: '20px',
             fontWeight: '600',
-            color: '#374151',
+            color: '#262626',
             margin: '0 0 8px 0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             No transactions yet
           </h3>
           <p style={{
             fontSize: '14px',
-            color: '#6b7280',
+            color: '#5a5a5a',
             margin: '0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             Create your first transaction to get started.
           </p>
@@ -731,7 +731,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
                 key={txn.id}
                 style={{
                   background: '#ffffff',
-                  border: '1px solid #e5e7eb',
+                  border: '1px solid #d6d6d6',
                   borderRadius: '16px',
                   padding: '24px',
                   boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -774,17 +774,17 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
                       <h3 style={{
                         fontSize: '18px',
                         fontWeight: '600',
-                        color: '#111827',
+                        color: '#000000',
                         margin: '0 0 4px 0',
-                        fontFamily: 'Inter, sans-serif'
+                        fontFamily: 'Poppins, sans-serif'
                       }}>
                         {txn.description}
                       </h3>
                       <p style={{
                         fontSize: '14px',
-                        color: '#6b7280',
+                        color: '#5a5a5a',
                         margin: '0',
-                        fontFamily: 'Inter, sans-serif'
+                        fontFamily: 'Poppins, sans-serif'
                       }}>
                         PO: {txn.poNumber}
                       </p>
@@ -824,14 +824,14 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
                         fontSize: '16px',
                         fontWeight: '600',
                         color: '#d97706',
-                        fontFamily: 'Inter, sans-serif'
+                        fontFamily: 'Poppins, sans-serif'
                       }}>
                         {formatCurrency(txn.amount)}
                       </div>
                       <div style={{
                         fontSize: '12px',
                         color: '#78350f',
-                        fontFamily: 'Inter, sans-serif'
+                        fontFamily: 'Poppins, sans-serif'
                       }}>
                         Amount
                       </div>
@@ -843,33 +843,33 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
                     gap: '12px',
                     padding: '12px',
                     borderRadius: '8px',
-                    backgroundColor: '#dbeafe',
-                    border: '1px solid #93c5fd'
+                    backgroundColor: '#ececec',
+                    border: '1px solid #e3ca63'
                   }}>
                     <div style={{
                       width: '32px',
                       height: '32px',
                       borderRadius: '6px',
-                      backgroundColor: '#2563eb',
+                      backgroundColor: '#d1b01b',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center'
                     }}>
-                      <Calendar style={{ width: '16px', height: '16px', color: 'white' }} />
+                      <Calendar style={{ width: '16px', height: '16px', color: '#000000' }} />
                     </div>
                     <div>
                       <div style={{
                         fontSize: '16px',
                         fontWeight: '600',
-                        color: '#2563eb',
-                        fontFamily: 'Inter, sans-serif'
+                        color: '#d1b01b',
+                        fontFamily: 'Poppins, sans-serif'
                       }}>
                         {formatDate(txn.date)}
                       </div>
                       <div style={{
                         fontSize: '12px',
-                        color: '#1e40af',
-                        fontFamily: 'Inter, sans-serif'
+                        color: '#7a6a0c',
+                        fontFamily: 'Poppins, sans-serif'
                       }}>
                         Date
                       </div>
@@ -880,7 +880,7 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
                 {vehicleName && (
                   <div style={{
                     paddingTop: '16px',
-                    borderTop: '1px solid #f3f4f6',
+                    borderTop: '1px solid #e6e6e6',
                     display: 'flex',
                     alignItems: 'center',
                     gap: '12px'
@@ -889,26 +889,26 @@ export function TransactionsList({ isAdmin }: TransactionsListProps) {
                       width: '32px',
                       height: '32px',
                       borderRadius: '6px',
-                      backgroundColor: '#f3f4f6',
+                      backgroundColor: '#e6e6e6',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center'
                     }}>
-                      <TruckIcon style={{ width: '16px', height: '16px', color: '#6b7280' }} />
+                      <TruckIcon style={{ width: '16px', height: '16px', color: '#5a5a5a' }} />
                     </div>
                     <div style={{ flex: 1 }}>
                       <div style={{
                         fontSize: '14px',
                         fontWeight: '500',
-                        color: '#374151',
-                        fontFamily: 'Inter, sans-serif'
+                        color: '#262626',
+                        fontFamily: 'Poppins, sans-serif'
                       }}>
                         {vehicleName}
                       </div>
                       <div style={{
                         fontSize: '12px',
-                        color: '#6b7280',
-                        fontFamily: 'Inter, sans-serif'
+                        color: '#5a5a5a',
+                        fontFamily: 'Poppins, sans-serif'
                       }}>
                         {txn.assetId}
                       </div>

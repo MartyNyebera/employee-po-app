@@ -10,17 +10,23 @@ export const peso = (n: number | null | undefined) =>
     : '₱' + Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export const S = {
-  page: { padding: '32px', backgroundColor: '#ffffff', minHeight: '100%' } as React.CSSProperties,
-  h1: { fontSize: '28px', fontWeight: 700, color: '#111827', margin: 0 } as React.CSSProperties,
-  sub: { fontSize: '14px', color: '#6b7280', marginTop: '4px' } as React.CSSProperties,
-  addBtn: { padding: '10px 18px', backgroundColor: '#2563eb', color: '#fff', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: 600 } as React.CSSProperties,
-  input: { width: '100%', padding: '10px 14px', borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px', boxSizing: 'border-box', backgroundColor: '#fff' } as React.CSSProperties,
-  label: { display: 'block', fontSize: '12px', fontWeight: 600, color: '#374151', marginBottom: '6px' } as React.CSSProperties,
-  card: { backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '14px', overflow: 'hidden' } as React.CSSProperties,
+  page: { padding: '32px', backgroundColor: '#ececec', minHeight: '100%' } as React.CSSProperties,
+  h1: { fontSize: '28px', fontWeight: 700, color: '#000000', margin: 0 } as React.CSSProperties,
+  sub: { fontSize: '14px', color: '#5a5a5a', marginTop: '4px' } as React.CSSProperties,
+  // Black on brand gold — white on #d1b01b fails contrast.
+  // fontFamily: 'inherit' on every control below is load-bearing, not decoration: <button>,
+  // <input> and <select> do NOT inherit the body's Poppins (theme.css) — browsers force their
+  // own control font. Without it a 12px button renders visibly larger than 12px Poppins text
+  // beside it, because the fallback face has a bigger x-height at the same pixel size.
+  addBtn: { padding: '10px 18px', backgroundColor: '#d1b01b', color: '#000000', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: 600, fontFamily: 'inherit' } as React.CSSProperties,
+  input: { width: '100%', padding: '10px 14px', borderRadius: '8px', border: '1px solid #d6d6d6', fontSize: '14px', boxSizing: 'border-box', backgroundColor: '#fff', fontFamily: 'inherit' } as React.CSSProperties,
+  label: { display: 'block', fontSize: '12px', fontWeight: 600, color: '#262626', marginBottom: '6px' } as React.CSSProperties,
+  card: { backgroundColor: '#fff', border: '1px solid #d6d6d6', borderRadius: '14px', overflow: 'hidden' } as React.CSSProperties,
   table: { width: '100%', borderCollapse: 'collapse' as const },
-  th: { padding: '14px 16px', textAlign: 'left' as const, fontSize: '11px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase' as const, letterSpacing: '0.04em', borderBottom: '1px solid #e5e7eb', backgroundColor: '#f9fafb' },
-  td: { padding: '14px 16px', fontSize: '14px', color: '#374151', borderBottom: '1px solid #f3f4f6' } as React.CSSProperties,
-  rowBtn: { padding: '6px 10px', borderRadius: '6px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', cursor: 'pointer', fontSize: '12px', fontWeight: 600, marginLeft: '6px' } as React.CSSProperties,
+  // Neutral grey band distinguishes the header from the white table body.
+  th: { padding: '14px 16px', textAlign: 'left' as const, fontSize: '11px', fontWeight: 700, color: '#262626', textTransform: 'uppercase' as const, letterSpacing: '0.04em', borderBottom: '1px solid #d6d6d6', backgroundColor: '#ececec' },
+  td: { padding: '14px 16px', fontSize: '14px', color: '#262626', borderBottom: '1px solid #e6e6e6' } as React.CSSProperties,
+  rowBtn: { padding: '6px 10px', borderRadius: '6px', border: '1px solid #d6d6d6', backgroundColor: '#fff', color: '#262626', cursor: 'pointer', fontSize: '12px', fontWeight: 600, marginLeft: '6px', fontFamily: 'inherit' } as React.CSSProperties,
 };
 
 export function badge(text: string, color: string, bg: string) {
@@ -35,12 +41,12 @@ export function Modal({ title, onClose, children, footer, wide }: { title: strin
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }} onClick={onClose}>
       <div style={{ background: '#fff', borderRadius: '16px', width: '100%', maxWidth: wide ? '760px' : '560px', maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid #e5e7eb' }}>
-          <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#111827', margin: 0 }}>{title}</h2>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}><X size={20} /></button>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid #d6d6d6' }}>
+          <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#000000', margin: 0 }}>{title}</h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#5a5a5a' }}><X size={20} /></button>
         </div>
         <div style={{ padding: '24px', overflowY: 'auto' }}>{children}</div>
-        {footer && <div style={{ display: 'flex', gap: '12px', padding: '16px 24px', borderTop: '1px solid #e5e7eb' }}>{footer}</div>}
+        {footer && <div style={{ display: 'flex', gap: '12px', padding: '16px 24px', borderTop: '1px solid #d6d6d6' }}>{footer}</div>}
       </div>
     </div>
   );
@@ -73,9 +79,9 @@ export function TextArea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement
 }
 
 export function PrimaryBtn({ children, ...rest }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return <button {...rest} style={{ flex: 1, padding: '11px', borderRadius: '8px', border: 'none', background: '#2563eb', color: '#fff', fontWeight: 600, fontSize: '14px', cursor: 'pointer', opacity: rest.disabled ? 0.6 : 1 }}>{children}</button>;
+  return <button {...rest} style={{ flex: 1, padding: '11px', borderRadius: '8px', border: 'none', background: '#d1b01b', color: '#000000', fontWeight: 600, fontSize: '14px', cursor: 'pointer', fontFamily: 'inherit', opacity: rest.disabled ? 0.6 : 1 }}>{children}</button>;
 }
 
 export function GhostBtn({ children, ...rest }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return <button {...rest} style={{ flex: 1, padding: '11px', borderRadius: '8px', border: '1px solid #e5e7eb', background: '#fff', color: '#374151', fontWeight: 600, fontSize: '14px', cursor: 'pointer' }}>{children}</button>;
+  return <button {...rest} style={{ flex: 1, padding: '11px', borderRadius: '8px', border: '1px solid #d6d6d6', background: '#fff', color: '#262626', fontWeight: 600, fontSize: '14px', cursor: 'pointer', fontFamily: 'inherit' }}>{children}</button>;
 }

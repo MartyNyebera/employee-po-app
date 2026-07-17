@@ -94,15 +94,15 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
           width: '40px',
           height: '40px',
           borderRadius: '50%',
-          border: '4px solid #e5e7eb',
-          borderTopColor: '#2563eb',
+          border: '4px solid #d6d6d6',
+          borderTopColor: '#d1b01b',
           animation: 'spin 1s linear infinite'
         }} />
         <div style={{
           fontSize: '16px',
           fontWeight: '500',
-          color: '#6b7280',
-          fontFamily: 'Inter, sans-serif'
+          color: '#5a5a5a',
+          fontFamily: 'Poppins, sans-serif'
         }}>
           Loading admin requests...
         </div>
@@ -113,7 +113,7 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
   return (
     <div style={{
       padding: '32px',
-      fontFamily: 'Inter, sans-serif',
+      fontFamily: 'Poppins, sans-serif',
       backgroundColor: '#ffffff',
       minHeight: '100vh'
     }}>
@@ -145,9 +145,9 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
             <h1 style={{
               fontSize: '28px',
               fontWeight: '700',
-              color: '#111827',
+              color: '#000000',
               margin: '0 0 8px 0',
-              fontFamily: 'Plus Jakarta Sans, Inter, sans-serif'
+              fontFamily: 'Poppins, sans-serif'
             }}>
               Admin Request Approvals
             </h1>
@@ -155,7 +155,7 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
               fontSize: '14px',
               color: '6b7280',
               margin: '0',
-              fontFamily: 'Inter, sans-serif'
+              fontFamily: 'Poppins, sans-serif'
             }}>
               Review and approve admin account requests
             </p>
@@ -168,8 +168,8 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
         }}>
           <div style={{
             fontSize: '14px',
-            color: '#6b7280',
-            fontFamily: 'Inter, sans-serif'
+            color: '#5a5a5a',
+            fontFamily: 'Poppins, sans-serif'
           }}>
             {adminRequests.length} pending
           </div>
@@ -183,13 +183,13 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
             }}
             style={{
               backgroundColor: 'white',
-              color: '#374151',
+              color: '#262626',
               padding: '12px 20px',
               borderRadius: '8px',
-              border: '1px solid #e5e7eb',
+              border: '1px solid #d6d6d6',
               fontSize: '14px',
               fontWeight: '500',
-              fontFamily: 'Inter, sans-serif',
+              fontFamily: 'Poppins, sans-serif',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
@@ -197,15 +197,15 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
               transition: 'all 0.2s ease'
             }}
             onMouseOver={(e) => {
-              e.currentTarget.style.backgroundColor = '#f9fafb';
-              e.currentTarget.style.borderColor = '#d1d5db';
+              e.currentTarget.style.backgroundColor = '#ececec';
+              e.currentTarget.style.borderColor = '#c9c9c9';
             }}
             onMouseOut={(e) => {
               e.currentTarget.style.backgroundColor = 'white';
-              e.currentTarget.style.borderColor = '#e5e7eb';
+              e.currentTarget.style.borderColor = '#d6d6d6';
             }}
           >
-            <RefreshCw style={{ width: '16px', height: '16px', color: '#6b7280' }} />
+            <RefreshCw style={{ width: '16px', height: '16px', color: '#5a5a5a' }} />
             Refresh
           </button>
         </div>
@@ -220,7 +220,7 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
       }}>
         <div style={{
           background: '#ffffff',
-          border: '1px solid #e5e7eb',
+          border: '1px solid #d6d6d6',
           borderRadius: '16px',
           padding: '24px',
           boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -256,18 +256,18 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
           <h3 style={{
             fontSize: '32px',
             fontWeight: '700',
-            color: '#111827',
+            color: '#000000',
             margin: '0 0 8px 0',
-            fontFamily: 'Plus Jakarta Sans, Inter, monospace'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             {adminRequests.length}
           </h3>
           <p style={{
             fontSize: '14px',
             fontWeight: '500',
-            color: '#6b7280',
+            color: '#5a5a5a',
             margin: '0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             Pending Requests
           </p>
@@ -277,7 +277,7 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
       {/* SEARCH BAR */}
       <div style={{
         background: '#ffffff',
-        border: '1px solid #e5e7eb',
+        border: '1px solid #d6d6d6',
         borderRadius: '16px',
         padding: '24px',
         boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -290,10 +290,10 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
           flex: 1,
           padding: '12px 16px',
           borderRadius: '8px',
-          border: '1px solid #e5e7eb',
-          backgroundColor: '#f9fafb'
+          border: '1px solid #d6d6d6',
+          backgroundColor: '#ececec'
         }}>
-          <Search style={{ width: '16px', height: '16px', color: '#6b7280' }} />
+          <Search style={{ width: '16px', height: '16px', color: '#5a5a5a' }} />
           <input
             type="text"
             placeholder="Search by name, email, or department..."
@@ -304,9 +304,9 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
               border: 'none',
               outline: 'none',
               fontSize: '14px',
-              fontFamily: 'Inter, sans-serif',
+              fontFamily: 'Poppins, sans-serif',
               backgroundColor: 'transparent',
-              color: '#111827'
+              color: '#000000'
             }}
           />
         </div>
@@ -316,7 +316,7 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
       {filteredRequests.length === 0 ? (
         <div style={{
           background: '#ffffff',
-          border: '1px solid #e5e7eb',
+          border: '1px solid #d6d6d6',
           borderRadius: '16px',
           padding: '48px',
           textAlign: 'center',
@@ -325,24 +325,24 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
           <AlertTriangle style={{ 
             width: '64px', 
             height: '64px', 
-            color: '#d1d5db',
+            color: '#c9c9c9',
             marginBottom: '16px',
             margin: '0 auto 16px'
           }} />
           <h3 style={{
             fontSize: '20px',
             fontWeight: '600',
-            color: '#374151',
+            color: '#262626',
             margin: '0 0 8px 0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             No Pending Admin Requests
           </h3>
           <p style={{
             fontSize: '14px',
-            color: '#6b7280',
+            color: '#5a5a5a',
             margin: '0',
-            fontFamily: 'Inter, sans-serif'
+            fontFamily: 'Poppins, sans-serif'
           }}>
             All admin requests have been reviewed
           </p>
@@ -357,7 +357,7 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
               key={request.id}
               style={{
                 background: '#ffffff',
-                border: '1px solid #e5e7eb',
+                border: '1px solid #d6d6d6',
                 borderRadius: '16px',
                 padding: '24px',
                 boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -402,9 +402,9 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
                       <h3 style={{
                         fontSize: '18px',
                         fontWeight: '600',
-                        color: '#111827',
+                        color: '#000000',
                         margin: '0 0 4px 0',
-                        fontFamily: 'Inter, sans-serif'
+                        fontFamily: 'Poppins, sans-serif'
                       }}>
                         {request.full_name}
                       </h3>
@@ -425,7 +425,7 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
                           color: '#dc2626',
                           backgroundColor: '#fffbeb',
                           border: '1px solid #fecaca',
-                          fontFamily: 'Inter, sans-serif'
+                          fontFamily: 'Poppins, sans-serif'
                         }}>
                           <Shield style={{ width: '12px', height: '12px' }} />
                           Pending
@@ -442,11 +442,11 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
                           alignItems: 'center',
                           gap: '8px'
                         }}>
-                          <Mail style={{ width: '14px', height: '14px', color: '#6b7280' }} />
+                          <Mail style={{ width: '14px', height: '14px', color: '#5a5a5a' }} />
                           <span style={{
                             fontSize: '14px',
-                            color: '#6b7280',
-                            fontFamily: 'Inter, sans-serif'
+                            color: '#5a5a5a',
+                            fontFamily: 'Poppins, sans-serif'
                           }}>
                             {request.email}
                           </span>
@@ -456,11 +456,11 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
                           alignItems: 'center',
                           gap: '8px'
                         }}>
-                          <Phone style={{ width: '14px', height: '14px', color: '#6b7280' }} />
+                          <Phone style={{ width: '14px', height: '14px', color: '#5a5a5a' }} />
                           <span style={{
                             fontSize: '14px',
-                            color: '#6b7280',
-                            fontFamily: 'Inter, sans-serif'
+                            color: '#5a5a5a',
+                            fontFamily: 'Poppins, sans-serif'
                           }}>
                             {request.phone}
                           </span>
@@ -475,11 +475,11 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
                             alignItems: 'center',
                             gap: '8px'
                           }}>
-                            <Shield style={{ width: '14px', height: '14px', color: '#6b7280' }} />
+                            <Shield style={{ width: '14px', height: '14px', color: '#5a5a5a' }} />
                             <span style={{
                               fontSize: '14px',
-                              color: '#6b7280',
-                              fontFamily: 'Inter, sans-serif'
+                              color: '#5a5a5a',
+                              fontFamily: 'Poppins, sans-serif'
                             }}>
                               {request.department}
                             </span>
@@ -490,11 +490,11 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
                           alignItems: 'center',
                           gap: '8px'
                         }}>
-                          <Calendar style={{ width: '14px', height: '14px', color: '#6b7280' }} />
+                          <Calendar style={{ width: '14px', height: '14px', color: '#5a5a5a' }} />
                           <span style={{
                             fontSize: '14px',
-                            color: '#6b7280',
-                            fontFamily: 'Inter, sans-serif'
+                            color: '#5a5a5a',
+                            fontFamily: 'Poppins, sans-serif'
                           }}>
                             {formatDate(request.requested_at)}
                           </span>
@@ -518,7 +518,7 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
                         color: 'white',
                         fontSize: '12px',
                         fontWeight: '500',
-                        fontFamily: 'Inter, sans-serif',
+                        fontFamily: 'Poppins, sans-serif',
                         cursor: processingId === request.id ? 'not-allowed' : 'pointer',
                         opacity: processingId === request.id ? 0.5 : 1,
                         transition: 'all 0.2s ease',
@@ -541,7 +541,7 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
                         color: 'white',
                         fontSize: '12px',
                         fontWeight: '500',
-                        fontFamily: 'Inter, sans-serif',
+                        fontFamily: 'Poppins, sans-serif',
                         cursor: processingId === request.id ? 'not-allowed' : 'pointer',
                         opacity: processingId === request.id ? 0.5 : 1,
                         transition: 'all 0.2s ease',

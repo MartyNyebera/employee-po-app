@@ -1,15 +1,18 @@
 import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import ErrorBoundary from './components/ErrorBoundary';
-import { BusinessOverview } from './components/BusinessOverview-Professional-Updated';
 import { Dashboard } from './components/Dashboard';
 import { AdminDashboard } from './components/AdminDashboard';
 import { LoginScreen } from './components/LoginScreen';
 import { getStoredAuth, clearStoredAuth } from './api/client';
 import { EmployeePortal } from './pages/EmployeePortal';
 import { EmployeeLogin } from './pages/EmployeeLogin';
-import { DriverPortal } from './pages/DriverPortal';
-import { DriverLogin } from './pages/DriverLogin';
+import { RequestsPage } from './pages/RequestsPage';
+import { PurchasingPortal } from './pages/PurchasingPortal';
+import { WarehousePortal } from './pages/WarehousePortal';
+import { AccountingPortal } from './pages/AccountingPortal';
+import { SalesPortal } from './pages/SalesPortal';
+import { LogisticsPortal } from './pages/LogisticsPortal';
 
 export type UserRole = 'employee' | 'admin' | 'bookkeeper' | 'purchasing' | 'office_admin' | null;
 
@@ -63,11 +66,12 @@ export default function App() {
     );
   }
 
-  // Allow portal routes to bypass main auth check
+  // Allow portal routes to bypass the admin auth check — each portal guards itself with its
+  // own token. A portal missing from this list is silently swallowed by LoginScreen below,
+  // so every new portal MUST be added here as well as to the routes.
+  const PORTAL_PATHS = ['/employee', '/production', '/requests', '/purchasing', '/warehouse', '/accounting', '/sales', '/logistics'];
   const currentPath = window.location.pathname;
-  const isPortalRoute = 
-    currentPath.startsWith('/employee') || 
-    currentPath.startsWith('/driver');
+  const isPortalRoute = PORTAL_PATHS.some(p => currentPath.startsWith(p));
 
   if (!userRole && !isPortalRoute) {
     return <LoginScreen onLogin={handleLogin} />;
@@ -87,15 +91,31 @@ export default function App() {
             <AdminDashboard userName={userName} isSuperAdmin={userIsSuperAdmin} role={userRole as any} onLogout={handleLogout} />
           )
         } />
-        
+
         {/* Employee Portal Routes */}
         <Route path="/employee" element={<EmployeePortal />} />
         <Route path="/employee/login" element={<EmployeeLogin />} />
-        
-        {/* Driver Portal Routes */}
-        <Route path="/driver" element={<DriverPortal />} />
-        <Route path="/driver/login" element={<DriverLogin />} />
-        
+
+        {/* Production portal — employee purchase requests (formerly /requests) */}
+        <Route path="/production" element={<RequestsPage />} />
+        {/* Back-compat: old /requests bookmarks redirect to /production */}
+        <Route path="/requests" element={<Navigate to="/production" replace />} />
+
+        {/* Purchasing Management portal (purchasing-role staff only) */}
+        <Route path="/purchasing" element={<PurchasingPortal />} />
+
+        {/* Warehouse portal (warehouse-account staff only) */}
+        <Route path="/warehouse" element={<WarehousePortal />} />
+
+        {/* Accounting portal (accounting-account staff only) */}
+        <Route path="/accounting" element={<AccountingPortal />} />
+
+        {/* Sales portal (sales-account staff only) */}
+        <Route path="/sales" element={<SalesPortal />} />
+
+        {/* Logistics portal (logistics-account staff only) */}
+        <Route path="/logistics" element={<LogisticsPortal />} />
+
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

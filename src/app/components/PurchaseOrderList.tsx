@@ -5,6 +5,7 @@ import { Badge } from './ui/badge';
 import { Input } from './ui/input';
 import { FileText, Plus, ShoppingCart, Package, Edit, Trash2, Filter, Printer, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { confirmDialog } from '../lib/confirm';
 import { fetchApi, updatePurchaseOrder, deletePurchaseOrder } from '../api/client';
 import { CreatePurchaseOrderModal } from './CreatePurchaseOrderModal';
 
@@ -123,7 +124,7 @@ const formatCurrency = (amount: number) => {
   };
 
   const handleDeletePO = async (po: PurchaseOrder) => {
-    if (!confirm(`Are you sure you want to delete PO ${po.poNumber}? This action cannot be undone.`)) {
+    if (!(await confirmDialog({ title: `Delete PO ${po.poNumber}?`, message: 'This action cannot be undone.', confirmLabel: 'Delete', tone: 'danger' }))) {
       return;
     }
 
@@ -605,7 +606,7 @@ useEffect(() => {
           </div>
         </div>
         {isAdmin && (
-          <Button onClick={() => setShowCreateModal(true)} className="bg-blue-600 hover:bg-blue-700 text-white">
+          <Button onClick={() => setShowCreateModal(true)} className="bg-blue-600 hover:bg-blue-700 text-black">
             <Plus className="size-4 mr-2" />
             New PO
           </Button>
@@ -757,7 +758,7 @@ useEffect(() => {
               <Button type="button" variant="outline" className="flex-1" onClick={() => setIsEditing(false)}>
                 Cancel
               </Button>
-              <Button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white" disabled={loading}>
+              <Button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-black" disabled={loading}>
                 {loading ? 'Updating...' : 'Update PO'}
               </Button>
             </div>

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { fetchMiscellaneousExpenses, createMiscellaneousExpense, updateMiscellaneousExpense, deleteMiscellaneousExpense } from '../api/client';
 import { DollarSign, TrendingDown, Calendar, User, Search, Filter, X, Plus, Edit2, Trash2, Package } from 'lucide-react';
 import { toast } from 'sonner';
+import { confirmDialog } from '../lib/confirm';
 
 interface MiscellaneousExpense {
   id: string;
@@ -118,7 +119,7 @@ export function MiscellaneousManagement() {
 
   // Handle delete
   const handleDelete = async (id: string, description: string) => {
-    if (!confirm(`Are you sure you want to delete "${description}"? This action cannot be undone.`)) {
+    if (!(await confirmDialog({ title: `Delete "${description}"?`, message: 'This action cannot be undone.', confirmLabel: 'Delete', tone: 'danger' }))) {
       return;
     }
 
@@ -160,7 +161,7 @@ export function MiscellaneousManagement() {
   if (loading) {
     return (
       <div style={{ padding: '24px', textAlign: 'center' }}>
-        <div style={{ fontSize: '16px', color: '#6b7280' }}>Loading miscellaneous expenses...</div>
+        <div style={{ fontSize: '16px', color: '#5a5a5a' }}>Loading miscellaneous expenses...</div>
       </div>
     );
   }
@@ -169,17 +170,17 @@ export function MiscellaneousManagement() {
     <div style={{ padding: '24px' }}>
       {/* Header */}
       <div style={{ marginBottom: '32px' }}>
-        <h1 style={{ fontSize: '32px', marginBottom: '8px', color: '#111827' }}>
+        <h1 style={{ fontSize: '32px', marginBottom: '8px', color: '#000000' }}>
           Miscellaneous Expenses
         </h1>
-        <p style={{ color: '#6b7280', marginBottom: '16px' }}>
+        <p style={{ color: '#5a5a5a', marginBottom: '16px' }}>
           Track company expenses like food, vehicle parts, donations, and more
         </p>
         <button
           onClick={() => setShowCreateModal(true)}
           style={{
-            backgroundColor: '#2563eb',
-            color: 'white',
+            backgroundColor: '#d1b01b',
+            color: '#000000',
             padding: '12px 20px',
             borderRadius: '8px',
             border: 'none',
@@ -197,13 +198,13 @@ export function MiscellaneousManagement() {
       {/* Summary Card */}
       <div style={{
         background: '#ffffff',
-        border: '1px solid #e5e7eb',
+        border: '1px solid #d6d6d6',
         borderRadius: '16px',
         padding: '24px',
         marginBottom: '32px',
         boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
       }}>
-        <h3 style={{ fontSize: '20px', marginBottom: '16px', color: '#111827' }}>
+        <h3 style={{ fontSize: '20px', marginBottom: '16px', color: '#000000' }}>
           Expense Summary
         </h3>
         <div style={{
@@ -212,24 +213,24 @@ export function MiscellaneousManagement() {
           gap: '20px'
         }}>
           <div>
-            <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '8px' }}>
+            <div style={{ fontSize: '14px', color: '#5a5a5a', marginBottom: '8px' }}>
               Total Expenses
             </div>
             <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#ef4444' }}>
               {formatCurrency(totalExpenses)}
             </div>
-            <div style={{ fontSize: '12px', color: '#6b7280' }}>
+            <div style={{ fontSize: '12px', color: '#5a5a5a' }}>
               {filteredExpenses.length} expenses
             </div>
           </div>
           <div>
-            <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '8px' }}>
+            <div style={{ fontSize: '14px', color: '#5a5a5a', marginBottom: '8px' }}>
               Average Expense
             </div>
-            <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#2563eb' }}>
+            <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#d1b01b' }}>
               {formatCurrency(filteredExpenses.length > 0 ? totalExpenses / filteredExpenses.length : 0)}
             </div>
-            <div style={{ fontSize: '12px', color: '#6b7280' }}>
+            <div style={{ fontSize: '12px', color: '#5a5a5a' }}>
               Per expense
             </div>
           </div>
@@ -239,7 +240,7 @@ export function MiscellaneousManagement() {
       {/* Search and Filter */}
       <div style={{ marginBottom: '32px', display: 'flex', gap: '16px' }}>
         <div style={{ position: 'relative', flex: 1 }}>
-          <Search style={{ position: 'absolute', left: '12px', top: '12px', width: '16px', height: '16px', color: '#9ca3af' }} />
+          <Search style={{ position: 'absolute', left: '12px', top: '12px', width: '16px', height: '16px', color: '#8a8a8a' }} />
           <input
             type="text"
             placeholder="Search expenses..."
@@ -249,7 +250,7 @@ export function MiscellaneousManagement() {
               width: '100%',
               padding: '12px 12px 12px 44px',
               borderRadius: '8px',
-              border: '1px solid #d1d5db',
+              border: '1px solid #c9c9c9',
               fontSize: '14px'
             }}
           />
@@ -260,7 +261,7 @@ export function MiscellaneousManagement() {
           style={{
             padding: '12px 16px',
             borderRadius: '8px',
-            border: '1px solid #d1d5db',
+            border: '1px solid #c9c9c9',
             fontSize: '14px'
           }}
         >
@@ -274,24 +275,24 @@ export function MiscellaneousManagement() {
       {/* Expenses Table */}
       <div style={{
         background: '#ffffff',
-        border: '1px solid #e5e7eb',
+        border: '1px solid #d6d6d6',
         borderRadius: '16px',
         overflow: 'hidden'
       }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead style={{ backgroundColor: '#f9fafb' }}>
+          <thead style={{ backgroundColor: '#ececec' }}>
             <tr>
-              <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#374151' }}>Date</th>
-              <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#374151' }}>Description</th>
-              <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#374151' }}>Category</th>
-              <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#374151' }}>Amount</th>
-              <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#374151' }}>Actions</th>
+              <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#262626' }}>Date</th>
+              <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#262626' }}>Description</th>
+              <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#262626' }}>Category</th>
+              <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#262626' }}>Amount</th>
+              <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', fontWeight: '600', color: '#262626' }}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {filteredExpenses.length === 0 ? (
               <tr>
-                <td colSpan={5} style={{ padding: '60px', textAlign: 'center', color: '#6b7280' }}>
+                <td colSpan={5} style={{ padding: '60px', textAlign: 'center', color: '#5a5a5a' }}>
                   <div>
                     <p style={{ fontSize: '16px', marginBottom: '16px' }}>No miscellaneous expenses found</p>
                     <button
@@ -299,7 +300,7 @@ export function MiscellaneousManagement() {
                       style={{
                         padding: '12px 24px',
                         borderRadius: '8px',
-                        border: '1px solid #d1d5db',
+                        border: '1px solid #c9c9c9',
                         backgroundColor: 'white',
                         cursor: 'pointer'
                       }}
@@ -311,17 +312,17 @@ export function MiscellaneousManagement() {
               </tr>
             ) : (
               filteredExpenses.map((expense) => (
-                <tr key={expense.id} style={{ borderBottom: '1px solid #e5e7eb' }}>
+                <tr key={expense.id} style={{ borderBottom: '1px solid #d6d6d6' }}>
                   <td style={{ padding: '12px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <Calendar style={{ width: '16px', height: '16px', color: '#6b7280' }} />
+                      <Calendar style={{ width: '16px', height: '16px', color: '#5a5a5a' }} />
                       {new Date(expense.expenseDate).toLocaleDateString()}
                     </div>
                   </td>
                   <td style={{ padding: '12px' }}>
                     <div>
                       <p style={{ margin: '0 0 4px 0', fontWeight: '500' }}>{expense.description}</p>
-                      <p style={{ margin: 0, fontSize: '12px', color: '#6b7280' }}>
+                      <p style={{ margin: 0, fontSize: '12px', color: '#5a5a5a' }}>
                         Created {new Date(expense.createdAt).toLocaleDateString()}
                       </p>
                     </div>
@@ -332,8 +333,8 @@ export function MiscellaneousManagement() {
                       borderRadius: '4px',
                       fontSize: '12px',
                       fontWeight: '600',
-                      backgroundColor: '#dbeafe',
-                      color: '#2563eb'
+                      backgroundColor: '#ececec',
+                      color: '#d1b01b'
                     }}>
                       {expense.category}
                     </span>
@@ -351,7 +352,7 @@ export function MiscellaneousManagement() {
                           padding: '6px',
                           borderRadius: '4px',
                           border: 'none',
-                          color: '#2563eb',
+                          color: '#d1b01b',
                           cursor: 'pointer'
                         }}
                       >
@@ -403,9 +404,9 @@ export function MiscellaneousManagement() {
               alignItems: 'center',
               justifyContent: 'space-between',
               padding: '24px',
-              borderBottom: '1px solid #e5e7eb'
+              borderBottom: '1px solid #d6d6d6'
             }}>
-              <h2 style={{ fontSize: '20px', fontWeight: '600', color: '#111827', margin: 0 }}>
+              <h2 style={{ fontSize: '20px', fontWeight: '600', color: '#000000', margin: 0 }}>
                 {editingExpense ? 'Edit Expense' : 'Add Miscellaneous Expense'}
               </h2>
               <button
@@ -424,7 +425,7 @@ export function MiscellaneousManagement() {
                   borderRadius: '6px',
                   border: 'none',
                   backgroundColor: 'transparent',
-                  color: '#6b7280',
+                  color: '#5a5a5a',
                   cursor: 'pointer'
                 }}
               >
@@ -434,7 +435,7 @@ export function MiscellaneousManagement() {
             <form onSubmit={handleSubmit} style={{ padding: '24px' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '8px' }}>
+                  <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#262626', marginBottom: '8px' }}>
                     Description
                   </label>
                   <textarea
@@ -445,7 +446,7 @@ export function MiscellaneousManagement() {
                       width: '100%',
                       padding: '12px',
                       borderRadius: '8px',
-                      border: '1px solid #d1d5db',
+                      border: '1px solid #c9c9c9',
                       fontSize: '14px',
                       minHeight: '80px'
                     }}
@@ -453,7 +454,7 @@ export function MiscellaneousManagement() {
                 </div>
                 
                 <div>
-                  <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '8px' }}>
+                  <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#262626', marginBottom: '8px' }}>
                     Amount
                   </label>
                   <input
@@ -466,14 +467,14 @@ export function MiscellaneousManagement() {
                       width: '100%',
                       padding: '12px',
                       borderRadius: '8px',
-                      border: '1px solid #d1d5db',
+                      border: '1px solid #c9c9c9',
                       fontSize: '14px'
                     }}
                   />
                 </div>
                 
                 <div>
-                  <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '8px' }}>
+                  <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#262626', marginBottom: '8px' }}>
                     Category
                   </label>
                   <select
@@ -483,7 +484,7 @@ export function MiscellaneousManagement() {
                       width: '100%',
                       padding: '12px',
                       borderRadius: '8px',
-                      border: '1px solid #d1d5db',
+                      border: '1px solid #c9c9c9',
                       fontSize: '14px'
                     }}
                   >
@@ -495,7 +496,7 @@ export function MiscellaneousManagement() {
                 </div>
                 
                 <div>
-                  <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '8px' }}>
+                  <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#262626', marginBottom: '8px' }}>
                     Expense Date
                   </label>
                   <input
@@ -506,7 +507,7 @@ export function MiscellaneousManagement() {
                       width: '100%',
                       padding: '12px',
                       borderRadius: '8px',
-                      border: '1px solid #d1d5db',
+                      border: '1px solid #c9c9c9',
                       fontSize: '14px'
                     }}
                   />
@@ -529,7 +530,7 @@ export function MiscellaneousManagement() {
                       flex: 1,
                       padding: '12px 20px',
                       borderRadius: '8px',
-                      border: '1px solid #d1d5db',
+                      border: '1px solid #c9c9c9',
                       fontSize: '14px',
                       backgroundColor: 'white',
                       cursor: 'pointer'
@@ -543,11 +544,11 @@ export function MiscellaneousManagement() {
                       flex: 1,
                       padding: '12px 20px',
                       borderRadius: '8px',
-                      border: '1px solid #2563eb',
+                      border: '1px solid #d1b01b',
                       fontSize: '14px',
                       fontWeight: '500',
-                      backgroundColor: '#2563eb',
-                      color: 'white',
+                      backgroundColor: '#d1b01b',
+                      color: '#000000',
                       cursor: 'pointer'
                     }}
                   >

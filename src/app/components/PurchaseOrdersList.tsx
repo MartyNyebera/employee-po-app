@@ -11,6 +11,7 @@ import { CreateSOModal } from './CreatePOModal';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { FileText, Plus, DollarSign, Calendar, Building2, Truck, Edit, Filter, Printer, Trash2, X, Search } from 'lucide-react';
 import { toast } from 'sonner';
+import { confirmDialog } from '../lib/confirm';
 
 const formatDate = (dateString: string) => {
   if (!dateString) return 'N/A';
@@ -141,7 +142,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
   };
 
   const handleDeletePO = async (po: PurchaseOrder) => {
-    if (!confirm(`Are you sure you want to delete PO ${po.poNumber}? This action cannot be undone.`)) {
+    if (!(await confirmDialog({ title: `Delete PO ${po.poNumber}?`, message: 'This action cannot be undone.', confirmLabel: 'Delete', tone: 'danger' }))) {
       return;
     }
     
@@ -620,7 +621,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
             </div>
           </div>
           {isAdmin && (
-            <Button onClick={() => setShowCreateModal(true)} className="bg-blue-600 hover:bg-blue-700 text-white">
+            <Button onClick={() => setShowCreateModal(true)} className="bg-blue-600 hover:bg-blue-700 text-black">
               <Plus className="size-4 mr-2" />
               New SO
             </Button>
@@ -784,7 +785,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
               <Button type="button" variant="outline" className="flex-1" onClick={() => setIsEditing(false)}>
                 Cancel
               </Button>
-              <Button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white" disabled={loading}>
+              <Button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-black" disabled={loading}>
                 {loading ? 'Updating...' : 'Update SO'}
               </Button>
             </div>

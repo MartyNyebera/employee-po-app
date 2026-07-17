@@ -8,8 +8,8 @@ const Toaster = ({ ...props }: ToasterProps) => {
       toastOptions={{
         style: {
           background: '#ffffff',
-          border: '1px solid #e5e7eb',
-          color: '#111827',
+          border: '1px solid #d6d6d6',
+          color: '#000000',
         },
       }}
       {...props}

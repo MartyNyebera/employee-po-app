@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx vite *)",
+      "Bash(echo \"build exit: $?\")",
+      "Bash(node --input-type=module -e ' *)",
+      "Bash(node _pricing2.mjs)",
+      "Bash(node _logi.mjs)"
+    ]
+  }
+}

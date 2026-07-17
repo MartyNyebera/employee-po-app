@@ -8,6 +8,10 @@
 body {
   overflow-x: hidden;
   min-height: 100vh;
+  /* Brand: Poppins everywhere on screen, black text on the #ECECEC page tone. */
+  font-family: 'Poppins', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  background-color: #ececec;
+  color: #000000;
 }
 
 /* Text elements inherit color naturally - no override needed */
@@ -21,26 +25,26 @@ input, select, textarea {
 }
 
 :root {
-  /* Navy Base with Gold Accents */
-  --background: #f8fafc;
-  --foreground: #1e293b;
+  /* Kimoel brand: #ECECEC page + neutral surfaces, white cards, #D1B01B gold accents. */
+  --background: #ececec;
+  --foreground: #000000;
   --card: #ffffff;
-  --card-foreground: #1e293b;
+  --card-foreground: #000000;
   --popover: #ffffff;
-  --popover-foreground: #1e293b;
-  --primary: #1e293b;
-  --primary-foreground: #f8fafc;
-  --secondary: #f1f5f9;
-  --secondary-foreground: #1e293b;
-  --muted: #f1f5f9;
-  --muted-foreground: #64748b;
-  --accent: #2563eb;
-  --accent-foreground: #ffffff;
+  --popover-foreground: #000000;
+  --primary: #d1b01b;
+  --primary-foreground: #000000;
+  --secondary: #ececec;
+  --secondary-foreground: #000000;
+  --muted: #ececec;
+  --muted-foreground: #5a5a5a;
+  --accent: #ececec;
+  --accent-foreground: #000000;
   --destructive: #dc2626;
   --destructive-foreground: #ffffff;
-  --border: #e2e8f0;
+  --border: #d6d6d6;
   --input: #ffffff;
-  --ring: #2563eb;
+  --ring: #d1b01b;
   --radius: 0.5rem;
 }
 
@@ -57,13 +61,13 @@ input, select, textarea {
   --secondary-foreground: #f8fafc;
   --muted: #1e293b;
   --muted-foreground: #94a3b8;
-  --accent: #2563eb;
+  --accent: #d1b01b;
   --accent-foreground: #f8fafc;
   --destructive: #dc2626;
   --destructive-foreground: #ffffff;
   --border: #334155;
   --input: #1e293b;
-  --ring: #2563eb;
+  --ring: #d1b01b;
 }
 
 /* Beautiful Gradients */
@@ -72,7 +76,7 @@ input, select, textarea {
 }
 
 .gradient-gold {
-  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  background: linear-gradient(135deg, #ffd000 0%, #d1b01b 100%);
 }
 
 .gradient-hero {
@@ -110,8 +114,8 @@ input, select, textarea {
 }
 
 .btn-gold {
-  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
-  color: white;
+  background: linear-gradient(135deg, #ffd000 0%, #d1b01b 100%);
+  color: #000000;
   border: none;
   padding: 12px 24px;
   border-radius: 8px;
@@ -120,9 +124,9 @@ input, select, textarea {
 }
 
 .btn-gold:hover {
-  background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+  background: linear-gradient(135deg, #d1b01b 0%, #b0940f 100%);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+  box-shadow: 0 4px 12px rgba(209, 176, 27, 0.3);
 }
 
 /* Status Pills */
@@ -136,8 +140,8 @@ input, select, textarea {
 }
 
 .pill-idle {
-  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
-  color: white;
+  background: linear-gradient(135deg, #ffd000 0%, #d1b01b 100%);
+  color: #000000;
   padding: 4px 12px;
   border-radius: 9999px;
   font-size: 12px;
@@ -155,8 +159,8 @@ input, select, textarea {
 
 /* Beautiful Form Inputs */
 .input-beautiful {
-  background: #f8fafc;
-  border: 2px solid #e2e8f0;
+  background: #ffffff;
+  border: 2px solid #d6d6d6;
   border-radius: 8px;
   padding: 12px 16px;
   font-size: 16px;
@@ -165,9 +169,9 @@ input, select, textarea {
 
 .input-beautiful:focus {
   outline: none;
-  border-color: #f59e0b;
+  border-color: #ffd000;
   background: white;
-  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.1);
+  box-shadow: 0 0 0 3px rgba(209, 176, 27, 0.15);
 }
 
 .dark .input-beautiful {
@@ -178,7 +182,7 @@ input, select, textarea {
 
 .dark .input-beautiful:focus {
   background: #0f172a;
-  border-color: #f59e0b;
+  border-color: #ffd000;
 }
 
 /* Hero Section */
