@@ -653,16 +653,16 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
               border: `1px solid ${filter === status ? '#e3ca63' : '#d6d6d6'}`,
               borderRadius: '16px',
               padding: '24px',
-              boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+              boxShadow: 'none',
               transition: 'all 0.2s ease',
               cursor: 'pointer'
             }}
             onMouseOver={(e) => {
-              e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)';
+              e.currentTarget.style.boxShadow = 'none';
               e.currentTarget.style.transform = 'translateY(-2px)';
             }}
             onMouseOut={(e) => {
-              e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)';
+              e.currentTarget.style.boxShadow = 'none';
               e.currentTarget.style.transform = 'translateY(0)';
             }}
           >
@@ -695,7 +695,7 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
         border: '1px solid #d6d6d6',
         borderRadius: '16px',
         padding: '24px',
-        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+        boxShadow: 'none',
         marginBottom: '32px'
       }}>
         <div style={{
@@ -768,7 +768,7 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
           borderRadius: '16px',
           padding: '48px',
           textAlign: 'center',
-          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+          boxShadow: 'none',
         }}>
           <Package style={{ 
             width: '64px', 
@@ -808,15 +808,15 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                 border: '1px solid #d6d6d6',
                 borderRadius: '16px',
                 padding: '24px',
-                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+                boxShadow: 'none',
                 transition: 'all 0.2s ease'
               }}
               onMouseOver={(e) => {
-                e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)';
+                e.currentTarget.style.boxShadow = 'none';
                 e.currentTarget.style.transform = 'translateY(-2px)';
               }}
               onMouseOut={(e) => {
-                e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)';
+                e.currentTarget.style.boxShadow = 'none';
                 e.currentTarget.style.transform = 'translateY(0)';
               }}
             >

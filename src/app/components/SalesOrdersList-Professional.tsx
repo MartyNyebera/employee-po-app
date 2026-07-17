@@ -598,15 +598,15 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
           border: '1px solid #d6d6d6',
           borderRadius: '16px',
           padding: '24px',
-          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+          boxShadow: 'none',
           transition: 'all 0.2s ease'
         }}
         onMouseOver={(e) => {
-          e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)';
+          e.currentTarget.style.boxShadow = 'none';
           e.currentTarget.style.transform = 'translateY(-2px)';
         }}
         onMouseOut={(e) => {
-          e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)';
+          e.currentTarget.style.boxShadow = 'none';
           e.currentTarget.style.transform = 'translateY(0)';
         }}
         >
@@ -653,15 +653,15 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
           border: '1px solid #fffbeb',
           borderRadius: '16px',
           padding: '24px',
-          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+          boxShadow: 'none',
           transition: 'all 0.2s ease'
         }}
         onMouseOver={(e) => {
-          e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)';
+          e.currentTarget.style.boxShadow = 'none';
           e.currentTarget.style.transform = 'translateY(-2px)';
         }}
         onMouseOut={(e) => {
-          e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)';
+          e.currentTarget.style.boxShadow = 'none';
           e.currentTarget.style.transform = 'translateY(0)';
         }}
         >
@@ -722,15 +722,15 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
           border: '1px solid #d6d6d6',
           borderRadius: '16px',
           padding: '24px',
-          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+          boxShadow: 'none',
           transition: 'all 0.2s ease'
         }}
         onMouseOver={(e) => {
-          e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)';
+          e.currentTarget.style.boxShadow = 'none';
           e.currentTarget.style.transform = 'translateY(-2px)';
         }}
         onMouseOut={(e) => {
-          e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)';
+          e.currentTarget.style.boxShadow = 'none';
           e.currentTarget.style.transform = 'translateY(0)';
         }}
         >
@@ -791,15 +791,15 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
           border: '1px solid #f0fdf4',
           borderRadius: '16px',
           padding: '24px',
-          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+          boxShadow: 'none',
           transition: 'all 0.2s ease'
         }}
         onMouseOver={(e) => {
-          e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)';
+          e.currentTarget.style.boxShadow = 'none';
           e.currentTarget.style.transform = 'translateY(-2px)';
         }}
         onMouseOut={(e) => {
-          e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)';
+          e.currentTarget.style.boxShadow = 'none';
           e.currentTarget.style.transform = 'translateY(0)';
         }}
         >
@@ -940,7 +940,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
           borderRadius: '16px',
           padding: '48px',
           textAlign: 'center',
-          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)'
+          boxShadow: 'none'
         }}>
           <FileText style={{ 
             width: '64px', 
@@ -983,7 +983,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
                 border: '1px solid #d6d6d6',
                 borderRadius: '16px',
                 padding: '24px',
-                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+                boxShadow: 'none',
                 transition: 'all 0.2s ease',
                 overflow: 'hidden',
                 width: '100%',
@@ -993,11 +993,11 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
                 hyphens: 'auto'
               }}
               onMouseOver={(e) => {
-                e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)';
+                e.currentTarget.style.boxShadow = 'none';
                 e.currentTarget.style.transform = 'translateY(-2px)';
               }}
               onMouseOut={(e) => {
-                e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)';
+                e.currentTarget.style.boxShadow = 'none';
                 e.currentTarget.style.transform = 'translateY(0)';
               }}
             >

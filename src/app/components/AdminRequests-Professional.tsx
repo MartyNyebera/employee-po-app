@@ -223,15 +223,15 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
           border: '1px solid #d6d6d6',
           borderRadius: '16px',
           padding: '24px',
-          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+          boxShadow: 'none',
           transition: 'all 0.2s ease'
         }}
         onMouseOver={(e) => {
-          e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)';
+          e.currentTarget.style.boxShadow = 'none';
           e.currentTarget.style.transform = 'translateY(-2px)';
         }}
         onMouseOut={(e) => {
-          e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)';
+          e.currentTarget.style.boxShadow = 'none';
           e.currentTarget.style.transform = 'translateY(0)';
         }}
         >
@@ -280,7 +280,7 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
         border: '1px solid #d6d6d6',
         borderRadius: '16px',
         padding: '24px',
-        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+        boxShadow: 'none',
         marginBottom: '32px'
       }}>
         <div style={{
@@ -320,7 +320,7 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
           borderRadius: '16px',
           padding: '48px',
           textAlign: 'center',
-          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+          boxShadow: 'none',
         }}>
           <AlertTriangle style={{ 
             width: '64px', 
@@ -360,15 +360,15 @@ export function AdminRequests({ onApprove, onReject, userName }: AdminRequestsPr
                 border: '1px solid #d6d6d6',
                 borderRadius: '16px',
                 padding: '24px',
-                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+                boxShadow: 'none',
                 transition: 'all 0.2s ease'
               }}
               onMouseOver={(e) => {
-                e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0.05)';
+                e.currentTarget.style.boxShadow = 'none';
                 e.currentTarget.style.transform = 'translateY(-2px)';
               }}
               onMouseOut={(e) => {
-                e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0.06)';
+                e.currentTarget.style.boxShadow = 'none';
                 e.currentTarget.style.transform = 'translateY(0)';
               }}
             >

@@ -252,18 +252,18 @@ body {
 .admin-portal p { margin: 0; padding: 0; }
 
 /* ===== PROFESSIONAL CARD COMPONENT ===== */
+/* #13 — flat cards: white on the #ECECEC page body, a hairline border, NO shadow and no
+   hover lift, matching the crmKit/portal card idiom the other departments use. */
 .professional-card {
   background: #ffffff !important;
   border: 1px solid var(--color-neutral-200) !important;
   border-radius: var(--radius-xl) !important;
   padding: var(--spacing-xl) !important;
-  box-shadow: var(--shadow-md) !important;
-  transition: all var(--transition-base) !important;
+  box-shadow: none !important;
+  transition: border-color var(--transition-base) !important;
 }
 
 .professional-card:hover {
-  box-shadow: var(--shadow-lg) !important;
-  transform: translateY(-2px) !important;
   border-color: var(--color-neutral-300) !important;
 }
 
@@ -274,8 +274,8 @@ body {
   border: 1px solid var(--color-neutral-200) !important;
   border-radius: var(--radius-xl) !important;
   padding: var(--spacing-xl) !important;
-  box-shadow: var(--shadow-md) !important;
-  transition: all var(--transition-base) !important;
+  box-shadow: none !important;
+  transition: border-color var(--transition-base) !important;
   overflow: hidden !important;
 }
 
@@ -291,8 +291,6 @@ body {
 }
 
 .metric-card:hover {
-  box-shadow: var(--shadow-lg) !important;
-  transform: translateY(-4px) !important;
   border-color: var(--color-neutral-300) !important;
 }
 
@@ -616,7 +614,7 @@ body {
   border: 1px solid var(--color-neutral-200) !important;
   border-radius: var(--radius-xl) !important;
   padding: var(--spacing-xl) !important;
-  box-shadow: var(--shadow-md) !important;
+  box-shadow: none !important; /* #13 — flat, no shadow */
 }
 
 .chart-title {
