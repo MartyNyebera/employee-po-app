@@ -53,10 +53,13 @@ export const PRINT_CHROME_CSS = `
   .print-foot-inner .addr { font-weight: bold; }
 `;
 
+// An empty docTitle renders the company name ALONE (no bordered rectangle) — used when a
+// document wants to place its own title elsewhere in the body (e.g. the PR prints "PURCHASE
+// REQUEST" beneath the meta block, #4). Every order/receipt still passes a real title.
 export function printHeaderHtml(docTitle: string): string {
   return `<div class="print-header">
     <div class="company-name">${esc(COMPANY.name)}</div>
-    <div class="document-title">${esc(docTitle)}</div>
+    ${docTitle ? `<div class="document-title">${esc(docTitle)}</div>` : ''}
   </div>`;
 }
 

@@ -742,10 +742,15 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
     if (!projectId) { toast.error('Choose what this request is for'); return; }
     if (!neededBy) { toast.error('Set the date this is needed by'); return; }
     if (lineItems.length === 0) { toast.error('Add at least one item'); return; }
-    const incomplete = lineItems.find((li) =>
-      !li.description.trim() || !li.unit || !(Number(li.quantity) > 0) || !(Number(li.unitCost) > 0));
+    // #3 — a labor line has no qty/unit; it only needs a description and a cost. Item lines
+    // still require description, quantity, unit and est. cost.
+    const incomplete = lineItems.find((li) => li.kind === 'labor'
+      ? (!li.description.trim() || !(Number(li.unitCost) > 0))
+      : (!li.description.trim() || !li.unit || !(Number(li.quantity) > 0) || !(Number(li.unitCost) > 0)));
     if (incomplete) {
-      toast.error(`Line ${incomplete.no} is incomplete — description, quantity, unit and est. cost are all required`);
+      toast.error(incomplete.kind === 'labor'
+        ? `Labor line ${incomplete.no} is incomplete — a description and a cost are required`
+        : `Line ${incomplete.no} is incomplete — description, quantity, unit and est. cost are all required`);
       return;
     }
     const valid = lineItems;
@@ -816,9 +821,9 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
     const rows = req.items.map((it, i) => `
       <tr>
         <td>${i + 1}</td>
-        <td>${esc(it.description || '')}${it.kind === 'labor' ? ' <span style="font-size:8pt;color:#555;font-style:italic">(labor)</span>' : ''}${it.laborNote ? `<div style="font-size:8pt;color:#555">${esc(it.laborNote)}</div>` : ''}</td>
-        <td style="text-align:center">${esc(it.quantity ?? '')}</td>
-        <td style="text-align:center">${esc(it.unit || '')}</td>
+        <td>${esc(it.description || '')}${it.kind === 'labor' ? ' <span style="font-size:8pt;color:#555;font-style:italic">(labor)</span>' : ''}${it.laborNote ? `<div style="font-size:8pt;color:#555;white-space:pre-wrap">${esc(it.laborNote)}</div>` : ''}</td>
+        <td style="text-align:center">${it.kind === 'labor' ? '—' : esc(it.quantity ?? '')}</td>
+        <td style="text-align:center">${it.kind === 'labor' ? '—' : esc(it.unit || '')}</td>
         <td style="text-align:right">${peso(it.unitCost)}</td>
         <td style="text-align:right">${peso(it.amount)}</td>
       </tr>`).join('');
@@ -858,6 +863,8 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
         </div>
         <div class="meta-right"><span>PR No.:</span> ${esc(req.prNumber)}</div>
       </div>
+      <!-- #4 — the title sits UNDER the needed-by / PR No. meta, not in the page header. -->
+      <div class="document-title" style="margin:12px auto 4px">PURCHASE REQUEST</div>
       <table class="items">
         <thead><tr><th>No</th><th>Description</th><th>Qty</th><th>Unit</th><th>Est. Cost</th><th>Amount</th></tr></thead>
         <tbody>${rows}</tbody>
@@ -886,7 +893,7 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
       </div>`;
     const html = renderPrintDocument({
       title: `Purchase Request ${req.prNumber}`,
-      docTitle: 'PURCHASE REQUEST',
+      docTitle: '', // #4 — rendered inside the body (under the meta), not the repeating header
       css,
       body,
     });
@@ -1030,17 +1037,20 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
                                 {li.kind === 'labor' ? (
                                   <div className="space-y-1">
                                     <input value={li.description} onChange={(e) => updateLineItem(li.id, 'description', e.target.value)} placeholder="Labor description (e.g. Installation labor)" className="w-full px-2 py-1.5 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                                    <input value={li.laborNote || ''} onChange={(e) => updateLineItem(li.id, 'laborNote', e.target.value)} placeholder="Note (optional)" className="w-full px-2 py-1 text-xs border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                                    <textarea value={li.laborNote || ''} onChange={(e) => updateLineItem(li.id, 'laborNote', e.target.value)} placeholder="Note (optional — press Enter for a new line)" rows={2} className="w-full px-2 py-1 text-xs border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y" />
                                   </div>
                                 ) : (
                                   <ItemPicker value={li.description} onCommit={(name, unit, inventoryId) => { updateLineItem(li.id, 'description', name); updateLineItem(li.id, 'inventoryId', inventoryId ?? null); if (unit) updateLineItem(li.id, 'unit', unit); }} inventory={inventory} onRequestNew={setRequestingItem} />
                                 )}
                               </td>
-                              <td className="px-3 py-2 align-top"><input type="number" min="0" value={li.quantity} onChange={(e) => updateLineItem(li.id, 'quantity', e.target.value)} placeholder="0" className="w-full px-2 py-1.5 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" /></td>
-                              <td className="px-3 py-2">
-                                <select value={li.unit} onChange={(e) => updateLineItem(li.id, 'unit', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                  {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
-                                </select>
+                              {/* #3 — labor has no quantity or unit; show a dash placeholder instead of inputs. */}
+                              <td className="px-3 py-2 align-top text-center text-gray-400">{li.kind === 'labor' ? '—' : <input type="number" min="0" value={li.quantity} onChange={(e) => updateLineItem(li.id, 'quantity', e.target.value)} placeholder="0" className="w-full px-2 py-1.5 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" />}</td>
+                              <td className="px-3 py-2 text-center text-gray-400">
+                                {li.kind === 'labor' ? '—' : (
+                                  <select value={li.unit} onChange={(e) => updateLineItem(li.id, 'unit', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+                                  </select>
+                                )}
                               </td>
                               <td className="px-3 py-2"><input type="number" min="0" step="0.01" value={li.unitCost} onChange={(e) => updateLineItem(li.id, 'unitCost', e.target.value)} placeholder="0.00" className="w-full px-2 py-1.5 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" /></td>
                               <td className="px-3 py-2 text-right font-medium text-gray-900 whitespace-nowrap">{peso(li.amount)}</td>
