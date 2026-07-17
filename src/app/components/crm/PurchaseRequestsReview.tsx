@@ -5,6 +5,7 @@ import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
 import { useLiveRefresh } from '../../hooks/useLiveRefresh';
 import { S, Modal, GhostBtn, PrimaryBtn, badge, peso } from './crmKit';
+import { nextDeptFor } from '../../lib/nextDept';
 
 // unitCost/amount are the employee's ESTIMATE; the final* fields are what Purchasing priced
 // the line at when they raised the order. Both are kept, so the gap stays auditable.
@@ -136,7 +137,10 @@ export function PurchaseRequestsReview() {
                       <div style={{ fontWeight: 400, fontSize: '11px', color: '#8a8a8a', textDecoration: 'line-through' }}>{peso(pr.total)}</div>
                     )}
                   </td>
-                  <td style={S.td}>{statusBadge(pr.status)}{pr.withdrawn ? <span style={{ marginLeft: '6px' }}>{badge('Withdrawn', '#7a6a0c', '#ececec')}</span> : null}</td>
+                  <td style={S.td}>
+                    {statusBadge(pr.status)}{pr.withdrawn ? <span style={{ marginLeft: '6px' }}>{badge('Withdrawn', '#7a6a0c', '#ececec')}</span> : null}
+                    {nextDeptFor(pr.status, 'pr') && <div style={{ fontSize: '11px', color: '#8a8a8a', marginTop: '2px' }}>{nextDeptFor(pr.status, 'pr')}</div>}
+                  </td>
                   <td style={S.td}>
                     {/* Flex rather than inline buttons: an inline-flex button (icon + label) and a
                         plain inline one align on different baselines, which visibly staggers them. */}

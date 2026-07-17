@@ -13,6 +13,8 @@ import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { printPurchaseOrder, parsePOLineItems } from '../lib/orderPrint';
 import { printReceivingReport, type ReceivedLine } from '../lib/deliveryReceiptPrint';
 import { ReceivingModal } from '../components/ReceivingModal';
+import { NavBadge } from '../components/NavBadge';
+import { AttentionCard } from '../components/AttentionCard';
 
 // ============================================================================
 // Warehouse portal (/warehouse). Fully independent of the admin dashboard:
@@ -562,8 +564,11 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
           const active = view === id;
           return (
             <button key={id} title={label} onClick={() => { setView(id); setMobileOpen(false); }}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium focus:outline-none transition-colors ${collapsed ? 'justify-center' : ''} ${active ? 'bg-teal-600 text-white hover:bg-teal-700' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'}`}>
+              className={`relative w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium focus:outline-none transition-colors ${collapsed ? 'justify-center' : ''} ${active ? 'bg-teal-600 text-white hover:bg-teal-700' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'}`}>
               <Icon className="w-4 h-4 flex-shrink-0" />{!collapsed && <span>{label}</span>}
+              {id === 'itemRequests' && <NavBadge count={pendingRequests} collapsed={collapsed} />}
+              {id === 'orders' && <NavBadge count={openPOCount} collapsed={collapsed} />}
+              {id === 'withdrawals' && <NavBadge count={pendingWithdrawals} collapsed={collapsed} />}
             </button>
           );
         })}
@@ -588,6 +593,11 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
+      <AttentionCard items={[
+        { label: 'Item requests to review', count: pendingRequests, onView: () => setView('itemRequests') },
+        { label: 'Orders to receive', count: openPOCount, onView: () => setView('orders') },
+        { label: 'Withdrawals to release', count: pendingWithdrawals, onView: () => setView('withdrawals') },
+      ]} />
       <div className={`flex-shrink-0 z-30 w-64 lg:relative lg:flex lg:flex-col transition-all duration-200 ${collapsed ? 'lg:w-20' : 'lg:w-64'} ${mobileOpen ? 'fixed inset-y-0 left-0 flex flex-col' : 'hidden lg:flex lg:flex-col'}`}>{sidebar}</div>
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">

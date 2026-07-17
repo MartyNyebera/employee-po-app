@@ -12,6 +12,9 @@ import { confirmDialog } from '../lib/confirm';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { esc, printPurchaseOrder } from '../lib/orderPrint';
 import { renderPrintDocument } from '../lib/printChrome';
+import { NavBadge } from '../components/NavBadge';
+import { AttentionCard } from '../components/AttentionCard';
+import { nextDeptFor } from '../lib/nextDept';
 
 // ============================================================================
 // Accounting portal (/accounting). Fully independent of the admin dashboard:
@@ -628,10 +631,10 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
           const active = view === id;
           return (
             <button key={id} title={label} onClick={() => { setView(id); setMobileOpen(false); }}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${collapsed ? 'justify-center' : ''} ${active ? 'bg-blue-600 text-white hover:bg-blue-700' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'}`}>
+              className={`relative w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${collapsed ? 'justify-center' : ''} ${active ? 'bg-blue-600 text-white hover:bg-blue-700' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'}`}>
               <Icon className="w-4 h-4 flex-shrink-0" />{!collapsed && <span>{label}</span>}
-              {!collapsed && id === 'requests' && pendingCount > 0 && <span className={`ml-auto text-xs font-semibold px-2 py-0.5 rounded-full ${active ? 'bg-white/20' : 'bg-yellow-100 text-yellow-700'}`}>{pendingCount}</span>}
-              {!collapsed && id === 'orders' && pendingOrderCount > 0 && <span className={`ml-auto text-xs font-semibold px-2 py-0.5 rounded-full ${active ? 'bg-white/20' : 'bg-yellow-100 text-yellow-700'}`}>{pendingOrderCount}</span>}
+              {id === 'requests' && <NavBadge count={pendingCount} collapsed={collapsed} />}
+              {id === 'orders' && <NavBadge count={pendingOrderCount} collapsed={collapsed} />}
             </button>
           );
         })}
@@ -655,6 +658,10 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
+      <AttentionCard items={[
+        { label: 'Requests to review', count: pendingCount, onView: () => setView('requests') },
+        { label: 'Orders to review', count: pendingOrderCount, onView: () => setView('orders') },
+      ]} />
       <div className={`flex-shrink-0 w-64 z-30 lg:relative lg:flex lg:flex-col transition-all duration-200 ${collapsed ? 'lg:w-20' : 'lg:w-64'} ${mobileOpen ? 'fixed inset-y-0 left-0 flex flex-col' : 'hidden lg:flex lg:flex-col'}`}>{sidebar}</div>
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -763,7 +770,10 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                             <p className="text-xs text-gray-400 mt-0.5">{pr.items.map(i => i.description).join(', ')}</p>
                             <p className="text-xs text-gray-400 mt-1">Prepared by <span className="text-gray-600 font-medium">{pr.employeeName || '—'}</span>{pr.checkedBy && <> · Reviewed by <span className="text-gray-600 font-medium">{pr.checkedBy}</span></>}</p>
                           </div>
-                          <span className={`flex-shrink-0 text-xs font-semibold ${statusPill(pr.status)}`}>{statusLabel(pr.status)}</span>
+                          <div className="flex-shrink-0 text-right">
+                            <span className={`text-xs font-semibold ${statusPill(pr.status)}`}>{statusLabel(pr.status)}</span>
+                            {nextDeptFor(pr.status, 'pr') && <div className="text-[11px] text-gray-400">{nextDeptFor(pr.status, 'pr')}</div>}
+                          </div>
                         </div>
                         <div className="flex items-center justify-between mt-3 flex-wrap gap-2">
                           <div className="flex items-center gap-3 text-xs text-gray-400">
@@ -815,12 +825,15 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                             <p className="text-xs text-gray-400 mt-0.5">Supplier <span className="text-gray-600 font-medium">{po.client || '—'}</span></p>
                             <p className="text-xs text-gray-400 mt-1">Prepared by <span className="text-gray-600 font-medium">{po.processedBy || '—'}</span>{po.poReviewedBy && <> · Reviewed by <span className="text-gray-600 font-medium">{po.poReviewedBy}</span></>}</p>
                           </div>
-                          <span className="flex-shrink-0 text-xs font-semibold text-brand-gold">
-                            {po.status === 'pending' ? 'Needs review'
-                              : po.status === 'accounting-approved' ? 'Awaiting admin'
-                              : po.status === 'rejected' ? 'Rejected'
-                              : po.status.charAt(0).toUpperCase() + po.status.slice(1)}
-                          </span>
+                          <div className="flex-shrink-0 text-right">
+                            <span className="text-xs font-semibold text-brand-gold">
+                              {po.status === 'pending' ? 'Needs review'
+                                : po.status === 'accounting-approved' ? 'Awaiting admin'
+                                : po.status === 'rejected' ? 'Rejected'
+                                : po.status.charAt(0).toUpperCase() + po.status.slice(1)}
+                            </span>
+                            {nextDeptFor(po.status, 'po') && <div className="text-[11px] text-gray-400">{nextDeptFor(po.status, 'po')}</div>}
+                          </div>
                         </div>
                         <div className="flex items-center justify-between mt-3 flex-wrap gap-2">
                           <div className="flex items-center gap-3 text-xs text-gray-400">

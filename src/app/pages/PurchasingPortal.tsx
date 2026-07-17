@@ -12,6 +12,8 @@ import { confirmDialog } from '../lib/confirm';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { printPurchaseOrder, esc } from '../lib/orderPrint';
 import { renderPrintDocument } from '../lib/printChrome';
+import { NavBadge } from '../components/NavBadge';
+import { AttentionCard } from '../components/AttentionCard';
 
 // ============================================================================
 // Purchasing Management portal (/purchasing). Fully independent of the admin
@@ -967,6 +969,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 
   // Purchasing acts on requests Accounting has already reviewed — those still need a PO.
   const awaitingPOCount = requests.filter(r => r.status === 'verified').length;
+  // Rejected orders sent back here to revise & resubmit (Section C).
+  const rejectedPOCount = orders.filter(o => o.status === 'rejected').length;
 
   const NAV: { id: PortalView; label: string; icon: any }[] = [
     { id: 'requests', label: 'Purchase Requests', icon: ClipboardList },
@@ -1000,9 +1004,10 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
           const active = view === id;
           return (
             <button key={id} title={label} onClick={() => { setView(id); setMobileOpen(false); }}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium focus:outline-none transition-colors ${collapsed ? 'justify-center' : ''} ${active ? 'bg-blue-600 text-white hover:bg-blue-700' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'}`}>
+              className={`relative w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium focus:outline-none transition-colors ${collapsed ? 'justify-center' : ''} ${active ? 'bg-blue-600 text-white hover:bg-blue-700' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'}`}>
               <Icon className="w-4 h-4 flex-shrink-0" />{!collapsed && <span>{label}</span>}
-              {!collapsed && id === 'requests' && awaitingPOCount > 0 && <span className={`ml-auto text-xs font-semibold px-2 py-0.5 rounded-full ${active ? 'bg-white/20' : 'bg-yellow-100 text-yellow-700'}`}>{awaitingPOCount}</span>}
+              {id === 'requests' && <NavBadge count={awaitingPOCount} collapsed={collapsed} />}
+              {id === 'orders' && <NavBadge count={rejectedPOCount} collapsed={collapsed} />}
             </button>
           );
         })}
@@ -1026,6 +1031,10 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
+      <AttentionCard items={[
+        { label: 'Requests to raise a PO', count: awaitingPOCount, onView: () => setView('requests') },
+        { label: 'Rejected orders to resubmit', count: rejectedPOCount, onView: () => setView('orders') },
+      ]} />
       <div className={`flex-shrink-0 w-64 z-30 lg:relative lg:flex lg:flex-col transition-all duration-200 ${collapsed ? 'lg:w-20' : 'lg:w-64'} ${mobileOpen ? 'fixed inset-y-0 left-0 flex flex-col' : 'hidden lg:flex lg:flex-col'}`}>{sidebar}</div>
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">

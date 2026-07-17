@@ -6,6 +6,7 @@ import { fetchApi, updatePurchaseOrder, deletePurchaseOrder } from '../api/clien
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { CreatePurchaseOrderModal } from './CreatePurchaseOrderModal';
 import { printPurchaseOrder } from '../lib/orderPrint';
+import { nextDeptFor } from '../lib/nextDept';
 
 interface PurchaseOrder {
   id: string;
@@ -986,6 +987,9 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                   )}
                 </span>
                 <StatusBadge status={po.status} />
+                {nextDeptFor(po.status, 'po') && (
+                  <span style={{ fontSize: '11px', color: '#8a8a8a', fontFamily: 'Poppins, sans-serif' }}>{nextDeptFor(po.status, 'po')}</span>
+                )}
               </div>
               
               <div style={{

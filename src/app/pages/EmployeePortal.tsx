@@ -3,6 +3,7 @@ import { Package, ClipboardList, Bell, LogOut, Menu, X, User, Wifi, WifiOff, Ale
 import ErrorBoundary from '../components/ErrorBoundary';
 import { PageErrorFallback } from '../components/PageErrorFallback';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
+import { NavBadge } from '../components/NavBadge';
 
 export type EmployeeView = 'inventory' | 'requests' | 'history' | 'notifications';
 
@@ -78,7 +79,7 @@ function SidebarInner({ view, setView, setMobileMenuOpen, unreadCount, employee,
               key={id}
               title={label}
               onClick={() => { setView(id); setMobileMenuOpen(false); }}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium focus:outline-none transition-colors ${collapsed ? 'justify-center' : ''} ${
+              className={`relative w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium focus:outline-none transition-colors ${collapsed ? 'justify-center' : ''} ${
                 active
                   ? 'bg-blue-600 text-black hover:bg-blue-700 active:bg-blue-700'
                   : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900 active:bg-gray-100'
@@ -86,11 +87,7 @@ function SidebarInner({ view, setView, setMobileMenuOpen, unreadCount, employee,
             >
               <Icon className="w-4 h-4 flex-shrink-0" />
               {!collapsed && <span>{label}</span>}
-              {!collapsed && id === 'notifications' && unreadCount > 0 && (
-                <span className={`ml-auto text-xs font-semibold rounded-full px-1.5 py-0.5 ${active ? 'bg-white/30 text-white' : 'bg-red-100 text-red-600'}`}>
-                  {unreadCount}
-                </span>
-              )}
+              {id === 'notifications' && <NavBadge count={unreadCount} collapsed={collapsed} />}
             </button>
           );
         })}

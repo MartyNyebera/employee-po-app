@@ -20,6 +20,8 @@ import { PageErrorFallback } from './PageErrorFallback';
 import { AssetDetails } from './AssetDetails';
 import { PurchaseOrdersList } from './PurchaseOrdersList';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
+import { NavBadge } from './NavBadge';
+import { AttentionCard } from './AttentionCard';
 
 // Heavy pages (charts, maps, and large data tables) are code-split and loaded only
 // when their tab is opened — this keeps the initial app-shell bundle small.
@@ -55,28 +57,7 @@ const isGroup = (e: NavEntry): e is NavGroup => 'children' in e;
 // primary/secondary/outline, which professional-design-complete.css matches on and would
 // hijack (the same trap that once broke the nav pill). It's a <span>, so the blanket
 // `.admin-portal button` rule never touches it.
-function NavBadge({ count, collapsed }: { count: number; collapsed: boolean }) {
-  if (!count) return null;
-  const label = count > 99 ? '99+' : String(count);
-  if (collapsed) {
-    return (
-      <span
-        className="crm-nav-badge absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-red-600 text-white text-[10px] font-bold leading-4 text-center"
-        aria-label={`${count} awaiting attention`}
-      >
-        {label}
-      </span>
-    );
-  }
-  return (
-    <span
-      className="crm-nav-badge ml-auto min-w-[18px] h-[18px] px-1.5 rounded-full bg-red-600 text-white text-[11px] font-bold leading-[18px] text-center"
-      aria-label={`${count} awaiting attention`}
-    >
-      {label}
-    </span>
-  );
-}
+// NavBadge now lives in components/NavBadge.tsx — one bubble style system-wide (#16).
 
 // Ordered by importance/workflow: Dashboard → operational flows (Orders, Requests) →
 // reference/master data → administrative account management last.
@@ -324,6 +305,12 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
   return (
     <ErrorBoundary fallback={<PageErrorFallback />}>
       <div className="admin-portal h-screen bg-slate-50 flex overflow-hidden">
+      {/* #8 — dismissible attention card, fed by the same queue-counts the badges use. */}
+      <AttentionCard items={[
+        { label: 'Purchase requests to verify', count: counts.purchaseRequests, onView: () => setCurrentView('purchase-requests') },
+        { label: 'Purchase orders to approve', count: counts.purchaseOrders, onView: () => setCurrentView('purchase-orders') },
+        { label: 'Withdrawals to approve', count: counts.withdrawals, onView: () => setCurrentView('withdrawal-requests') },
+      ]} />
       {/* Sidebar. Matches the portal shell: a fixed drawer under lg, an in-flow rail above it.
           The admin previously had no mobile behaviour at all — the sidebar simply ate the
           screen on a phone, with no way to dismiss it. */}
