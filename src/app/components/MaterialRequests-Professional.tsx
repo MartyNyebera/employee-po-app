@@ -980,6 +980,7 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                       Print Request
                     </button>
                     <button
+                      title="Delete"
                       onClick={() => handleDelete(request.id)}
                       disabled={processingId === request.id}
                       style={{
@@ -1000,7 +1001,6 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
                       }}
                     >
                       <Trash2 style={{ width: '14px', height: '14px' }} />
-                      {processingId === request.id ? 'Deleting...' : 'Delete'}
                     </button>
                   </div>
                 </div>

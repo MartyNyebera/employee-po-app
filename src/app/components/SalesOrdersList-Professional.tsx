@@ -1045,6 +1045,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
                       Print
                     </button>
                     <button
+                      title="Delete"
                       onClick={() => handleDeletePO(po)}
                       style={{
                         padding: '8px 12px',
@@ -1063,7 +1064,6 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
                       }}
                     >
                       <Trash2 style={{ width: '14px', height: '14px' }} />
-                      Delete
                     </button>
                   </>
                 )}

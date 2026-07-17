@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Search } from 'lucide-react';
+import { Plus, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
@@ -99,7 +99,7 @@ export function SuppliersList({ isAdmin }: { isAdmin: boolean }) {
                   <td style={S.td}>{relBadge(s.reliability)}</td>
                   {isAdmin && <td style={{ ...S.td, textAlign: 'right' }}>
                     <button style={S.rowBtn} onClick={() => { setEditing(s); setShowModal(true); }}>Edit</button>
-                    <button style={{ ...S.rowBtn, color: '#b91c1c' }} onClick={() => onDelete(s)}>Delete</button>
+                    <button title="Delete" style={{ ...S.rowBtn, color: '#b91c1c' }} onClick={() => onDelete(s)}><Trash2 size={14} /></button>
                   </td>}
                 </tr>
               ))}

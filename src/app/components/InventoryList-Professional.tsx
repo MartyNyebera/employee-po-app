@@ -981,6 +981,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
 
                             {/* Delete Button */}
                             <button
+                              title="Delete"
                               onClick={async () => {
                                 if (await confirmDialog({ title: `Delete ${item.itemName}?`, message: 'This cannot be undone.', confirmLabel: 'Delete', tone: 'danger' })) {
                                   handleDelete(item.id);
@@ -1013,7 +1014,6 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
                               }}
                             >
                               <Trash2 style={{ width: '12px', height: '12px' }} />
-                              Delete
                             </button>
                           </>
                         )}

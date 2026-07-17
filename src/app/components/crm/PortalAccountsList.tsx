@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
@@ -110,7 +110,7 @@ export function PortalAccountsList({ isAdmin, path, label, portalPath, blurb }: 
                     {isAdmin ? <>
                       <button style={S.rowBtn} onClick={() => { setEditing(e); setShowModal(true); }}>Edit</button>
                       <button style={{ ...S.rowBtn, color: isActive(e.status) ? '#b91c1c' : '#059669' }} onClick={() => toggleActive(e)}>{isActive(e.status) ? 'Deactivate' : 'Reactivate'}</button>
-                      <button style={{ ...S.rowBtn, color: '#b91c1c' }} onClick={() => onDelete(e)}>Delete</button>
+                      <button title="Delete" style={{ ...S.rowBtn, color: '#b91c1c' }} onClick={() => onDelete(e)}><Trash2 size={14} /></button>
                     </> : <span style={{ color: '#8a8a8a', fontSize: '12px' }}>—</span>}
                   </td>
                 </tr>
