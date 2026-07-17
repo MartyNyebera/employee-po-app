@@ -71,7 +71,7 @@ const NAV_ENTRIES: NavEntry[] = [
     { view: 'withdrawal-requests', label: 'Withdrawal Requests', icon: PackageMinus, module: 'withdrawal-requests' },
   ] },
   { group: 'monitoring', label: 'Monitoring', icon: Activity, children: [
-    { view: 'customers', label: 'Customers', icon: Users, module: 'customers' },
+    { view: 'customers', label: 'Clients', icon: Users, module: 'customers' },
     { view: 'suppliers', label: 'Suppliers', icon: Factory, module: 'suppliers' },
     { view: 'projects', label: 'Projects', icon: Briefcase, module: 'projects' },
     { view: 'inquiries', label: 'Quotation', icon: MessageSquare, module: 'inquiries' },

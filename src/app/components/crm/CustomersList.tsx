@@ -33,7 +33,7 @@ export function CustomersList({ isAdmin }: { isAdmin: boolean }) {
   const load = async () => {
     setLoading(true);
     try { setRows(await fetchApi<Customer[]>('/customers')); }
-    catch { toast.error('Failed to load customers'); }
+    catch { toast.error('Failed to load clients'); }
     finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
@@ -46,23 +46,23 @@ export function CustomersList({ isAdmin }: { isAdmin: boolean }) {
   });
 
   const onDelete = async (c: Customer) => {
-    if (!(await confirmDialog({ title: `Delete customer "${c.name}"?`, message: 'This cannot be undone.', confirmLabel: 'Delete', tone: 'danger' }))) return;
+    if (!(await confirmDialog({ title: `Delete client "${c.name}"?`, message: 'This cannot be undone.', confirmLabel: 'Delete', tone: 'danger' }))) return;
     const prev = rows; setRows(rows.filter(r => r.id !== c.id));
-    try { await fetchApi(`/customers/${c.id}`, { method: 'DELETE' }); toast.success('Customer deleted'); }
+    try { await fetchApi(`/customers/${c.id}`, { method: 'DELETE' }); toast.success('Client deleted'); }
     catch { setRows(prev); toast.error('Delete failed'); }
   };
 
   return (
     <div style={S.page}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
-        <div><h1 style={S.h1}>Customers</h1><p style={S.sub}>Who we sell to — contractors, builders, factories, distributors.</p></div>
+        <div><h1 style={S.h1}>Clients</h1><p style={S.sub}>Who we sell to — contractors, builders, factories, distributors.</p></div>
         {/* Admin cannot add customers from the admin portal (#10) — Sales owns client creation. */}
       </div>
 
       <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
         <div style={{ position: 'relative', flex: 1, minWidth: '220px' }}>
           <Search size={16} style={{ position: 'absolute', left: '12px', top: '11px', color: '#8a8a8a' }} />
-          <input placeholder="Search customers…" value={search} onChange={e => setSearch(e.target.value)} style={{ ...S.input, paddingLeft: '36px' }} />
+          <input placeholder="Search clients…" value={search} onChange={e => setSearch(e.target.value)} style={{ ...S.input, paddingLeft: '36px' }} />
         </div>
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ ...S.input, width: 'auto', cursor: 'pointer' }}>
           <option value="">All statuses</option>
@@ -79,7 +79,7 @@ export function CustomersList({ isAdmin }: { isAdmin: boolean }) {
           </tr></thead>
           <tbody>
             {loading ? <tr><td style={S.td} colSpan={7}>Loading…</td></tr>
-              : filtered.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={7}>No customers yet.</td></tr>
+              : filtered.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={7}>No clients yet.</td></tr>
               : filtered.map(c => (
                 <tr key={c.id}>
                   <td style={{ ...S.td, fontWeight: 600, color: '#000000' }}>{c.name}</td>
@@ -114,13 +114,13 @@ function CustomerModal({ initial, onClose, onSaved }: { initial: Customer | null
     try {
       if (initial) await fetchApi(`/customers/${initial.id}`, { method: 'PATCH', body: JSON.stringify(f) });
       else await fetchApi('/customers', { method: 'POST', body: JSON.stringify(f) });
-      toast.success(initial ? 'Customer updated' : 'Customer added');
+      toast.success(initial ? 'Client updated' : 'Client added');
       onSaved();
     } catch (e: any) { toast.error('Save failed: ' + e.message); } finally { setSaving(false); }
   };
 
   return (
-    <Modal title={initial ? 'Edit Customer' : 'Add Customer'} onClose={onClose} wide
+    <Modal title={initial ? 'Edit Client' : 'Add Client'} onClose={onClose} wide
       footer={<><GhostBtn onClick={onClose}>Cancel</GhostBtn><PrimaryBtn onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</PrimaryBtn></>}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
         <Field label="Name *"><TextInput value={f.name || ''} onChange={e => set('name', e.target.value)} /></Field>

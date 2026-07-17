@@ -138,7 +138,7 @@ function InquiryModal({ initial, customers, suppliers, onClose, onSaved }: { ini
 
   const save = async () => {
     if (!f.inquiryDate) { toast.error('Inquiry date is required'); return; }
-    if (!f.customerId && !f.customerName) { toast.error('Pick a customer or type a name'); return; }
+    if (!f.customerId && !f.customerName) { toast.error('Pick a client or type a name'); return; }
     setSaving(true);
     try {
       const body = { ...f, quoteAmount: f.quoteAmount === ('' as any) ? null : f.quoteAmount, supplierQuoteAmount: f.supplierQuoteAmount === ('' as any) ? null : f.supplierQuoteAmount };
@@ -155,13 +155,13 @@ function InquiryModal({ initial, customers, suppliers, onClose, onSaved }: { ini
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
         <Field label="Inquiry date *"><TextInput type="date" value={(f.inquiryDate || '').slice(0, 10)} onChange={e => set('inquiryDate', e.target.value)} /></Field>
         <Field label="Source"><Select value={f.source || ''} onChange={v => set('source', v)} options={SOURCES} /></Field>
-        <Field label="Customer (existing)">
+        <Field label="Client (existing)">
           <select value={f.customerId || ''} onChange={e => set('customerId', e.target.value)} style={{ ...S.input, cursor: 'pointer' }}>
             <option value="">— or type a new name below —</option>
             {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </Field>
-        <Field label="…or new customer name"><TextInput value={f.customerName || ''} onChange={e => set('customerName', e.target.value)} placeholder="Brand-new lead" /></Field>
+        <Field label="…or new client name"><TextInput value={f.customerName || ''} onChange={e => set('customerName', e.target.value)} placeholder="Brand-new lead" /></Field>
         <Field label="Contact"><TextInput value={f.contact || ''} onChange={e => set('contact', e.target.value)} /></Field>
         <Field label="Trading line"><Select value={f.line || ''} onChange={v => set('line', v)} options={LINES} /></Field>
       </div>

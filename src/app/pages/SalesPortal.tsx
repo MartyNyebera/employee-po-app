@@ -253,7 +253,7 @@ function CreateSOModal({ session, customers, onClose, onCreated }: {
   const total = useMemo(() => items.reduce((t, it) => t + (Number(it.amount) || 0), 0), [items]);
 
   const save = async () => {
-    if (!f.client.trim()) { toast.error('Customer is required'); return; }
+    if (!f.client.trim()) { toast.error('Client is required'); return; }
     if (!f.deliveryDate) { toast.error('Delivery date is required'); return; }
     const valid = items.filter(it => it.description.trim() && Number(it.quantity) > 0);
     if (!valid.length) { toast.error('Add at least one item with a description and quantity'); return; }
@@ -316,14 +316,14 @@ function CreateSOModal({ session, customers, onClose, onCreated }: {
         <div className="p-5 space-y-4 overflow-y-auto">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Customer <span className="text-red-500">*</span></label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Client <span className="text-red-500">*</span></label>
               <select value={f.customerId} onChange={e => pickCustomer(e.target.value)} className={`${input} bg-white`}>
                 <option value="">Walk-in / type below…</option>
                 {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Customer name <span className="text-red-500">*</span></label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Client name <span className="text-red-500">*</span></label>
               <input value={f.client} onChange={e => set('client', e.target.value)} className={input} />
             </div>
             <div>
@@ -593,7 +593,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
               <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                 <div className="relative flex-1">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                  <input type="text" placeholder="Search SO #, customer…" value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-4 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <input type="text" placeholder="Search SO #, client…" value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-4 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
                 <button onClick={() => setCreating(true)} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Plus className="w-4 h-4" /> New Sales Order</button>
               </div>
@@ -611,7 +611,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                               <h3 className="font-semibold text-gray-900 text-sm">{so.soNumber}</h3>
                               {so.line && <span className="text-xs text-gray-400">· {so.line}</span>}
                             </div>
-                            <p className="text-xs text-gray-400 mt-0.5">Customer <span className="text-gray-600 font-medium">{so.client || '—'}</span></p>
+                            <p className="text-xs text-gray-400 mt-0.5">Client <span className="text-gray-600 font-medium">{so.client || '—'}</span></p>
                             <p className="text-xs text-gray-400 mt-1">Prepared by <span className="text-gray-600 font-medium">{so.preparedBy || '—'}</span></p>
                           </div>
                           <div className="flex flex-col items-end gap-1.5 flex-shrink-0">

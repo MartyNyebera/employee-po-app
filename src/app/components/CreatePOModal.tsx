@@ -308,39 +308,39 @@ export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
               {customers.length > 0 && (
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Existing customer
+                    Existing client
                   </label>
                   <select
                     value={form.customerId}
                     onChange={e => pickCustomer(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
-                    <option value="">— pick a customer, or type below —</option>
+                    <option value="">— pick a client, or type below —</option>
                     {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </div>
               )}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
-                  Customer Name <span className="text-red-500">*</span>
+                  Client Name <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
                   value={form.customerName}
                   onChange={e => setForm(f => ({ ...f, customerName: e.target.value }))}
-                  placeholder="Customer company name"
+                  placeholder="Client company name"
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   required
                 />
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
-                  Customer Address <span className="text-red-500">*</span>
+                  Client Address <span className="text-red-500">*</span>
                 </label>
                 <textarea
                   value={form.customerAddress}
                   onChange={e => setForm(f => ({ ...f, customerAddress: e.target.value }))}
-                  placeholder="Customer complete address"
+                  placeholder="Client complete address"
                   rows={2}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                   required
@@ -348,13 +348,13 @@ export function CreateSOModal({ onClose, onCreated }: CreateSOModalProps) {
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
-                  Customer Contact
+                  Client Contact
                 </label>
                 <input
                   type="text"
                   value={form.customerContact}
                   onChange={e => setForm(f => ({ ...f, customerContact: e.target.value }))}
-                  placeholder="Customer phone or email"
+                  placeholder="Client phone or email"
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>

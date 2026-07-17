@@ -514,7 +514,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
               margin: '0',
               fontFamily: 'Poppins, sans-serif'
             }}>
-              Track sales orders and customer deliveries
+              Track sales orders and client deliveries
             </p>
           </div>
         </div>
@@ -1000,7 +1000,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
                 marginBottom: '8px',
                 fontFamily: 'Poppins, sans-serif'
               }}>
-                <span>Customer: {po.client}</span>
+                <span>Client: {po.client}</span>
                 <span>{formatDate(po.createdDate)}</span>
               </div>
               
@@ -1238,13 +1238,13 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
                     marginBottom: '6px',
                     fontFamily: 'Poppins, sans-serif'
                   }}>
-                    Customer Name
+                    Client Name
                   </label>
                   <input
                     type="text"
                     value={editForm.customerName}
                     onChange={e => setEditForm({ ...editForm, customerName: e.target.value })}
-                    placeholder="Enter customer name..."
+                    placeholder="Enter client name..."
                     style={{
                       width: '100%',
                       padding: '12px 16px',
@@ -1267,13 +1267,13 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
                     marginBottom: '6px',
                     fontFamily: 'Poppins, sans-serif'
                   }}>
-                    Customer Address
+                    Client Address
                   </label>
                   <textarea
                     value={editForm.customerAddress}
                     onChange={e => setEditForm({ ...editForm, customerAddress: e.target.value })}
                     rows={2}
-                    placeholder="Enter customer address..."
+                    placeholder="Enter client address..."
                     style={{
                       width: '100%',
                       padding: '12px 16px',
@@ -1297,13 +1297,13 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
                     marginBottom: '6px',
                     fontFamily: 'Poppins, sans-serif'
                   }}>
-                    Customer Contact
+                    Client Contact
                   </label>
                   <input
                     type="text"
                     value={editForm.customerContact}
                     onChange={e => setEditForm({ ...editForm, customerContact: e.target.value })}
-                    placeholder="Enter customer contact..."
+                    placeholder="Enter client contact..."
                     style={{
                       width: '100%',
                       padding: '12px 16px',
@@ -1320,7 +1320,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
                 {customers.length > 0 && (
                   <div>
                     <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#262626', marginBottom: '6px', fontFamily: 'Poppins, sans-serif' }}>
-                      Link to customer
+                      Link to client
                     </label>
                     <select
                       value={editForm.customerId}

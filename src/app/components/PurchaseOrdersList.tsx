@@ -570,7 +570,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
               <Search className="size-4 text-slate-400 flex-shrink-0" />
               <input
                 type="text"
-                placeholder="Search SO number or customer..."
+                placeholder="Search SO number or client..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="flex-1 bg-transparent text-sm outline-none text-slate-700 min-w-0"
@@ -598,7 +598,7 @@ export function PurchaseOrdersList({ isAdmin = false }: PurchaseOrdersListProps)
               </div>
               <div className="flex flex-col gap-1 mb-3">
                 <div className="flex justify-between text-xs sm:text-sm text-slate-500">
-                  <span>Customer: {po.client}</span>
+                  <span>Client: {po.client}</span>
                   <span>{formatDate(po.createdDate)}</span>
                 </div>
                 <div className="flex justify-between text-xs sm:text-sm">

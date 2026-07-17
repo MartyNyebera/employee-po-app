@@ -101,7 +101,7 @@ function StaffModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => 
       <Field label="Temporary password *"><TextInput type="text" value={f.password} onChange={e => set('password', e.target.value)} placeholder="At least 6 characters" /></Field>
       <Field label="Role *"><Select value={f.role} onChange={v => set('role', v)} options={ROLES} placeholder="Select role" /></Field>
       <p style={{ fontSize: '12px', color: '#8a8a8a' }}>
-        <strong>Bookkeeper</strong>: money view (dashboard, orders, expenses, customers). <strong>Purchasing</strong>: supply view (suppliers, POs, quotations, product lines, inventory). <strong>Office Admin</strong>: combined bookkeeper + purchasing access (for one person doing both jobs). <strong>Admin</strong>: full access.
+        <strong>Bookkeeper</strong>: money view (dashboard, orders, expenses, clients). <strong>Purchasing</strong>: supply view (suppliers, POs, quotations, product lines, inventory). <strong>Office Admin</strong>: combined bookkeeper + purchasing access (for one person doing both jobs). <strong>Admin</strong>: full access.
       </p>
     </Modal>
   );
