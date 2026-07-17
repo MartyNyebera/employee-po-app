@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, X, Printer } from 'lucide-react';
+import { Check, X, Printer, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
@@ -80,6 +80,18 @@ export function WithdrawalRequestsReview({ isAdmin }: { isAdmin: boolean }) {
     if (!r.ok) toast.error(r.error || 'Failed to open the print window');
   };
 
+  // #3 — admin hard delete. The server refuses if a delivery was created from this withdrawal.
+  const removeWithdrawal = async (w: WithdrawalRequest) => {
+    const ok = await confirmDialog({ title: 'Delete this withdrawal request?', message: `${w.withdrawalNumber || ''} — ${w.quantity} ${w.unit || ''} of ${w.itemName}. This permanently removes it.`, confirmLabel: 'Delete', tone: 'danger' });
+    if (!ok) return;
+    setProcessing(w.id);
+    try {
+      await fetchApi(`/inventory-withdrawals/${w.id}`, { method: 'DELETE' });
+      setRows(prev => prev.filter(r => r.id !== w.id));
+      toast.success('Withdrawal request deleted');
+    } catch (e: any) { toast.error('Failed: ' + e.message); } finally { setProcessing(''); }
+  };
+
   // Only a warehouse-released request is yours to act on — a 'pending' one hasn't been
   // confirmed as physically on the shelf yet, so it isn't "awaiting you" in any useful sense.
   const pending = rows.filter(r => r.status === 'warehouse-approved').length;
@@ -146,6 +158,10 @@ export function WithdrawalRequestsReview({ isAdmin }: { isAdmin: boolean }) {
                           onClick={() => print(w)}><Printer size={13} /></button>
                       )}
                       {w.status === 'rejected' && <span style={{ color: '#8a8a8a', fontSize: '12px' }}>{w.reviewedBy ? `by ${w.reviewedBy}` : '—'}</span>}
+                      {isAdmin && (
+                        <button className="crm-row-btn" title="Delete request" style={{ ...S.rowBtn, marginLeft: 0, color: '#b91c1c' }} disabled={processing === w.id}
+                          onClick={() => removeWithdrawal(w)}><Trash2 size={13} /></button>
+                      )}
                     </div>
                   </td>
                 </tr>

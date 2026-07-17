@@ -5199,6 +5199,23 @@ app.get('/api/inventory-withdrawals', requireRole(['admin', 'warehouse']), async
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Admin-only hard delete of a withdrawal request (#3). A logistics-origin withdrawal that was
+// approved becomes a delivery (deliveries.withdrawal_id) in the same transaction — deleting the
+// withdrawal would orphan that delivery, so refuse if one exists (cancel the delivery first).
+// Otherwise the row is safe to remove (no table has an inbound FK to it).
+app.delete('/api/inventory-withdrawals/:id', requireRole(['admin']), async (req, res) => {
+  try {
+    const existing = await query('SELECT id FROM inventory_withdrawal_requests WHERE id = $1', [req.params.id]);
+    if (!existing.rows[0]) return res.status(404).json({ error: 'Withdrawal request not found' });
+    const del = await query('SELECT delivery_number FROM deliveries WHERE withdrawal_id = $1 LIMIT 1', [req.params.id]);
+    if (del.rows[0]) {
+      return res.status(400).json({ error: `A delivery (${del.rows[0].delivery_number || 'DR'}) was created from this withdrawal — cancel that delivery first.` });
+    }
+    await query('DELETE FROM inventory_withdrawal_requests WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // Signatures for ONE withdrawal, fetched on demand at print time — kept off the list for the
 // same reason as the purchase-request ones: ~20KB of base64 per row.
 // Requester and approver are both resolved LIVE from their accounts (by id), so saving a
