@@ -37,6 +37,44 @@ export function badge(text: string, color: string, bg: string) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// On-palette status coding. Three tones only — the palette has no green/amber, so
+// good/pending/bad collapse onto gold / neutral-gray / red. `statusToneFor` maps every domain
+// status word onto a tone; `tonePill` renders the standard pill; `toneText` is the plain gold/
+// gray/red text used inside the minimal list rows (no pill).
+export type Tone = 'good' | 'pending' | 'bad';
+
+export const TONE: Record<Tone, { text: string; bg: string; border: string }> = {
+  good:    { text: '#7a6a0c', bg: '#ececec', border: '#e3ca63' },
+  pending: { text: '#5a5a5a', bg: '#f4f4f4', border: '#d6d6d6' },
+  bad:     { text: '#b91c1c', bg: '#f4f4f4', border: '#d6d6d6' },
+};
+
+const GOOD = new Set(['approved', 'active', 'paid', 'completed', 'complete', 'won', 'in-stock', 'received', 'delivered', 'on-file', 'excellent']);
+const BAD = new Set(['rejected', 'disapproved', 'inactive', 'lost', 'cancelled', 'canceled', 'out-of-stock', 'high', 'poor', 'overdue']);
+
+export function statusToneFor(status: string): Tone {
+  const s = (status || '').toLowerCase();
+  if (GOOD.has(s)) return 'good';
+  if (BAD.has(s)) return 'bad';
+  return 'pending'; // pending / reviewed / verified / ordered / in-progress / awaiting / low-stock / normal / lead / new …
+}
+
+export function toneText(status: string): string {
+  return TONE[statusToneFor(status)].text;
+}
+
+// A pill coloured by the status' tone. `label` defaults to a Title-cased status.
+export function tonePill(status: string, label?: string) {
+  const t = TONE[statusToneFor(status)];
+  const text = label ?? (status ? status.charAt(0).toUpperCase() + status.slice(1) : status);
+  return (
+    <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '12px', fontWeight: 600, color: t.text, backgroundColor: t.bg, border: `1px solid ${t.border}`, whiteSpace: 'nowrap' }}>
+      {text}
+    </span>
+  );
+}
+
 export function Modal({ title, onClose, children, footer, wide }: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }} onClick={onClose}>

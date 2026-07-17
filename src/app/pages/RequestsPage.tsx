@@ -11,6 +11,7 @@ import { PageErrorFallback } from '../components/PageErrorFallback';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { printWithdrawalReceipt } from '../lib/withdrawalReceiptPrint';
+import { printPurchaseRequest } from '../lib/purchaseRequestPrint';
 import { esc } from '../lib/orderPrint';
 import { renderPrintDocument } from '../lib/printChrome';
 
@@ -795,114 +796,13 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
     } catch (e: any) { toast.error(e.message || 'Failed to submit request'); } finally { setSubmitting(false); }
   };
 
-  // Printable purchase-request document (opens a print-ready window). Mirrors the company
-  // letterhead used by the purchasing check report for a consistent look.
+  // Printable purchase-request document — now via the shared lib so the production portal and the
+  // admin review print the exact same document (one template). The employee's own signature comes
+  // from the /signatures response (preparedSignature), same as the admin path.
   const printRequest = async (req: PurchaseRequest) => {
-    // Open the window synchronously — inside the click — or the popup blocker kills it. The
-    // signature fetch happens after, into the already-open window.
-    const w = window.open('', '_blank');
-    if (!w) { toast.error('Please allow popups to print'); return; }
-    w.document.write('<!doctype html><title>Preparing…</title><body style="font:14px sans-serif;padding:2rem;color:#555">Preparing the request…</body>');
-
-    // Three blocks now, so the accounting reviewer's and the approving admin's signatures are
-    // needed too — both live on other people's accounts and are ~20KB each, hence the
-    // per-document fetch. The employee's own signature is already in state.
-    let checkedSignature: string | null = null;
-    let approvedSignature: string | null = null;
-    try {
-      const s = await empFetch<{ preparedSignature: string | null; checkedSignature: string | null; approvedSignature: string | null }>(`/purchase-requests/${req.id}/signatures`);
-      checkedSignature = s.checkedSignature;
-      approvedSignature = s.approvedSignature;
-    } catch {
-      // A signature lookup failure must not block the document — the blocks render unsigned.
-      toast.error('Could not load signatures; printing without them');
-    }
-
-    const rows = req.items.map((it, i) => `
-      <tr>
-        <td>${i + 1}</td>
-        <td>${esc(it.description || '')}${it.kind === 'labor' ? ' <span style="font-size:8pt;color:#555;font-style:italic">(labor)</span>' : ''}${it.laborNote ? `<div style="font-size:8pt;color:#555;white-space:pre-wrap">${esc(it.laborNote)}</div>` : ''}</td>
-        <td style="text-align:center">${it.kind === 'labor' ? '—' : esc(it.quantity ?? '')}</td>
-        <td style="text-align:center">${it.kind === 'labor' ? '—' : esc(it.unit || '')}</td>
-        <td style="text-align:right">${peso(it.unitCost)}</td>
-        <td style="text-align:right">${peso(it.amount)}</td>
-      </tr>`).join('');
-    // Fixed-height slot whether or not a signature exists, so the rule lines stay level.
-    const sigImg = (src: string | null) => src
-      ? `<img class="sign-img" src="${esc(src)}" />`
-      : `<div style="height:60px"></div>`;
-    const signDate = (d?: string | null) =>
-      d ? `<div class="sign-date">${esc(new Date(d).toLocaleDateString())}</div>` : '';
-    const css = `
-      /* #3 — PR meta is two columns: the project block stacked on the LEFT, PR No. on the RIGHT. */
-      .meta { display:flex; justify-content:space-between; align-items:flex-start; margin:14px 0; font-size:10pt; }
-      .meta .meta-left div { margin-bottom:3px; }
-      .meta .meta-left span, .meta .meta-right span { font-weight:bold; }
-      .meta .meta-right { text-align:right; }
-      table.items { width:100%; border-collapse:collapse; margin-top:6px; font-size:10pt; }
-      table.items th, table.items td { border:1px solid #000; padding:5px 6px; }
-      table.items th { background:#f0f0f0; }
-      .total { text-align:right; font-weight:bold; margin-top:8px; font-size:11pt; }
-      .notes { margin:14px 0 6px; font-size:10.5pt; line-height:1.5; }
-      /* Three blocks across (Prepared / Reviewed / Approved), sharing the width via flex:1
-         rather than a fixed 280px each — 3 × 280 overflows the A4 text column. Matches the
-         accounting and purchasing review reports. */
-      .signs { display:flex; gap:20px; margin-top:40px; break-inside:avoid; }
-      .sign { flex:1; min-width:0; text-align:center; }
-      .sign-img { height:60px; object-fit:contain; margin-bottom:-6px; }
-      .sign-line { border-top:1px solid #000; padding-top:3px; font-weight:bold; font-size:10pt; overflow-wrap:break-word; }
-      .sign-role { font-size:8.5pt; color:#333; }
-      .sign-date { font-size:8.5pt; color:#333; margin-top:1px; }
-`;
-    const body = `
-      <div class="meta">
-        <div class="meta-left">
-          <div><span>For (Project):</span> ${esc(req.projectName || 'Personal use')}</div>
-          <div><span>Date filed:</span> ${esc(req.createdAt ? new Date(req.createdAt).toLocaleDateString() : '—')}</div>
-          <div><span>Needed by:</span> ${esc(req.neededBy ? new Date(req.neededBy).toLocaleDateString() : '—')}</div>
-        </div>
-        <div class="meta-right"><span>PR No.:</span> ${esc(req.prNumber)}</div>
-      </div>
-      <!-- #4 — the title sits UNDER the needed-by / PR No. meta, not in the page header. -->
-      <div class="document-title" style="margin:12px auto 4px">PURCHASE REQUEST</div>
-      <table class="items">
-        <thead><tr><th>No</th><th>Description</th><th>Qty</th><th>Unit</th><th>Est. Cost</th><th>Amount</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      <div class="total">Total: ${peso(req.total)}</div>
-      ${req.notes ? `<div class="notes"><span style="font-weight:bold">Notes:</span> ${esc(req.notes)}</div>` : ''}
-      <div class="signs">
-        <div class="sign">
-          ${sigImg(signature)}
-          <div class="sign-line">${esc(req.employeeName || session.full_name)}</div>
-          <div class="sign-role">Prepared By</div>
-          ${signDate(req.createdAt)}
-        </div>
-        <div class="sign">
-          ${sigImg(checkedSignature)}
-          <div class="sign-line">${esc(req.checkedBy || '')}</div>
-          <div class="sign-role">Reviewed By</div>
-          ${signDate(req.checkedAt)}
-        </div>
-        <div class="sign">
-          ${sigImg(approvedSignature)}
-          <div class="sign-line">${esc(req.verifiedBy || '')}</div>
-          <div class="sign-role">Approved By</div>
-          ${signDate(req.verifiedAt)}
-        </div>
-      </div>`;
-    const html = renderPrintDocument({
-      title: `Purchase Request ${req.prNumber}`,
-      docTitle: '', // #4 — rendered inside the body (under the meta), not the repeating header
-      css,
-      body,
-    });
-    // open() resets the document — without it, write() appends onto the "Preparing…" placeholder.
-    w.document.open();
-    w.document.write(html);
-    w.document.close();
-    w.focus();
-    w.onload = () => { w.print(); };
+    const r = await printPurchaseRequest(req as any, () =>
+      empFetch<{ preparedSignature: string | null; checkedSignature: string | null; approvedSignature: string | null }>(`/purchase-requests/${req.id}/signatures`));
+    if (!r.ok) toast.error(r.error || 'Failed to open the print window');
   };
 
   const filteredRequests = requests.filter((r) => statusFilter === 'all' || r.status === statusFilter);
