@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Check, X, Trash2 } from 'lucide-react';
+import { Check, X, Trash2, Printer } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
 import { useLiveRefresh } from '../../hooks/useLiveRefresh';
-import { S, Modal, GhostBtn, PrimaryBtn, badge, peso } from './crmKit';
+import { S, badge, peso } from './crmKit';
+import { printPurchaseRequest } from '../../lib/purchaseRequestPrint';
 import { nextDeptFor } from '../../lib/nextDept';
 
 // unitCost/amount are the employee's ESTIMATE; the final* fields are what Purchasing priced
 // the line at when they raised the order. Both are kept, so the gap stays auditable.
-interface PRItem { no?: number; description: string; quantity: number; unit: string; unitCost: number; amount: number; finalUnitCost?: number | null; finalAmount?: number | null; }
+interface PRItem { no?: number; description: string; quantity: number; unit: string; unitCost: number; amount: number; finalUnitCost?: number | null; finalAmount?: number | null; kind?: string | null; laborNote?: string | null; }
 type PRStatus = 'pending' | 'reviewed' | 'verified' | 'ordered' | 'approved' | 'disapproved';
 interface PurchaseRequest {
   id: string; prNumber: string; employeeName?: string; projectId?: string | null; projectName?: string | null;
@@ -59,7 +60,6 @@ export function PurchaseRequestsReview() {
   const [rows, setRows] = useState<PurchaseRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('');
-  const [selected, setSelected] = useState<PurchaseRequest | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   // silent: background poll — no spinner, no toast on a blip (see useLiveRefresh).
@@ -84,9 +84,15 @@ export function PurchaseRequestsReview() {
     try {
       await fetchApi(`/purchase-requests/${pr.id}/verify`, { method: 'PUT', body: JSON.stringify({ action }) });
       toast.success(action === 'verified' ? `${pr.prNumber} verified — Purchasing can now assign a supplier` : `${pr.prNumber} rejected`);
-      setSelected(null);
       load();
     } catch (e: any) { toast.error('Failed: ' + e.message); } finally { setBusyId(null); }
+  };
+
+  // #2 — print the PURCHASE REQUEST document (shared with the production portal). Signatures come
+  // from the admin-authed endpoint (the guard admits 'admin').
+  const printPR = async (pr: PurchaseRequest) => {
+    const r = await printPurchaseRequest(pr as any, () => fetchApi(`/purchase-requests/${pr.id}/signatures`));
+    if (!r.ok) toast.error(r.error || 'Failed to open the print window');
   };
 
   // Admin-only hard delete (#2) — clears test rows. The server rejects deleting a request that
@@ -98,7 +104,6 @@ export function PurchaseRequestsReview() {
     try {
       await fetchApi(`/purchase-requests/${pr.id}`, { method: 'DELETE' });
       toast.success(`${pr.prNumber} deleted`);
-      setSelected(null);
       load();
     } catch (e: any) { toast.error('Failed: ' + e.message); } finally { setBusyId(null); }
   };
@@ -159,7 +164,7 @@ export function PurchaseRequestsReview() {
                     {/* Flex rather than inline buttons: an inline-flex button (icon + label) and a
                         plain inline one align on different baselines, which visibly staggers them. */}
                     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px' }}>
-                      <button className="crm-row-btn" style={{ ...S.rowBtn, marginLeft: 0 }} onClick={() => setSelected(pr)}>View</button>
+                      <button className="crm-row-btn" title="Print" style={{ ...S.rowBtn, marginLeft: 0 }} onClick={() => printPR(pr)}><Printer size={13} /></button>
                       {pr.status === 'reviewed' && (
                         <>
                           <button className="crm-action-btn" title="Verify" style={actionBtn(busyId === pr.id)} disabled={busyId === pr.id}
@@ -177,64 +182,6 @@ export function PurchaseRequestsReview() {
           </tbody>
         </table>
       </div>
-
-      {selected && (
-        <Modal title={`${selected.prNumber} — ${selected.employeeName || 'Employee'}`} onClose={() => setSelected(null)} wide
-          footer={selected.status === 'reviewed' ? (
-            <>
-              <GhostBtn onClick={() => verify(selected, 'rejected')}>Reject</GhostBtn>
-              <PrimaryBtn onClick={() => verify(selected, 'verified')} disabled={busyId === selected.id}>
-                {busyId === selected.id ? 'Verifying…' : 'Verify Request'}
-              </PrimaryBtn>
-            </>
-          ) : <GhostBtn onClick={() => setSelected(null)}>Close</GhostBtn>}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px', fontSize: '14px' }}>
-            <div><div style={S.label}>For</div>{selected.projectName || 'Personal use'}</div>
-            <div><div style={S.label}>Status</div>{statusBadge(selected.status)}</div>
-            <div><div style={S.label}>Prepared by</div>{selected.employeeName || '—'}</div>
-            <div><div style={S.label}>Reviewed by (Accounting)</div>{selected.checkedBy || '—'}</div>
-            {/* One admin field, not two. This is verified_by — filled the moment you verify —
-                and it is what the printed "Approved By" block shows. The separate reviewed_by
-                (set when the resulting purchase order is approved) is surfaced under
-                Orders ▸ Purchase Orders instead; two "Admin" rows here read as a bug. */}
-            <div><div style={S.label}>Approved by (Admin)</div>{selected.verifiedBy || '—'}</div>
-            <div><div style={S.label}>Needed by</div>{selected.neededBy ? new Date(selected.neededBy).toLocaleDateString() : '—'}</div>
-            <div><div style={S.label}>Supplier</div>{selected.supplier || '—'}</div>
-          </div>
-          <div style={{ ...S.label, marginBottom: '6px' }}>Items</div>
-          <table style={{ ...S.table, marginBottom: '12px' }}>
-            <thead><tr>
-              <th style={S.th}>Description</th><th style={S.th}>Qty</th><th style={S.th}>Unit</th>
-              <th style={{ ...S.th, textAlign: 'right' }}>Est. Cost</th>
-              {isPriced(selected) && <th style={{ ...S.th, textAlign: 'right' }}>Final Cost</th>}
-              <th style={{ ...S.th, textAlign: 'right' }}>Amount</th>
-            </tr></thead>
-            <tbody>
-              {selected.items.map((it, idx) => {
-                const priced = isPriced(selected);
-                return (
-                  <tr key={idx}>
-                    <td style={S.td}>{it.description}</td><td style={S.td}>{it.quantity}</td><td style={S.td}>{it.unit}</td>
-                    {/* Once Purchasing has priced it, the estimate greys out — it is history. */}
-                    <td style={{ ...S.td, textAlign: 'right', color: priced ? '#8a8a8a' : undefined }}>{peso(it.unitCost)}</td>
-                    {priced && <td style={{ ...S.td, textAlign: 'right' }}>{peso(it.finalUnitCost ?? 0)}</td>}
-                    <td style={{ ...S.td, textAlign: 'right', fontWeight: 600 }}>{peso(priced ? (it.finalAmount ?? 0) : it.amount)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          <div style={{ textAlign: 'right', fontWeight: 700, color: '#000000' }}>
-            {isPriced(selected) && (
-              <span style={{ fontWeight: 400, color: '#8a8a8a', marginRight: '12px' }}>
-                Estimate: <span style={{ textDecoration: 'line-through' }}>{peso(selected.total)}</span>
-              </span>
-            )}
-            {isPriced(selected) ? 'Final total' : 'Total'}: {peso(isPriced(selected) ? (selected.finalTotal ?? 0) : selected.total)}
-          </div>
-          {selected.notes && <div style={{ marginTop: '12px' }}><div style={S.label}>Notes</div><p style={{ fontSize: '14px', color: '#262626' }}>{selected.notes}</p></div>}
-        </Modal>
-      )}
     </div>
   );
 }
