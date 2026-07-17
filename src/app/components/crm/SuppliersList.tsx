@@ -61,7 +61,7 @@ export function SuppliersList({ isAdmin }: { isAdmin: boolean }) {
     <div style={S.page}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
         <div><h1 style={S.h1}>Suppliers</h1><p style={S.sub}>Who we buy from — parts, fabrication, raw materials.</p></div>
-        {isAdmin && <button style={S.addBtn} onClick={() => { setEditing(null); setShowModal(true); }}><Plus size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />Add Supplier</button>}
+        {/* Admin cannot add suppliers from the admin portal (#10). */}
       </div>
 
       <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>

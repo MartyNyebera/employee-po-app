@@ -525,35 +525,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
             </p>
           </div>
         </div>
-        {isAdmin && (
-          <button
-            onClick={() => setShowCreateModal(true)}
-            style={{
-              backgroundColor: '#d1b01b',
-              color: '#000000',
-              padding: '12px 20px',
-              borderRadius: '8px',
-              border: 'none',
-              fontSize: '14px',
-              fontWeight: '500',
-              fontFamily: 'Poppins, sans-serif',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              transition: 'all 0.2s ease'
-            }}
-            onMouseOver={(e) => {
-              e.currentTarget.style.backgroundColor = '#d1b01b';
-            }}
-            onMouseOut={(e) => {
-              e.currentTarget.style.backgroundColor = '#d1b01b';
-            }}
-          >
-            <Plus style={{ width: '16px', height: '16px' }} />
-            New PO
-          </button>
-        )}
+        {/* Admin cannot raise POs from the admin portal (#10) — Purchasing owns PO creation. */}
       </div>
 
       {/* METRIC CARDS */}

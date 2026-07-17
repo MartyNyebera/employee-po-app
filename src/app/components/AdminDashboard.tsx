@@ -3,7 +3,7 @@ import { getStoredAuth, fetchApi } from '../api/client';
 import { useAutoLogout } from '../hooks/useAutoLogout';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { Button } from './ui/button';
-import { LogOut, Home, FileText, Receipt, Menu, X, Check, XCircle, Clock, Wrench, ShoppingCart, Package, User, UserCheck, MessageSquare, Users, Factory, UserCog, Briefcase, ClipboardCheck, PackageMinus, ChevronRight, ChevronDown, Warehouse, Activity, Calculator, Truck, PenTool, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { LogOut, Home, FileText, Receipt, Menu, X, Check, XCircle, Clock, ShoppingCart, Package, User, UserCheck, MessageSquare, Users, Factory, UserCog, Briefcase, ClipboardCheck, PackageMinus, ChevronRight, ChevronDown, Warehouse, Activity, Calculator, Truck, PenTool, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { SuppliersList } from './crm/SuppliersList';
 import { CustomersList } from './crm/CustomersList';
 import { InquiriesList } from './crm/InquiriesList';
@@ -31,7 +31,6 @@ const SalesOrdersList = lazy(() => import('./SalesOrdersList-Professional').then
 const TransactionsList = lazy(() => import('./TransactionsList-Professional').then(m => ({ default: m.TransactionsList })));
 const PurchaseOrderList = lazy(() => import('./PurchaseOrderList-Professional-Fixed').then(m => ({ default: m.PurchaseOrderList })));
 const InventoryList = lazy(() => import('./InventoryList-Professional').then(m => ({ default: m.InventoryList })));
-const MiscellaneousManagement = lazy(() => import('./MiscellaneousManagement-Simple').then(m => ({ default: m.MiscellaneousManagement })));
 import { toast } from 'sonner';
 
 interface AdminDashboardProps {
@@ -66,7 +65,6 @@ const NAV_ENTRIES: NavEntry[] = [
   { group: 'orders', label: 'Orders', icon: FileText, children: [
     { view: 'orders', label: 'Sales Orders', icon: FileText, module: 'orders' },
     { view: 'purchase-orders', label: 'Purchase Orders', icon: Package, module: 'purchase-orders' },
-    { view: 'request-form', label: 'Request Order', icon: ShoppingCart, module: 'request-form' },
   ] },
   { group: 'requests', label: 'Requests', icon: ClipboardCheck, children: [
     { view: 'purchase-requests', label: 'Purchase Requests', icon: ClipboardCheck, module: 'purchase-requests' },
@@ -79,7 +77,6 @@ const NAV_ENTRIES: NavEntry[] = [
     { view: 'inquiries', label: 'Quotation', icon: MessageSquare, module: 'inquiries' },
   ] },
   { view: 'inventory', label: 'Inventory Management', icon: Package, module: 'inventory' },
-  { view: 'miscellaneous', label: 'Miscellaneous', icon: Wrench, module: 'miscellaneous' },
   { group: 'accounts', label: 'Accounts', icon: UserCog, children: [
     // Labels only — `view` and `module` ids are the contract with permissions.ts and the
     // canView guard below, which passes currentView where a module key is expected.
@@ -254,14 +251,6 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
 
     if (currentView === 'withdrawal-requests') {
       return <WithdrawalRequestsReview isAdmin={canManage(role, 'withdrawal-requests')} />;
-    }
-
-    if (currentView === 'miscellaneous') {
-      return <MiscellaneousManagement />;
-    }
-
-    if (currentView === 'request-form') {
-      return <MaterialRequests />;
     }
 
     return <div>View not found</div>;

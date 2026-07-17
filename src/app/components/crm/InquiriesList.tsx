@@ -71,7 +71,7 @@ export function InquiriesList({ isAdmin }: { isAdmin: boolean }) {
     <div style={S.page}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
         <div><h1 style={S.h1}>Inquiries / Quotations</h1><p style={S.sub}>Client asks → we get a supplier quote → we quote the client. The gap is the margin.</p></div>
-        {isAdmin && <button style={S.addBtn} onClick={() => { setEditing(null); setShowModal(true); }}><Plus size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />New Quotation</button>}
+        {/* Admin cannot create quotations from the admin portal (#10) — Sales owns quotation creation. */}
       </div>
 
       <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>

@@ -523,35 +523,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
             display: 'flex',
             gap: '16px'
           }}>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              style={{
-                backgroundColor: '#d1b01b',
-                color: '#000000',
-                border: 'none',
-                borderRadius: '8px',
-                padding: '10px 20px',
-                fontSize: '14px',
-                fontWeight: '500',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                fontFamily: 'Poppins, sans-serif',
-                transition: 'all 0.2s ease'
-              }}
-              onMouseOver={(e) => {
-                e.currentTarget.style.backgroundColor = '#d1b01b';
-                e.currentTarget.style.transform = 'translateY(-1px)';
-              }}
-              onMouseOut={(e) => {
-                e.currentTarget.style.backgroundColor = '#d1b01b';
-                e.currentTarget.style.transform = 'translateY(0)';
-              }}
-            >
-              <Plus style={{ width: '16px', height: '16px' }} />
-              Add Sales Order
-            </button>
+            {/* Admin cannot create sales orders from the admin portal (#10) — Sales owns SO creation. Refresh stays. */}
             <button
               onClick={() => {
                 setRefreshKey(prev => prev + 1);

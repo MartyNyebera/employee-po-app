@@ -54,7 +54,7 @@ export function ProjectsList({ isAdmin }: { isAdmin: boolean }) {
     <div style={S.page}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
         <div><h1 style={S.h1}>Projects</h1><p style={S.sub}>Jobs and sites employees can charge purchase requests to.</p></div>
-        {isAdmin && <button style={S.addBtn} onClick={() => { setEditing(null); setShowModal(true); }}><Plus size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />Add Project</button>}
+        {/* Admin cannot add projects from the admin portal (#10). */}
       </div>
 
       <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>

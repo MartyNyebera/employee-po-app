@@ -278,35 +278,7 @@ export function InventoryList({ isAdmin }: InventoryListProps) {
             </p>
           </div>
         </div>
-        {isAdmin && (
-          <button
-            onClick={() => setShowCreateModal(true)}
-            style={{
-              backgroundColor: '#d1b01b',
-              color: '#000000',
-              padding: '12px 20px',
-              borderRadius: '8px',
-              border: 'none',
-              fontSize: '14px',
-              fontWeight: '500',
-              fontFamily: 'Poppins, sans-serif',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              transition: 'all 0.2s ease'
-            }}
-            onMouseOver={(e) => {
-              e.currentTarget.style.backgroundColor = '#d1b01b';
-            }}
-            onMouseOut={(e) => {
-              e.currentTarget.style.backgroundColor = '#d1b01b';
-            }}
-          >
-            <Plus style={{ width: '16px', height: '16px' }} />
-            Add Item
-          </button>
-        )}
+        {/* Admin cannot create inventory items from the admin portal (#10) — Warehouse owns item creation. */}
       </div>
 
       {/* METRIC CARDS */}
