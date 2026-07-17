@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ClipboardList, PenTool, Menu, X, Search, Clock, Calendar,
   Printer, LogOut, Upload, Eraser, Eye, FileText, Factory,
-  PanelLeftClose, PanelLeftOpen, Plus, Pencil, Trash2, Paperclip, RefreshCw,
+  PanelLeftClose, PanelLeftOpen, Plus, Pencil, Trash2, Paperclip, RefreshCw, PackageMinus,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { PageErrorFallback } from '../components/PageErrorFallback';
+import { WithdrawalTab } from '../components/WithdrawalTab';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { confirmDialog } from '../lib/confirm';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
@@ -28,7 +29,7 @@ import { AttentionCard } from '../components/AttentionCard';
 // ============================================================================
 
 type PRStatus = 'pending' | 'reviewed' | 'verified' | 'ordered' | 'approved' | 'disapproved';
-type PortalView = 'requests' | 'orders' | 'suppliers' | 'signature';
+type PortalView = 'requests' | 'orders' | 'suppliers' | 'withdrawals' | 'signature';
 
 // unitCost/amount are the employee's ESTIMATE; finalUnitCost/finalAmount are what Purchasing
 // priced the line at when they raised the order. Both are kept — see final_total in schema.
@@ -976,6 +977,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     { id: 'requests', label: 'Purchase Requests', icon: ClipboardList },
     { id: 'orders', label: 'Purchase Orders', icon: FileText },
     { id: 'suppliers', label: 'Suppliers', icon: Factory },
+    { id: 'withdrawals', label: 'Withdrawals', icon: PackageMinus },
     { id: 'signature', label: 'My Signature', icon: PenTool },
   ];
 
@@ -1047,6 +1049,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 
         <main className="flex-1 overflow-y-auto p-4 lg:p-6">
           {view === 'signature' && <SignaturePad initial={signature} onSaved={setSignature} />}
+
+          {view === 'withdrawals' && <WithdrawalTab fetchFn={pFetch} />}
 
           {view === 'requests' && (
             <div className="space-y-4">

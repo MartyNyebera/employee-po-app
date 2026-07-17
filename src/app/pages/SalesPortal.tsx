@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   FileText, PenTool, Menu, X, Search, Clock, Calendar, Printer, LogOut,
-  Upload, Eraser, Plus, Trash2, PanelLeftClose, PanelLeftOpen,
+  Upload, Eraser, Plus, Trash2, PanelLeftClose, PanelLeftOpen, PackageMinus,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { PageErrorFallback } from '../components/PageErrorFallback';
+import { WithdrawalTab } from '../components/WithdrawalTab';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { printSalesOrder } from '../lib/orderPrint';
 
@@ -18,7 +19,7 @@ import { printSalesOrder } from '../lib/orderPrint';
 // approved orders are what Logistics can then dispatch (/logistics).
 // ============================================================================
 
-type PortalView = 'orders' | 'signature';
+type PortalView = 'orders' | 'withdrawals' | 'signature';
 
 interface LineItem { id: string; description: string; quantity: number; unit: string; unitPrice: number; amount: number; }
 interface SalesOrder {
@@ -428,6 +429,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 
   const NAV: { id: PortalView; label: string; icon: any }[] = [
     { id: 'orders', label: 'Sales Orders', icon: FileText },
+    { id: 'withdrawals', label: 'Withdrawals', icon: PackageMinus },
     { id: 'signature', label: 'My Signature', icon: PenTool },
   ];
 
@@ -487,6 +489,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 
         <main className="flex-1 overflow-y-auto p-4 lg:p-6">
           {view === 'signature' && <SignaturePad initial={signature} onSaved={setSignature} />}
+
+          {view === 'withdrawals' && <WithdrawalTab fetchFn={sFetch} />}
 
           {view === 'orders' && (
             <div className="space-y-4">

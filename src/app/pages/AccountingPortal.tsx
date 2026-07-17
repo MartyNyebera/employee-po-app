@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ClipboardList, PenTool, Menu, X, Search, Clock, Calendar, CheckCircle2,
   XCircle, Printer, LogOut, Upload, Eraser, Eye, Briefcase, Plus, Trash2, Pencil,
-  PanelLeftClose, PanelLeftOpen, FileText,
+  PanelLeftClose, PanelLeftOpen, FileText, PackageMinus,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -14,6 +14,7 @@ import { esc, printPurchaseOrder } from '../lib/orderPrint';
 import { renderPrintDocument } from '../lib/printChrome';
 import { NavBadge } from '../components/NavBadge';
 import { AttentionCard } from '../components/AttentionCard';
+import { WithdrawalTab } from '../components/WithdrawalTab';
 import { nextDeptFor } from '../lib/nextDept';
 
 // ============================================================================
@@ -29,7 +30,7 @@ import { nextDeptFor } from '../lib/nextDept';
 // ============================================================================
 
 type PRStatus = 'pending' | 'reviewed' | 'verified' | 'ordered' | 'approved' | 'disapproved';
-type PortalView = 'requests' | 'orders' | 'projects' | 'signature';
+type PortalView = 'requests' | 'orders' | 'projects' | 'withdrawals' | 'signature';
 
 // Section C — #12: Accounting is also the FIRST gate of the purchase-ORDER flow. Purchasing
 // raises an order ('pending'); Accounting reviews it here (→ 'accounting-approved', passing it
@@ -609,6 +610,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     { id: 'requests', label: 'Purchase Requests', icon: ClipboardList },
     { id: 'orders', label: 'Purchase Orders', icon: FileText },
     { id: 'projects', label: 'Projects', icon: Briefcase },
+    { id: 'withdrawals', label: 'Withdrawals', icon: PackageMinus },
     { id: 'signature', label: 'My Signature', icon: PenTool },
   ];
 
@@ -674,6 +676,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 
         <main className="flex-1 overflow-y-auto p-4 lg:p-6">
           {view === 'signature' && <SignaturePad initial={signature} onSaved={setSignature} />}
+
+          {view === 'withdrawals' && <WithdrawalTab fetchFn={aFetch} />}
 
           {view === 'projects' && (
             <div className="space-y-4">

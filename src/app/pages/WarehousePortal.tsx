@@ -13,6 +13,7 @@ import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { printPurchaseOrder, parsePOLineItems } from '../lib/orderPrint';
 import { printReceivingReport, type ReceivedLine } from '../lib/deliveryReceiptPrint';
 import { ReceivingModal } from '../components/ReceivingModal';
+import { WithdrawalTab } from '../components/WithdrawalTab';
 import { NavBadge } from '../components/NavBadge';
 import { AttentionCard } from '../components/AttentionCard';
 
@@ -24,7 +25,7 @@ import { AttentionCard } from '../components/AttentionCard';
 // Items entered here feed inventory management and purchase-request selection.
 // ============================================================================
 
-type PortalView = 'inventory' | 'itemRequests' | 'orders' | 'withdrawals' | 'signature';
+type PortalView = 'inventory' | 'itemRequests' | 'orders' | 'withdrawals' | 'myWithdrawals' | 'signature';
 
 // Section D — #10: inbound receiving moved here from Logistics. An approved purchase order
 // arrives from a supplier; the warehouse marks it received, which adds the goods to stock.
@@ -536,6 +537,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     { id: 'itemRequests', label: 'Item Requests', icon: ClipboardList },
     { id: 'orders',       label: 'Purchase Orders', icon: FileText },
     { id: 'withdrawals',  label: 'Withdrawals', icon: PackageMinus },
+    { id: 'myWithdrawals', label: 'My Withdrawals', icon: PackageMinus },
     { id: 'signature',    label: 'My Signature', icon: PenTool },
   ];
 
@@ -610,6 +612,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 
         <main className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-4">
           {view === 'signature' && <SignaturePad initial={signature} onSaved={setSignature} />}
+
+          {view === 'myWithdrawals' && <WithdrawalTab fetchFn={wFetch} />}
 
           {view === 'inventory' && <>
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
