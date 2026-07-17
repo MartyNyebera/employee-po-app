@@ -7,6 +7,7 @@ import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { CreatePurchaseOrderModal } from './CreatePurchaseOrderModal';
 import { printPurchaseOrder } from '../lib/orderPrint';
 import { nextDeptFor } from '../lib/nextDept';
+import { S, peso } from './crm/crmKit';
 
 interface PurchaseOrder {
   id: string;
@@ -36,6 +37,8 @@ interface PurchaseOrder {
 interface PurchaseOrderListProps {
   isAdmin: boolean;
 }
+
+const statusLabel = (s: string) => ({ 'pending':'Pending','accounting-approved':'Accounting-approved','rejected':'Rejected','approved':'Approved','in-progress':'In progress','RECEIVED':'Received','cancelled':'Cancelled' }[s] || s);
 
 export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
@@ -475,610 +478,69 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
   }
 
   return (
-    <div style={{
-      padding: '32px',
-      fontFamily: 'Poppins, sans-serif',
-      backgroundColor: '#ffffff',
-      minHeight: '100vh'
-    }}>
-      {/* HEADER */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginBottom: '32px'
-      }}>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '16px'
-        }}>
-          <div>
-            <h1 style={{
-              fontSize: '28px',
-              fontWeight: '700',
-              color: '#000000',
-              margin: '0 0 8px 0',
-              fontFamily: 'Poppins, sans-serif'
-            }}>
-              Purchase Orders
-            </h1>
-            <p style={{
-              fontSize: '14px',
-              color: '#5a5a5a',
-              margin: '0',
-              fontFamily: 'Poppins, sans-serif'
-            }}>
-              Manage purchases from vendors and suppliers
-            </p>
-          </div>
+    <div style={S.page}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
+        <div>
+          <h1 style={S.h1}>Purchase Orders</h1>
+          <p style={S.sub}>Vendor & supplier orders — Accounting reviews, then an admin approves.</p>
         </div>
-        {/* Admin cannot raise POs from the admin portal (#10) — Purchasing owns PO creation. */}
+        <select value={filter} onChange={e => setFilter(e.target.value)} style={{ ...S.input, width: 'auto', cursor: 'pointer' }}>
+          <option value="all">All statuses</option>
+          <option value="pending">Pending (accounting)</option>
+          <option value="accounting-approved">Accounting-approved (admin)</option>
+          <option value="approved">Approved</option>
+          <option value="in-progress">In progress</option>
+          <option value="RECEIVED">Received</option>
+          <option value="rejected">Rejected</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
       </div>
 
-      {/* METRIC CARDS */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-        gap: '20px',
-        marginBottom: '32px'
-      }}>
-        <div style={{
-          background: '#ffffff',
-          border: '1px solid #d6d6d6',
-          borderRadius: '16px',
-          padding: '24px',
-          boxShadow: 'none',
-          transition: 'all 0.2s ease'
-        }}
-        onMouseOver={(e) => {
-          e.currentTarget.style.boxShadow = 'none';
-          e.currentTarget.style.transform = 'translateY(-2px)';
-        }}
-        onMouseOut={(e) => {
-          e.currentTarget.style.boxShadow = 'none';
-          e.currentTarget.style.transform = 'translateY(0)';
-        }}
-        >
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            marginBottom: '12px'
-          }}>
-            <div style={{
-              width: '48px',
-              height: '48px',
-              borderRadius: '12px',
-              backgroundColor: '#ececec',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}>
-              <ShoppingCart style={{ width: '24px', height: '24px', color: '#d1b01b' }} />
-            </div>
-          </div>
-          <h3 style={{
-            fontSize: '32px',
-            fontWeight: '700',
-            color: '#000000',
-            margin: '0 0 8px 0',
-            fontFamily: 'Poppins, sans-serif'
-          }}>
-            {purchaseOrders.length}
-          </h3>
-          <p style={{
-            fontSize: '14px',
-            fontWeight: '500',
-            color: '#5a5a5a',
-            margin: '0',
-            fontFamily: 'Poppins, sans-serif'
-          }}>
-            Total POs
-          </p>
-        </div>
-
-        <div style={{
-          background: '#ffffff',
-          border: '1px solid #d6d6d6',
-          borderRadius: '16px',
-          padding: '24px',
-          boxShadow: 'none',
-          transition: 'all 0.2s ease'
-        }}
-        onMouseOver={(e) => {
-          e.currentTarget.style.boxShadow = 'none';
-          e.currentTarget.style.transform = 'translateY(-2px)';
-        }}
-        onMouseOut={(e) => {
-          e.currentTarget.style.boxShadow = 'none';
-          e.currentTarget.style.transform = 'translateY(0)';
-        }}
-        >
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            marginBottom: '12px'
-          }}>
-            <div style={{
-              width: '48px',
-              height: '48px',
-              borderRadius: '12px',
-              backgroundColor: '#ececec',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}>
-              <Package style={{ width: '24px', height: '24px', color: '#d1b01b' }} />
-            </div>
-          </div>
-          <h3 style={{
-            fontSize: '32px',
-            fontWeight: '700',
-            color: '#000000',
-            margin: '0 0 8px 0',
-            fontFamily: 'Poppins, sans-serif'
-          }}>
-            {pendingCount}
-          </h3>
-          <p style={{
-            fontSize: '14px',
-            fontWeight: '500',
-            color: '#5a5a5a',
-            margin: '0',
-            fontFamily: 'Poppins, sans-serif'
-          }}>
-            Pending
-          </p>
-        </div>
-
-        <div style={{
-          background: '#ffffff',
-          border: '1px solid #d6d6d6',
-          borderRadius: '16px',
-          padding: '24px',
-          boxShadow: 'none',
-          transition: 'all 0.2s ease'
-        }}
-        onMouseOver={(e) => {
-          e.currentTarget.style.boxShadow = 'none';
-          e.currentTarget.style.transform = 'translateY(-2px)';
-        }}
-        onMouseOut={(e) => {
-          e.currentTarget.style.boxShadow = 'none';
-          e.currentTarget.style.transform = 'translateY(0)';
-        }}
-        >
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            marginBottom: '12px'
-          }}>
-            <div style={{
-              width: '48px',
-              height: '48px',
-              borderRadius: '12px',
-              backgroundColor: '#ececec',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}>
-              <FileText style={{ width: '24px', height: '24px', color: '#d1b01b' }} />
-            </div>
-          </div>
-          <h3 style={{
-            fontSize: '32px',
-            fontWeight: '700',
-            color: '#000000',
-            margin: '0 0 8px 0',
-            fontFamily: 'Poppins, sans-serif'
-          }}>
-            {approvedCount}
-          </h3>
-          <p style={{
-            fontSize: '14px',
-            fontWeight: '500',
-            color: '#5a5a5a',
-            margin: '0',
-            fontFamily: 'Poppins, sans-serif'
-          }}>
-            Approved
-          </p>
-        </div>
-
-        <div style={{
-          background: '#ffffff',
-          border: '1px solid #d6d6d6',
-          borderRadius: '16px',
-          padding: '24px',
-          boxShadow: 'none',
-          transition: 'all 0.2s ease'
-        }}
-        onMouseOver={(e) => {
-          e.currentTarget.style.boxShadow = 'none';
-          e.currentTarget.style.transform = 'translateY(-2px)';
-        }}
-        onMouseOut={(e) => {
-          e.currentTarget.style.boxShadow = 'none';
-          e.currentTarget.style.transform = 'translateY(0)';
-        }}
-        >
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            marginBottom: '12px'
-          }}>
-            <div style={{
-              width: '48px',
-              height: '48px',
-              borderRadius: '12px',
-              backgroundColor: '#ececec',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}>
-              <Package style={{ width: '24px', height: '24px', color: '#d1b01b' }} />
-            </div>
-          </div>
-          <h3 style={{
-            fontSize: '32px',
-            fontWeight: '700',
-            color: '#000000',
-            margin: '0 0 8px 0',
-            fontFamily: 'Poppins, sans-serif'
-          }}>
-            {receivedCount}
-          </h3>
-          <p style={{
-            fontSize: '14px',
-            fontWeight: '500',
-            color: '#5a5a5a',
-            margin: '0',
-            fontFamily: 'Poppins, sans-serif'
-          }}>
-            Received
-          </p>
-        </div>
-      </div>
-
-      {/* FILTERS */}
-      <div style={{
-        background: '#ffffff',
-        border: '1px solid #d6d6d6',
-        borderRadius: '16px',
-        padding: '24px',
-        boxShadow: 'none',
-        marginBottom: '32px'
-      }}>
-        <div style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: '16px',
-          alignItems: 'center'
-        }}>
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}>
-            <Filter style={{ width: '16px', height: '16px', color: '#5a5a5a' }} />
-            <select
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              style={{
-                padding: '12px 40px 12px 16px',
-                borderRadius: '8px',
-                border: '1px solid #d6d6d6',
-                fontSize: '14px',
-                fontFamily: 'Poppins, sans-serif',
-                appearance: 'none',
-                backgroundColor: 'white',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-                position: 'relative'
-              }}
-              onFocus={(e) => {
-                e.currentTarget.style.borderColor = '#d1b01b';
-                e.currentTarget.style.boxShadow = '0 0 0 3px rgba(209, 176, 27, 0.1)';
-              }}
-              onBlur={(e) => {
-                e.currentTarget.style.borderColor = '#d6d6d6';
-                e.currentTarget.style.boxShadow = 'none';
-              }}
-            >
-              <option value="all">All Status</option>
-              <option value="pending">Pending</option>
-              <option value="approved">Approved</option>
-              <option value="in-progress">Ongoing delivery</option>
-              <option value="RECEIVED">Received</option>
-              <option value="cancelled">Cancelled</option>
-            </select>
-          </div>
-          <div style={{ flex: 1, minWidth: '250px' }}>
-            <input
-              type="text"
-              placeholder="Search PO number or vendor..."
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '12px 16px',
-                borderRadius: '8px',
-                border: '1px solid #d6d6d6',
-                fontSize: '14px',
-                fontFamily: 'Poppins, sans-serif',
-                transition: 'all 0.2s ease'
-              }}
-              onFocus={(e) => {
-                e.currentTarget.style.borderColor = '#d1b01b';
-                e.currentTarget.style.boxShadow = '0 0 0 3px rgba(209, 176, 27, 0.1)';
-              }}
-              onBlur={(e) => {
-                e.currentTarget.style.borderColor = '#d6d6d6';
-                e.currentTarget.style.boxShadow = 'none';
-              }}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* PURCHASE ORDERS LIST */}
-      {filteredPOs.length === 0 ? (
-        <div style={{
-          background: '#ffffff',
-          border: '1px solid #d6d6d6',
-          borderRadius: '16px',
-          padding: '48px',
-          textAlign: 'center',
-          boxShadow: 'none'
-        }}>
-          <Package style={{ 
-            width: '64px', 
-            height: '64px', 
-            color: '#c9c9c9',
-            marginBottom: '16px',
-            margin: '0 auto 16px'
-          }} />
-          <h3 style={{
-            fontSize: '20px',
-            fontWeight: '600',
-            color: '#262626',
-            margin: '0 0 8px 0',
-            fontFamily: 'Poppins, sans-serif'
-          }}>
-            No purchase orders found
-          </h3>
-          <p style={{
-            fontSize: '14px',
-            color: '#5a5a5a',
-            margin: '0',
-            fontFamily: 'Poppins, sans-serif'
-          }}>
-            Create your first purchase order to get started.
-          </p>
-        </div>
-      ) : (
-        <div style={{
-          display: 'grid',
-          gap: '16px'
-        }}>
-          {filteredPOs.map((po) => (
-            <div
-              key={po.id}
-              style={{
-                background: '#ffffff',
-                border: '1px solid #d6d6d6',
-                borderRadius: '16px',
-                padding: '24px',
-                boxShadow: 'none',
-                transition: 'all 0.2s ease'
-              }}
-              onMouseOver={(e) => {
-                e.currentTarget.style.boxShadow = 'none';
-                e.currentTarget.style.transform = 'translateY(-2px)';
-              }}
-              onMouseOut={(e) => {
-                e.currentTarget.style.boxShadow = 'none';
-                e.currentTarget.style.transform = 'translateY(0)';
-              }}
-            >
-              <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'flex-start',
-                marginBottom: '12px'
-              }}>
-                <span style={{
-                  fontSize: '18px',
-                  fontWeight: '600',
-                  color: '#000000',
-                  fontFamily: 'Poppins, sans-serif'
-                }}>
-                  {po.poNumber}
-                  {po.prNumber && (
-                    <span style={{ fontSize: '12px', fontWeight: '500', color: '#5a5a5a', marginLeft: '8px', fontFamily: 'Poppins, sans-serif' }}>
-                      for {po.prNumber}
-                    </span>
-                  )}
-                </span>
-                <StatusBadge status={po.status} />
-                {nextDeptFor(po.status, 'po') && (
-                  <span style={{ fontSize: '11px', color: '#8a8a8a', fontFamily: 'Poppins, sans-serif' }}>{nextDeptFor(po.status, 'po')}</span>
-                )}
-              </div>
-              
-              <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                fontSize: '14px',
-                color: '#5a5a5a',
-                marginBottom: '8px',
-                fontFamily: 'Poppins, sans-serif'
-              }}>
-                <span>Vendor: {po.client}</span>
-                <span>{formatDate(po.createdDate)}</span>
-              </div>
-              
-              <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                fontSize: '14px',
-                marginBottom: '20px'
-              }}>
-                <span style={{
-                  color: '#5a5a5a',
-                  fontFamily: 'Poppins, sans-serif'
-                }}>
-                  Delivery: {formatDate(po.deliveryDate)}
-                </span>
-                <span style={{
-                  fontSize: '16px',
-                  fontWeight: '600',
-                  color: '#000000',
-                  fontFamily: 'Poppins, sans-serif'
-                }}>
-                  {formatCurrency(po.amount)}
-                </span>
-              </div>
-              
-              <div style={{
-                display: 'flex',
-                justifyContent: 'flex-end',
-                gap: '12px'
-              }}>
-                {isAdmin && (
-                  <>
-                    {po.status === 'accounting-approved' && (
+      <div style={S.card}>
+        <table style={S.table}>
+          <thead><tr>
+            <th style={S.th}>PO #</th>
+            <th style={S.th}>Supplier</th>
+            <th style={S.th}>PR #</th>
+            <th style={{ ...S.th, textAlign: 'right' }}>Amount</th>
+            <th style={S.th}>Status</th>
+            <th style={{ ...S.th, textAlign: 'right' }}>Actions</th>
+          </tr></thead>
+          <tbody>
+            {filteredPOs.length === 0 ? (
+              <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={6}>No purchase orders.</td></tr>
+            ) : filteredPOs.map(po => (
+              <tr key={po.id}>
+                <td style={{ ...S.td, fontWeight: 600, color: '#000000' }}>{po.poNumber}</td>
+                <td style={S.td}>{po.client}</td>
+                <td style={S.td}>{po.prNumber || '—'}</td>
+                <td style={{ ...S.td, textAlign: 'right', fontWeight: 600, color: '#000000' }}>{peso(po.amount)}</td>
+                <td style={S.td}>
+                  <span style={{ color: '#d1b01b', fontSize: '12px', fontWeight: 600, whiteSpace: 'nowrap' }}>{statusLabel(po.status)}</span>
+                  {nextDeptFor(po.status, 'po') && <div style={{ fontSize: '11px', color: '#8a8a8a', marginTop: '2px' }}>{nextDeptFor(po.status, 'po')}</div>}
+                </td>
+                <td style={S.td}>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px', flexWrap: 'wrap' }}>
+                    <button className="crm-row-btn" title="Print" style={{ ...S.rowBtn, marginLeft: 0 }} onClick={() => handlePrintPO(po)}><Printer size={13} /></button>
+                    {isAdmin && po.status === 'accounting-approved' && (
                       <>
-                        <button
-                          onClick={() => handleApprove(po, 'approved')}
-                          disabled={approvingId === po.id}
-                          style={{
-                            padding: '8px 12px', borderRadius: '6px', border: 'none',
-                            backgroundColor: '#16a34a', color: 'white', fontSize: '12px',
-                            fontWeight: '500', fontFamily: 'Poppins, sans-serif',
-                            cursor: approvingId === po.id ? 'default' : 'pointer',
-                            opacity: approvingId === po.id ? 0.6 : 1,
-                            display: 'flex', alignItems: 'center', gap: '6px',
-                          }}
-                        >
-                          <Check style={{ width: '14px', height: '14px' }} />
-                          Approve
-                        </button>
-                        <button
-                          onClick={() => handleApprove(po, 'disapproved')}
-                          disabled={approvingId === po.id}
-                          style={{
-                            padding: '8px 12px', borderRadius: '6px', border: '1px solid #d6d6d6',
-                            backgroundColor: 'white', color: '#dc2626', fontSize: '12px',
-                            fontWeight: '500', fontFamily: 'Poppins, sans-serif',
-                            cursor: approvingId === po.id ? 'default' : 'pointer',
-                            opacity: approvingId === po.id ? 0.6 : 1,
-                            display: 'flex', alignItems: 'center', gap: '6px',
-                          }}
-                        >
-                          Reject
-                        </button>
+                        <button className="crm-row-btn" style={{ ...S.rowBtn, marginLeft: 0, backgroundColor: '#d1b01b', border: '1px solid #d1b01b', color: '#000000' }} disabled={approvingId === po.id} onClick={() => handleApprove(po, 'approved')}>Approve</button>
+                        <button className="crm-row-btn" style={{ ...S.rowBtn, marginLeft: 0, color: '#b91c1c' }} disabled={approvingId === po.id} onClick={() => handleApprove(po, 'disapproved')}>Reject</button>
                       </>
                     )}
-                    <button
-                      onClick={() => handleEditClick(po)}
-                      style={{
-                        padding: '8px 12px',
-                        borderRadius: '6px',
-                        border: '1px solid #d6d6d6',
-                        backgroundColor: 'white',
-                        color: '#d1b01b',
-                        fontSize: '12px',
-                        fontWeight: '500',
-                        fontFamily: 'Poppins, sans-serif',
-                        cursor: 'pointer',
-                        transition: 'all 0.2s ease',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px'
-                      }}
-                      onMouseOver={(e) => {
-                        e.currentTarget.style.backgroundColor = '#fbf7e8';
-                        e.currentTarget.style.borderColor = '#d1b01b';
-                      }}
-                      onMouseOut={(e) => {
-                        e.currentTarget.style.backgroundColor = 'white';
-                        e.currentTarget.style.borderColor = '#d6d6d6';
-                      }}
-                    >
-                      <Edit style={{ width: '14px', height: '14px' }} />
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handlePrintPO(po)}
-                      style={{
-                        padding: '8px 12px',
-                        borderRadius: '6px',
-                        border: '1px solid #d6d6d6',
-                        backgroundColor: 'white',
-                        color: '#d1b01b',
-                        fontSize: '12px',
-                        fontWeight: '500',
-                        fontFamily: 'Poppins, sans-serif',
-                        cursor: 'pointer',
-                        transition: 'all 0.2s ease',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px'
-                      }}
-                      onMouseOver={(e) => {
-                        e.currentTarget.style.backgroundColor = '#fbf7e8';
-                        e.currentTarget.style.borderColor = '#d1b01b';
-                      }}
-                      onMouseOut={(e) => {
-                        e.currentTarget.style.backgroundColor = 'white';
-                        e.currentTarget.style.borderColor = '#d6d6d6';
-                      }}
-                    >
-                      <Printer style={{ width: '14px', height: '14px' }} />
-                      Print
-                    </button>
-                    <button
-                      title="Delete"
-                      onClick={() => handleDeletePO(po)}
-                      style={{
-                        padding: '8px 12px',
-                        borderRadius: '6px',
-                        border: '1px solid #fecaca',
-                        backgroundColor: 'white',
-                        color: '#dc2626',
-                        fontSize: '12px',
-                        fontWeight: '500',
-                        fontFamily: 'Poppins, sans-serif',
-                        cursor: 'pointer',
-                        transition: 'all 0.2s ease',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px'
-                      }}
-                      onMouseOver={(e) => {
-                        e.currentTarget.style.backgroundColor = '#fef2f2';
-                        e.currentTarget.style.borderColor = '#dc2626';
-                      }}
-                      onMouseOut={(e) => {
-                        e.currentTarget.style.backgroundColor = 'white';
-                        e.currentTarget.style.borderColor = '#fecaca';
-                      }}
-                    >
-                      <Trash2 style={{ width: '14px', height: '14px' }} />
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+                    {isAdmin && (
+                      <button className="crm-row-btn" title="Edit" style={{ ...S.rowBtn, marginLeft: 0 }} onClick={() => handleEditClick(po)}><Edit size={13} /></button>
+                    )}
+                    {isAdmin && (
+                      <button className="crm-row-btn" title="Delete" style={{ ...S.rowBtn, marginLeft: 0, color: '#b91c1c' }} onClick={() => handleDeletePO(po)}><Trash2 size={13} /></button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       {/* Create PO Modal */}
       {showCreateModal && (
