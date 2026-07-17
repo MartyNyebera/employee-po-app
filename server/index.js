@@ -4061,8 +4061,8 @@ app.put('/api/material-requests/:id/review', async (req, res) => {
   }
 });
 
-// Delete material request
-app.delete('/api/material-requests/:id', async (req, res) => {
+// Delete material request (admin-only — this route was previously unguarded, #2)
+app.delete('/api/material-requests/:id', requireRole(['admin']), async (req, res) => {
   try {
     const material_request_id = req.params.id;
     
@@ -4891,6 +4891,26 @@ app.get('/api/purchase-requests', requireRole(['admin', 'purchasing', 'accountin
       params
     );
     res.json(r.rows.map(mapPurchaseRequest));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Admin-only hard delete of a purchase request (#2) — lets the admin clear test rows without
+// touching the DB by hand. A request that already has a purchase order raised against it is
+// protected: deleting it would orphan the PO and the priced-line history mirrored back onto the
+// request (see the PR↔PO link in POST /api/purchase-orders). Delete that order first if intended.
+app.delete('/api/purchase-requests/:id', requireRole(['admin']), async (req, res) => {
+  try {
+    const existing = await query('SELECT id FROM purchase_requests WHERE id = $1', [req.params.id]);
+    if (!existing.rows[0]) return res.status(404).json({ error: 'Purchase request not found' });
+    const linked = await query(
+      `SELECT id FROM purchase_orders WHERE purchase_request_id = $1 AND COALESCE(order_type,'purchase') <> 'sales' LIMIT 1`,
+      [req.params.id]
+    );
+    if (linked.rows[0]) {
+      return res.status(400).json({ error: `Purchase order ${linked.rows[0].id} exists for this request — delete that order first.` });
+    }
+    await query('DELETE FROM purchase_requests WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

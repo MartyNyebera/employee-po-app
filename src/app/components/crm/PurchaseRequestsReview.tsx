@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, X } from 'lucide-react';
+import { Check, X, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
@@ -89,6 +89,20 @@ export function PurchaseRequestsReview() {
     } catch (e: any) { toast.error('Failed: ' + e.message); } finally { setBusyId(null); }
   };
 
+  // Admin-only hard delete (#2) — clears test rows. The server rejects deleting a request that
+  // already has a purchase order raised against it, so the surfaced error explains what to do.
+  const removePR = async (pr: PurchaseRequest) => {
+    const ok = await confirmDialog({ title: `Delete ${pr.prNumber}?`, message: 'This permanently removes the request from the database.', confirmLabel: 'Delete', tone: 'danger' });
+    if (!ok) return;
+    setBusyId(pr.id);
+    try {
+      await fetchApi(`/purchase-requests/${pr.id}`, { method: 'DELETE' });
+      toast.success(`${pr.prNumber} deleted`);
+      setSelected(null);
+      load();
+    } catch (e: any) { toast.error('Failed: ' + e.message); } finally { setBusyId(null); }
+  };
+
   const pendingVerification = rows.filter(r => r.status === 'reviewed').length;
 
   return (
@@ -154,6 +168,8 @@ export function PurchaseRequestsReview() {
                             onClick={() => verify(pr, 'rejected')}><X size={13} strokeWidth={3} /> Reject</button>
                         </>
                       )}
+                      <button className="crm-row-btn" title="Delete request" style={{ ...S.rowBtn, marginLeft: 0, color: '#dc2626' }} disabled={busyId === pr.id}
+                        onClick={() => removePR(pr)}><Trash2 size={13} /></button>
                     </div>
                   </td>
                 </tr>
