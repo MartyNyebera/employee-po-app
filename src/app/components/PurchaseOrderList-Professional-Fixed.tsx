@@ -7,6 +7,7 @@ import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { CreatePurchaseOrderModal } from './CreatePurchaseOrderModal';
 import { printPurchaseOrder } from '../lib/orderPrint';
 import { nextDeptFor } from '../lib/nextDept';
+import { SummaryStats } from './SummaryStats';
 import { S, peso } from './crm/crmKit';
 
 interface PurchaseOrder {
@@ -420,6 +421,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
   });
 
   const pendingCount = purchaseOrders.filter(po => po.status === 'pending').length;
+  const accountingApprovedCount = purchaseOrders.filter(po => po.status === 'accounting-approved').length;
   const approvedCount = purchaseOrders.filter(po => po.status === 'approved').length;
   const receivedCount = purchaseOrders.filter(po => po.status === 'RECEIVED').length;
 
@@ -495,6 +497,14 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
           <option value="cancelled">Cancelled</option>
         </select>
       </div>
+
+      <SummaryStats items={[
+        { label: 'Total POs', value: purchaseOrders.length },
+        { label: 'Pending', value: pendingCount },
+        { label: 'For admin', value: accountingApprovedCount, accent: true },
+        { label: 'Approved', value: approvedCount },
+        { label: 'Received', value: receivedCount },
+      ]} />
 
       <div style={S.card}>
         <table style={S.table}>

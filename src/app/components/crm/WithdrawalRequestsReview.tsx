@@ -6,6 +6,7 @@ import { fetchApi } from '../../api/client';
 import { useLiveRefresh } from '../../hooks/useLiveRefresh';
 import { S } from './crmKit';
 import { printWithdrawalReceipt } from '../../lib/withdrawalReceiptPrint';
+import { SummaryStats } from '../SummaryStats';
 
 // Production requests stock from the /production portal — either ad-hoc from inventory, or as
 // the lines of an approved purchase request. Stock is deducted ONLY here, on approval: the
@@ -95,6 +96,7 @@ export function WithdrawalRequestsReview({ isAdmin }: { isAdmin: boolean }) {
   // Only a warehouse-released request is yours to act on — a 'pending' one hasn't been
   // confirmed as physically on the shelf yet, so it isn't "awaiting you" in any useful sense.
   const pending = rows.filter(r => r.status === 'warehouse-approved').length;
+  const wrCount = (s: string) => rows.filter(r => r.status === s).length;
 
   return (
     <div style={S.page}>
@@ -114,6 +116,14 @@ export function WithdrawalRequestsReview({ isAdmin }: { isAdmin: boolean }) {
           <option value="rejected">Rejected</option>
         </select>
       </div>
+
+      <SummaryStats items={[
+        { label: 'Total', value: rows.length },
+        { label: 'Awaiting warehouse', value: wrCount('pending') },
+        { label: 'Awaiting you', value: wrCount('warehouse-approved'), accent: true },
+        { label: 'Approved', value: wrCount('approved') },
+        { label: 'Rejected', value: wrCount('rejected') },
+      ]} />
 
       <div style={S.card}>
         <table style={S.table}>

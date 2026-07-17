@@ -7,6 +7,7 @@ import { FileText, Plus, DollarSign, Calendar, Building2, Truck, Edit, Filter, P
 import { toast } from 'sonner';
 import { confirmDialog } from '../lib/confirm';
 import { S, peso } from './crm/crmKit';
+import { SummaryStats } from './SummaryStats';
 
 const formatDate = (dateString: string) => {
   if (!dateString) return 'N/A';
@@ -483,6 +484,15 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
           <option value="completed">Completed</option>
         </select>
       </div>
+
+      <SummaryStats items={[
+        { label: 'Total SOs', value: orders.length },
+        { label: 'Pending', value: pendingCount, accent: true },
+        { label: 'Approved', value: approvedCount },
+        { label: 'In progress', value: inProgressCount },
+        { label: 'PAID', value: paidCount },
+        { label: 'Completed', value: completedCount },
+      ]} />
 
       <div style={S.card}>
         <table style={S.table}>

@@ -7,6 +7,7 @@ import { useLiveRefresh } from '../../hooks/useLiveRefresh';
 import { S, badge, peso } from './crmKit';
 import { printPurchaseRequest } from '../../lib/purchaseRequestPrint';
 import { nextDeptFor } from '../../lib/nextDept';
+import { SummaryStats } from '../SummaryStats';
 
 // unitCost/amount are the employee's ESTIMATE; the final* fields are what Purchasing priced
 // the line at when they raised the order. Both are kept, so the gap stays auditable.
@@ -109,6 +110,7 @@ export function PurchaseRequestsReview() {
   };
 
   const pendingVerification = rows.filter(r => r.status === 'reviewed').length;
+  const prCount = (s: string) => rows.filter(r => r.status === s).length;
 
   return (
     <div style={S.page}>
@@ -131,6 +133,15 @@ export function PurchaseRequestsReview() {
           <option value="disapproved">Disapproved</option>
         </select>
       </div>
+
+      <SummaryStats items={[
+        { label: 'Total', value: rows.length },
+        { label: 'Pending', value: prCount('pending') },
+        { label: 'Reviewed', value: prCount('reviewed'), accent: true },
+        { label: 'Verified', value: prCount('verified') },
+        { label: 'Ordered', value: prCount('ordered') },
+        { label: 'Approved', value: prCount('approved') },
+      ]} />
 
       <div style={S.card}>
         <table style={S.table}>
