@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ClipboardList, PenTool, Menu, X, Search, Clock, Calendar,
   Printer, LogOut, Upload, Eraser, Eye, FileText, Factory,
-  PanelLeftClose, PanelLeftOpen, Plus, Pencil, Trash2, Paperclip,
+  PanelLeftClose, PanelLeftOpen, Plus, Pencil, Trash2, Paperclip, RefreshCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -64,18 +64,18 @@ interface PurchaseOrder {
   paymentTerms?: string | null; termsAndConditions?: string | null;
 }
 
-// A rejected purchase order stays 'pending' in the DB — purchase_orders' CHECK has no
-// 'disapproved', so the admin's rejection is recorded on the linked REQUEST instead.
-// Reading po.status alone would show a rejected order as merely awaiting approval.
+// Section C — #12: a PO now carries its own two-gate status. 'rejected' means an admin or
+// accounting sent it back here to revise & resubmit.
 const orderState = (po: PurchaseOrder): { label: string; hint: string | null } => {
-  if (po.prStatus === 'disapproved') return { label: 'Rejected', hint: 'Rejected by admin' };
-  if (po.status === 'approved') return { label: 'Approved', hint: 'With logistics for delivery' };
-  if (po.status === 'pending') return { label: 'Pending', hint: 'Awaiting admin approval' };
-  // Set by Logistics once the order is approved — the raw values are storage-shaped
+  if (po.status === 'rejected') return { label: 'Rejected', hint: 'Sent back — revise & resubmit' };
+  if (po.status === 'approved') return { label: 'Approved', hint: 'With the warehouse for delivery' };
+  if (po.status === 'pending') return { label: 'Pending', hint: 'Awaiting accounting review' };
+  if (po.status === 'accounting-approved') return { label: 'In review', hint: 'Awaiting admin approval' };
+  // Set on the delivery leg once approved — the raw values are storage-shaped
   // ('in-progress', 'RECEIVED') and would otherwise leak onto the screen verbatim.
   if (po.status === 'in-progress') return { label: 'Ongoing delivery', hint: 'In transit from supplier' };
   if (po.status === 'RECEIVED') return { label: 'Delivered', hint: 'Received in full' };
-  if (po.status === 'cancelled') return { label: 'Cancelled', hint: 'Cancelled by logistics' };
+  if (po.status === 'cancelled') return { label: 'Cancelled', hint: 'Cancelled on the delivery leg' };
   return { label: statusLabel(po.status as PRStatus), hint: null };
 };
 
@@ -943,6 +943,19 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     if (!r.ok) toast.error(r.error || 'Failed to open the print window');
   };
 
+  // Section C — #12: a rejected order was sent back here. Edit it (via the admin/edit flow) and
+  // resubmit to send it through both gates again (→ 'pending', awaiting accounting).
+  const resubmitOrder = async (po: PurchaseOrder) => {
+    if (!(await confirmDialog({ title: `Resubmit ${po.poNumber}?`, message: 'It goes back to Accounting for review, then Admin approval.', confirmLabel: 'Resubmit' }))) return;
+    try {
+      await pFetch(`/purchase-orders/${po.id}/resubmit`, { method: 'PUT' });
+      toast.success('Purchase order resubmitted');
+      loadAll();
+    } catch (e: any) {
+      toast.error('Failed: ' + (e?.message || 'unknown error'));
+    }
+  };
+
   const deleteSupplier = async (s: Supplier) => {
     if (!(await confirmDialog({ title: `Delete ${s.name}?`, message: 'Purchase orders already raised against them keep their details.', confirmLabel: 'Delete', tone: 'danger' }))) return;
     try {
@@ -1133,6 +1146,9 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                             </div>
                             <div className="flex items-center gap-2">
                               <span className="text-sm font-bold text-gray-900 mr-1">{peso(po.amount)}</span>
+                              {po.status === 'rejected' && (
+                                <button onClick={() => resubmitOrder(po)} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"><RefreshCw className="w-3.5 h-3.5" /> Resubmit</button>
+                              )}
                               <button onClick={() => printOrder(po)} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Printer className="w-3.5 h-3.5" /> Print</button>
                             </div>
                           </div>

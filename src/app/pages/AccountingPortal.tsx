@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ClipboardList, PenTool, Menu, X, Search, Clock, Calendar, CheckCircle2,
   XCircle, Printer, LogOut, Upload, Eraser, Eye, Briefcase, Plus, Trash2, Pencil,
-  PanelLeftClose, PanelLeftOpen,
+  PanelLeftClose, PanelLeftOpen, FileText,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -10,7 +10,7 @@ import { PageErrorFallback } from '../components/PageErrorFallback';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { confirmDialog } from '../lib/confirm';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
-import { esc } from '../lib/orderPrint';
+import { esc, printPurchaseOrder } from '../lib/orderPrint';
 import { renderPrintDocument } from '../lib/printChrome';
 
 // ============================================================================
@@ -26,7 +26,20 @@ import { renderPrintDocument } from '../lib/printChrome';
 // ============================================================================
 
 type PRStatus = 'pending' | 'reviewed' | 'verified' | 'ordered' | 'approved' | 'disapproved';
-type PortalView = 'requests' | 'projects' | 'signature';
+type PortalView = 'requests' | 'orders' | 'projects' | 'signature';
+
+// Section C — #12: Accounting is also the FIRST gate of the purchase-ORDER flow. Purchasing
+// raises an order ('pending'); Accounting reviews it here (→ 'accounting-approved', passing it
+// to Admin; or → 'rejected', back to Purchasing). The fields below are what the order document
+// and the review row need — all returned by GET /purchase-orders.
+interface PurchaseOrder {
+  id: string; poNumber: string; client: string; amount: number; status: string;
+  createdDate?: string | null; deliveryDate?: string | null; prNumber?: string | null;
+  processedBy?: string | null; description?: string | null; docDate?: string | null;
+  supplierAddress?: string | null; supplierContact?: string | null; supplierTin?: string | null;
+  paymentTerms?: string | null; termsAndConditions?: string | null;
+  poReviewedBy?: string | null; poReviewedAt?: string | null; approvedBy?: string | null; approvedAt?: string | null;
+}
 
 interface PRItem { no?: number; description: string; quantity: number; unit: string; unitCost: number; amount: number; }
 interface PurchaseRequest {
@@ -497,6 +510,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [requests, setRequests] = useState<PurchaseRequest[]>([]);
+  const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [signature, setSignature] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -511,12 +525,16 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const loadAll = async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!silent) setLoading(true);
     try {
-      const [prs, prj, sig] = await Promise.all([
+      const [prs, pos, prj, sig] = await Promise.all([
         aFetch<PurchaseRequest[]>('/purchase-requests'),
+        aFetch<PurchaseOrder[]>('/purchase-orders').catch(() => [] as PurchaseOrder[]),
         aFetch<Project[]>('/projects'),
         aFetch<{ signature: string | null }>('/accounting/signature').catch(() => ({ signature: null })),
       ]);
       setRequests(prs || []);
+      // Only real purchase orders (the table is shared with Sales Orders, discriminated by
+      // order_type — accounting reviews purchases, not sales).
+      setOrders((pos || []).filter(o => (o as any).orderType !== 'sales'));
       setProjects(prj || []);
       setSignature(sig?.signature || null);
     } catch (e: any) {
@@ -549,6 +567,25 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     } catch (e: any) { toast.error(e.message || 'Failed'); } finally { setBusyId(''); }
   };
 
+  // Section C — #12: Accounting's review of a raised purchase order — the FIRST of its two gates.
+  const reviewOrder = async (po: PurchaseOrder, status: 'approved' | 'rejected') => {
+    const ok = status === 'approved'
+      ? await confirmDialog({ title: `Pass ${po.poNumber} to Admin?`, message: 'Your review is recorded and the order moves to Admin for final approval.', confirmLabel: 'Approve' })
+      : await confirmDialog({ title: `Reject ${po.poNumber}?`, message: 'It goes back to Purchasing to revise and resubmit.', confirmLabel: 'Reject', tone: 'danger' });
+    if (!ok) return;
+    setBusyId(po.id);
+    try {
+      await aFetch(`/purchase-orders/${po.id}/accounting-review`, { method: 'PUT', body: JSON.stringify({ status }) });
+      toast.success(status === 'approved' ? 'Order reviewed — sent to Admin' : 'Order rejected');
+      loadAll({ silent: true });
+    } catch (e: any) { toast.error(e.message || 'Failed'); } finally { setBusyId(''); }
+  };
+
+  const printOrder = async (po: PurchaseOrder) => {
+    const r = await printPurchaseOrder(po as any, () => aFetch(`/purchase-orders/${po.id}/signatures`));
+    if (!r.ok) toast.error(r.error || 'Failed to open the print window');
+  };
+
   const deleteProject = async (p: Project) => {
     if (!(await confirmDialog({ title: `Delete project "${p.name}"?`, message: 'Purchase requests that referenced it will show as "Personal use".', confirmLabel: 'Delete', tone: 'danger' }))) return;
     const prev = projects; setProjects(projects.filter(x => x.id !== p.id));
@@ -563,9 +600,11 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   }), [requests, statusFilter, search]);
 
   const pendingCount = requests.filter(r => r.status === 'pending').length;
+  const pendingOrderCount = orders.filter(o => o.status === 'pending').length;
 
   const NAV: { id: PortalView; label: string; icon: any }[] = [
     { id: 'requests', label: 'Purchase Requests', icon: ClipboardList },
+    { id: 'orders', label: 'Purchase Orders', icon: FileText },
     { id: 'projects', label: 'Projects', icon: Briefcase },
     { id: 'signature', label: 'My Signature', icon: PenTool },
   ];
@@ -592,6 +631,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${collapsed ? 'justify-center' : ''} ${active ? 'bg-blue-600 text-white hover:bg-blue-700' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'}`}>
               <Icon className="w-4 h-4 flex-shrink-0" />{!collapsed && <span>{label}</span>}
               {!collapsed && id === 'requests' && pendingCount > 0 && <span className={`ml-auto text-xs font-semibold px-2 py-0.5 rounded-full ${active ? 'bg-white/20' : 'bg-yellow-100 text-yellow-700'}`}>{pendingCount}</span>}
+              {!collapsed && id === 'orders' && pendingOrderCount > 0 && <span className={`ml-auto text-xs font-semibold px-2 py-0.5 rounded-full ${active ? 'bg-white/20' : 'bg-yellow-100 text-yellow-700'}`}>{pendingOrderCount}</span>}
             </button>
           );
         })}
@@ -740,6 +780,60 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                             {pr.status !== 'pending' && (
                               <button onClick={() => printReviewReport(pr)} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Printer className="w-3.5 h-3.5" /> Print</button>
                             )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+            </div>
+          )}
+
+          {view === 'orders' && (
+            <div className="space-y-4">
+              {!signature && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+                  <PenTool className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                  <div className="text-sm text-amber-800">
+                    You haven't set an e-signature yet. <button onClick={() => setView('signature')} className="font-semibold underline">Set it now</button> — it's stamped on each order you review.
+                  </div>
+                </div>
+              )}
+              {loading ? <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading…</div>
+                : orders.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-48 text-gray-400"><FileText className="w-10 h-10 mb-3 text-gray-300" /><p className="font-medium text-gray-500">No purchase orders</p><p className="text-xs mt-1">Purchasing raises these against verified requests.</p></div>
+                ) : (
+                  <div className="space-y-3">
+                    {orders.map(po => (
+                      <div key={po.id} className="bg-white rounded-xl border border-gray-200 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h3 className="font-semibold text-gray-900 text-sm">{po.poNumber}</h3>
+                              {po.prNumber && <span className="text-xs text-gray-400">· for {po.prNumber}</span>}
+                            </div>
+                            <p className="text-xs text-gray-400 mt-0.5">Supplier <span className="text-gray-600 font-medium">{po.client || '—'}</span></p>
+                            <p className="text-xs text-gray-400 mt-1">Prepared by <span className="text-gray-600 font-medium">{po.processedBy || '—'}</span>{po.poReviewedBy && <> · Reviewed by <span className="text-gray-600 font-medium">{po.poReviewedBy}</span></>}</p>
+                          </div>
+                          <span className="flex-shrink-0 text-xs font-semibold text-brand-gold">
+                            {po.status === 'pending' ? 'Needs review'
+                              : po.status === 'accounting-approved' ? 'Awaiting admin'
+                              : po.status === 'rejected' ? 'Rejected'
+                              : po.status.charAt(0).toUpperCase() + po.status.slice(1)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between mt-3 flex-wrap gap-2">
+                          <div className="flex items-center gap-3 text-xs text-gray-400">
+                            {po.createdDate && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{new Date(po.createdDate).toLocaleDateString()}</span>}
+                            {po.deliveryDate && <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />delivery {new Date(po.deliveryDate).toLocaleDateString()}</span>}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-bold text-gray-900 mr-1">{peso(po.amount)}</span>
+                            {po.status === 'pending' && <>
+                              <button onClick={() => reviewOrder(po, 'rejected')} disabled={busyId === po.id} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"><XCircle className="w-3.5 h-3.5" /> Reject</button>
+                              <button onClick={() => reviewOrder(po, 'approved')} disabled={busyId === po.id} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"><CheckCircle2 className="w-3.5 h-3.5" /> Confirm Reviewed</button>
+                            </>}
+                            <button onClick={() => printOrder(po)} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Printer className="w-3.5 h-3.5" /> Print</button>
                           </div>
                         </div>
                       </div>

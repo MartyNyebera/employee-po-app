@@ -13,9 +13,11 @@ interface PurchaseOrder {
   client: string;
   description: string;
   amount: number;
-  // 'in-progress' / 'RECEIVED' / 'cancelled' are set by Logistics once an admin approves
+  // Section C — #12: a PO clears two gates — 'pending' (awaiting Accounting) →
+  // 'accounting-approved' (awaiting Admin) → 'approved'; 'rejected' sends it back to Purchasing.
+  // 'in-progress' / 'RECEIVED' / 'cancelled' are set on the delivery leg once approved
   // (PUT /api/purchase-orders/:id/delivery). 'RECEIVED' is what counts as an expense.
-  status: 'pending' | 'approved' | 'in-progress' | 'RECEIVED' | 'cancelled';
+  status: 'pending' | 'accounting-approved' | 'rejected' | 'approved' | 'in-progress' | 'RECEIVED' | 'cancelled';
   createdDate: string;
   deliveryDate: string;
   assignedAssets: string[];
@@ -132,12 +134,24 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
 
   const getStatusConfig = (status: string) => {
     const configs: Record<string, { color: string; bgColor: string; borderColor: string; }> = {
-      'pending': { 
-        color: '#d97706', 
-        bgColor: '#fffbeb', 
+      'pending': {
+        color: '#d97706',
+        bgColor: '#fffbeb',
         borderColor: '#fed7aa'
       },
-      'approved': { 
+      // Accounting has passed it; awaiting admin. Same amber family as pending — still in-queue.
+      'accounting-approved': {
+        color: '#b45309',
+        bgColor: '#fffbeb',
+        borderColor: '#fed7aa'
+      },
+      // Sent back to Purchasing to revise & resubmit.
+      'rejected': {
+        color: '#dc2626',
+        bgColor: '#fef2f2',
+        borderColor: '#fecaca'
+      },
+      'approved': {
         color: '#d1b01b', 
         bgColor: '#ececec', 
         borderColor: '#e3ca63'
@@ -180,7 +194,9 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
         border: `1px solid ${config.borderColor}`,
         fontFamily: 'Poppins, sans-serif'
       }}>
-        {status.charAt(0).toUpperCase() + status.slice(1)}
+        {status === 'accounting-approved' ? 'Awaiting admin'
+          : status === 'pending' ? 'Awaiting accounting'
+          : status.charAt(0).toUpperCase() + status.slice(1)}
       </div>
     );
   };
@@ -300,14 +316,15 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
     setIsEditing(true);
   };
 
-  // Admin approval — the final gate of the purchase-request flow. This goes through the
-  // dedicated approve route (not the generic PATCH) because the server records the approver
-  // and flips the linked purchase request to approved/disapproved in the same transaction.
+  // Admin approval — the SECOND, final gate (Section C — #12). The order must already be
+  // 'accounting-approved'. Approving flips the linked request to 'approved' (releasing the
+  // withdrawal) in the same server transaction; rejecting sends the ORDER back to Purchasing to
+  // revise & resubmit, and leaves the request untouched.
   const handleApprove = async (po: PurchaseOrder, status: 'approved' | 'disapproved') => {
     const what = po.prNumber ? `${po.poNumber} (for ${po.prNumber})` : po.poNumber;
     const ok = status === 'approved'
       ? await confirmDialog({ title: `Approve ${what}?`, message: po.prNumber ? 'This also approves the purchase request, releasing it for withdrawal.' : undefined, confirmLabel: 'Approve' })
-      : await confirmDialog({ title: `Reject ${what}?`, message: po.prNumber ? 'The purchase request will be marked disapproved.' : undefined, confirmLabel: 'Reject', tone: 'danger' });
+      : await confirmDialog({ title: `Reject ${what}?`, message: 'The order goes back to Purchasing to revise and resubmit.', confirmLabel: 'Reject', tone: 'danger' });
     if (!ok) return;
     setApprovingId(po.id);
     try {
@@ -1013,7 +1030,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
               }}>
                 {isAdmin && (
                   <>
-                    {po.status === 'pending' && (
+                    {po.status === 'accounting-approved' && (
                       <>
                         <button
                           onClick={() => handleApprove(po, 'approved')}

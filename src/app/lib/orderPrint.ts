@@ -43,17 +43,13 @@ export interface PrintablePO {
   // purchase request behind the order — a PR-linked order names the real people below instead.
   preparedBy?: string | null;
   reviewedBy?: string | null;
-  // The five signatories of a PR-linked order, each a recorded event with a timestamp, in the
-  // order they act:
-  //   requestedBy — the employee who filed the request        (Prepared By)
-  //   checkedBy   — the accounting staffer who reviewed it    (Reviewed By)
-  //   verifiedBy  — the admin who approved the request        (Approved By)
-  //   processedBy — the purchasing staffer who raised the PO  (Processed By)
-  //   approvedBy  — the admin who approved the order          (Supervised By)
-  //
-  // The admin acts twice, and the two are different events on different rows. Approving the
-  // REQUEST is what lets purchasing raise the order at all, so it comes before Processed By;
-  // approving the ORDER happens after, which is the step the business calls supervision.
+  // Section C — #12: the printed order has THREE signatories, each a recorded event with a
+  // timestamp, in the order they act:
+  //   processedBy   — the purchasing staffer who raised the PO   (Prepared By)
+  //   poReviewedBy  — the accounting staffer who reviewed it     (Reviewed By)
+  //   approvedBy    — the admin who approved the order           (Approved By)
+  // requestedBy/checkedBy/verifiedBy still arrive on the payload (request-side history) but are
+  // no longer signatories on the ORDER — the "Supervised By" block is gone (#7).
   requestedBy?: string | null;
   requestedAt?: string | null;
   checkedBy?: string | null;
@@ -62,6 +58,8 @@ export interface PrintablePO {
   verifiedAt?: string | null;
   processedBy?: string | null;
   processedAt?: string | null;
+  poReviewedBy?: string | null;
+  poReviewedAt?: string | null;
   approvedBy?: string | null;
   approvedAt?: string | null;
   paymentTerms?: string | null;
@@ -70,15 +68,13 @@ export interface PrintablePO {
   prStatus?: string | null;
 }
 
-// Fetched on demand at print time — never carried on the list payload (~20KB each).
-// approvedSignature resolves the admin who approved the REQUEST (purchase_requests.
-// verified_by_id); supervisedSignature the admin who approved the ORDER (approved_by_id).
+// Fetched on demand at print time — never carried on the list payload (~20KB each). Section C:
+// exactly three, resolved from processed_by_id (purchasing), po_reviewed_by_id (accounting) and
+// approved_by_id (admin) respectively.
 export interface POSignatures {
   preparedSignature?: string | null;
   reviewedSignature?: string | null;
   approvedSignature?: string | null;
-  processedSignature?: string | null;
-  supervisedSignature?: string | null;
 }
 
 export interface PrintableSO {
@@ -193,9 +189,9 @@ const SHARED_CSS = `
   .signature-section { margin-top: 30px; }
   .approved-header { text-align: center; font-weight: bold; font-size: 10pt; margin-bottom: 15px; letter-spacing: 2px; }
   .approved-header.rejected { text-decoration: line-through; }
-  /* Five boxes (Prepared / Reviewed / Approved / Processed / Supervised) share the A4 text
-     column, so the gap and the type tighten to fit. flex:1 + min-width:0 lets them shrink
-     evenly; without min-width:0 a long name would force the row wider than the page. */
+  /* Three boxes (Prepared / Reviewed / Approved) share the A4 text column. flex:1 + min-width:0
+     lets them shrink evenly; without min-width:0 a long name would force the row wider than the
+     page. Sales orders reuse these classes with their own three blocks. */
   .signature-boxes { display: flex; gap: 6px; }
   .signature-box { flex: 1; min-width: 0; border: 1px solid black; padding: 6px 4px; text-align: center; }
   .signature-title { font-weight: bold; font-size: 8pt; margin-bottom: 4px; }
@@ -238,26 +234,17 @@ export async function printPurchaseOrder(
   const contact = po.supplierContact || blobLine(description, 'Contact:') || '';
   const paymentTerms = po.paymentTerms || blobLine(description, 'Payment Terms:') || DEFAULT_PAYMENT_TERMS;
 
-  // The five signatories, in the order they actually act. A PR-linked order names the people
-  // who really did each step; a hand-raised one has no request behind it and falls back to the
-  // free-text fields its own form captured (which carry no date and no signature).
-  const preparedBy = po.requestedBy || po.preparedBy?.trim() || blobLine(description, 'Prepared By:') || '';
-  const reviewedBy = po.checkedBy || po.reviewedBy || blobLine(description, 'Reviewed By:') || '';
-  const processedBy = po.processedBy || '';
-  // Approved By is the admin's approval of the REQUEST, which is what allows the order to be
-  // raised — hence its place before Processed By. It fills the moment the request is approved,
-  // before this order exists. A hand-raised order has no request to approve, so it prints
-  // blank: the admin's sign-off on it appears under Supervised By instead.
-  const isSupervised = po.status === 'approved';
+  // Section C — #12: three signatories, in the order they act. Prepared By is the purchasing
+  // staffer who raised the order (processedBy); a hand-raised order with no purchasing account
+  // behind it falls back to the free-text Prepared By its own form captured.
+  const preparedBy = po.processedBy || po.preparedBy?.trim() || blobLine(description, 'Prepared By:') || '';
+  // Approved By is stamped only once the order is actually approved. The linked request's
+  // verifier is no longer a signatory here (#7 — the Supervised block is gone).
+  const isApprovedOrder = po.status === 'approved';
   const signatories = [
-    { title: 'Prepared By:', name: preparedBy, sig: sigs.preparedSignature, date: po.requestedAt },
-    { title: 'Reviewed By:', name: reviewedBy, sig: sigs.reviewedSignature, date: po.checkedAt },
-    { title: 'Approved By:', name: po.verifiedBy || '', sig: sigs.approvedSignature, date: po.verifiedAt },
-    { title: 'Processed By:', name: processedBy, sig: sigs.processedSignature, date: po.processedAt },
-    // Only stamp the supervisor once the order is actually approved. The approve route stamps
-    // approved_by even on a rejection (the PO has no 'disapproved' status), so without this
-    // gate a rejected order would print a sign-off that never happened.
-    { title: 'Supervised By:', name: isSupervised ? (po.approvedBy || '') : '', sig: isSupervised ? sigs.supervisedSignature : null, date: isSupervised ? po.approvedAt : null },
+    { title: 'Prepared By:', name: preparedBy, sig: sigs.preparedSignature, date: po.processedAt },
+    { title: 'Reviewed By:', name: po.poReviewedBy || '', sig: sigs.reviewedSignature, date: po.poReviewedAt },
+    { title: 'Approved By:', name: isApprovedOrder ? (po.approvedBy || '') : '', sig: isApprovedOrder ? sigs.approvedSignature : null, date: isApprovedOrder ? po.approvedAt : null },
   ];
 
   // Totals come from the blob when present; the previous template hardcoded 0.00 for VAT
@@ -273,10 +260,10 @@ export async function printPurchaseOrder(
     : DEFAULT_TERMS;
   const termsHtml = termLines.map((l, i) => `${i + 1}. ${esc(l)}`).join('<br>');
 
-  // A rejected order keeps status 'pending' (purchase_orders' CHECK has no 'disapproved'),
-  // so status alone cannot distinguish "rejected" from "awaiting approval" — hence prStatus.
+  // Section C — #12: the order now carries real 'approved' and 'rejected' statuses of its own,
+  // so the stamp keys off the order status directly (no longer the linked request's).
   const isApproved = po.status === 'approved';
-  const isRejected = po.prStatus === 'disapproved';
+  const isRejected = po.status === 'rejected';
   const stamp = isApproved ? '<div class="approved-header">APPROVED</div>'
     : isRejected ? '<div class="approved-header rejected">REJECTED</div>'
     : '';

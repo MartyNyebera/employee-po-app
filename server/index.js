@@ -273,12 +273,31 @@ async function runMigrations() {
     //   approved --> in-progress --> RECEIVED    (terminal; RECEIVED is what counts as an expense)
     //           \-------------------> cancelled  (terminal)
     // 'in-progress' predates this and meant nothing — it now means "ongoing delivery".
+    // A PO now clears two gates before it is 'approved' (Section C — #12): Purchasing raises it
+    // ('pending', awaiting Accounting), Accounting reviews it ('accounting-approved', awaiting
+    // Admin), Admin approves it ('approved', → Warehouse for delivery). A refusal at either gate
+    // sends it back to Purchasing as 'rejected', who revise and resubmit (→ 'pending').
+    //   pending --> accounting-approved --> approved --> in-progress --> RECEIVED  (terminal)
+    //      \-------------\--------------------> rejected --> (resubmit) --> pending
+    //                                        \--> cancelled (terminal)
     try {
       await query(`ALTER TABLE purchase_orders DROP CONSTRAINT IF EXISTS purchase_orders_status_check`);
-      await query(`ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_status_check CHECK (status IN ('pending', 'approved', 'in-progress', 'RECEIVED', 'PAID', 'completed', 'cancelled'))`);
-      console.log('✅ purchase_orders status constraint updated (added RECEIVED, PAID, cancelled)');
+      await query(`ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_status_check CHECK (status IN ('pending', 'accounting-approved', 'rejected', 'approved', 'in-progress', 'RECEIVED', 'PAID', 'completed', 'cancelled'))`);
+      console.log('✅ purchase_orders status constraint updated (added accounting-approved, rejected)');
     } catch (err) {
       console.log('ℹ️ purchase_orders constraint update skipped:', err.message);
+    }
+
+    // The accounting review of a PO (Section C — #12). Distinct from the free-text reviewed_by,
+    // which is create-form text the printout falls back on: these three are stamped ONLY by the
+    // accounting-review route and name the real reviewer (→ accounting_accounts for a signature).
+    try {
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS po_reviewed_by TEXT`);
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS po_reviewed_by_id INTEGER`);
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS po_reviewed_at TIMESTAMPTZ`);
+      console.log('✅ purchase_orders accounting-review columns ready');
+    } catch (err) {
+      console.log('ℹ️ purchase_orders accounting-review columns skipped:', err.message);
     }
 
     // Who confirmed each step of the delivery, and when. Mirrors the approved_by/approved_at
@@ -1059,7 +1078,9 @@ app.get('/api/admin/queue-counts', requireAuth, requireRole(['admin']), async (r
     const r = await query(
       `SELECT
          (SELECT COUNT(*) FROM purchase_requests WHERE status = 'reviewed')::int AS purchase_requests,
-         (SELECT COUNT(*) FROM purchase_orders WHERE status = 'pending')::int AS purchase_orders,
+         -- Section C — #12: the admin's PO queue is now the SECOND gate, so it counts orders
+         -- Accounting has passed ('accounting-approved'), not raw 'pending' ones.
+         (SELECT COUNT(*) FROM purchase_orders WHERE status = 'accounting-approved')::int AS purchase_orders,
          (SELECT COUNT(*) FROM inventory_withdrawal_requests WHERE status = 'warehouse-approved')::int AS withdrawals`
     );
     const row = r.rows[0];
@@ -1101,6 +1122,7 @@ app.get('/api/purchase-orders', requireAuth, async (req, res) => {
               po.in_transit_at, po.in_transit_by, po.received_at, po.received_by,
               po.cancelled_at, po.cancelled_by, po.delivery_notes, po.received_lines,
               po.processed_by, po.processed_at,
+              po.po_reviewed_by, po.po_reviewed_at,
               -- The printed order names the people who actually acted on the REQUEST: the
               -- employee who filed it, the accounting staffer who reviewed it, and the admin
               -- who approved it. All live on purchase_requests, which this query already joins.
@@ -1145,18 +1167,18 @@ app.get('/api/purchase-orders', requireAuth, async (req, res) => {
       // A rejected PO stays 'pending' (its CHECK has no 'disapproved') — the rejection lives on
       // the request. Without prStatus a consumer cannot tell "awaiting admin" from "rejected".
       prStatus: row.pr_status ?? null,
-      // The admin's sign-off on the ORDER, which happens after purchasing processes it —
-      // the printed document calls this block "Supervised By". Distinct from verifiedBy
-      // below, which is the admin's earlier approval of the REQUEST.
+      // Section C — #12: the printed order now has THREE signees, in the order they act:
+      //   Prepared By — purchasing (processedBy/processedAt)
+      //   Reviewed By — accounting (poReviewedBy/poReviewedAt)
+      //   Approved By — admin      (approvedBy/approvedAt), stamped only on approval
       approvedBy: row.approved_by ?? null,
       approvedAt: row.approved_at ?? null,
-      // The five signatories of the printed document, in the order they act:
-      //   requestedBy (Prepared) → checkedBy (Reviewed) → verifiedBy (Approved)
-      //   → processedBy (Processed) → approvedBy (Supervised)
-      // The first three come from the linked request; a hand-raised order has none of them
-      // and falls back to its own free-text fields.
       processedBy: row.processed_by ?? null,
       processedAt: row.processed_at ?? null,
+      poReviewedBy: row.po_reviewed_by ?? null,
+      poReviewedAt: row.po_reviewed_at ?? null,
+      // Still surfaced for the request-side history (PR review report, next-dept hints), but no
+      // longer signatories on the ORDER document:
       requestedBy: row.pr_employee_name ?? null,
       requestedAt: row.pr_created_at ?? null,
       checkedBy: row.pr_checked_by ?? null,
@@ -2509,8 +2531,10 @@ Terms & Conditions: ${termsAndConditions || 'Standard terms apply'}`;
           doc_date, prepared_by, reviewed_by, supplier_address, supplier_contact, payment_terms, terms_and_conditions, purchase_request_id, supplier_id,
           processed_by, processed_by_id, processed_at)
          VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW())`,
+        // reviewed_by is left NULL at creation (Section C — #12): "Reviewed By" now names the
+        // accounting reviewer and is stamped only by the accounting-review route, never the form.
         [id, poNumber, client || customerName, extendedDescription, amount || totalAmount, finalCreatedDate, deliveryDate, assignedAssets, finalOrderType,
-         poDate || finalCreatedDate, preparedBy || null, reviewedBy || null, customerAddress || null, customerContact || null,
+         poDate || finalCreatedDate, preparedBy || null, null, customerAddress || null, customerContact || null,
          paymentTerms || '30 days from receipt/acceptance', termsAndConditions || null, purchaseRequestId || null, supplierId || null,
          req.user?.name || null, processedById]
       );
@@ -2579,21 +2603,39 @@ app.put('/api/purchase-orders/:id/approve', requireRole(['admin']), async (req, 
     const cur = await client.query('SELECT purchase_request_id, status FROM purchase_orders WHERE id = $1 FOR UPDATE', [req.params.id]);
     if (!cur.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Purchase order not found' }); }
 
-    // purchase_orders.status has no 'disapproved' in its CHECK; a rejected PO stays 'pending'
-    // and the rejection is carried by the request instead.
-    const poStatus = status === 'approved' ? 'approved' : 'pending';
-    // approved_by_id is what resolves this admin's signature on the printed order —
-    // approved_by alone is a display name and cannot be joined on.
-    const po = await client.query(
-      `UPDATE purchase_orders SET status=$1, approved_by=$2, approved_by_id=$3, approved_at=NOW(), updated_at=NOW() WHERE id=$4 RETURNING *`,
-      [poStatus, req.user?.name || 'Admin', req.user?.id ?? null, req.params.id]
-    );
+    // Section C — #12: the admin gate is the SECOND gate. The order must have cleared Accounting
+    // first, so it can only be approved from 'accounting-approved'. This stops an admin
+    // approving a raw 'pending' order that Accounting has not yet reviewed.
+    if (cur.rows[0].status !== 'accounting-approved') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: `This order is '${cur.rows[0].status}', not awaiting admin approval (it must be reviewed by Accounting first)` });
+    }
 
+    let po;
     const prId = cur.rows[0].purchase_request_id;
-    if (prId) {
-      await client.query(
-        `UPDATE purchase_requests SET status=$1, reviewed_by=$2, reviewed_at=NOW(), updated_at=NOW() WHERE id=$3`,
-        [status, req.user?.name || 'Admin', prId]
+    if (status === 'approved') {
+      // approved_by_id is what resolves this admin's signature on the printed order —
+      // approved_by alone is a display name and cannot be joined on.
+      po = await client.query(
+        `UPDATE purchase_orders SET status='approved', approved_by=$1, approved_by_id=$2, approved_at=NOW(), updated_at=NOW() WHERE id=$3 RETURNING *`,
+        [req.user?.name || 'Admin', req.user?.id ?? null, req.params.id]
+      );
+      // Approving the ORDER is what flips the linked request to 'approved' (which unlocks the
+      // employee's stock withdrawal) — one transaction, so the PR can never lag behind the PO.
+      if (prId) {
+        await client.query(
+          `UPDATE purchase_requests SET status='approved', reviewed_by=$1, reviewed_at=NOW(), updated_at=NOW() WHERE id=$2`,
+          [req.user?.name || 'Admin', prId]
+        );
+      }
+    } else {
+      // Rejection at the admin gate sends the order BACK to Purchasing to revise & resubmit
+      // (decision: rejection returns it, not terminal). No approver is stamped — the order was
+      // NOT approved — and the linked request is left intact: the request was fine, the order
+      // needs fixing.
+      po = await client.query(
+        `UPDATE purchase_orders SET status='rejected', updated_at=NOW() WHERE id=$1 RETURNING *`,
+        [req.params.id]
       );
     }
     await client.query('COMMIT');
@@ -2612,6 +2654,67 @@ app.put('/api/purchase-orders/:id/approve', requireRole(['admin']), async (req, 
   } finally {
     client.release();
   }
+});
+
+// Section C — #12: the Accounting gate, the FIRST gate a raised order clears. An accounting
+// account reviews a 'pending' order and either passes it to the admin ('accounting-approved',
+// stamping po_reviewed_*) or sends it back to Purchasing ('rejected'). Plain admins may act
+// here too (emergency override); 'owner' is admitted by requireRole.
+app.put('/api/purchase-orders/:id/accounting-review', requireRole(['accounting', 'admin']), async (req, res) => {
+  const client = await getClient();
+  try {
+    const { status } = req.body; // 'approved' (passes to admin) | 'rejected' (back to purchasing)
+    if (!['approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ error: "status must be 'approved' or 'rejected'" });
+    }
+    await client.query('BEGIN');
+    const cur = await client.query('SELECT status FROM purchase_orders WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (!cur.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Purchase order not found' }); }
+    if (cur.rows[0].status !== 'pending') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: `This order is '${cur.rows[0].status}', not awaiting accounting review` });
+    }
+    let po;
+    if (status === 'approved') {
+      // po_reviewed_by_id resolves the accounting reviewer's signature on the printed order
+      // (Reviewed By). Distinct from the free-text reviewed_by the create form once carried.
+      po = await client.query(
+        `UPDATE purchase_orders SET status='accounting-approved', po_reviewed_by=$1, po_reviewed_by_id=$2, po_reviewed_at=NOW(), updated_at=NOW() WHERE id=$3 RETURNING *`,
+        [req.user?.name || 'Accounting', req.user?.id ?? null, req.params.id]
+      );
+    } else {
+      po = await client.query(
+        `UPDATE purchase_orders SET status='rejected', updated_at=NOW() WHERE id=$1 RETURNING *`,
+        [req.params.id]
+      );
+    }
+    await client.query('COMMIT');
+    const row = po.rows[0];
+    res.json({ id: row.id, poNumber: row.po_number, status: row.status, poReviewedBy: row.po_reviewed_by, poReviewedAt: row.po_reviewed_at });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Section C — #12: after a rejection at either gate, Purchasing revises the order and resubmits
+// it. This clears the prior accounting review so the order goes through both gates afresh.
+app.put('/api/purchase-orders/:id/resubmit', requireRole(['purchasing', 'admin']), async (req, res) => {
+  try {
+    const cur = await query('SELECT status FROM purchase_orders WHERE id = $1', [req.params.id]);
+    if (!cur.rows[0]) return res.status(404).json({ error: 'Purchase order not found' });
+    if (cur.rows[0].status !== 'rejected') {
+      return res.status(409).json({ error: `Only a rejected order can be resubmitted (this one is '${cur.rows[0].status}')` });
+    }
+    const po = await query(
+      `UPDATE purchase_orders SET status='pending', po_reviewed_by=NULL, po_reviewed_by_id=NULL, po_reviewed_at=NULL, approved_by=NULL, approved_by_id=NULL, approved_at=NULL, updated_at=NOW() WHERE id=$1 RETURNING *`,
+      [req.params.id]
+    );
+    const row = po.rows[0];
+    res.json({ id: row.id, poNumber: row.po_number, status: row.status });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // A purchase order's line items live as a one-line JSON blob inside its `description`
@@ -4771,19 +4874,20 @@ app.get('/api/purchase-requests/:id/signatures', requireRole(['admin', 'accounti
 //
 // A hand-raised order (no purchase request) has no employee and no accounting review; those
 // blocks come back null and print as blank ruled lines.
-app.get('/api/purchase-orders/:id/signatures', requireRole(['admin', 'purchasing', 'logistics']), async (req, res) => {
+app.get('/api/purchase-orders/:id/signatures', requireRole(['admin', 'purchasing', 'accounting', 'warehouse', 'logistics']), async (req, res) => {
   try {
+    // Section C — #12: the printed order has exactly THREE signees, in the order they act:
+    //   Prepared By — the purchasing staffer who raised the order (processed_by_id)
+    //   Reviewed By — the accounting staffer who reviewed it     (po_reviewed_by_id)
+    //   Approved By — the admin who approved it                  (approved_by_id)
+    // The old employee/request-verifier joins and the Supervised block are gone (#7).
     const r = await query(
-      `SELECT e.signature  AS prepared_signature,
-              pr.checked_signature AS reviewed_signature,
-              v.signature  AS approved_signature,
-              pc.signature AS processed_signature,
-              u.signature  AS supervised_signature
+      `SELECT pc.signature AS prepared_signature,
+              ac.signature AS reviewed_signature,
+              u.signature  AS approved_signature
          FROM purchase_orders po
-         LEFT JOIN purchase_requests pr ON pr.id = po.purchase_request_id
-         LEFT JOIN employee_accounts e ON e.id = pr.employee_id
-         LEFT JOIN users v ON v.id = pr.verified_by_id
          LEFT JOIN purchasing_accounts pc ON pc.id = po.processed_by_id
+         LEFT JOIN accounting_accounts ac ON ac.id = po.po_reviewed_by_id
          LEFT JOIN users u ON u.id = po.approved_by_id
         WHERE po.id = $1`,
       [req.params.id]
@@ -4792,12 +4896,7 @@ app.get('/api/purchase-orders/:id/signatures', requireRole(['admin', 'purchasing
     res.json({
       preparedSignature: r.rows[0].prepared_signature || null,
       reviewedSignature: r.rows[0].reviewed_signature || null,
-      // The admin who approved the REQUEST (pr.verified_by_id) — not the one who approved the
-      // order. Approval of the request is what lets purchasing raise the order at all, so it
-      // precedes Processed By on the document; the order's own approval is Supervised By.
       approvedSignature: r.rows[0].approved_signature || null,
-      processedSignature: r.rows[0].processed_signature || null,
-      supervisedSignature: r.rows[0].supervised_signature || null,
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
