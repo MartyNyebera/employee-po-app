@@ -306,9 +306,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
           background: '#ececec',
           border: '1px solid #d6d6d6',
           borderRadius: '16px',
-          padding: '24px',
-          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-          transition: 'all 200ms ease-in-out',
+          padding: '24px',          transition: 'all 200ms ease-in-out',
           overflow: 'hidden'
         }}>
           <div style={{
@@ -423,9 +421,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
           background: '#ececec',
           border: '1px solid #d6d6d6',
           borderRadius: '16px',
-          padding: '24px',
-          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-          transition: 'all 200ms ease-in-out',
+          padding: '24px',          transition: 'all 200ms ease-in-out',
           overflow: 'hidden'
         }}>
           <div style={{
@@ -540,9 +536,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
           background: '#ececec',
           border: '1px solid #d6d6d6',
           borderRadius: '16px',
-          padding: '24px',
-          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-          transition: 'all 200ms ease-in-out',
+          padding: '24px',          transition: 'all 200ms ease-in-out',
           overflow: 'hidden'
         }}>
           <div style={{
@@ -639,9 +633,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
           background: '#ececec',
           border: '1px solid #d6d6d6',
           borderRadius: '16px',
-          padding: '24px',
-          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-          transition: 'all 200ms ease-in-out',
+          padding: '24px',          transition: 'all 200ms ease-in-out',
           overflow: 'hidden'
         }}>
           <div style={{
@@ -739,9 +731,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
         background: '#ececec',
         border: '1px solid #d6d6d6',
         borderRadius: '16px',
-        padding: '24px',
-        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-        marginBottom: '32px'
+        padding: '24px',        marginBottom: '32px'
       }}>
         <h2 style={{ fontSize: '20px', fontWeight: '600', color: '#000000', marginBottom: '24px' }}>
           Expenses vs Revenue Trend
@@ -755,9 +745,7 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
         background: '#ececec',
         border: '1px solid #d6d6d6',
         borderRadius: '16px',
-        padding: '24px',
-        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-        marginBottom: '32px'
+        padding: '24px',        marginBottom: '32px'
       }}>
         <h2 style={{ fontSize: '20px', fontWeight: '600', color: '#000000', marginBottom: '6px' }}>
           Project Budgets
