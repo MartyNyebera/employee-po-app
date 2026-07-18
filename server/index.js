@@ -359,8 +359,8 @@ async function runMigrations() {
     // Alter sales_orders: ensure PAID status is allowed
     try {
       await query(`ALTER TABLE sales_orders DROP CONSTRAINT IF EXISTS sales_orders_status_check`);
-      await query(`ALTER TABLE sales_orders ADD CONSTRAINT sales_orders_status_check CHECK (status IN ('pending', 'approved', 'in-progress', 'PAID', 'completed', 'Assigned', 'Picked Up', 'In Transit', 'Delivered'))`);
-      console.log('✅ sales_orders status constraint set (includes PAID + delivery statuses)');
+      await query(`ALTER TABLE sales_orders ADD CONSTRAINT sales_orders_status_check CHECK (status IN ('pending', 'rejected', 'approved', 'in-progress', 'PAID', 'completed', 'Assigned', 'Picked Up', 'In Transit', 'Delivered'))`);
+      console.log('✅ sales_orders status constraint set (includes rejected + PAID + delivery statuses)');
     } catch (err) {
       console.log('ℹ️ sales_orders constraint update skipped:', err.message);
     }
@@ -2814,6 +2814,23 @@ async function receiveLinesIntoInventory(client, lines, clientLines) {
   return { receivedLines, applied };
 }
 
+// A hand-raised order's lines are free-text (services, one-offs) — not inventory, so nothing is
+// shelved. But the warehouse can still record ordered/received/defective against them, so this
+// captures the discrepancy breakdown (#6) without touching stock. Matched by index, like above.
+function buildReceiptLinesNoInventory(lines, clientLines) {
+  const receivedLines = [];
+  for (let i = 0; i < lines.length; i++) {
+    const name = String(lines[i]?.description || '').trim();
+    if (!name) continue;
+    const ordered = Number(lines[i]?.quantity) || 0;
+    const cl = Array.isArray(clientLines) ? clientLines[i] : null;
+    const received = cl && cl.received != null ? Math.max(0, Number(cl.received) || 0) : ordered;
+    const defective = cl && cl.defective != null ? Math.max(0, Number(cl.defective) || 0) : 0;
+    receivedLines.push({ inventoryId: null, itemName: name, ordered, received, defective, added: 0, newQuantity: null });
+  }
+  return receivedLines;
+}
+
 // Logistics' confirmation of an inbound delivery — the tail of the purchase-order lifecycle,
 // which previously stopped dead at 'approved'.
 //
@@ -2883,6 +2900,10 @@ app.put('/api/purchase-orders/:id/delivery', requireRole(['admin', 'warehouse'])
         const result = await receiveLinesIntoInventory(client, parsePOLineItems(cur.rows[0].description), req.body.lines);
         receivedLines = result.receivedLines;
         applied = result.applied;
+      } else if (Array.isArray(req.body.lines) && req.body.lines.length) {
+        // Hand-raised order: nothing is inventory, so nothing is shelved, but still record the
+        // ordered/received/defective breakdown so discrepancies show on the receipt + report (#6).
+        receivedLines = buildReceiptLinesNoInventory(parsePOLineItems(cur.rows[0].description), req.body.lines);
       }
       // Stored, not just returned: the delivery receipt has to be printable again later, and
       // `new_quantity` is a snapshot of stock at receipt that cannot be recomputed once
@@ -2982,6 +3003,14 @@ app.patch('/api/purchase-orders/:id', requireRole(['admin','purchasing','office_
     const isAdmin = effectiveRole(req.user) === 'admin' || effectiveRole(req.user) === 'owner';
     if (req.body.status !== undefined && !isAdmin) {
       return res.status(403).json({ error: 'Only an admin can change a purchase order status' });
+    }
+    // #3 — a purchase order is only editable after it has been rejected (by the admin or by
+    // accounting). An in-flight, approved, or received order is locked. The dedicated
+    // approve/reject/delivery routes carry their own status transitions and are unaffected.
+    const cur = (await query('SELECT status FROM purchase_orders WHERE id = $1', [req.params.id])).rows[0];
+    if (!cur) return res.status(404).json({ error: 'Purchase order not found' });
+    if (cur.status !== 'rejected') {
+      return res.status(409).json({ error: 'A purchase order can only be edited after it has been rejected.' });
     }
     const cols = {
       status: req.body.status,
@@ -3377,6 +3406,18 @@ app.delete('/api/miscellaneous-expenses/:id', requireRole(['admin','bookkeeper',
 app.patch('/api/sales-orders/:id', requireRole(['admin', 'sales']), async (req, res) => {
   try {
     const { status, description } = req.body;
+    // #3 — an admin may only edit a sales order's CONTENT once it has been rejected; a pure
+    // status transition (approve / PAID / complete / the reject itself) is always allowed, and
+    // sales editing/pricing their own order is unaffected (the gate is admin-scoped).
+    const isAdminEditor = ['admin', 'owner'].includes(effectiveRole(req.user));
+    const contentKeys = ['description','client','customerName','amount','costAmount','customerId','line','source','deliveryDate','docDate','preparedBy','reviewedBy','customerAddress','customerContact','paymentTerms','termsAndConditions'];
+    if (isAdminEditor && contentKeys.some(k => req.body[k] !== undefined)) {
+      const cur = (await query('SELECT status FROM sales_orders WHERE id = $1', [req.params.id])).rows[0];
+      if (!cur) return res.status(404).json({ error: 'Sales order not found' });
+      if (cur.status !== 'rejected') {
+        return res.status(409).json({ error: 'A sales order can only be edited after it has been rejected.' });
+      }
+    }
     // Editable pricing/CRM fields (Phase 7e): owner sets the client price on the SO itself.
     const cols = {
       status, description,
@@ -4922,6 +4963,36 @@ app.delete('/api/purchase-requests/:id', requireRole(['admin']), async (req, res
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// #3 — admin edit of a DISAPPROVED purchase request, so a rejected request can be corrected and
+// re-submitted rather than re-filed from scratch. Only 'disapproved' is editable — a request in
+// any live stage of the workflow is locked. A successful edit resets it to 'pending' so it
+// re-enters the review pipeline from the top with the corrected lines.
+app.patch('/api/purchase-requests/:id', requireRole(['admin']), async (req, res) => {
+  try {
+    const cur = (await query('SELECT status FROM purchase_requests WHERE id = $1', [req.params.id])).rows[0];
+    if (!cur) return res.status(404).json({ error: 'Purchase request not found' });
+    if (cur.status !== 'disapproved') {
+      return res.status(409).json({ error: 'Only a disapproved purchase request can be edited.' });
+    }
+    const b = req.body;
+    const items = Array.isArray(b.items)
+      ? b.items.filter((it) => it && String(it.description || '').trim() && Number(it.quantity) > 0)
+      : null;
+    if (!items || items.length === 0) {
+      return res.status(400).json({ error: 'At least one item with a description and quantity is required' });
+    }
+    const total = items.reduce((t, it) => t + (Number(it.quantity) || 0) * (Number(it.unitCost) || 0), 0);
+    const r = await query(
+      `UPDATE purchase_requests
+          SET items = $1::jsonb, total = $2, needed_by = $3, project_id = $4, notes = $5,
+              status = 'pending', updated_at = NOW()
+        WHERE id = $6 RETURNING *`,
+      [JSON.stringify(items), total, orNull(b.neededBy), orNull(b.projectId), orNull(b.notes), req.params.id]
+    );
+    res.json(mapPurchaseRequest(r.rows[0]));
+  } catch (err) { console.error('purchase-request edit error:', err); res.status(500).json({ error: err.message }); }
+});
+
 // Signatures for ONE request, fetched on demand at print time.
 //
 // Deliberately not part of GET /api/purchase-requests: a signature is ~20KB of base64, so
@@ -4974,10 +5045,19 @@ app.get('/api/purchase-orders/:id/signatures', requireRole(['admin', 'purchasing
     //   Reviewed By — the accounting staffer who reviewed it     (po_reviewed_by_id)
     //   Approved By — the admin who approved it                  (approved_by_id)
     // The old employee/request-verifier joins and the Supervised block are gone (#7).
+    // Also resolve the signatory NAMES + DATES from the same id-joins. The printed order's
+    // list payload reads the paired text/timestamp columns (processed_by/at, po_reviewed_by/at,
+    // approved_by/at), but legacy rows have only the *_id column populated (no backfill), so the
+    // name/date print blank while the signature resolves. Returning these lets the printout fall
+    // back to the authoritative account name + the stored timestamps — no data migration needed.
     const r = await query(
       `SELECT pc.signature AS prepared_signature,
               ac.signature AS reviewed_signature,
-              u.signature  AS approved_signature
+              u.signature  AS approved_signature,
+              pc.full_name AS prepared_by_name,
+              ac.full_name AS reviewed_by_name,
+              u.name       AS approved_by_name,
+              po.processed_at, po.po_reviewed_at, po.approved_at
          FROM purchase_orders po
          LEFT JOIN purchasing_accounts pc ON pc.id = po.processed_by_id
          LEFT JOIN accounting_accounts ac ON ac.id = po.po_reviewed_by_id
@@ -4990,6 +5070,12 @@ app.get('/api/purchase-orders/:id/signatures', requireRole(['admin', 'purchasing
       preparedSignature: r.rows[0].prepared_signature || null,
       reviewedSignature: r.rows[0].reviewed_signature || null,
       approvedSignature: r.rows[0].approved_signature || null,
+      preparedByName: r.rows[0].prepared_by_name || null,
+      reviewedByName: r.rows[0].reviewed_by_name || null,
+      approvedByName: r.rows[0].approved_by_name || null,
+      preparedAt: r.rows[0].processed_at || null,
+      reviewedAt: r.rows[0].po_reviewed_at || null,
+      approvedAt: r.rows[0].approved_at || null,
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
