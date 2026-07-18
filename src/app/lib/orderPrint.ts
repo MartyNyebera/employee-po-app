@@ -76,6 +76,14 @@ export interface POSignatures {
   preparedSignature?: string | null;
   reviewedSignature?: string | null;
   approvedSignature?: string | null;
+  // Names + dates resolved from the account id-joins — fallbacks for legacy rows whose paired
+  // text/timestamp columns are null (the signature resolves but the printed name/date were blank).
+  preparedByName?: string | null;
+  reviewedByName?: string | null;
+  approvedByName?: string | null;
+  preparedAt?: string | null;
+  reviewedAt?: string | null;
+  approvedAt?: string | null;
 }
 
 export interface PrintableSO {
@@ -194,9 +202,9 @@ const SHARED_CSS = `
   .unit-cost-col { width: 14%; }
   .amount-col { width: 14%; }
   .summary-section { margin-bottom: 15px; }
-  /* margin-right:auto (not margin-left) puts the box on the LEFT — a fixed-width block with
+  /* margin-left:auto (not margin-right) puts the box on the RIGHT — a fixed-width block with
      auto on one side is pushed to the opposite edge. Both documents share this rule. */
-  .summary-box { border: 1px solid black; padding: 10px; width: 300px; margin-right: auto; }
+  .summary-box { border: 1px solid black; padding: 10px; width: 300px; margin-left: auto; }
   .summary-row { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 9pt; }
   .summary-label { font-weight: bold; }
   .summary-value { text-align: right; }
@@ -259,14 +267,17 @@ export async function printPurchaseOrder(
   // Section C — #12: three signatories, in the order they act. Prepared By is the purchasing
   // staffer who raised the order (processedBy); a hand-raised order with no purchasing account
   // behind it falls back to the free-text Prepared By its own form captured.
-  const preparedBy = po.processedBy || po.preparedBy?.trim() || blobLine(description, 'Prepared By:') || '';
+  const preparedBy = po.processedBy || po.preparedBy?.trim() || blobLine(description, 'Prepared By:') || sigs.preparedByName || '';
   // Approved By is stamped only once the order is actually approved. The linked request's
   // verifier is no longer a signatory here (#7 — the Supervised block is gone).
   const isApprovedOrder = po.status === 'approved';
+  // Name/date fall back to the values resolved from the signature id-joins (sigs.*), so legacy
+  // rows that only carry the *_id column still print the signatory's name and — where a timestamp
+  // was recorded — the date, instead of a blank line under the signature.
   const signatories = [
-    { title: 'Prepared By:', name: preparedBy, sig: sigs.preparedSignature, date: po.processedAt },
-    { title: 'Reviewed By:', name: po.poReviewedBy || '', sig: sigs.reviewedSignature, date: po.poReviewedAt },
-    { title: 'Approved By:', name: isApprovedOrder ? (po.approvedBy || '') : '', sig: isApprovedOrder ? sigs.approvedSignature : null, date: isApprovedOrder ? po.approvedAt : null },
+    { title: 'Prepared By:', name: preparedBy, sig: sigs.preparedSignature, date: po.processedAt || sigs.preparedAt },
+    { title: 'Reviewed By:', name: po.poReviewedBy || sigs.reviewedByName || '', sig: sigs.reviewedSignature, date: po.poReviewedAt || sigs.reviewedAt },
+    { title: 'Approved By:', name: isApprovedOrder ? (po.approvedBy || sigs.approvedByName || '') : '', sig: isApprovedOrder ? sigs.approvedSignature : null, date: isApprovedOrder ? (po.approvedAt || sigs.approvedAt) : null },
   ];
 
   // Totals come from the blob when present; the previous template hardcoded 0.00 for VAT
@@ -328,12 +339,11 @@ export async function printPurchaseOrder(
         ${po.prNumber ? `<strong>PR Number:</strong> ${esc(po.prNumber)}<br>` : ''}
         <strong>Type:</strong> ${esc(poType)}<br>
         <strong>Delivery Date:</strong> ${esc(fmtDate(po.deliveryDate))}<br>
+        <strong>Payment Terms:</strong> ${esc(paymentTerms)}<br>
         <strong>Page:</strong> 1 of 1
       </div>
     </div>
   </div>
-
-  <div class="payment-terms">PAYMENT TERMS: ${esc(paymentTerms)}</div>
 
   <table class="items-table">
     <thead>
@@ -352,7 +362,6 @@ export async function printPurchaseOrder(
   <div class="summary-section">
     <div class="summary-box">
       <div class="summary-row"><div class="summary-label">Sub Total:</div><div class="summary-value">${peso(subTotal)}</div></div>
-      <div class="summary-row"><div class="summary-label">Other Charges:</div><div class="summary-value">${peso(otherCharges)}</div></div>
       <div class="summary-row"><div class="summary-label">VAT Amount:</div><div class="summary-value">${peso(vatAmount)}</div></div>
       <div class="summary-row"><div class="summary-label">Total Amount:</div><div class="summary-value">${peso(totalAmount)}</div></div>
     </div>

@@ -47,8 +47,8 @@ export const PRINT_CHROME_CSS = `
   /* The body cell fills the remaining height so an opt-in bottom-pinned block (e.g. the PO
      signatures, #7) can sink to just above the footer. */
   .print-page > tbody > tr > td { padding: 0; height: 100%; }
-  /* Extra top/bottom breathing room around the KIMOEL letterhead (#5). */
-  .print-header { padding: 20px 0 14px; }
+  /* Extra top/bottom breathing room around the KIMOEL letterhead (#5, deepened per follow-up). */
+  .print-header { padding: 28px 0 20px; }
   .print-body { padding: 6px 2px 10px; height: 100%; box-sizing: border-box; }
   /* Opt-in: a body that wraps itself in .print-fill becomes a full-height flex column, so a
      child given margin-top:auto (the PO signature block) is pushed to the page bottom (#7). */
