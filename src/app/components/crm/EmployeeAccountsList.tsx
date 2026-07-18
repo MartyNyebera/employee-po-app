@@ -90,7 +90,7 @@ export function EmployeeAccountsList({ isAdmin }: { isAdmin: boolean }) {
                   <td style={S.td}>{e.department || '—'}</td>
                   <td style={S.td}>{e.position || '—'}</td>
                   <td style={S.td}>{statusBadge(e.status)}</td>
-                  <td style={{ ...S.td, textAlign: 'right' }}>
+                  <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                     {isAdmin ? <>
                       <button title="Edit" style={S.rowBtn} onClick={() => { setEditing(e); setShowModal(true); }}><Pencil size={13} /></button>
                       <button title={isActive(e.status) ? 'Deactivate' : 'Reactivate'} style={{ ...S.rowBtn, color: isActive(e.status) ? '#b91c1c' : '#7a6a0c' }} onClick={() => toggleActive(e)}><Power size={13} /></button>

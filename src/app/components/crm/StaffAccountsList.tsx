@@ -59,7 +59,7 @@ export function StaffAccountsList() {
                   <td style={S.td}>{s.email}</td>
                   <td style={S.td}>{roleBadge(s.role)}</td>
                   <td style={S.td}>{s.isActive === false ? pill('Inactive', 'bad') : pill('Active', 'good')}</td>
-                  <td style={{ ...S.td, textAlign: 'right' }}>
+                  <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                     {s.isSuperAdmin ? <span style={{ color: '#8a8a8a', fontSize: '12px' }}>—</span>
                       : <>
                         <button title={s.isActive === false ? 'Reactivate' : 'Deactivate'} style={{ ...S.rowBtn, color: s.isActive === false ? '#7a6a0c' : '#b91c1c' }} onClick={() => toggleActive(s)}><Power size={13} /></button>
