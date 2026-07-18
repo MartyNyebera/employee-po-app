@@ -19,7 +19,9 @@ export const S = {
   // <input> and <select> do NOT inherit the body's Poppins (theme.css) — browsers force their
   // own control font. Without it a 12px button renders visibly larger than 12px Poppins text
   // beside it, because the fallback face has a bigger x-height at the same pixel size.
-  addBtn: { padding: '10px 18px', backgroundColor: '#d1b01b', color: '#ffffff', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: 600, fontFamily: 'inherit' } as React.CSSProperties,
+  // inline-flex + nowrap + flex-shrink:0 keep "+ Account" on ONE line: the button is a flex item
+  // beside a long heading, so without these it gets squeezed and the label wraps under the icon.
+  addBtn: { display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap', flexShrink: 0, padding: '10px 18px', backgroundColor: '#d1b01b', color: '#ffffff', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: 600, fontFamily: 'inherit' } as React.CSSProperties,
   input: { width: '100%', padding: '10px 14px', borderRadius: '8px', border: '1px solid #d6d6d6', fontSize: '14px', boxSizing: 'border-box', backgroundColor: '#fff', fontFamily: 'inherit' } as React.CSSProperties,
   label: { display: 'block', fontSize: '12px', fontWeight: 600, color: '#262626', marginBottom: '6px' } as React.CSSProperties,
   card: { backgroundColor: '#fff', border: '1px solid #d6d6d6', borderRadius: '14px', overflow: 'hidden' } as React.CSSProperties,
