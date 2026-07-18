@@ -750,9 +750,9 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
       </div>
 
       {/* #7 — per-project budget vs committed spend (approved/ordered purchase requests).
-          White card so the gold Spent and grey Remaining bars read clearly. */}
+          Grey card so the white per-project cards inside it stand out. */}
       <div style={{
-        background: '#ffffff',
+        background: '#ececec',
         border: '1px solid #d6d6d6',
         borderRadius: '16px',
         padding: '24px',

@@ -1,19 +1,27 @@
 import { useEffect, useState } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { fetchApi } from '../api/client';
 
 // #7 — per-project budget vs spend. Each project carries an allotted budget (budget_allocation);
 // every purchase request linked to it deducts its cost from that budget. Per the chosen rule,
-// only COMMITTED spend counts — PRs that reached 'approved' or 'ordered' — using the priced
-// final total where available, else the employee estimate. The bar stacks Spent (gold) +
-// Remaining (grey) so each project reads as a share of its budget consumed.
+// only COMMITTED spend counts — PRs that reached 'approved' or 'ordered' — using the priced final
+// total where available, else the employee estimate.
+//
+// Presentation: one CARD per project (scroll horizontally through them), each with two bars —
+// Remaining budget and Spent. The Spent bar turns RED once it exceeds the Remaining (i.e. more
+// than half the budget is consumed), and an over-budget note appears when spend passes the budget.
 interface Project { id: string; name: string; budgetAllocation?: number }
 interface PR { projectId?: string | null; total?: number; finalTotal?: number | null; status?: string }
 interface Row { name: string; budget: number; spent: number; remaining: number; over: number }
 
 const COUNTED = new Set(['approved', 'ordered']);
 
-export function ProjectBudgetChart({ height = 360 }: { height?: number }) {
+const fmt = (v: number) =>
+  v >= 1e6 ? '₱' + (v / 1e6).toFixed(1) + 'M'
+    : v >= 1e3 ? '₱' + (v / 1e3).toFixed(0) + 'K'
+      : '₱' + Math.round(v);
+const peso = (v: number) => '₱' + (Number(v) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 });
+
+export function ProjectBudgetChart() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -41,47 +49,52 @@ export function ProjectBudgetChart({ height = 360 }: { height?: number }) {
     })();
   }, []);
 
-  const yFmt = (v: number) => v >= 1e6 ? '₱' + (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? '₱' + (v / 1e3).toFixed(0) + 'K' : '₱' + v;
-
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (!active || !payload || !payload.length) return null;
-    const r: Row | undefined = payload[0]?.payload;
-    if (!r) return null;
-    const peso = (v: number) => '₱' + v.toLocaleString('en-PH', { minimumFractionDigits: 2 });
-    return (
-      <div className="bg-white p-3 border border-slate-200 rounded-lg shadow-lg" style={{ fontSize: '13px' }}>
-        <p className="font-semibold text-slate-900 mb-1">{label}</p>
-        <p style={{ color: '#5a5a5a' }}>Budget: {peso(r.budget)}</p>
-        <p style={{ color: '#7a6a0c' }}>Spent: {peso(r.spent)}</p>
-        {r.over > 0
-          ? <p style={{ color: '#dc2626' }}>Over budget: {peso(r.over)}</p>
-          : <p style={{ color: '#5a5a5a' }}>Remaining: {peso(r.remaining)}</p>}
-      </div>
-    );
-  };
-
   if (loading) {
-    return <div className="w-full flex items-center justify-center" style={{ height }}><div className="w-8 h-8 rounded-full border-2 border-slate-300 border-t-[#d1b01b] animate-spin" /></div>;
+    return <div className="w-full flex items-center justify-center" style={{ height: 220 }}><div className="w-8 h-8 rounded-full border-2 border-slate-300 border-t-[#d1b01b] animate-spin" /></div>;
   }
   if (rows.length === 0) {
-    return <div className="w-full border border-slate-200 rounded-lg flex items-center justify-center" style={{ height: 200 }}><p className="text-slate-500 text-sm">No project budgets yet — set a budget on a project and link approved requests to it.</p></div>;
+    return <div className="w-full border border-slate-200 rounded-lg flex items-center justify-center" style={{ height: 160 }}><p className="text-slate-500 text-sm">No project budgets yet — set a budget on a project and link approved requests to it.</p></div>;
   }
 
+  const TRACK = 170; // px height of the bar track
+
   return (
-    <div className="w-full">
-      <ResponsiveContainer width="100%" height={height}>
-        <BarChart data={rows} margin={{ top: 8, right: 24, left: 12, bottom: 5 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#d6d6d6" vertical={false} />
-          <XAxis dataKey="name" tick={{ fill: '#5a5a5a', fontSize: 12 }} tickLine={{ stroke: '#d6d6d6' }} interval={0} angle={rows.length > 4 ? -20 : 0} textAnchor={rows.length > 4 ? 'end' : 'middle'} height={rows.length > 4 ? 60 : 30} />
-          <YAxis tickFormatter={yFmt} tick={{ fill: '#5a5a5a', fontSize: 12 }} tickLine={{ stroke: '#d6d6d6' }} />
-          <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0,0,0,0.04)' }} />
-          <Legend wrapperStyle={{ paddingTop: '12px', fontSize: '14px' }} />
-          {/* Stacked: spent + remaining sum to the budget. An over-budget project shows a red cap. */}
-          <Bar dataKey="spent" stackId="b" fill="#d1b01b" name="Spent" isAnimationActive animationDuration={900} />
-          <Bar dataKey="remaining" stackId="b" fill="#c9c9c9" name="Remaining" isAnimationActive animationDuration={900} />
-          <Bar dataKey="over" stackId="b" fill="#dc2626" name="Over budget" isAnimationActive animationDuration={900} />
-        </BarChart>
-      </ResponsiveContainer>
+    <div style={{ display: 'flex', gap: '16px', overflowX: 'auto', paddingBottom: '10px' }}>
+      {rows.map((r, i) => {
+        const scale = Math.max(r.budget, r.spent, 1);
+        // The Spent bar is red once it is the larger of the two (spent > remaining), i.e. more than
+        // half the budget spent; grey→gold otherwise.
+        const spentColor = r.spent > r.remaining ? '#dc2626' : '#d1b01b';
+        const bars = [
+          { label: 'Remaining', value: r.remaining, color: '#c9c9c9' },
+          { label: 'Spent', value: r.spent, color: spentColor },
+        ];
+        return (
+          <div key={i} style={{ minWidth: '210px', flexShrink: 0, background: '#ffffff', border: '1px solid #d6d6d6', borderRadius: '12px', padding: '16px 18px' }}>
+            <div style={{ fontWeight: 700, color: '#000000', fontSize: '14px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.name}>{r.name}</div>
+            <div style={{ fontSize: '11px', color: '#8a8a8a', marginBottom: '14px' }} title={peso(r.budget)}>Budget {fmt(r.budget)}</div>
+
+            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'center', gap: '28px', height: `${TRACK}px`, borderBottom: '1px solid #e6e6e6' }}>
+              {bars.map((b) => (
+                <div key={b.label} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 700, color: '#5a5a5a', marginBottom: '4px', whiteSpace: 'nowrap' }} title={peso(b.value)}>{fmt(b.value)}</div>
+                  <div title={`${b.label}: ${peso(b.value)}`}
+                    style={{ width: '48px', height: `${Math.max(2, (b.value / scale) * 100)}%`, background: b.color, borderRadius: '6px 6px 0 0', transition: 'height .5s ease' }} />
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '28px', marginTop: '6px' }}>
+              {bars.map((b) => (
+                <div key={b.label} style={{ width: '48px', textAlign: 'center', fontSize: '11px', color: '#5a5a5a' }}>{b.label}</div>
+              ))}
+            </div>
+
+            {r.over > 0 && (
+              <div style={{ marginTop: '10px', fontSize: '11px', fontWeight: 600, color: '#dc2626', textAlign: 'center' }} title={peso(r.over)}>Over budget by {fmt(r.over)}</div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
