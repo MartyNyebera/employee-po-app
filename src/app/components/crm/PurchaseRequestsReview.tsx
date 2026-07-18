@@ -35,25 +35,6 @@ const statusBadge = (s: string) => (
 // Until then only the employee's estimate exists.
 const isPriced = (pr: PurchaseRequest) => pr.finalTotal !== null && pr.finalTotal !== undefined;
 
-// Verify / Reject: brand-gold fill, white label, icon first — the house action style.
-//
-// The 12px/600 below only actually renders because of the `crm-action-btn`/`crm-row-btn`
-// classes: `.admin-portal button` in professional-design-complete.css forces 14px/500 with
-// !important, which beats inline styles. Changing the numbers here alone does nothing.
-// Hover comes from those classes too, for the same reason.
-const actionBtn = (busy: boolean): React.CSSProperties => ({
-  ...S.rowBtn,
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: '5px',
-  marginLeft: 0,
-  backgroundColor: '#d1b01b',
-  border: '1px solid #d1b01b',
-  color: '#ffffff',
-  opacity: busy ? 0.6 : 1,
-  cursor: busy ? 'default' : 'pointer',
-});
-
 // The admin's verification gate. Accounting reviews first (/accounting); the admin verifies
 // here, which is what lets Purchasing assign a supplier; the admin then approves the resulting
 // purchase order under Orders ▸ Purchase Orders — and THAT is what approves the request.
@@ -177,12 +158,14 @@ export function PurchaseRequestsReview() {
                         plain inline one align on different baselines, which visibly staggers them. */}
                     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px' }}>
                       <button className="crm-row-btn" title="Print" style={{ ...S.rowBtn, marginLeft: 0 }} onClick={() => printPR(pr)}><Printer size={13} /></button>
+                      {/* Same styling as the Sales/Purchase Order action buttons: crm-row-btn
+                          pills — gold fill + black check for Verify, red X on white for Reject. */}
                       {pr.status === 'reviewed' && (
                         <>
-                          <button className="crm-action-btn" title="Verify" style={actionBtn(busyId === pr.id)} disabled={busyId === pr.id}
-                            onClick={() => verify(pr, 'verified')}><Check size={13} strokeWidth={3} /></button>
-                          <button className="crm-action-btn" title="Reject" style={{ ...actionBtn(busyId === pr.id), backgroundColor: '#fff', border: '1px solid #d6d6d6', color: '#b91c1c' }} disabled={busyId === pr.id}
-                            onClick={() => verify(pr, 'rejected')}><X size={13} strokeWidth={3} /></button>
+                          <button className="crm-row-btn" title="Verify" style={{ ...S.rowBtn, marginLeft: 0, backgroundColor: '#d1b01b', border: '1px solid #d1b01b', color: '#000000' }} disabled={busyId === pr.id}
+                            onClick={() => verify(pr, 'verified')}><Check size={13} /></button>
+                          <button className="crm-row-btn" title="Reject" style={{ ...S.rowBtn, marginLeft: 0, color: '#b91c1c' }} disabled={busyId === pr.id}
+                            onClick={() => verify(pr, 'rejected')}><X size={13} /></button>
                         </>
                       )}
                       {/* #3 — only a disapproved request can be corrected and re-submitted. */}
