@@ -20,7 +20,7 @@ interface PurchaseOrder {
   // 'accounting-approved' (awaiting Admin) → 'approved'; 'rejected' sends it back to Purchasing.
   // 'in-progress' / 'RECEIVED' / 'cancelled' are set on the delivery leg once approved
   // (PUT /api/purchase-orders/:id/delivery). 'RECEIVED' is what counts as an expense.
-  status: 'pending' | 'accounting-approved' | 'rejected' | 'approved' | 'in-progress' | 'RECEIVED' | 'cancelled';
+  status: 'pending' | 'accounting-approved' | 'rejected' | 'approved' | 'in-progress' | 'partially-received' | 'RECEIVED' | 'cancelled';
   createdDate: string;
   deliveryDate: string;
   assignedAssets: string[];
@@ -39,7 +39,7 @@ interface PurchaseOrderListProps {
   isAdmin: boolean;
 }
 
-const statusLabel = (s: string) => ({ 'pending':'Pending','accounting-approved':'Accounting-approved','rejected':'Rejected','approved':'Approved','in-progress':'In progress','RECEIVED':'Received','cancelled':'Cancelled' }[s] || s);
+const statusLabel = (s: string) => ({ 'pending':'Pending','accounting-approved':'Accounting-approved','rejected':'Rejected','approved':'Approved','in-progress':'In progress','partially-received':'Partially received','RECEIVED':'Received','cancelled':'Cancelled' }[s] || s);
 
 export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
@@ -426,6 +426,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
           <option value="accounting-approved">Accounting-approved (admin)</option>
           <option value="approved">Approved</option>
           <option value="in-progress">In progress</option>
+          <option value="partially-received">Partially received</option>
           <option value="RECEIVED">Received</option>
           <option value="rejected">Rejected</option>
           <option value="cancelled">Cancelled</option>

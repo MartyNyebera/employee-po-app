@@ -47,6 +47,7 @@ interface PurchaseOrder {
 const poState = (s: string): { label: string; hint: string | null } => {
   if (s === 'approved') return { label: 'Ready', hint: 'Awaiting receipt' };
   if (s === 'in-progress') return { label: 'Ongoing delivery', hint: 'In transit from supplier' };
+  if (s === 'partially-received') return { label: 'Partially received', hint: 'Awaiting the outstanding balance' };
   if (s === 'RECEIVED') return { label: 'Received', hint: null };
   if (s === 'cancelled') return { label: 'Cancelled', hint: null };
   return { label: (s || '').charAt(0).toUpperCase() + (s || '').slice(1), hint: null };
@@ -495,7 +496,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
       || (po.prNumber || '').toLowerCase().includes(q);
   }), [purchaseOrders, search]);
   // Actionable = still needs a confirmation from the warehouse. RECEIVED/cancelled are terminal.
-  const openPOCount = purchaseOrders.filter(po => po.status === 'approved' || po.status === 'in-progress').length;
+  const openPOCount = purchaseOrders.filter(po => po.status === 'approved' || po.status === 'in-progress' || po.status === 'partially-received').length;
 
   const setPODelivery = async (po: PurchaseOrder, status: 'in-progress' | 'cancelled') => {
     if (status === 'cancelled' && !(await confirmDialog({ title: `Cancel ${po.poNumber}?`, message: 'This cannot be undone. The purchase request stays approved.', confirmLabel: 'Cancel order', tone: 'danger' }))) return;
@@ -752,7 +753,9 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
               <div className="space-y-3 mt-3">
                 {filteredPOs.map(po => {
                   const st = poState(po.status);
-                  const open = po.status === 'approved' || po.status === 'in-progress';
+                  // 'partially-received' stays actionable: the supplier is fulfilling the outstanding
+                  // balance, so the warehouse can receive it again (against its reduced lines).
+                  const open = po.status === 'approved' || po.status === 'in-progress' || po.status === 'partially-received';
                   return (
                     <div key={po.id} className="bg-white rounded-xl border border-gray-200 p-4">
                       <div className="flex items-start justify-between gap-3">
@@ -904,12 +907,19 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
             initialNotes={receivingPO.deliveryNotes}
             lines={orderLines.length ? orderLines : undefined}
             onSave={async (receivedBy, notes, lineResults) => {
-              const r = await wFetch<{ receivedAt?: string; inventoryApplied?: ReceivedLine[]; receivedLines?: ReceivedLine[] }>(
+              const r = await wFetch<{ status?: string; receivedAt?: string; inventoryApplied?: ReceivedLine[]; receivedLines?: ReceivedLine[] }>(
                 `/purchase-orders/${receivingPO.id}/delivery`,
                 { method: 'PUT', body: JSON.stringify({ status: 'RECEIVED', receivedBy, notes, lines: lineResults }) },
               );
               const n = r.inventoryApplied?.length || 0;
-              toast.success(n ? `${receivingPO.poNumber} received — ${n} item${n > 1 ? 's' : ''} added to inventory` : `${receivingPO.poNumber} marked received`);
+              const hadDefect = (lineResults || []).some(l => (Number(l.defective) || 0) > 0);
+              if (r.status === 'partially-received') {
+                // Short/defective: the PO stays open for the outstanding balance, and any defective
+                // units were queued for return to the supplier through logistics.
+                toast.success(`${receivingPO.poNumber} partially received — ${n} shelved; balance still outstanding${hadDefect ? '; defective units sent to logistics for return' : ''}`);
+              } else {
+                toast.success(n ? `${receivingPO.poNumber} received — ${n} item${n > 1 ? 's' : ''} added to inventory` : `${receivingPO.poNumber} marked received`);
+              }
               // Print the full per-line breakdown (short/defective lines included).
               const p = printPOReceipt(receivingPO, r.receivedLines || r.inventoryApplied || [], receivedBy, r.receivedAt || undefined, notes);
               if (!p.ok) toast.error(p.error || 'Receipt recorded — allow popups, then use Receipt on the row');

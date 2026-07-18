@@ -48,6 +48,8 @@ interface Delivery {
   // Section D — #15: set on a withdrawal-origin delivery (no sales order behind it).
   withdrawalId?: string | null; destination?: string | null;
   items?: { itemName: string; quantity: number; unit?: string | null }[] | null;
+  // Set on a supplier-return delivery (defective units going back to the supplier).
+  returnOfPoId?: string | null; returnPoNumber?: string | null;
 }
 // Minimal shape for the withdrawal item-picker.
 interface InventoryItem { id: string; itemName: string; unit?: string | null; quantity: number; }
@@ -306,6 +308,13 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     [deliveries],
   );
 
+  // Supplier-return deliveries — a deliveries row with no sales order, auto-created when the
+  // warehouse received a PO with DEFECTIVE units. Same pending → dispatched → delivered flow.
+  const returnDeliveries = useMemo(
+    () => deliveries.filter(d => d.returnOfPoId && d.status !== 'cancelled'),
+    [deliveries],
+  );
+
   const filtered = useMemo(() => jobs.filter(j => {
     const q = search.toLowerCase();
     return !q || j.so.soNumber.toLowerCase().includes(q) || (j.so.client || '').toLowerCase().includes(q)
@@ -317,8 +326,15 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     return !q || (d.deliveryNumber || '').toLowerCase().includes(q) || (d.destination || '').toLowerCase().includes(q);
   }), [withdrawalDeliveries, search]);
 
+  const filteredReturns = useMemo(() => returnDeliveries.filter(d => {
+    const q = search.toLowerCase();
+    return !q || (d.deliveryNumber || '').toLowerCase().includes(q) || (d.destination || '').toLowerCase().includes(q)
+      || (d.returnPoNumber || '').toLowerCase().includes(q);
+  }), [returnDeliveries, search]);
+
   const pendingCount = jobs.filter(j => j.state === 'pending').length
-    + withdrawalDeliveries.filter(d => d.status === 'pending').length;
+    + withdrawalDeliveries.filter(d => d.status === 'pending').length
+    + returnDeliveries.filter(d => d.status === 'pending').length;
 
   const dispatch = async (job: Job) => {
     setBusyId(job.so.id);
@@ -448,10 +464,49 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
               </div>
 
               {loading ? <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading…</div>
-                : (filtered.length === 0 && filteredWD.length === 0) ? (
-                  <div className="flex flex-col items-center justify-center h-48 text-gray-400"><Truck className="w-10 h-10 mb-3 text-gray-300" /><p className="font-medium text-gray-500">Nothing to deliver</p><p className="text-xs mt-1">Approved sales orders and approved stock withdrawals appear here.</p></div>
+                : (filtered.length === 0 && filteredWD.length === 0 && filteredReturns.length === 0) ? (
+                  <div className="flex flex-col items-center justify-center h-48 text-gray-400"><Truck className="w-10 h-10 mb-3 text-gray-300" /><p className="font-medium text-gray-500">Nothing to deliver</p><p className="text-xs mt-1">Approved sales orders, stock withdrawals, and supplier returns appear here.</p></div>
                 ) : (
                   <>
+                  {filteredReturns.length > 0 && (
+                    <div className="space-y-3">
+                      <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Returns to supplier</h3>
+                      {filteredReturns.map(d => {
+                        const item = d.items?.[0];
+                        return (
+                          <div key={d.id} className="bg-white rounded-xl border border-gray-200 p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <h3 className="font-semibold text-gray-900 text-sm">{d.deliveryNumber}</h3>
+                                  {d.returnPoNumber && <span className="text-xs text-gray-400">· defective from {d.returnPoNumber}</span>}
+                                  {item && <span className="text-xs text-gray-400">· {item.quantity} {item.unit || ''} {item.itemName}</span>}
+                                </div>
+                                <p className="text-xs text-gray-400 mt-0.5">Return to <span className="text-gray-600 font-medium">{d.destination || '—'}</span></p>
+                                {d.status === 'delivered' && <p className="text-xs text-gray-400 mt-1">Received by <span className="text-gray-600 font-medium">{d.receivedBy || '—'}</span></p>}
+                              </div>
+                              <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+                                <span className="text-xs font-semibold text-brand-gold">{statusLabel(d.status)}</span>
+                                {d.status === 'pending' && <span className="text-[11px] text-gray-400">Ready to dispatch</span>}
+                                {d.status === 'dispatched' && <span className="text-[11px] text-gray-400">Out for return</span>}
+                              </div>
+                            </div>
+                            <div className="flex items-center justify-end gap-2 mt-3 flex-wrap">
+                              {d.status === 'pending' && (
+                                <button onClick={() => dispatchWithdrawal(d)} disabled={busyId === d.id}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"><Truck className="w-3.5 h-3.5" /> Dispatch</button>
+                              )}
+                              {d.status === 'dispatched' && (
+                                <button onClick={() => setCompletingDelivery(d)}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"><PackageCheck className="w-3.5 h-3.5" /> Mark Delivered</button>
+                              )}
+                              <button onClick={() => printWD(d)} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Printer className="w-3.5 h-3.5" /> Receipt</button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                   {filteredWD.length > 0 && (
                     <div className="space-y-3">
                       <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Withdrawal deliveries</h3>
