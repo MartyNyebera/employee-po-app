@@ -14,6 +14,7 @@ import { ProjectsList } from './crm/ProjectsList';
 import { PurchaseRequestsReview } from './crm/PurchaseRequestsReview';
 import { AdminSignature } from './crm/AdminSignature';
 import { WithdrawalRequestsReview } from './crm/WithdrawalRequestsReview';
+import { DeliveryDiscrepancies } from './crm/DeliveryDiscrepancies';
 import { canView, canManage, type Role } from '../config/permissions';
 import ErrorBoundary from './ErrorBoundary';
 import { PageErrorFallback } from './PageErrorFallback';
@@ -40,7 +41,7 @@ interface AdminDashboardProps {
   onLogout: () => void;
 }
 
-type View = 'home' | 'orders' | 'transactions' | 'material-requests' | 'employee-accounts' | 'purchasing-accounts' | 'warehouse-accounts' | 'accounting-accounts' | 'sales-accounts' | 'logistics-accounts' | 'projects' | 'purchase-requests' | 'withdrawal-requests' | 'purchase-orders' | 'inventory' | 'miscellaneous' | 'request-form' | 'suppliers' | 'customers' | 'inquiries' | 'staff' | 'signature';
+type View = 'home' | 'orders' | 'transactions' | 'material-requests' | 'employee-accounts' | 'purchasing-accounts' | 'warehouse-accounts' | 'accounting-accounts' | 'sales-accounts' | 'logistics-accounts' | 'projects' | 'purchase-requests' | 'withdrawal-requests' | 'purchase-orders' | 'discrepancies' | 'inventory' | 'miscellaneous' | 'request-form' | 'suppliers' | 'customers' | 'inquiries' | 'staff' | 'signature';
 
 // Sidebar entries, in display order. An entry is either a leaf (navigates to a view) or a
 // group (a collapsible dropdown holding leaves). Visibility + write access come from MODULE_ACCESS.
@@ -65,6 +66,7 @@ const NAV_ENTRIES: NavEntry[] = [
   { group: 'orders', label: 'Orders', icon: FileText, children: [
     { view: 'orders', label: 'Sales Orders', icon: FileText, module: 'orders' },
     { view: 'purchase-orders', label: 'Purchase Orders', icon: Package, module: 'purchase-orders' },
+    { view: 'discrepancies', label: 'Delivery Discrepancies', icon: PackageMinus, module: 'discrepancies' },
   ] },
   { group: 'requests', label: 'Requests', icon: ClipboardCheck, children: [
     { view: 'purchase-requests', label: 'Purchase Requests', icon: ClipboardCheck, module: 'purchase-requests' },
@@ -200,6 +202,10 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
 
     if (currentView === 'purchase-orders') {
       return <PurchaseOrderList isAdmin={canManage(role, 'purchase-orders')} />;
+    }
+
+    if (currentView === 'discrepancies') {
+      return <DeliveryDiscrepancies />;
     }
 
     if (currentView === 'inventory') {

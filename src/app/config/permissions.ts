@@ -23,6 +23,7 @@ const BASE_ACCESS: Record<string, Partial<Record<Role, Access>>> = {
   home:             { owner: 'manage', admin: 'manage', bookkeeper: 'view',   purchasing: 'none'   },
   orders:           { owner: 'manage', admin: 'manage', bookkeeper: 'view',   purchasing: 'none'   },
   'purchase-orders':{ owner: 'manage', admin: 'manage', bookkeeper: 'view',   purchasing: 'manage' },
+  discrepancies:    { owner: 'manage', admin: 'manage', bookkeeper: 'view',   purchasing: 'view'   },
   miscellaneous:    { owner: 'manage', admin: 'manage', bookkeeper: 'manage', purchasing: 'none'   },
   customers:        { owner: 'manage', admin: 'manage', bookkeeper: 'view',   purchasing: 'none'   },
   // Supply

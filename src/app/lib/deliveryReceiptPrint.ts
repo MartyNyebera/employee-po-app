@@ -150,6 +150,7 @@ export function printReceivingReport(r: PrintableReceipt): { ok: boolean; error?
       <td>${esc(it.itemName)}${short(it) ? ` <span style="color:#b45309;font-weight:bold">(short ${esc(Number(it.ordered) - Number(it.added))})</span>` : ''}</td>
       <td style="text-align:center">${it.ordered === undefined ? '' : esc(it.ordered)}</td>
       <td style="text-align:center">${it.received === undefined ? esc(it.added) : esc(it.received)}</td>
+      <td style="text-align:center">${it.ordered === undefined ? '' : esc(Math.max(0, Number(it.ordered) - Number(it.received ?? it.ordered)))}</td>
       <td style="text-align:center">${esc(it.defective ?? 0)}</td>
       <td style="text-align:center">${esc(it.added)}</td>
       <td style="text-align:center">${it.newQuantity === undefined ? '' : esc(it.newQuantity)}</td>
@@ -194,7 +195,7 @@ export function printReceivingReport(r: PrintableReceipt): { ok: boolean; error?
   ${rows ? `
   <table class="items">
     <thead><tr>${detailed
-      ? '<th style="width:34px">No</th><th>Item</th><th style="width:70px">Ordered</th><th style="width:70px">Received</th><th style="width:70px">Defective</th><th style="width:70px">Added</th><th style="width:80px">New stock</th>'
+      ? '<th style="width:34px">No</th><th>Item</th><th style="width:64px">Ordered</th><th style="width:64px">Received</th><th style="width:60px">Missing</th><th style="width:64px">Defective</th><th style="width:56px">Added</th><th style="width:72px">New stock</th>'
       : '<th style="width:40px">No</th><th>Item added to inventory</th><th style="width:90px">Received</th><th style="width:110px">New stock</th>'}</tr></thead>
     <tbody>${rows}</tbody>
   </table>`

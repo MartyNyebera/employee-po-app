@@ -569,7 +569,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
           return (
             <button key={id} title={label} onClick={() => { setView(id); setMobileOpen(false); }}
               className={`relative w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium focus:outline-none transition-colors ${collapsed ? 'justify-center' : ''} ${active ? 'bg-teal-600 text-white hover:bg-teal-700' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'}`}>
-              <Icon className="w-4 h-4 flex-shrink-0" />{!collapsed && <span>{label}</span>}
+              <Icon className="w-4 h-4 flex-shrink-0" />{!collapsed && <span className="whitespace-nowrap">{label}</span>}
               {id === 'itemRequests' && <NavBadge count={pendingRequests} collapsed={collapsed} />}
               {id === 'orders' && <NavBadge count={openPOCount} collapsed={collapsed} />}
               {id === 'withdrawals' && <NavBadge count={pendingWithdrawals} collapsed={collapsed} />}
@@ -889,13 +889,13 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
       {receivingPO && (() => {
         // No .filter here: the server matches received/defective to its own parse of the same
         // "Line Items:" blob BY INDEX, so the grid must stay 1:1 with that parse (Section E).
-        const orderLines = receivingPO.prNumber
-          ? parsePOLineItems(receivingPO.description).map(l => ({
-              description: String(l.description || ''),
-              ordered: Number(l.quantity) || 0,
-              unit: l.unit || null,
-            }))
-          : [];
+        // #6 — the per-line grid now shows for EVERY order (not just PR-linked ones); a
+        // hand-raised order records its discrepancies too, it just doesn't move stock.
+        const orderLines = parsePOLineItems(receivingPO.description).map(l => ({
+          description: String(l.description || ''),
+          ordered: Number(l.quantity) || 0,
+          unit: l.unit || null,
+        }));
         return (
           <ReceivingModal
             title="Mark Received"

@@ -98,6 +98,7 @@ export function ReceivingModal({
                       <th className="px-3 py-2">Item</th>
                       <th className="px-3 py-2 text-center">Ordered</th>
                       <th className="px-3 py-2 text-center">Received</th>
+                      <th className="px-3 py-2 text-center">Missing</th>
                       <th className="px-3 py-2 text-center">Defective</th>
                       <th className="px-3 py-2 text-center">Usable</th>
                     </tr>
@@ -105,12 +106,14 @@ export function ReceivingModal({
                   <tbody>
                     {lines.map((l, i) => {
                       const usable = Math.max(0, (Number(grid[i]?.received) || 0) - (Number(grid[i]?.defective) || 0));
+                      const missing = Math.max(0, l.ordered - (Number(grid[i]?.received) || 0));
                       const shortfall = usable < l.ordered;
                       return (
                         <tr key={i} className="border-t border-gray-100">
                           <td className="px-3 py-2 text-gray-800">{l.description}</td>
                           <td className="px-3 py-2 text-center text-gray-500">{l.ordered} {l.unit || ''}</td>
                           <td className="px-3 py-2 text-center"><input type="number" min="0" value={grid[i]?.received ?? ''} onChange={e => setCell(i, 'received', e.target.value)} className={cell} /></td>
+                          <td className={`px-3 py-2 text-center font-semibold ${missing > 0 ? 'text-red-600' : 'text-gray-400'}`}>{missing}</td>
                           <td className="px-3 py-2 text-center"><input type="number" min="0" value={grid[i]?.defective ?? ''} onChange={e => setCell(i, 'defective', e.target.value)} className={cell} /></td>
                           <td className={`px-3 py-2 text-center font-semibold ${shortfall ? 'text-amber-600' : 'text-gray-800'}`}>{usable}{shortfall ? ` (short ${l.ordered - usable})` : ''}</td>
                         </tr>
