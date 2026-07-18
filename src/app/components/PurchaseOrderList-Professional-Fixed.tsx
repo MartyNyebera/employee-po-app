@@ -472,7 +472,9 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
                         <button className="crm-row-btn" title="Reject" style={{ ...S.rowBtn, marginLeft: 0, color: '#b91c1c' }} disabled={approvingId === po.id} onClick={() => handleApprove(po, 'disapproved')}><X size={13} /></button>
                       </>
                     )}
-                    {isAdmin && (
+                    {/* #3 — an order can only be edited once it has been rejected (by the admin or
+                        accounting); an in-flight or approved order is locked. */}
+                    {isAdmin && po.status === 'rejected' && (
                       <button className="crm-row-btn" title="Edit" style={{ ...S.rowBtn, marginLeft: 0 }} onClick={() => handleEditClick(po)}><Edit size={13} /></button>
                     )}
                     {isAdmin && (

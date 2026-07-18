@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Check, X, Trash2, Printer } from 'lucide-react';
+import { Check, X, Trash2, Printer, Pencil, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
 import { useLiveRefresh } from '../../hooks/useLiveRefresh';
-import { S, badge, peso, toneText } from './crmKit';
+import { S, badge, peso, toneText, Modal, Field, TextInput, TextArea, GhostBtn, PrimaryBtn } from './crmKit';
 import { printPurchaseRequest } from '../../lib/purchaseRequestPrint';
 import { nextDeptFor } from '../../lib/nextDept';
 import { SummaryStats } from '../SummaryStats';
@@ -62,6 +62,7 @@ export function PurchaseRequestsReview() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [editing, setEditing] = useState<PurchaseRequest | null>(null);
 
   // silent: background poll — no spinner, no toast on a blip (see useLiveRefresh).
   const load = async ({ silent = false }: { silent?: boolean } = {}) => {
@@ -184,6 +185,11 @@ export function PurchaseRequestsReview() {
                             onClick={() => verify(pr, 'rejected')}><X size={13} strokeWidth={3} /></button>
                         </>
                       )}
+                      {/* #3 — only a disapproved request can be corrected and re-submitted. */}
+                      {pr.status === 'disapproved' && (
+                        <button className="crm-row-btn" title="Edit" style={{ ...S.rowBtn, marginLeft: 0 }} disabled={busyId === pr.id}
+                          onClick={() => setEditing(pr)}><Pencil size={13} /></button>
+                      )}
                       <button className="crm-row-btn" title="Delete request" style={{ ...S.rowBtn, marginLeft: 0, color: '#dc2626' }} disabled={busyId === pr.id}
                         onClick={() => removePR(pr)}><Trash2 size={13} /></button>
                     </div>
@@ -193,6 +199,100 @@ export function PurchaseRequestsReview() {
           </tbody>
         </table>
       </div>
+
+      {editing && (
+        <PREditModal
+          pr={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); load(); }}
+        />
+      )}
     </div>
+  );
+}
+
+// #3 — correct a DISAPPROVED request's lines, needed-by and notes, then re-submit. Saving PATCHes
+// the request, which the server resets to 'pending' so it re-enters the review pipeline. The
+// project link is preserved (sent back unchanged). Labor lines keep their kind/note.
+interface EditLine { description: string; quantity: string; unit: string; unitCost: string; kind?: string | null; laborNote?: string | null; }
+function PREditModal({ pr, onClose, onSaved }: { pr: PurchaseRequest; onClose: () => void; onSaved: () => void }) {
+  const [neededBy, setNeededBy] = useState((pr.neededBy || '').slice(0, 10));
+  const [notes, setNotes] = useState(pr.notes || '');
+  const [lines, setLines] = useState<EditLine[]>(() => (pr.items || []).map(it => ({
+    description: it.description, quantity: String(it.quantity ?? ''), unit: it.unit || (it.kind === 'labor' ? 'lot' : 'pcs'),
+    unitCost: String(it.unitCost ?? ''), kind: it.kind ?? null, laborNote: it.laborNote ?? null,
+  })));
+  const [saving, setSaving] = useState(false);
+
+  const setCell = (i: number, k: keyof EditLine, v: string) => setLines(g => g.map((r, idx) => idx === i ? { ...r, [k]: v } : r));
+  const removeLine = (i: number) => setLines(g => g.filter((_, idx) => idx !== i));
+  const total = lines.reduce((t, l) => t + (Number(l.quantity) || 0) * (Number(l.unitCost) || 0), 0);
+
+  const save = async () => {
+    const items = lines
+      .filter(l => l.description.trim() && Number(l.quantity) > 0)
+      .map((l, i) => ({
+        no: i + 1, kind: l.kind || undefined, description: l.description.trim(),
+        laborNote: l.kind === 'labor' ? ((l.laborNote || '').trim() || null) : undefined,
+        quantity: Number(l.quantity) || 0, unit: l.unit,
+        unitCost: Number(l.unitCost) || 0, amount: (Number(l.quantity) || 0) * (Number(l.unitCost) || 0),
+      }));
+    if (items.length === 0) { toast.error('At least one item with a description and quantity is required'); return; }
+    if (!neededBy) { toast.error('Set the needed-by date'); return; }
+    setSaving(true);
+    try {
+      await fetchApi(`/purchase-requests/${pr.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ items, neededBy, projectId: pr.projectId ?? null, notes: notes.trim() || null }),
+      });
+      toast.success(`${pr.prNumber} updated — re-submitted for review`);
+      onSaved();
+    } catch (e: any) { toast.error('Failed: ' + e.message); } finally { setSaving(false); }
+  };
+
+  return (
+    <Modal title={`Edit ${pr.prNumber}`} onClose={onClose} wide
+      footer={<><GhostBtn onClick={onClose}>Cancel</GhostBtn><PrimaryBtn onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save & re-submit'}</PrimaryBtn></>}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+        <Field label="Needed by"><TextInput type="date" value={neededBy} onChange={e => setNeededBy(e.target.value)} /></Field>
+        <Field label="Project"><TextInput value={pr.projectName || 'Personal use'} onChange={() => {}} disabled /></Field>
+      </div>
+      <div style={{ marginTop: '4px' }}>
+        <div style={{ fontSize: '12px', fontWeight: 600, color: '#5a5a5a', marginBottom: '6px' }}>Items</div>
+        <table style={S.table}>
+          <thead><tr>
+            <th style={S.th}>Description</th>
+            <th style={{ ...S.th, textAlign: 'right', width: '70px' }}>Qty</th>
+            <th style={{ ...S.th, width: '90px' }}>Unit</th>
+            <th style={{ ...S.th, textAlign: 'right', width: '110px' }}>Unit cost</th>
+            <th style={{ ...S.th, textAlign: 'right', width: '110px' }}>Amount</th>
+            <th style={{ ...S.th, width: '36px' }}></th>
+          </tr></thead>
+          <tbody>
+            {lines.map((l, i) => (
+              <tr key={i}>
+                <td style={S.td}>
+                  <TextInput value={l.description} onChange={e => setCell(i, 'description', e.target.value)} />
+                  {l.kind === 'labor' && <div style={{ marginTop: '4px' }}><TextInput value={l.laborNote || ''} onChange={e => setCell(i, 'laborNote', e.target.value)} placeholder="Labor note" /></div>}
+                </td>
+                <td style={{ ...S.td, textAlign: 'right' }}>{l.kind === 'labor' ? <span style={{ color: '#8a8a8a' }}>—</span> : <TextInput type="number" value={l.quantity} onChange={e => setCell(i, 'quantity', e.target.value)} />}</td>
+                <td style={S.td}>{l.kind === 'labor' ? <span style={{ color: '#8a8a8a' }}>lot</span> : <TextInput value={l.unit} onChange={e => setCell(i, 'unit', e.target.value)} />}</td>
+                <td style={{ ...S.td, textAlign: 'right' }}><TextInput type="number" value={l.unitCost} onChange={e => setCell(i, 'unitCost', e.target.value)} /></td>
+                <td style={{ ...S.td, textAlign: 'right', fontWeight: 600, color: '#000000' }}>{peso((Number(l.quantity) || 0) * (Number(l.unitCost) || 0))}</td>
+                <td style={{ ...S.td, textAlign: 'center' }}>
+                  {lines.length > 1 && <button title="Remove line" style={{ ...S.rowBtn, marginLeft: 0, color: '#b91c1c' }} onClick={() => removeLine(i)}><Trash2 size={13} /></button>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '16px', alignItems: 'center', marginTop: '8px' }}>
+          <button style={{ ...S.rowBtn, marginLeft: 0, display: 'inline-flex', alignItems: 'center', gap: '5px' }}
+            onClick={() => setLines(g => [...g, { description: '', quantity: '1', unit: 'pcs', unitCost: '' }])}><Plus size={13} /> Add line</button>
+          <div style={{ fontSize: '13px', fontWeight: 700, color: '#000000' }}>Total: {peso(total)}</div>
+        </div>
+      </div>
+      <Field label="Notes"><TextArea value={notes} onChange={e => setNotes(e.target.value)} /></Field>
+    </Modal>
   );
 }

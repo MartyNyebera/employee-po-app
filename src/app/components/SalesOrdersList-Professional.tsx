@@ -24,7 +24,7 @@ interface PurchaseOrderData {
   client: string;
   description: string;
   amount: number;
-  status: 'pending' | 'approved' | 'in-progress' | 'PAID' | 'completed';
+  status: 'pending' | 'rejected' | 'approved' | 'in-progress' | 'PAID' | 'completed';
   createdDate: string;
   deliveryDate: string;
   assignedAssets: string[];
@@ -37,7 +37,7 @@ interface PurchaseOrder {
   client: string;
   description: string;
   amount: number;
-  status: 'pending' | 'approved' | 'in-progress' | 'PAID' | 'completed';
+  status: 'pending' | 'rejected' | 'approved' | 'in-progress' | 'PAID' | 'completed';
   createdDate: string;
   deliveryDate: string;
   assignedAssets: string[];
@@ -149,9 +149,21 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
     }).format(amount);
   };
 
+  // #3 — admin rejects a sales order. A rejected SO is the ONLY state an admin may then edit
+  // (mirrors the purchase-order rule); until then the order is locked.
+  const handleReject = async (po: PurchaseOrder) => {
+    if (!(await confirmDialog({ title: `Reject SO ${po.soNumber}?`, message: 'It can then be edited and re-issued.', confirmLabel: 'Reject', tone: 'danger' }))) return;
+    try {
+      await updateSalesOrder(po.id, { status: 'rejected' });
+      setOrders(prev => prev.map(o => o.id === po.id ? { ...o, status: 'rejected' } : o));
+      toast.success(`${po.soNumber} rejected`);
+      window.dispatchEvent(new CustomEvent('ordersUpdated'));
+    } catch (e: any) { toast.error('Failed to reject: ' + (e?.message || 'unknown error')); }
+  };
+
   const handleEditClick = (po: PurchaseOrder) => {
     setSelectedPO(po);
-    
+
     // Debug: Log the raw description
     console.log('🔍 RAW DESCRIPTION DEBUG:');
     console.log('Description:', JSON.stringify(po.description));
@@ -355,7 +367,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
     if (!r.ok) toast.error(r.error || 'Failed to open the print window');
   };
 
-  const statusLabel = (s: string) => ({ 'pending': 'Pending', 'approved': 'Approved', 'in-progress': 'In progress', 'PAID': 'PAID', 'completed': 'Completed' }[s] || s);
+  const statusLabel = (s: string) => ({ 'pending': 'Pending', 'rejected': 'Rejected', 'approved': 'Approved', 'in-progress': 'In progress', 'PAID': 'PAID', 'completed': 'Completed' }[s] || s);
 
   const filteredOrders = orders.filter(po => {
     const matchesFilter = statusFilter === 'all' || po.status === statusFilter;
@@ -376,6 +388,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
   const inProgressCount = orders.filter(po => po.status === 'in-progress').length;
   const paidCount = orders.filter(po => po.status === 'PAID').length;
   const completedCount = orders.filter(po => po.status === 'completed').length;
+  const rejectedCount = orders.filter(po => po.status === 'rejected').length;
 
   if (loading) {
     return (
@@ -431,6 +444,7 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
         { label: 'In progress', value: inProgressCount },
         { label: 'PAID', value: paidCount },
         { label: 'Completed', value: completedCount },
+        { label: 'Rejected', value: rejectedCount },
       ]} />
 
       <div style={S.card}>
@@ -456,7 +470,12 @@ export function SalesOrdersList({ isAdmin = false }: SalesOrdersListProps) {
                 <td style={S.td}>
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px', flexWrap: 'wrap' }}>
                     <button className="crm-row-btn" title="Print" style={{ ...S.rowBtn, marginLeft: 0 }} onClick={() => handlePrintSO(po)}><Printer size={13} /></button>
-                    {isAdmin && (
+                    {/* #3 — reject is offered while the order is still open (not yet rejected,
+                        paid, or completed); a rejected order is the only one that can be edited. */}
+                    {isAdmin && po.status !== 'rejected' && po.status !== 'PAID' && po.status !== 'completed' && (
+                      <button className="crm-action-btn" title="Reject" style={{ ...S.rowBtn, marginLeft: 0, color: '#b91c1c' }} onClick={() => handleReject(po)}><X size={13} /></button>
+                    )}
+                    {isAdmin && po.status === 'rejected' && (
                       <button className="crm-row-btn" title="Edit" style={{ ...S.rowBtn, marginLeft: 0 }} onClick={() => handleEditClick(po)}><Edit size={13} /></button>
                     )}
                     {isAdmin && (
