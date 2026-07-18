@@ -19,6 +19,7 @@ import {
   Target
 } from 'lucide-react';
 import { ProperLineChart } from './ProperLineChart';
+import { ProjectBudgetChart } from './ProjectBudgetChart';
 import { 
   fetchOverviewMetrics, 
   fetchOrderSummary, 
@@ -746,6 +747,24 @@ export function BusinessOverview({ isAdmin }: BusinessOverviewProps) {
           Expenses vs Revenue Trend
         </h2>
         <ProperLineChart data={chartData} />
+      </div>
+
+      {/* #7 — per-project budget vs committed spend (approved/ordered purchase requests). */}
+      <div style={{
+        background: '#ececec',
+        border: '1px solid #d6d6d6',
+        borderRadius: '16px',
+        padding: '24px',
+        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+        marginBottom: '32px'
+      }}>
+        <h2 style={{ fontSize: '20px', fontWeight: '600', color: '#000000', marginBottom: '6px' }}>
+          Project Budgets
+        </h2>
+        <p style={{ fontSize: '13px', color: '#5a5a5a', marginBottom: '24px' }}>
+          Remaining budget vs spend for each project — spend counts approved &amp; ordered purchase requests linked to the project.
+        </p>
+        <ProjectBudgetChart />
       </div>
 
     </div>
