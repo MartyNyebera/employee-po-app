@@ -847,7 +847,7 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
           return (
             <button key={id} title={label} onClick={() => { setView(id); setMobileMenuOpen(false); }}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium focus:outline-none transition-colors ${collapsed ? 'justify-center' : ''} ${active ? 'bg-blue-600 text-white hover:bg-blue-700' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'}`}>
-              <Icon className="w-4 h-4 flex-shrink-0" />{!collapsed && <span>{label}</span>}
+              <Icon className="w-4 h-4 flex-shrink-0" />{!collapsed && <span className="whitespace-nowrap">{label}</span>}
             </button>
           );
         })}

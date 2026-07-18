@@ -88,7 +88,7 @@ function SidebarInner({ view, setView, setMobileMenuOpen, unreadCount, employee,
               }`}
             >
               <Icon className="w-4 h-4 flex-shrink-0" />
-              {!collapsed && <span>{label}</span>}
+              {!collapsed && <span className="whitespace-nowrap">{label}</span>}
               {id === 'notifications' && <NavBadge count={unreadCount} collapsed={collapsed} />}
             </button>
           );
