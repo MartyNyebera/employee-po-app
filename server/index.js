@@ -282,8 +282,8 @@ async function runMigrations() {
     //                                        \--> cancelled (terminal)
     try {
       await query(`ALTER TABLE purchase_orders DROP CONSTRAINT IF EXISTS purchase_orders_status_check`);
-      await query(`ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_status_check CHECK (status IN ('pending', 'accounting-approved', 'rejected', 'approved', 'in-progress', 'RECEIVED', 'PAID', 'completed', 'cancelled'))`);
-      console.log('✅ purchase_orders status constraint updated (added accounting-approved, rejected)');
+      await query(`ALTER TABLE purchase_orders ADD CONSTRAINT purchase_orders_status_check CHECK (status IN ('pending', 'accounting-approved', 'rejected', 'approved', 'in-progress', 'partially-received', 'RECEIVED', 'PAID', 'completed', 'cancelled'))`);
+      console.log('✅ purchase_orders status constraint updated (added accounting-approved, rejected, partially-received)');
     } catch (err) {
       console.log('ℹ️ purchase_orders constraint update skipped:', err.message);
     }
@@ -760,6 +760,11 @@ async function runMigrations() {
       await query(`ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS destination TEXT`);
       await query(`ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS items JSONB`);
       await query(`CREATE INDEX IF NOT EXISTS idx_deliveries_withdrawal ON deliveries(withdrawal_id)`);
+      // A delivery can also originate from a warehouse PO RECEIPT with DEFECTIVE units: those units
+      // are shipped back to the supplier. Such a row has no sales_order_id/withdrawal_id and instead
+      // carries the PO it returns for, the supplier as destination, and the defective lines snapshot.
+      await query(`ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS return_of_po_id TEXT`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_deliveries_return_po ON deliveries(return_of_po_id)`);
       console.log('✅ deliveries table ready');
     } catch (err) { console.log('ℹ️ deliveries table skipped:', err.message); }
 
@@ -2749,6 +2754,37 @@ function parsePOLineItems(description) {
   } catch { return []; }
 }
 
+// Rebuild a PO's description blob to hold only the OUTSTANDING quantities after a short/defective
+// receipt (#partial-receipt). Per line, outstanding = ordered − usable (usable = the `added`
+// recorded by the receiving helper = received − defective); lines fully received are dropped. The
+// Line Items / Sub Total / Total Amount blob lines and the returned amount are recomputed; VAT and
+// Other Charges are zeroed on the remainder (a deliberate simplification — the reduced PO tracks
+// what the supplier still owes, not a fresh tax computation). All other blob lines (Address,
+// Contact, PO Type, Payment Terms, Terms & Conditions) are preserved untouched.
+function rewritePOOutstanding(description, parsedLines, receivedLines) {
+  const outLines = [];
+  let subTotal = 0;
+  parsedLines.forEach((li, i) => {
+    const ordered = Number(li.quantity) || 0;
+    const usable = Number(receivedLines[i]?.added) || 0;
+    const outstanding = Math.max(0, ordered - usable);
+    if (outstanding <= 0) return;
+    const unitCost = Number(li.unitCost ?? li.unitPrice) || 0;
+    subTotal += outstanding * unitCost;
+    outLines.push({ ...li, quantity: outstanding, amount: outstanding * unitCost });
+  });
+  const money = (n) => (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
+  const setLine = (text, label, value) => text.split('\n')
+    .map((l) => l.trimStart().startsWith(label) ? `${label} ${value}` : l).join('\n');
+  let d = String(description || '');
+  d = setLine(d, 'Line Items:', JSON.stringify(outLines));
+  d = setLine(d, 'Sub Total:', money(subTotal));
+  d = setLine(d, 'Other Charges:', money(0));
+  d = setLine(d, 'VAT Amount:', money(0));
+  d = setLine(d, 'Total Amount:', money(subTotal));
+  return { description: d, amount: subTotal };
+}
+
 // Receive an order's lines into stock, inside the caller's transaction (Section E — #14).
 //
 // The warehouse enters, per line, how many actually ARRIVED and how many are DEFECTIVE; only the
@@ -2855,7 +2891,7 @@ app.put('/api/purchase-orders/:id/delivery', requireRole(['admin', 'warehouse'])
     // a receipt recorded without its stock (or vice versa) is unrecoverable — RECEIVED is
     // terminal, so there is no retry. FOR UPDATE also serialises two concurrent receipts.
     await client.query('BEGIN');
-    const cur = await client.query('SELECT status, description, purchase_request_id FROM purchase_orders WHERE id = $1 FOR UPDATE', [req.params.id]);
+    const cur = await client.query('SELECT status, description, purchase_request_id, po_number, client, supplier_id, supplier_address FROM purchase_orders WHERE id = $1 FOR UPDATE', [req.params.id]);
     if (!cur.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Purchase order not found' }); }
     const from = cur.rows[0].status;
 
@@ -2864,12 +2900,13 @@ app.put('/api/purchase-orders/:id/delivery', requireRole(['admin', 'warehouse'])
       return reject(`This order is already ${from === 'RECEIVED' ? 'received' : 'cancelled'}`);
     }
     // Only an approved order reaches Logistics at all — a pending one hasn't been authorised.
-    if (status === 'in-progress' && from !== 'approved') {
+    if (status === 'in-progress' && !['approved', 'partially-received'].includes(from)) {
       return reject('Only an approved purchase order can be marked as an ongoing delivery');
     }
     // Goods sometimes just turn up without anyone flagging them in transit first, so RECEIVED
-    // is reachable straight from 'approved' as well as from 'in-progress'.
-    if ((status === 'RECEIVED' || status === 'cancelled') && !['approved', 'in-progress'].includes(from)) {
+    // is reachable straight from 'approved' as well as from 'in-progress'. A 'partially-received'
+    // order is receivable again (the supplier is fulfilling the outstanding balance).
+    if ((status === 'RECEIVED' || status === 'cancelled') && !['approved', 'in-progress', 'partially-received'].includes(from)) {
       return reject('Only an approved or in-transit purchase order can be updated');
     }
     if (status === 'RECEIVED' && !String(receivedBy || '').trim()) {
@@ -2896,26 +2933,69 @@ app.put('/api/purchase-orders/:id/delivery', requireRole(['admin', 'warehouse'])
       // Section E — #14: the warehouse may pass `lines` = per-line { received, defective } so
       // only the usable quantity is shelved; received_lines records the full ordered/received/
       // defective/added breakdown for the receipt and the "short N" label.
+      const parsedLines = parsePOLineItems(cur.rows[0].description);
       if (cur.rows[0].purchase_request_id) {
-        const result = await receiveLinesIntoInventory(client, parsePOLineItems(cur.rows[0].description), req.body.lines);
+        const result = await receiveLinesIntoInventory(client, parsedLines, req.body.lines);
         receivedLines = result.receivedLines;
         applied = result.applied;
       } else if (Array.isArray(req.body.lines) && req.body.lines.length) {
         // Hand-raised order: nothing is inventory, so nothing is shelved, but still record the
         // ordered/received/defective breakdown so discrepancies show on the receipt + report (#6).
-        receivedLines = buildReceiptLinesNoInventory(parsePOLineItems(cur.rows[0].description), req.body.lines);
+        receivedLines = buildReceiptLinesNoInventory(parsedLines, req.body.lines);
       }
-      // Stored, not just returned: the delivery receipt has to be printable again later, and
-      // `new_quantity` is a snapshot of stock at receipt that cannot be recomputed once
-      // production starts withdrawing. Written in the same transaction as the stock it
-      // describes, so the record and the movement cannot disagree. '[]' for a hand-raised
-      // order is a real answer — nothing was an inventory item — and distinct from NULL.
-      r = await client.query(
-        `UPDATE purchase_orders SET status='RECEIVED', received_by=$1, received_at=NOW(),
-           delivery_notes=COALESCE($2, delivery_notes), received_lines=$3::jsonb, updated_at=NOW()
-         WHERE id=$4 RETURNING *`,
-        [String(receivedBy).trim(), orNull(notes), JSON.stringify(receivedLines), req.params.id]
-      );
+
+      // #partial — per line, outstanding = ordered − usable (usable = `added` = received − defective),
+      // i.e. missing + defective. If anything is still owed, the PO STAYS OPEN reduced to just the
+      // outstanding quantities ('partially-received') instead of closing; the supplier will fulfil
+      // the balance and it is received again until zero. Any DEFECTIVE units are shipped back to the
+      // supplier via an auto-created logistics return delivery (pending → dispatched → delivered).
+      const totalOutstanding = receivedLines.reduce((t, l) => t + Math.max(0, (Number(l.ordered) || 0) - (Number(l.added) || 0)), 0);
+      const totalDefective = receivedLines.reduce((t, l) => t + (Number(l.defective) || 0), 0);
+
+      if (receivedLines.length && totalOutstanding > 0) {
+        const rewritten = rewritePOOutstanding(cur.rows[0].description, parsedLines, receivedLines);
+        r = await client.query(
+          `UPDATE purchase_orders SET status='partially-received', received_by=$1, received_at=NOW(),
+             delivery_notes=COALESCE($2, delivery_notes), received_lines=$3::jsonb,
+             description=$4, amount=$5, updated_at=NOW()
+           WHERE id=$6 RETURNING *`,
+          [String(receivedBy).trim(), orNull(notes), JSON.stringify(receivedLines), rewritten.description, rewritten.amount, req.params.id]
+        );
+        if (totalDefective > 0) {
+          const defItems = receivedLines
+            .filter((l) => (Number(l.defective) || 0) > 0)
+            .map((l) => ({ itemName: l.itemName, quantity: Number(l.defective) || 0, unit: l.unit || null }));
+          // Destination = the supplier (id → name/location), else the PO's free-text header fields.
+          let dest = cur.rows[0].client || '';
+          if (cur.rows[0].supplier_id) {
+            const s = (await client.query('SELECT name, location FROM suppliers WHERE id = $1', [cur.rows[0].supplier_id])).rows[0];
+            if (s) dest = [s.name, s.location].filter(Boolean).join(' — ') || dest;
+          } else if (cur.rows[0].supplier_address) {
+            dest = [cur.rows[0].client, cur.rows[0].supplier_address].filter(Boolean).join(' — ') || dest;
+          }
+          const yr = new Date().getFullYear();
+          const lastDr = await client.query(`SELECT delivery_number FROM deliveries WHERE delivery_number LIKE $1 ORDER BY delivery_number DESC LIMIT 1`, [`DR-${yr}-%`]);
+          let drc = 1;
+          if (lastDr.rows[0]) { const n = parseInt(String(lastDr.rows[0].delivery_number).split('-')[2], 10); if (!isNaN(n)) drc = n + 1; }
+          const drNumber = `DR-${yr}-${String(drc).padStart(4, '0')}`;
+          await client.query(
+            `INSERT INTO deliveries (id, delivery_number, sales_order_id, return_of_po_id, destination, items, status, notes)
+             VALUES ($1, $2, NULL, $3, $4, $5::jsonb, 'pending', $6)`,
+            [`DEL-${drNumber}`, drNumber, cur.rows[0].id, dest || 'Supplier', JSON.stringify(defItems), `Return of defective items — ${cur.rows[0].po_number}`]
+          );
+        }
+      } else {
+        // Fully received (or a blind receipt with no line data) — the terminal close, unchanged.
+        // Stored, not just returned: the delivery receipt has to be printable again later, and
+        // `new_quantity` is a snapshot of stock at receipt that cannot be recomputed once
+        // production starts withdrawing. '[]' for a hand-raised order is a real answer.
+        r = await client.query(
+          `UPDATE purchase_orders SET status='RECEIVED', received_by=$1, received_at=NOW(),
+             delivery_notes=COALESCE($2, delivery_notes), received_lines=$3::jsonb, updated_at=NOW()
+           WHERE id=$4 RETURNING *`,
+          [String(receivedBy).trim(), orNull(notes), JSON.stringify(receivedLines), req.params.id]
+        );
+      }
     } else {
       r = await client.query(
         `UPDATE purchase_orders SET status='cancelled', cancelled_by=$1, cancelled_at=NOW(),
@@ -3557,6 +3637,9 @@ function mapDelivery(r) {
     withdrawalId: r.withdrawal_id ?? null,
     destination: r.destination ?? null,
     items: r.items ?? null,
+    // Supplier-return deliveries (defective units going back): the PO they return for.
+    returnOfPoId: r.return_of_po_id ?? null,
+    returnPoNumber: r.return_po_number ?? null,
   };
 }
 
@@ -3564,9 +3647,10 @@ app.get('/api/deliveries', requireRole(['admin', 'logistics']), async (req, res)
   try {
     const r = await query(
       `SELECT d.*, so.so_number, so.client, so.customer_address, so.customer_contact,
-              so.amount, so.status AS so_status, so.delivery_date
+              so.amount, so.status AS so_status, so.delivery_date, po.po_number AS return_po_number
        FROM deliveries d
        LEFT JOIN sales_orders so ON so.id = d.sales_order_id
+       LEFT JOIN purchase_orders po ON po.id = d.return_of_po_id
        ORDER BY d.created_at DESC`
     );
     res.json(r.rows.map(mapDelivery));
