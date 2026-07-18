@@ -715,14 +715,14 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
           {/* #4 — PO type (domestic/foreign) and the manually-typed payment-terms days. */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">PO type</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1 whitespace-nowrap">PO type</label>
               <select value={poType} onChange={e => setPoType(e.target.value as 'domestic' | 'foreign')} className={`${input} bg-white`}>
                 <option value="domestic">Domestic</option>
                 <option value="foreign">Foreign</option>
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Payment terms (days)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1 whitespace-nowrap">Payment terms (days)</label>
               <input type="number" min="0" step="1" value={termsDays}
                 onChange={e => setTermsDays(e.target.value)} placeholder="30" className={input} />
               <p className="text-xs text-gray-400 mt-1">Stored as “{terms}”.</p>
@@ -1041,7 +1041,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
           return (
             <button key={id} title={label} onClick={() => { setView(id); setMobileOpen(false); }}
               className={`relative w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium focus:outline-none transition-colors ${collapsed ? 'justify-center' : ''} ${active ? 'bg-blue-600 text-white hover:bg-blue-700' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'}`}>
-              <Icon className="w-4 h-4 flex-shrink-0" />{!collapsed && <span>{label}</span>}
+              <Icon className="w-4 h-4 flex-shrink-0" />{!collapsed && <span className="whitespace-nowrap">{label}</span>}
               {id === 'requests' && <NavBadge count={awaitingPOCount} collapsed={collapsed} />}
               {id === 'orders' && <NavBadge count={rejectedPOCount} collapsed={collapsed} />}
             </button>
