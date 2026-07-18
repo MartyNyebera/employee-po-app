@@ -78,7 +78,7 @@ export function ProjectBudgetChart({ height = 360 }: { height?: number }) {
           <Legend wrapperStyle={{ paddingTop: '12px', fontSize: '14px' }} />
           {/* Stacked: spent + remaining sum to the budget. An over-budget project shows a red cap. */}
           <Bar dataKey="spent" stackId="b" fill="#d1b01b" name="Spent" isAnimationActive animationDuration={900} />
-          <Bar dataKey="remaining" stackId="b" fill="#e6e6e6" name="Remaining" isAnimationActive animationDuration={900} />
+          <Bar dataKey="remaining" stackId="b" fill="#c9c9c9" name="Remaining" isAnimationActive animationDuration={900} />
           <Bar dataKey="over" stackId="b" fill="#dc2626" name="Over budget" isAnimationActive animationDuration={900} />
         </BarChart>
       </ResponsiveContainer>
