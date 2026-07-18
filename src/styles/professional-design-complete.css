@@ -461,6 +461,14 @@ body {
   background-color: #b0940f !important;
   border-color: #b0940f !important;
 }
+/* Reject action (title="Reject"): red fill + white icon on hover. The attribute selector is
+   more specific than the shared gold rule above, and !important beats the inline red color so
+   the lucide X (currentColor) turns white. */
+.admin-portal button.crm-action-btn[title="Reject"]:hover:not(:disabled) {
+  background-color: #b91c1c !important;
+  border-color: #b91c1c !important;
+  color: #ffffff !important;
+}
 
 /* ---- Sidebar nav buttons -----------------------------------------------------------------
    The sidebar is styled to match the portals (solid accent pill when active, muted grey at
