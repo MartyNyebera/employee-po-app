@@ -938,6 +938,35 @@ async function runMigrations() {
       console.log('✅ persons table ready');
     } catch (err) { console.log('ℹ️ persons table skipped:', err.message); }
 
+    // ===== Attendance module — Phase 1 (clock station). Additive, new tables only. =====
+    // A time station is a shared PC by the door. It authenticates with its own station_token
+    // (a non-guessable UUID, admin-issued) — NOT an employee login. Punches are append-only:
+    // never UPDATE/DELETE a row here; corrections belong to a later adjustment table.
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS attendance_stations (
+          id SERIAL PRIMARY KEY,
+          name TEXT,
+          station_token TEXT UNIQUE NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      await query(`
+        CREATE TABLE IF NOT EXISTS attendance_punches (
+          id SERIAL PRIMARY KEY,
+          person_id INTEGER NOT NULL REFERENCES persons(id),
+          punched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          punch_type TEXT,
+          station_id INTEGER REFERENCES attendance_stations(id) ON DELETE SET NULL,
+          source TEXT NOT NULL DEFAULT 'station_scan',
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      // Backs the per-person "latest punch today" lookup on every scan.
+      await query(`CREATE INDEX IF NOT EXISTS idx_attendance_punches_person_time ON attendance_punches(person_id, punched_at DESC)`);
+      console.log('✅ attendance_stations + attendance_punches tables ready');
+    } catch (err) { console.log('ℹ️ attendance tables skipped:', err.message); }
+
     console.log('✅ All migrations complete');
   } catch (err) {
     console.error('❌ Migration error:', err.message);
@@ -1620,6 +1649,24 @@ app.get('/api/admin/migrate-approval-columns', requireAdmin, async (req, res) =>
 // [removed] Driver GPS location + vehicle-assignment endpoints (/api/driver/location,
 // /api/driver/locations/live, /api/admin/drivers/:id/assign-vehicle, /api/driver/:id/vehicle,
 // /api/admin/drivers/accounts) — Driver Portal / GPS feature removed.
+
+// Time station login — a station's OWN auth, mirroring the per-portal login pattern but
+// keyed on a station_token secret (not email/password). Public (registered before the global
+// requireAuth) so a kiosk can obtain a session; the station_token is admin-issued. Returns a
+// JWT with role 'station' + stationId, which the scan/today routes below verify.
+app.post('/api/clock/station-login', async (req, res) => {
+  try {
+    const { station_token } = req.body;
+    if (!station_token) return res.status(400).json({ error: 'station_token is required' });
+    const result = await query('SELECT id, name FROM attendance_stations WHERE station_token = $1', [station_token]);
+    const station = result.rows[0];
+    if (!station) return res.status(401).json({ error: 'Invalid station token' });
+    const token = signToken({ stationId: station.id, stationName: station.name, role: 'station' });
+    res.json({ token, station: { id: station.id, name: station.name } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ----- All routes below require auth -----
 app.use('/api', requireAuth);
@@ -4346,6 +4393,137 @@ app.post('/api/persons/:id/reissue-qr', requireRole(['admin']), async (req, res)
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Person not found' });
     res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
+// Attendance module — Phase 1: time stations + clock scans.
+// Station admin routes are admin-only; scan/today are station-only (a station JWT
+// from /api/clock/station-login). Punches are append-only.
+// ============================================================================
+
+// Admin: list stations. station_token is shown so an admin can set up the kiosk PC.
+app.get('/api/attendance/stations', requireRole(['admin']), async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT s.id, s.name, s.station_token, s.created_at,
+              (SELECT COUNT(*) FROM attendance_punches p WHERE p.station_id = s.id)::int AS punch_count
+         FROM attendance_stations s
+        ORDER BY s.created_at ASC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: create a station. station_token is minted server-side (non-guessable UUID).
+app.post('/api/attendance/stations', requireRole(['admin']), async (req, res) => {
+  try {
+    const { name } = req.body;
+    const result = await query(
+      `INSERT INTO attendance_stations (name, station_token) VALUES ($1, $2)
+       RETURNING id, name, station_token, created_at`,
+      [name && String(name).trim() ? String(name).trim() : null, randomUUID()]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: delete a station. Punches keep their history (station_id -> NULL via FK).
+app.delete('/api/attendance/stations/:id', requireRole(['admin']), async (req, res) => {
+  try {
+    const result = await query('DELETE FROM attendance_stations WHERE id = $1 RETURNING id', [req.params.id]);
+    if (!result.rows[0]) return res.status(404).json({ error: 'Station not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Station: record a scan. The scanned QR content (person's qr_token) arrives as `token`;
+// the station is identified by its authenticated JWT (req.user.stationId), NOT a body field,
+// so a station can only punch under its own id. IN vs OUT is decided server-side; time is
+// stamped server-side. Wrapped in a transaction with a row lock on the person so two rapid
+// scans of the same card serialize instead of double-punching.
+app.post('/api/attendance/scan', requireRole(['station']), async (req, res) => {
+  const { token } = req.body;
+  const stationId = req.user.stationId;
+  if (!token) return res.status(400).json({ error: 'No code scanned' });
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const pr = await client.query('SELECT id, full_name, status FROM persons WHERE qr_token = $1 FOR UPDATE', [token]);
+    const person = pr.rows[0];
+    if (!person) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Card not recognized' }); }
+    if (person.status === 'resigned') { await client.query('ROLLBACK'); return res.status(403).json({ error: `${person.full_name} is no longer active` }); }
+
+    // Latest punch for this person on today's LOCAL (Asia/Manila) calendar day.
+    const last = await client.query(
+      `SELECT punch_type, punched_at, EXTRACT(EPOCH FROM (NOW() - punched_at)) AS age_sec
+         FROM attendance_punches
+        WHERE person_id = $1
+          AND (punched_at AT TIME ZONE 'Asia/Manila')::date = (NOW() AT TIME ZONE 'Asia/Manila')::date
+        ORDER BY punched_at DESC
+        LIMIT 1`,
+      [person.id]
+    );
+    const latest = last.rows[0];
+
+    // Already completed IN + OUT today — reject further scans (no new IN). Genuine re-entry is
+    // rare and is handled by an Admin correction later, not by the scanner.
+    if (latest && latest.punch_type === 'out') {
+      await client.query('ROLLBACK');
+      return res.json({ ignored: true, reason: 'already_out', person: { id: person.id, name: person.full_name },
+        message: 'Already clocked out today.' });
+    }
+
+    const hasOpenIn = latest && latest.punch_type === 'in';
+
+    // Cooldown: an OUT within ~60s of the IN is almost certainly an accidental double-scan —
+    // ignore it (no row written) rather than closing the day the instant they clocked in.
+    if (hasOpenIn && Number(latest.age_sec) < 60) {
+      await client.query('ROLLBACK');
+      return res.json({ ignored: true, reason: 'cooldown', person: { id: person.id, name: person.full_name },
+        message: 'Just clocked in — scan again in a moment to clock out.' });
+    }
+
+    const punchType = hasOpenIn ? 'out' : 'in';
+    const ins = await client.query(
+      `INSERT INTO attendance_punches (person_id, punch_type, station_id, source)
+       VALUES ($1, $2, $3, 'station_scan')
+       RETURNING punch_type, punched_at`,
+      [person.id, punchType, stationId]
+    );
+    await client.query('COMMIT');
+    res.json({ ok: true, punch_type: ins.rows[0].punch_type, punched_at: ins.rows[0].punched_at,
+      person: { id: person.id, name: person.full_name } });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Station: today's punches at THIS station (for the on-screen list). Local-day scoped.
+app.get('/api/attendance/today', requireRole(['station']), async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT ap.id, ap.punch_type, ap.punched_at, p.full_name
+         FROM attendance_punches ap
+         JOIN persons p ON p.id = ap.person_id
+        WHERE ap.station_id = $1
+          AND (ap.punched_at AT TIME ZONE 'Asia/Manila')::date = (NOW() AT TIME ZONE 'Asia/Manila')::date
+        ORDER BY ap.punched_at DESC
+        LIMIT 100`,
+      [req.user.stationId]
+    );
+    res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

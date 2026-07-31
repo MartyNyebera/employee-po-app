@@ -13,6 +13,7 @@ import { WarehousePortal } from './pages/WarehousePortal';
 import { AccountingPortal } from './pages/AccountingPortal';
 import { SalesPortal } from './pages/SalesPortal';
 import { LogisticsPortal } from './pages/LogisticsPortal';
+import { ClockStation } from './pages/ClockStation';
 
 export type UserRole = 'employee' | 'admin' | 'bookkeeper' | 'purchasing' | 'office_admin' | null;
 
@@ -69,7 +70,7 @@ export default function App() {
   // Allow portal routes to bypass the admin auth check — each portal guards itself with its
   // own token. A portal missing from this list is silently swallowed by LoginScreen below,
   // so every new portal MUST be added here as well as to the routes.
-  const PORTAL_PATHS = ['/employee', '/production', '/requests', '/purchasing', '/warehouse', '/accounting', '/sales', '/logistics'];
+  const PORTAL_PATHS = ['/employee', '/production', '/requests', '/purchasing', '/warehouse', '/accounting', '/sales', '/logistics', '/clock'];
   const currentPath = window.location.pathname;
   const isPortalRoute = PORTAL_PATHS.some(p => currentPath.startsWith(p));
 
@@ -115,6 +116,9 @@ export default function App() {
 
         {/* Logistics portal (logistics-account staff only) */}
         <Route path="/logistics" element={<LogisticsPortal />} />
+
+        {/* Attendance time station — authenticates as a station, not an employee */}
+        <Route path="/clock" element={<ClockStation />} />
 
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />
