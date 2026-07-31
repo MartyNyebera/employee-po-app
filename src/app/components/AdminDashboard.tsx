@@ -3,7 +3,7 @@ import { getStoredAuth, fetchApi } from '../api/client';
 import { useAutoLogout } from '../hooks/useAutoLogout';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { Button } from './ui/button';
-import { LogOut, Home, FileText, Receipt, Menu, X, Check, XCircle, Clock, ShoppingCart, Package, User, UserCheck, MessageSquare, Users, Factory, UserCog, Briefcase, ClipboardCheck, PackageMinus, ChevronRight, ChevronDown, Warehouse, Activity, Calculator, Truck, PenTool, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { LogOut, Home, FileText, Receipt, Menu, X, Check, XCircle, Clock, ShoppingCart, Package, User, UserCheck, MessageSquare, Users, Factory, UserCog, Briefcase, ClipboardCheck, PackageMinus, ChevronRight, ChevronDown, Warehouse, Activity, Calculator, Truck, PenTool, PanelLeftClose, PanelLeftOpen, IdCard } from 'lucide-react';
 import { SuppliersList } from './crm/SuppliersList';
 import { CustomersList } from './crm/CustomersList';
 import { InquiriesList } from './crm/InquiriesList';
@@ -11,6 +11,7 @@ import { StaffAccountsList } from './crm/StaffAccountsList';
 import { EmployeeAccountsList } from './crm/EmployeeAccountsList';
 import { PortalAccountsList } from './crm/PortalAccountsList';
 import { ProjectsList } from './crm/ProjectsList';
+import { RosterList } from './crm/RosterList';
 import { PurchaseRequestsReview } from './crm/PurchaseRequestsReview';
 import { AdminSignature } from './crm/AdminSignature';
 import { WithdrawalRequestsReview } from './crm/WithdrawalRequestsReview';
@@ -41,7 +42,7 @@ interface AdminDashboardProps {
   onLogout: () => void;
 }
 
-type View = 'home' | 'orders' | 'transactions' | 'material-requests' | 'employee-accounts' | 'purchasing-accounts' | 'warehouse-accounts' | 'accounting-accounts' | 'sales-accounts' | 'logistics-accounts' | 'projects' | 'purchase-requests' | 'withdrawal-requests' | 'purchase-orders' | 'discrepancies' | 'inventory' | 'miscellaneous' | 'request-form' | 'suppliers' | 'customers' | 'inquiries' | 'staff' | 'signature';
+type View = 'home' | 'orders' | 'transactions' | 'material-requests' | 'employee-accounts' | 'purchasing-accounts' | 'warehouse-accounts' | 'accounting-accounts' | 'sales-accounts' | 'logistics-accounts' | 'projects' | 'purchase-requests' | 'withdrawal-requests' | 'purchase-orders' | 'discrepancies' | 'inventory' | 'miscellaneous' | 'request-form' | 'suppliers' | 'customers' | 'inquiries' | 'staff' | 'signature' | 'roster';
 
 // Sidebar entries, in display order. An entry is either a leaf (navigates to a view) or a
 // group (a collapsible dropdown holding leaves). Visibility + write access come from MODULE_ACCESS.
@@ -79,6 +80,7 @@ const NAV_ENTRIES: NavEntry[] = [
     { view: 'inquiries', label: 'Quotation', icon: MessageSquare, module: 'inquiries' },
   ] },
   { view: 'inventory', label: 'Inventory Management', icon: Package, module: 'inventory' },
+  { view: 'roster', label: 'Roster', icon: IdCard, module: 'roster' },
   { group: 'accounts', label: 'Accounts', icon: UserCog, children: [
     // Labels only — `view` and `module` ids are the contract with permissions.ts and the
     // canView guard below, which passes currentView where a module key is expected.
@@ -249,6 +251,10 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
 
     if (currentView === 'projects') {
       return <ProjectsList isAdmin={canManage(role, 'projects')} />;
+    }
+
+    if (currentView === 'roster') {
+      return <RosterList />;
     }
 
     if (currentView === 'purchase-requests') {

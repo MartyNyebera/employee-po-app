@@ -4,6 +4,7 @@ import compression from 'compression';
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
 import { query, getClient, testConnection, createNewTables } from './db.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -912,6 +913,30 @@ async function runMigrations() {
       await query(`ALTER TABLE material_requests ALTER COLUMN reviewed_by TYPE TEXT USING reviewed_by::text`);
       console.log('✅ material_requests.reviewed_by widened to TEXT');
     } catch (err) { console.log('ℹ️ material_requests.reviewed_by migration skipped:', err.message); }
+
+    // ===== Attendance module — Phase 0 (roster). Additive, new table only. =====
+    // The workforce directory attendance/payroll hangs off. qr_token is a per-person
+    // non-guessable UUID printed on their ID card; it is unique so a scan resolves to
+    // exactly one person. Payroll fields (rates etc.) come in a later phase.
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS persons (
+          id SERIAL PRIMARY KEY,
+          full_name TEXT NOT NULL,
+          department TEXT,
+          position TEXT,
+          employment_type TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          hired_on DATE,
+          last_day DATE,
+          qr_token TEXT UNIQUE NOT NULL,
+          biometric_id TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      await query(`CREATE INDEX IF NOT EXISTS idx_persons_status ON persons(status)`);
+      console.log('✅ persons table ready');
+    } catch (err) { console.log('ℹ️ persons table skipped:', err.message); }
 
     console.log('✅ All migrations complete');
   } catch (err) {
@@ -4230,6 +4255,98 @@ app.delete('/api/material-requests/:id', requireRole(['admin']), async (req, res
     res.json({ message: 'Material request deleted successfully' });
   } catch (err) {
     console.error('Error deleting material request:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
+// Attendance module — Phase 0: persons roster. Admin-only (server is the real gate,
+// like every other write route). qr_token is generated server-side (crypto.randomUUID)
+// so it is authoritative and non-guessable; reissue mints a new one, invalidating the
+// old card. Additive — touches only the new `persons` table.
+// ============================================================================
+
+// List all persons (roster)
+app.get('/api/persons', requireRole(['admin']), async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT id, full_name, department, position, employment_type, status,
+              hired_on, last_day, qr_token, created_at
+         FROM persons
+        ORDER BY (status = 'active') DESC, full_name ASC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create a person. qr_token is minted server-side, never accepted from the client.
+app.post('/api/persons', requireRole(['admin']), async (req, res) => {
+  try {
+    const { full_name, department, position, employment_type, status, hired_on, last_day } = req.body;
+    if (!full_name || !String(full_name).trim()) {
+      return res.status(400).json({ error: 'full_name is required' });
+    }
+    const et = employment_type === 'daily' || employment_type === 'monthly' ? employment_type : null;
+    const st = status === 'resigned' ? 'resigned' : 'active';
+    const result = await query(
+      `INSERT INTO persons (full_name, department, position, employment_type, status, hired_on, last_day, qr_token)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, created_at`,
+      [String(full_name).trim(), department || null, position || null, et, st,
+       hired_on || null, last_day || null, randomUUID()]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update a person. qr_token is intentionally NOT updatable here — use the reissue route.
+app.patch('/api/persons/:id', requireRole(['admin']), async (req, res) => {
+  try {
+    const { full_name, department, position, employment_type, status, hired_on, last_day } = req.body;
+    if (full_name !== undefined && !String(full_name).trim()) {
+      return res.status(400).json({ error: 'full_name cannot be empty' });
+    }
+    const et = employment_type === undefined ? undefined
+      : (employment_type === 'daily' || employment_type === 'monthly' ? employment_type : null);
+    const st = status === undefined ? undefined : (status === 'resigned' ? 'resigned' : 'active');
+    // COALESCE keeps the stored value when a field is omitted; only sent fields change.
+    const result = await query(
+      `UPDATE persons SET
+         full_name       = COALESCE($1, full_name),
+         department      = COALESCE($2, department),
+         position        = COALESCE($3, position),
+         employment_type = COALESCE($4, employment_type),
+         status          = COALESCE($5, status),
+         hired_on        = COALESCE($6, hired_on),
+         last_day        = COALESCE($7, last_day)
+       WHERE id = $8
+       RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, created_at`,
+      [full_name !== undefined ? String(full_name).trim() : null,
+       department ?? null, position ?? null, et ?? null, st ?? null,
+       hired_on ?? null, last_day ?? null, req.params.id]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'Person not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Reissue the QR token (e.g. a lost/reprinted card). Invalidates the previous token.
+app.post('/api/persons/:id/reissue-qr', requireRole(['admin']), async (req, res) => {
+  try {
+    const result = await query(
+      `UPDATE persons SET qr_token = $1 WHERE id = $2
+       RETURNING id, full_name, qr_token`,
+      [randomUUID(), req.params.id]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'Person not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
