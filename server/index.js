@@ -967,6 +967,35 @@ async function runMigrations() {
       console.log('✅ attendance_stations + attendance_punches tables ready');
     } catch (err) { console.log('ℹ️ attendance tables skipped:', err.message); }
 
+    // ===== Attendance module — Phase 2 (daily sheet). Additive, new table only. =====
+    // A per-person-per-day roll-up COMPUTED from the immutable attendance_punches. Raw punches
+    // are never edited; this is a derived, rebuildable projection of them. worked_minutes is a
+    // simple span (last_out − first_in) — NO payroll math (no OT/late/undertime/holiday/rates).
+    // Rows are only built for days a person actually punched; absences are NOT fabricated here
+    // (that needs a work calendar, a later phase). Rebuild is idempotent and skips locked rows.
+    // pay_period_id / is_locked are populated in Phase 3 (review + lock); kept here so the table
+    // shape is stable. pay_period_id has no FK yet — the pay_periods table arrives in Phase 3.
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS attendance_days (
+          id SERIAL PRIMARY KEY,
+          person_id INTEGER NOT NULL REFERENCES persons(id),
+          work_date DATE NOT NULL,
+          first_in TIMESTAMPTZ,
+          last_out TIMESTAMPTZ,
+          worked_minutes INTEGER,
+          status TEXT,
+          flags JSONB DEFAULT '[]',
+          pay_period_id INTEGER,
+          is_locked BOOLEAN DEFAULT FALSE,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE (person_id, work_date)
+        )
+      `);
+      await query(`CREATE INDEX IF NOT EXISTS idx_attendance_days_date ON attendance_days(work_date)`);
+      console.log('✅ attendance_days table ready');
+    } catch (err) { console.log('ℹ️ attendance_days table skipped:', err.message); }
+
     console.log('✅ All migrations complete');
   } catch (err) {
     console.error('❌ Migration error:', err.message);
@@ -4522,6 +4551,96 @@ app.get('/api/attendance/today', requireRole(['station']), async (req, res) => {
         ORDER BY ap.punched_at DESC
         LIMIT 100`,
       [req.user.stationId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ===== Attendance module — Phase 2: daily sheet (computed from punches) =====
+// Rebuild the attendance_days roll-up for [startDate, endDate] (inclusive, local Manila days)
+// straight from the immutable attendance_punches. This is idempotent — re-running produces the
+// same rows — and never touches a row where is_locked = true (a locked pay period is frozen).
+// It ONLY creates rows for person+day combinations that actually have a punch; absent days are
+// not fabricated (that needs a work calendar, a later phase). No payroll math happens here:
+// worked_minutes is just the plain span last_out − first_in when both exist, else NULL.
+//
+//   status: 'complete'   → has both an IN and an OUT
+//           'no_out'     → has an IN but no OUT   (flag: missing_out)
+//           'incomplete' → has an OUT but no IN   (flag: missing_in — a data anomaly)
+//
+// Returns the number of day-rows built/updated. startDate/endDate are 'YYYY-MM-DD' strings.
+async function rebuildAttendanceDays(startDate, endDate) {
+  const result = await query(
+    `INSERT INTO attendance_days (person_id, work_date, first_in, last_out, worked_minutes, status, flags)
+     SELECT
+       agg.person_id,
+       agg.work_date,
+       agg.first_in,
+       agg.last_out,
+       CASE WHEN agg.first_in IS NOT NULL AND agg.last_out IS NOT NULL AND agg.last_out > agg.first_in
+            THEN ROUND(EXTRACT(EPOCH FROM (agg.last_out - agg.first_in)) / 60.0)::int
+            ELSE NULL END,
+       CASE WHEN agg.first_in IS NOT NULL AND agg.last_out IS NOT NULL THEN 'complete'
+            WHEN agg.first_in IS NOT NULL AND agg.last_out IS NULL     THEN 'no_out'
+            ELSE 'incomplete' END,
+       CASE WHEN agg.first_in IS NOT NULL AND agg.last_out IS NULL THEN '["missing_out"]'::jsonb
+            WHEN agg.first_in IS NULL                              THEN '["missing_in"]'::jsonb
+            ELSE '[]'::jsonb END
+     FROM (
+       SELECT
+         person_id,
+         (punched_at AT TIME ZONE 'Asia/Manila')::date AS work_date,
+         MIN(punched_at) FILTER (WHERE punch_type = 'in')  AS first_in,
+         MAX(punched_at) FILTER (WHERE punch_type = 'out') AS last_out
+       FROM attendance_punches
+       WHERE (punched_at AT TIME ZONE 'Asia/Manila')::date BETWEEN $1 AND $2
+       GROUP BY person_id, (punched_at AT TIME ZONE 'Asia/Manila')::date
+     ) agg
+     ON CONFLICT (person_id, work_date) DO UPDATE SET
+       first_in       = EXCLUDED.first_in,
+       last_out       = EXCLUDED.last_out,
+       worked_minutes = EXCLUDED.worked_minutes,
+       status         = EXCLUDED.status,
+       flags          = EXCLUDED.flags
+     WHERE attendance_days.is_locked = false`,
+    [startDate, endDate]
+  );
+  return result.rowCount;
+}
+
+// Admin: (re)build the daily sheet for a date range from raw punches. Idempotent; locked rows
+// are left alone. Body: { start: 'YYYY-MM-DD', end: 'YYYY-MM-DD' }.
+app.post('/api/attendance/rebuild-days', requireRole(['admin']), async (req, res) => {
+  const { start, end } = req.body || {};
+  const isDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  if (!isDate(start) || !isDate(end)) return res.status(400).json({ error: 'start and end must be YYYY-MM-DD dates' });
+  if (start > end) return res.status(400).json({ error: 'start must be on or before end' });
+  try {
+    const count = await rebuildAttendanceDays(start, end);
+    res.json({ ok: true, rebuilt: count, start, end });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: read the daily sheet for a date range (does NOT rebuild — call rebuild-days first if
+// you want it fresh). Joins the person so the sheet is readable. Query: ?start=&end=.
+app.get('/api/attendance/days', requireRole(['admin']), async (req, res) => {
+  const { start, end } = req.query;
+  const isDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  if (!isDate(start) || !isDate(end)) return res.status(400).json({ error: 'start and end must be YYYY-MM-DD dates' });
+  try {
+    const result = await query(
+      `SELECT ad.id, ad.person_id, ad.work_date, ad.first_in, ad.last_out, ad.worked_minutes,
+              ad.status, ad.flags, ad.pay_period_id, ad.is_locked,
+              p.full_name, p.department, p.position
+         FROM attendance_days ad
+         JOIN persons p ON p.id = ad.person_id
+        WHERE ad.work_date BETWEEN $1 AND $2
+        ORDER BY p.full_name ASC, ad.work_date ASC`,
+      [start, end]
     );
     res.json(result.rows);
   } catch (err) {
