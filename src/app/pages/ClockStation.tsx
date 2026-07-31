@@ -105,8 +105,8 @@ function StationSetup({ connecting, error, hasSecret, onActivate, onReset }: {
 }
 
 // ---- The live clock + scan capture ---------------------------------------
-interface PunchRow { id: number; punch_type: 'in' | 'out'; punched_at: string; full_name: string; }
-type Flash = { kind: 'in' | 'out' | 'info' | 'error'; name?: string; time?: string; message?: string } | null;
+interface PunchRow { id: number; punch_type: 'in' | 'out'; punched_at: string; full_name: string; position?: string | null; }
+type Flash = { kind: 'in' | 'out' | 'info' | 'error'; name?: string; position?: string | null; time?: string; message?: string } | null;
 
 const fmtClock = (d: Date) => d.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 const fmtTime = (s: string) => new Date(s).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' });
@@ -143,7 +143,7 @@ function ClockView({ secret, stationName, onSignOut }: { secret: string; station
   const showFlash = useCallback((f: Flash) => {
     setFlash(f);
     if (flashTimer.current) clearTimeout(flashTimer.current);
-    flashTimer.current = window.setTimeout(() => setFlash(null), 2800);
+    flashTimer.current = window.setTimeout(() => setFlash(null), 2500);
   }, []);
 
   const handleScan = useCallback(async (code: string) => {
@@ -153,8 +153,8 @@ function ClockView({ secret, stationName, onSignOut }: { secret: string; station
       const res = await stationFetch('/api/attendance/scan', { method: 'POST', body: JSON.stringify({ token: code }) }, secret);
       const data = await res.json().catch(() => ({} as any));
       if (!res.ok) showFlash({ kind: 'error', message: data.error || 'Scan failed' });
-      else if (data.ignored) showFlash({ kind: 'info', name: data.person?.name, message: data.message });
-      else { showFlash({ kind: data.punch_type, name: data.person?.name, time: data.punched_at }); loadToday(); }
+      else if (data.ignored) showFlash({ kind: 'info', name: data.person?.name, position: data.person?.position, message: data.message });
+      else { showFlash({ kind: data.punch_type, name: data.person?.name, position: data.person?.position, time: data.punched_at }); loadToday(); }
     } catch { showFlash({ kind: 'error', message: 'Network error — try again' }); }
     finally { setBusy(false); refocus(); }
   }, [busy, secret, showFlash, loadToday, refocus]);
@@ -199,9 +199,12 @@ function ClockView({ secret, stationName, onSignOut }: { secret: string; station
         <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '12px', overflow: 'hidden' }}>
           {today.length === 0 ? (
             <div style={{ padding: '18px', color: '#64748b', fontSize: '14px' }}>No scans yet today.</div>
-          ) : today.map(r => (
+          ) : today.slice(0, 5).map(r => (
             <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #0f172a' }}>
-              <span style={{ fontWeight: 600 }}>{r.full_name}</span>
+              <span style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontWeight: 600 }}>{r.full_name}</span>
+                {r.position ? <span style={{ fontSize: '12px', color: '#94a3b8' }}>{r.position}</span> : null}
+              </span>
               <span style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                 <span style={{ fontSize: '12px', fontWeight: 700, padding: '2px 10px', borderRadius: '999px', background: r.punch_type === 'in' ? '#065f46' : '#1e40af' }}>{r.punch_type === 'in' ? 'IN' : 'OUT'}</span>
                 <span style={{ color: '#94a3b8', fontVariantNumeric: 'tabular-nums' }}>{fmtTime(r.punched_at)}</span>
@@ -219,6 +222,7 @@ function ClockView({ secret, stationName, onSignOut }: { secret: string; station
               {flash.kind === 'in' ? '✓ Time In' : flash.kind === 'out' ? '✓ Time Out' : flash.kind === 'error' ? '✕' : '•'}
             </div>
             {flash.name ? <div style={{ fontSize: 'min(7vw, 44px)', fontWeight: 700, marginTop: '14px' }}>{flash.name}</div> : null}
+            {flash.position ? <div style={{ fontSize: 'min(3.2vw, 22px)', color: '#e2e8f0', opacity: 0.8, marginTop: '6px' }}>{flash.position}</div> : null}
             {flash.time ? <div style={{ fontSize: '28px', color: '#e2e8f0', marginTop: '8px', fontVariantNumeric: 'tabular-nums' }}>{fmtTime(flash.time)}</div> : null}
             {flash.message ? <div style={{ fontSize: '22px', color: '#e2e8f0', marginTop: '12px', maxWidth: '680px' }}>{flash.message}</div> : null}
           </>

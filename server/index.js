@@ -4457,7 +4457,7 @@ app.post('/api/attendance/scan', requireRole(['station']), async (req, res) => {
   const client = await getClient();
   try {
     await client.query('BEGIN');
-    const pr = await client.query('SELECT id, full_name, status FROM persons WHERE qr_token = $1 FOR UPDATE', [token]);
+    const pr = await client.query('SELECT id, full_name, position, status FROM persons WHERE qr_token = $1 FOR UPDATE', [token]);
     const person = pr.rows[0];
     if (!person) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Card not recognized' }); }
     if (person.status === 'resigned') { await client.query('ROLLBACK'); return res.status(403).json({ error: `${person.full_name} is no longer active` }); }
@@ -4478,7 +4478,7 @@ app.post('/api/attendance/scan', requireRole(['station']), async (req, res) => {
     // rare and is handled by an Admin correction later, not by the scanner.
     if (latest && latest.punch_type === 'out') {
       await client.query('ROLLBACK');
-      return res.json({ ignored: true, reason: 'already_out', person: { id: person.id, name: person.full_name },
+      return res.json({ ignored: true, reason: 'already_out', person: { id: person.id, name: person.full_name, position: person.position },
         message: 'Already clocked out today.' });
     }
 
@@ -4488,7 +4488,7 @@ app.post('/api/attendance/scan', requireRole(['station']), async (req, res) => {
     // ignore it (no row written) rather than closing the day the instant they clocked in.
     if (hasOpenIn && Number(latest.age_sec) < 60) {
       await client.query('ROLLBACK');
-      return res.json({ ignored: true, reason: 'cooldown', person: { id: person.id, name: person.full_name },
+      return res.json({ ignored: true, reason: 'cooldown', person: { id: person.id, name: person.full_name, position: person.position },
         message: 'Just clocked in — scan again in a moment to clock out.' });
     }
 
@@ -4501,7 +4501,7 @@ app.post('/api/attendance/scan', requireRole(['station']), async (req, res) => {
     );
     await client.query('COMMIT');
     res.json({ ok: true, punch_type: ins.rows[0].punch_type, punched_at: ins.rows[0].punched_at,
-      person: { id: person.id, name: person.full_name } });
+      person: { id: person.id, name: person.full_name, position: person.position } });
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
     res.status(500).json({ error: err.message });
@@ -4514,7 +4514,7 @@ app.post('/api/attendance/scan', requireRole(['station']), async (req, res) => {
 app.get('/api/attendance/today', requireRole(['station']), async (req, res) => {
   try {
     const result = await query(
-      `SELECT ap.id, ap.punch_type, ap.punched_at, p.full_name
+      `SELECT ap.id, ap.punch_type, ap.punched_at, p.full_name, p.position
          FROM attendance_punches ap
          JOIN persons p ON p.id = ap.person_id
         WHERE ap.station_id = $1
