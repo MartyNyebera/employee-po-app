@@ -36,6 +36,7 @@ const BASE_ACCESS: Record<string, Partial<Record<Role, Access>>> = {
   // Attendance module — employee roster + QR cards, and the time stations (owner/admin only).
   roster:               { owner: 'manage', admin: 'manage' },
   stations:             { owner: 'manage', admin: 'manage' },
+  timesheet:            { owner: 'manage', admin: 'manage' },
   'employee-accounts':  { owner: 'manage', admin: 'manage' },
   'purchasing-accounts':{ owner: 'manage', admin: 'manage' },
   'warehouse-accounts': { owner: 'manage', admin: 'manage' },

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ClipboardList, PenTool, Menu, X, Search, Clock, Calendar, CheckCircle2,
   XCircle, Printer, LogOut, Upload, Eraser, Eye, Briefcase, Plus, Trash2, Pencil,
-  PanelLeftClose, PanelLeftOpen, FileText, PackageMinus,
+  PanelLeftClose, PanelLeftOpen, FileText, PackageMinus, CalendarCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -17,6 +17,7 @@ import { AttentionCard } from '../components/AttentionCard';
 import { CreatePurchaseRequestForm } from '../components/CreatePurchaseRequestForm';
 import { WithdrawalTab } from '../components/WithdrawalTab';
 import { nextDeptFor } from '../lib/nextDept';
+import { TimesheetReview } from '../components/crm/TimesheetReview';
 
 // ============================================================================
 // Accounting portal (/accounting). Fully independent of the admin dashboard:
@@ -31,7 +32,7 @@ import { nextDeptFor } from '../lib/nextDept';
 // ============================================================================
 
 type PRStatus = 'pending' | 'reviewed' | 'verified' | 'ordered' | 'approved' | 'disapproved';
-type PortalView = 'new-pr' | 'requests' | 'orders' | 'projects' | 'withdrawals' | 'signature';
+type PortalView = 'new-pr' | 'requests' | 'orders' | 'projects' | 'withdrawals' | 'timesheet' | 'signature';
 
 // Section C — #12: Accounting is also the FIRST gate of the purchase-ORDER flow. Purchasing
 // raises an order ('pending'); Accounting reviews it here (→ 'accounting-approved', passing it
@@ -619,6 +620,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     { id: 'orders', label: 'Purchase Orders', icon: FileText },
     { id: 'projects', label: 'Projects', icon: Briefcase },
     { id: 'withdrawals', label: 'Withdrawals', icon: PackageMinus },
+    { id: 'timesheet', label: 'Attendance Sheet', icon: CalendarCheck },
     { id: 'signature', label: 'My Signature', icon: PenTool },
   ];
 
@@ -686,6 +688,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
           {view === 'signature' && <SignaturePad initial={signature} onSaved={setSignature} />}
 
           {view === 'withdrawals' && <WithdrawalTab fetchFn={aFetch} />}
+
+          {view === 'timesheet' && <TimesheetReview api={aFetch} role="accounting" />}
 
           {view === 'projects' && (
             <div className="space-y-4">

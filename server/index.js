@@ -988,13 +988,52 @@ async function runMigrations() {
           flags JSONB DEFAULT '[]',
           pay_period_id INTEGER,
           is_locked BOOLEAN DEFAULT FALSE,
+          is_adjusted BOOLEAN DEFAULT FALSE,
           created_at TIMESTAMPTZ DEFAULT NOW(),
           UNIQUE (person_id, work_date)
         )
       `);
+      // is_adjusted guards a manually-corrected day from being silently reverted by a later
+      // rebuild (rebuild skips locked AND adjusted rows). Added via ALTER for DBs that already
+      // created attendance_days before Phase 3.
+      await query(`ALTER TABLE attendance_days ADD COLUMN IF NOT EXISTS is_adjusted BOOLEAN DEFAULT FALSE`);
       await query(`CREATE INDEX IF NOT EXISTS idx_attendance_days_date ON attendance_days(work_date)`);
       console.log('✅ attendance_days table ready');
     } catch (err) { console.log('ℹ️ attendance_days table skipped:', err.message); }
+
+    // ===== Attendance module — Phase 3 (review + lock). Additive, new tables only. =====
+    // pay_periods: semi-monthly windows (1–15, 16–end). Locking a period freezes its days.
+    // attendance_adjustments: an append-only audit log of every manual correction to a day
+    // (old→new value, reason, who). Raw attendance_punches are NEVER touched by a correction —
+    // the punch stays the immutable source; the adjustment layers on top of the derived day.
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS pay_periods (
+          id SERIAL PRIMARY KEY,
+          start_date DATE NOT NULL,
+          end_date DATE NOT NULL,
+          status TEXT NOT NULL DEFAULT 'open',
+          locked_by TEXT,
+          locked_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE (start_date, end_date)
+        )
+      `);
+      await query(`
+        CREATE TABLE IF NOT EXISTS attendance_adjustments (
+          id SERIAL PRIMARY KEY,
+          day_id INTEGER NOT NULL REFERENCES attendance_days(id),
+          field TEXT NOT NULL,
+          old_value TEXT,
+          new_value TEXT,
+          reason TEXT,
+          adjusted_by TEXT,
+          adjusted_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      await query(`CREATE INDEX IF NOT EXISTS idx_attendance_adjustments_day ON attendance_adjustments(day_id)`);
+      console.log('✅ pay_periods + attendance_adjustments tables ready');
+    } catch (err) { console.log('ℹ️ pay_periods/attendance_adjustments tables skipped:', err.message); }
 
     console.log('✅ All migrations complete');
   } catch (err) {
@@ -4604,7 +4643,8 @@ async function rebuildAttendanceDays(startDate, endDate) {
        worked_minutes = EXCLUDED.worked_minutes,
        status         = EXCLUDED.status,
        flags          = EXCLUDED.flags
-     WHERE attendance_days.is_locked = false`,
+     WHERE attendance_days.is_locked = false
+       AND attendance_days.is_adjusted = false`,
     [startDate, endDate]
   );
   return result.rowCount;
@@ -4645,6 +4685,227 @@ app.get('/api/attendance/days', requireRole(['admin']), async (req, res) => {
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ===== Attendance module — Phase 3: pay periods, review sheet, corrections, lock =====
+// These endpoints back BOTH the Admin dashboard AND the Accounting portal review screen, so
+// they admit either an admin/owner token OR an accounting-portal token. Where the two differ:
+//   • a LOCKED period is read-only for accounting; only an admin may still correct it.
+// No payroll math happens anywhere here (no pesos/rates/OT/holiday/deductions) — this only
+// reviews and locks the attendance sheet computed in Phase 2.
+const attendanceReviewRoles = ['admin', 'accounting'];
+const isAdminUser = (req) => !!req.user?.isSuperAdmin || ['admin', 'owner'].includes(req.user?.role);
+const isYMD = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+
+// List pay periods (newest first).
+app.get('/api/attendance/periods', requireRole(attendanceReviewRoles), async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date,
+              status, locked_by, locked_at, created_at
+         FROM pay_periods
+        ORDER BY start_date DESC, id DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create a pay period. Semi-monthly windows are chosen on the client (1–15, 16–end); the server
+// only validates the range. Idempotent on (start,end): re-posting the same window returns it.
+app.post('/api/attendance/periods', requireRole(attendanceReviewRoles), async (req, res) => {
+  const { start, end } = req.body || {};
+  if (!isYMD(start) || !isYMD(end)) return res.status(400).json({ error: 'start and end must be YYYY-MM-DD dates' });
+  if (start > end) return res.status(400).json({ error: 'start must be on or before end' });
+  try {
+    const result = await query(
+      `INSERT INTO pay_periods (start_date, end_date) VALUES ($1, $2)
+       ON CONFLICT (start_date, end_date) DO UPDATE SET end_date = EXCLUDED.end_date
+       RETURNING id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date, status, locked_by, locked_at, created_at`,
+      [start, end]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// (Re)build the daily sheet for a period from raw punches, then stamp the period id onto the
+// (still-unassigned, unlocked) days in range. Idempotent; locked/adjusted rows are left alone.
+app.post('/api/attendance/periods/:id/rebuild', requireRole(attendanceReviewRoles), async (req, res) => {
+  try {
+    const pr = await query(
+      `SELECT id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date, status FROM pay_periods WHERE id = $1`,
+      [req.params.id]
+    );
+    const period = pr.rows[0];
+    if (!period) return res.status(404).json({ error: 'Pay period not found' });
+    const count = await rebuildAttendanceDays(period.start_date, period.end_date);
+    await query(
+      `UPDATE attendance_days SET pay_period_id = $1
+        WHERE work_date BETWEEN $2 AND $3 AND pay_period_id IS NULL`,
+      [period.id, period.start_date, period.end_date]
+    );
+    res.json({ ok: true, rebuilt: count });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// The review sheet for a period: the period header + every punched day in range, joined to the
+// person, so Finance/Admin can review in/out/hours/flags. Read-only; call rebuild to refresh.
+app.get('/api/attendance/periods/:id/sheet', requireRole(attendanceReviewRoles), async (req, res) => {
+  try {
+    const pr = await query(
+      `SELECT id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date,
+              status, locked_by, locked_at
+         FROM pay_periods WHERE id = $1`,
+      [req.params.id]
+    );
+    const period = pr.rows[0];
+    if (!period) return res.status(404).json({ error: 'Pay period not found' });
+    const rows = await query(
+      `SELECT ad.id, ad.person_id, to_char(ad.work_date,'YYYY-MM-DD') AS work_date,
+              ad.first_in, ad.last_out, ad.worked_minutes, ad.status, ad.flags,
+              ad.pay_period_id, ad.is_locked, ad.is_adjusted,
+              p.full_name, p.department, p.position
+         FROM attendance_days ad
+         JOIN persons p ON p.id = ad.person_id
+        WHERE ad.work_date BETWEEN $1 AND $2
+        ORDER BY p.full_name ASC, ad.work_date ASC`,
+      [period.start_date, period.end_date]
+    );
+    res.json({ period, rows: rows.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Correct a single day's first_in / last_out / status. ADMIN ONLY — Finance/Accounting is
+// view-only on the sheet and can never edit attendance values (an accounting token gets 403).
+// Every call writes an attendance_adjustments row (old→new, reason, who) and updates the derived
+// attendance_days row — the raw punch is never touched. A time edit recomputes worked_minutes.
+// Sets is_adjusted so a later rebuild won't revert it. Works on open and locked days alike.
+app.post('/api/attendance/days/:id/adjust', requireRole(['admin']), async (req, res) => {
+  const { field, value, reason } = req.body || {};
+  if (!['first_in', 'last_out', 'status'].includes(field)) {
+    return res.status(400).json({ error: "field must be 'first_in', 'last_out' or 'status'" });
+  }
+  const clearing = value === null || value === '' || value === undefined;
+  if (field === 'status') {
+    if (!['complete', 'no_out', 'incomplete'].includes(value)) {
+      return res.status(400).json({ error: "status must be 'complete', 'no_out' or 'incomplete'" });
+    }
+  } else if (!clearing && Number.isNaN(new Date(value).getTime())) {
+    return res.status(400).json({ error: 'value must be a valid timestamp or empty to clear' });
+  }
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const dr = await client.query('SELECT * FROM attendance_days WHERE id = $1 FOR UPDATE', [req.params.id]);
+    const day = dr.rows[0];
+    if (!day) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Day not found' }); }
+    if (day.is_locked && !isAdminUser(req)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'This pay period is locked — corrections are admin-only.' });
+    }
+
+    let oldValue;
+    let newValue;
+    if (field === 'status') {
+      oldValue = day.status;
+      newValue = value;
+      await client.query('UPDATE attendance_days SET status = $1, is_adjusted = true WHERE id = $2', [value, day.id]);
+    } else {
+      // field is 'first_in' or 'last_out' (whitelisted above) — safe to interpolate.
+      oldValue = day[field] ? new Date(day[field]).toISOString() : null;
+      newValue = clearing ? null : value;
+      // The client sends Manila wall-clock (from a datetime-local input); interpret it in Manila.
+      await client.query(
+        `UPDATE attendance_days
+            SET ${field} = CASE WHEN $1::text IS NULL THEN NULL
+                                ELSE ($1::timestamp AT TIME ZONE 'Asia/Manila') END,
+                is_adjusted = true
+          WHERE id = $2`,
+        [clearing ? null : value, day.id]
+      );
+      await client.query(
+        `UPDATE attendance_days
+            SET worked_minutes = CASE WHEN first_in IS NOT NULL AND last_out IS NOT NULL AND last_out > first_in
+                                      THEN ROUND(EXTRACT(EPOCH FROM (last_out - first_in)) / 60.0)::int
+                                      ELSE NULL END
+          WHERE id = $1`,
+        [day.id]
+      );
+    }
+    await client.query(
+      `INSERT INTO attendance_adjustments (day_id, field, old_value, new_value, reason, adjusted_by)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [day.id, field, oldValue, newValue, reason || null, req.user.id]
+    );
+    await client.query('COMMIT');
+    const updated = await query(
+      `SELECT ad.id, ad.person_id, to_char(ad.work_date,'YYYY-MM-DD') AS work_date,
+              ad.first_in, ad.last_out, ad.worked_minutes, ad.status, ad.flags,
+              ad.pay_period_id, ad.is_locked, ad.is_adjusted, p.full_name, p.department, p.position
+         FROM attendance_days ad JOIN persons p ON p.id = ad.person_id WHERE ad.id = $1`,
+      [day.id]
+    );
+    res.json(updated.rows[0]);
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// A day's correction history (for the "edited" trail on the review sheet).
+app.get('/api/attendance/days/:id/adjustments', requireRole(attendanceReviewRoles), async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT id, field, old_value, new_value, reason, adjusted_by, adjusted_at
+         FROM attendance_adjustments WHERE day_id = $1 ORDER BY adjusted_at DESC, id DESC`,
+      [req.params.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Lock a pay period: freeze every day in its range (is_locked = true, stamped with the period id)
+// and mark the period locked with who/when. After this the Finance view is read-only; only an
+// admin may still correct a day (which stays logged). Available to both admin and accounting.
+app.post('/api/attendance/periods/:id/lock', requireRole(attendanceReviewRoles), async (req, res) => {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const pr = await client.query(
+      `SELECT id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date, status
+         FROM pay_periods WHERE id = $1 FOR UPDATE`,
+      [req.params.id]
+    );
+    const period = pr.rows[0];
+    if (!period) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Pay period not found' }); }
+    await client.query(
+      `UPDATE attendance_days SET is_locked = true, pay_period_id = $1 WHERE work_date BETWEEN $2 AND $3`,
+      [period.id, period.start_date, period.end_date]
+    );
+    const upd = await client.query(
+      `UPDATE pay_periods SET status = 'locked', locked_by = $1, locked_at = NOW() WHERE id = $2
+       RETURNING id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date, status, locked_by, locked_at`,
+      [req.user.id, period.id]
+    );
+    await client.query('COMMIT');
+    res.json(upd.rows[0]);
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
