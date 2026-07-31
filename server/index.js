@@ -933,6 +933,9 @@ async function runMigrations() {
           biometric_id TEXT,
           pay_rate NUMERIC(12,2),
           photo_url TEXT,
+          sss_ee NUMERIC(12,2),
+          philhealth_ee NUMERIC(12,2),
+          pagibig_ee NUMERIC(12,2),
           created_at TIMESTAMPTZ DEFAULT NOW()
         )
       `);
@@ -948,6 +951,13 @@ async function runMigrations() {
       // already uses for signatures/cert scans — client-downscaled to a ~300px square thumbnail so
       // the row stays light. Nullable. Admin/roster-only; shown at the clock station on a scan.
       await query(`ALTER TABLE persons ADD COLUMN IF NOT EXISTS photo_url TEXT`);
+      // Standing per-employee government deduction amounts (employee share): SSS, PhilHealth,
+      // Pag-IBIG. Sensitive, admin/roster-only — treated exactly like pay_rate and, like it, never
+      // exposed on any attendance/timesheet endpoint. Nullable (may be filled in later). Stored
+      // only — Phase 4 payroll reads them; no computation happens here.
+      await query(`ALTER TABLE persons ADD COLUMN IF NOT EXISTS sss_ee NUMERIC(12,2)`);
+      await query(`ALTER TABLE persons ADD COLUMN IF NOT EXISTS philhealth_ee NUMERIC(12,2)`);
+      await query(`ALTER TABLE persons ADD COLUMN IF NOT EXISTS pagibig_ee NUMERIC(12,2)`);
       console.log('✅ persons table ready');
     } catch (err) { console.log('ℹ️ persons table skipped:', err.message); }
 
@@ -4422,7 +4432,8 @@ app.get('/api/persons', requireRole(['admin']), async (req, res) => {
   try {
     const result = await query(
       `SELECT id, full_name, department, position, employment_type, status,
-              hired_on, last_day, qr_token, pay_rate, photo_url, created_at
+              hired_on, last_day, qr_token, pay_rate, photo_url,
+              sss_ee, philhealth_ee, pagibig_ee, created_at
          FROM persons
         ORDER BY (status = 'active') DESC, full_name ASC`
     );
@@ -4435,7 +4446,8 @@ app.get('/api/persons', requireRole(['admin']), async (req, res) => {
 // Create a person. qr_token is minted server-side, never accepted from the client.
 app.post('/api/persons', requireRole(['admin']), async (req, res) => {
   try {
-    const { full_name, department, position, employment_type, status, hired_on, last_day, pay_rate, photo_url } = req.body;
+    const { full_name, department, position, employment_type, status, hired_on, last_day, pay_rate, photo_url,
+            sss_ee, philhealth_ee, pagibig_ee } = req.body;
     if (!full_name || !String(full_name).trim()) {
       return res.status(400).json({ error: 'full_name is required' });
     }
@@ -4445,12 +4457,17 @@ app.post('/api/persons', requireRole(['admin']), async (req, res) => {
     if (pr === INVALID_PAY) return res.status(400).json({ error: 'pay_rate must be a non-negative number or blank' });
     const ph = normalizePhoto(photo_url);
     if (ph === INVALID_PHOTO) return res.status(400).json({ error: 'photo_url must be an image under ~2MB, or blank' });
+    // Government deduction amounts (employee share) — same validation as pay_rate.
+    const sss = normalizePayRate(sss_ee), phic = normalizePayRate(philhealth_ee), pgib = normalizePayRate(pagibig_ee);
+    if (sss === INVALID_PAY) return res.status(400).json({ error: 'sss_ee must be a non-negative number or blank' });
+    if (phic === INVALID_PAY) return res.status(400).json({ error: 'philhealth_ee must be a non-negative number or blank' });
+    if (pgib === INVALID_PAY) return res.status(400).json({ error: 'pagibig_ee must be a non-negative number or blank' });
     const result = await query(
-      `INSERT INTO persons (full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url, created_at`,
+      `INSERT INTO persons (full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url, sss_ee, philhealth_ee, pagibig_ee)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url, sss_ee, philhealth_ee, pagibig_ee, created_at`,
       [String(full_name).trim(), department || null, position || null, et, st,
-       hired_on || null, last_day || null, randomUUID(), pr, ph]
+       hired_on || null, last_day || null, randomUUID(), pr, ph, sss, phic, pgib]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -4461,7 +4478,8 @@ app.post('/api/persons', requireRole(['admin']), async (req, res) => {
 // Update a person. qr_token is intentionally NOT updatable here — use the reissue route.
 app.patch('/api/persons/:id', requireRole(['admin']), async (req, res) => {
   try {
-    const { full_name, department, position, employment_type, status, hired_on, last_day, pay_rate, photo_url } = req.body;
+    const { full_name, department, position, employment_type, status, hired_on, last_day, pay_rate, photo_url,
+            sss_ee, philhealth_ee, pagibig_ee } = req.body;
     if (full_name !== undefined && !String(full_name).trim()) {
       return res.status(400).json({ error: 'full_name cannot be empty' });
     }
@@ -4472,6 +4490,10 @@ app.patch('/api/persons/:id', requireRole(['admin']), async (req, res) => {
     if (pr === INVALID_PAY) return res.status(400).json({ error: 'pay_rate must be a non-negative number or blank' });
     const ph = normalizePhoto(photo_url);
     if (ph === INVALID_PHOTO) return res.status(400).json({ error: 'photo_url must be an image under ~2MB, or blank' });
+    const sss = normalizePayRate(sss_ee), phic = normalizePayRate(philhealth_ee), pgib = normalizePayRate(pagibig_ee);
+    if (sss === INVALID_PAY) return res.status(400).json({ error: 'sss_ee must be a non-negative number or blank' });
+    if (phic === INVALID_PAY) return res.status(400).json({ error: 'philhealth_ee must be a non-negative number or blank' });
+    if (pgib === INVALID_PAY) return res.status(400).json({ error: 'pagibig_ee must be a non-negative number or blank' });
     // COALESCE keeps the stored value when a field is omitted; only sent fields change.
     const result = await query(
       `UPDATE persons SET
@@ -4483,12 +4505,15 @@ app.patch('/api/persons/:id', requireRole(['admin']), async (req, res) => {
          hired_on        = COALESCE($6, hired_on),
          last_day        = COALESCE($7, last_day),
          pay_rate        = COALESCE($8, pay_rate),
-         photo_url       = COALESCE($9, photo_url)
-       WHERE id = $10
-       RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url, created_at`,
+         photo_url       = COALESCE($9, photo_url),
+         sss_ee          = COALESCE($10, sss_ee),
+         philhealth_ee   = COALESCE($11, philhealth_ee),
+         pagibig_ee      = COALESCE($12, pagibig_ee)
+       WHERE id = $13
+       RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url, sss_ee, philhealth_ee, pagibig_ee, created_at`,
       [full_name !== undefined ? String(full_name).trim() : null,
        department ?? null, position ?? null, et ?? null, st ?? null,
-       hired_on ?? null, last_day ?? null, pr, ph, req.params.id]
+       hired_on ?? null, last_day ?? null, pr, ph, sss, phic, pgib, req.params.id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Person not found' });
     res.json(result.rows[0]);

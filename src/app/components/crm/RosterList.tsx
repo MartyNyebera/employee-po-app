@@ -23,6 +23,11 @@ interface Person {
   pay_rate?: number | string | null;
   // Small base64 image thumbnail (data URL) for attendance verification at the clock station.
   photo_url?: string | null;
+  // Standing government deductions (employee share). Sensitive, admin-only — like pay_rate, never
+  // shown on the attendance sheet. NUMERIC comes back as a string, so allow both.
+  sss_ee?: number | string | null;
+  philhealth_ee?: number | string | null;
+  pagibig_ee?: number | string | null;
   created_at?: string;
 }
 
@@ -179,6 +184,9 @@ function PersonModal({ initial, onClose, onSaved }: { initial: Person | null; on
     last_day: initial?.last_day ? String(initial.last_day).slice(0, 10) : '',
     pay_rate: initial?.pay_rate === null || initial?.pay_rate === undefined ? '' : String(initial.pay_rate),
     photo_url: initial?.photo_url || '',
+    sss_ee: initial?.sss_ee === null || initial?.sss_ee === undefined ? '' : String(initial.sss_ee),
+    philhealth_ee: initial?.philhealth_ee === null || initial?.philhealth_ee === undefined ? '' : String(initial.philhealth_ee),
+    pagibig_ee: initial?.pagibig_ee === null || initial?.pagibig_ee === undefined ? '' : String(initial.pagibig_ee),
   });
   const [saving, setSaving] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
@@ -207,6 +215,9 @@ function PersonModal({ initial, onClose, onSaved }: { initial: Person | null; on
         last_day: f.last_day || null,
         pay_rate: f.pay_rate.trim() === '' ? null : Number(f.pay_rate),
         photo_url: f.photo_url || null,
+        sss_ee: f.sss_ee.trim() === '' ? null : Number(f.sss_ee),
+        philhealth_ee: f.philhealth_ee.trim() === '' ? null : Number(f.philhealth_ee),
+        pagibig_ee: f.pagibig_ee.trim() === '' ? null : Number(f.pagibig_ee),
       };
       if (initial) await fetchApi(`/persons/${initial.id}`, { method: 'PATCH', body: JSON.stringify(body) });
       else await fetchApi('/persons', { method: 'POST', body: JSON.stringify(body) });
@@ -243,6 +254,27 @@ function PersonModal({ initial, onClose, onSaved }: { initial: Person | null; on
         <TextInput type="number" min="0" step="0.01" inputMode="decimal" value={f.pay_rate}
           onChange={e => set('pay_rate', e.target.value)} placeholder="Leave blank if not set" />
       </Field>
+      <div style={{ marginBottom: '14px' }}>
+        <label style={S.label}>Government deductions (employee share)</label>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+          <div>
+            <div style={{ fontSize: '11px', color: '#8a8a8a', marginBottom: '4px' }}>SSS (EE)</div>
+            <TextInput type="number" min="0" step="0.01" inputMode="decimal" value={f.sss_ee}
+              onChange={e => set('sss_ee', e.target.value)} placeholder="—" />
+          </div>
+          <div>
+            <div style={{ fontSize: '11px', color: '#8a8a8a', marginBottom: '4px' }}>PhilHealth (EE)</div>
+            <TextInput type="number" min="0" step="0.01" inputMode="decimal" value={f.philhealth_ee}
+              onChange={e => set('philhealth_ee', e.target.value)} placeholder="—" />
+          </div>
+          <div>
+            <div style={{ fontSize: '11px', color: '#8a8a8a', marginBottom: '4px' }}>Pag-IBIG (EE)</div>
+            <TextInput type="number" min="0" step="0.01" inputMode="decimal" value={f.pagibig_ee}
+              onChange={e => set('pagibig_ee', e.target.value)} placeholder="—" />
+          </div>
+        </div>
+        <div style={{ fontSize: '11px', color: '#8a8a8a', marginTop: '6px' }}>Standing per-cutoff amounts. Leave blank if not set — payroll uses these later.</div>
+      </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
         <Field label="Hired on"><TextInput type="date" value={f.hired_on} onChange={e => set('hired_on', e.target.value)} /></Field>
         <Field label="Last day"><TextInput type="date" value={f.last_day} onChange={e => set('last_day', e.target.value)} /></Field>
