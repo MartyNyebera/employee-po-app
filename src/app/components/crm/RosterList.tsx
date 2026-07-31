@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
 import { printQrCard, printQrCards } from '../../lib/qrCard';
+import { fileToSquareThumb } from '../../lib/imageThumb';
 import { S, Modal, Field, TextInput, Select, PrimaryBtn, GhostBtn, pill, peso } from './crmKit';
 
 // Server returns snake_case straight from the `persons` table.
@@ -20,7 +21,23 @@ interface Person {
   // Admin-input pay. Meaning follows employment_type (daily rate vs monthly salary). Postgres
   // NUMERIC comes back as a string, so allow both. Admin/roster-only — never on the attendance sheet.
   pay_rate?: number | string | null;
+  // Small base64 image thumbnail (data URL) for attendance verification at the clock station.
+  photo_url?: string | null;
   created_at?: string;
+}
+
+// Round avatar with an initials fallback so a missing photo never leaves a blank/broken image.
+const initialsOf = (name: string) =>
+  (name || '').trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() || '').join('') || '?';
+
+function Avatar({ src, name, size }: { src?: string | null; name: string; size: number }) {
+  const common: React.CSSProperties = { width: size, height: size, borderRadius: '50%', flexShrink: 0, border: '1px solid #d6d6d6', objectFit: 'cover' };
+  if (src) return <img src={src} alt="" style={common} />;
+  return (
+    <span style={{ ...common, background: '#ececec', color: '#5a5a5a', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: Math.round(size * 0.38), fontWeight: 700 }}>
+      {initialsOf(name)}
+    </span>
+  );
 }
 
 const STATUSES = ['active', 'resigned'];
@@ -122,7 +139,12 @@ export function RosterList() {
               : filtered.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={7}>No people yet.</td></tr>
               : filtered.map(p => (
                 <tr key={p.id}>
-                  <td style={{ ...S.td, fontWeight: 600, color: '#000000' }}>{p.full_name}</td>
+                  <td style={{ ...S.td, color: '#000000' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <Avatar src={p.photo_url} name={p.full_name} size={30} />
+                      <span style={{ fontWeight: 600 }}>{p.full_name}</span>
+                    </span>
+                  </td>
                   <td style={S.td}>{[p.department, p.position].filter(Boolean).join(' · ') || '—'}</td>
                   <td style={S.td}>{p.employment_type ? p.employment_type.charAt(0).toUpperCase() + p.employment_type.slice(1) : '—'}</td>
                   <td style={S.td}>{p.pay_rate === null || p.pay_rate === undefined || p.pay_rate === '' ? '—' : <>{peso(Number(p.pay_rate))}<span style={{ color: '#8a8a8a', fontSize: '12px' }}>{paySuffixFor(p.employment_type)}</span></>}</td>
@@ -156,9 +178,20 @@ function PersonModal({ initial, onClose, onSaved }: { initial: Person | null; on
     hired_on: initial?.hired_on ? String(initial.hired_on).slice(0, 10) : '',
     last_day: initial?.last_day ? String(initial.last_day).slice(0, 10) : '',
     pay_rate: initial?.pay_rate === null || initial?.pay_rate === undefined ? '' : String(initial.pay_rate),
+    photo_url: initial?.photo_url || '',
   });
   const [saving, setSaving] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
   const set = (k: string, v: any) => setF(p => ({ ...p, [k]: v }));
+
+  // Downscale the chosen image to a light square thumbnail in the browser before saving.
+  const onPhoto = async (file?: File) => {
+    if (!file) return;
+    setPhotoBusy(true);
+    try { set('photo_url', await fileToSquareThumb(file)); }
+    catch (e: any) { toast.error(e.message || 'Could not use that image'); }
+    finally { setPhotoBusy(false); }
+  };
 
   const save = async () => {
     if (!f.full_name.trim()) { toast.error('Full name is required'); return; }
@@ -173,6 +206,7 @@ function PersonModal({ initial, onClose, onSaved }: { initial: Person | null; on
         hired_on: f.hired_on || null,
         last_day: f.last_day || null,
         pay_rate: f.pay_rate.trim() === '' ? null : Number(f.pay_rate),
+        photo_url: f.photo_url || null,
       };
       if (initial) await fetchApi(`/persons/${initial.id}`, { method: 'PATCH', body: JSON.stringify(body) });
       else await fetchApi('/persons', { method: 'POST', body: JSON.stringify(body) });
@@ -184,6 +218,18 @@ function PersonModal({ initial, onClose, onSaved }: { initial: Person | null; on
   return (
     <Modal title={initial ? 'Edit Person' : 'New Person'} onClose={onClose}
       footer={<><GhostBtn onClick={onClose}>Cancel</GhostBtn><PrimaryBtn onClick={save} disabled={saving}>{saving ? 'Saving…' : (initial ? 'Save' : 'Create')}</PrimaryBtn></>}>
+      <Field label="Photo">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <Avatar src={f.photo_url} name={f.full_name} size={64} />
+          <div>
+            <label style={{ ...S.rowBtn, display: 'inline-block', marginLeft: 0, cursor: photoBusy ? 'default' : 'pointer', opacity: photoBusy ? 0.6 : 1 }}>
+              {photoBusy ? 'Processing…' : (f.photo_url ? 'Change photo' : 'Upload photo')}
+              <input type="file" accept="image/*" disabled={photoBusy} onChange={e => onPhoto(e.target.files?.[0])} style={{ display: 'none' }} />
+            </label>
+            <div style={{ fontSize: '11px', color: '#8a8a8a', marginTop: '6px' }}>JPG/PNG, under 2 MB. Shown at the time station to verify the face on scan.</div>
+          </div>
+        </div>
+      </Field>
       <Field label="Full name *"><TextInput value={f.full_name} onChange={e => set('full_name', e.target.value)} /></Field>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
         <Field label="Department"><TextInput value={f.department} onChange={e => set('department', e.target.value)} /></Field>

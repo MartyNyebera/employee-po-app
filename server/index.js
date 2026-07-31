@@ -932,6 +932,7 @@ async function runMigrations() {
           qr_token TEXT UNIQUE NOT NULL,
           biometric_id TEXT,
           pay_rate NUMERIC(12,2),
+          photo_url TEXT,
           created_at TIMESTAMPTZ DEFAULT NOW()
         )
       `);
@@ -942,6 +943,11 @@ async function runMigrations() {
       // the number. NOTE: pay_rate is admin/roster-only and is deliberately never exposed on any
       // attendance/timesheet endpoint (Finance must not see salary on the attendance sheet).
       await query(`ALTER TABLE persons ADD COLUMN IF NOT EXISTS pay_rate NUMERIC(12,2)`);
+      // Optional employee photo for attendance verification (supervisor confirms the face matches
+      // the scanned card). Stored as a small base64 image data URL — the same convention the app
+      // already uses for signatures/cert scans — client-downscaled to a ~300px square thumbnail so
+      // the row stays light. Nullable. Admin/roster-only; shown at the clock station on a scan.
+      await query(`ALTER TABLE persons ADD COLUMN IF NOT EXISTS photo_url TEXT`);
       console.log('✅ persons table ready');
     } catch (err) { console.log('ℹ️ persons table skipped:', err.message); }
 
@@ -4399,12 +4405,24 @@ function normalizePayRate(v) {
   return n;
 }
 
+// photo_url normalizer. Blank/undefined/null -> null (no photo / keep on update via COALESCE); a
+// string image data URL under the cap -> stored as-is; anything else -> INVALID_PHOTO so the route
+// can 400. The client downscales to a ~300px JPEG (~20-50KB); the cap is generous headroom so a
+// stray large payload can't bloat the row (express.json already limits the body to 5mb).
+const INVALID_PHOTO = Symbol('invalid_photo');
+const MAX_PHOTO_CHARS = 3_000_000;
+function normalizePhoto(v) {
+  if (v === undefined || v === null || v === '') return null;
+  if (typeof v !== 'string' || v.length > MAX_PHOTO_CHARS) return INVALID_PHOTO;
+  return v;
+}
+
 // List all persons (roster)
 app.get('/api/persons', requireRole(['admin']), async (req, res) => {
   try {
     const result = await query(
       `SELECT id, full_name, department, position, employment_type, status,
-              hired_on, last_day, qr_token, pay_rate, created_at
+              hired_on, last_day, qr_token, pay_rate, photo_url, created_at
          FROM persons
         ORDER BY (status = 'active') DESC, full_name ASC`
     );
@@ -4417,7 +4435,7 @@ app.get('/api/persons', requireRole(['admin']), async (req, res) => {
 // Create a person. qr_token is minted server-side, never accepted from the client.
 app.post('/api/persons', requireRole(['admin']), async (req, res) => {
   try {
-    const { full_name, department, position, employment_type, status, hired_on, last_day, pay_rate } = req.body;
+    const { full_name, department, position, employment_type, status, hired_on, last_day, pay_rate, photo_url } = req.body;
     if (!full_name || !String(full_name).trim()) {
       return res.status(400).json({ error: 'full_name is required' });
     }
@@ -4425,12 +4443,14 @@ app.post('/api/persons', requireRole(['admin']), async (req, res) => {
     const st = status === 'resigned' ? 'resigned' : 'active';
     const pr = normalizePayRate(pay_rate);
     if (pr === INVALID_PAY) return res.status(400).json({ error: 'pay_rate must be a non-negative number or blank' });
+    const ph = normalizePhoto(photo_url);
+    if (ph === INVALID_PHOTO) return res.status(400).json({ error: 'photo_url must be an image under ~2MB, or blank' });
     const result = await query(
-      `INSERT INTO persons (full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-       RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, created_at`,
+      `INSERT INTO persons (full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url, created_at`,
       [String(full_name).trim(), department || null, position || null, et, st,
-       hired_on || null, last_day || null, randomUUID(), pr]
+       hired_on || null, last_day || null, randomUUID(), pr, ph]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -4441,7 +4461,7 @@ app.post('/api/persons', requireRole(['admin']), async (req, res) => {
 // Update a person. qr_token is intentionally NOT updatable here — use the reissue route.
 app.patch('/api/persons/:id', requireRole(['admin']), async (req, res) => {
   try {
-    const { full_name, department, position, employment_type, status, hired_on, last_day, pay_rate } = req.body;
+    const { full_name, department, position, employment_type, status, hired_on, last_day, pay_rate, photo_url } = req.body;
     if (full_name !== undefined && !String(full_name).trim()) {
       return res.status(400).json({ error: 'full_name cannot be empty' });
     }
@@ -4450,6 +4470,8 @@ app.patch('/api/persons/:id', requireRole(['admin']), async (req, res) => {
     const st = status === undefined ? undefined : (status === 'resigned' ? 'resigned' : 'active');
     const pr = normalizePayRate(pay_rate);
     if (pr === INVALID_PAY) return res.status(400).json({ error: 'pay_rate must be a non-negative number or blank' });
+    const ph = normalizePhoto(photo_url);
+    if (ph === INVALID_PHOTO) return res.status(400).json({ error: 'photo_url must be an image under ~2MB, or blank' });
     // COALESCE keeps the stored value when a field is omitted; only sent fields change.
     const result = await query(
       `UPDATE persons SET
@@ -4460,12 +4482,13 @@ app.patch('/api/persons/:id', requireRole(['admin']), async (req, res) => {
          status          = COALESCE($5, status),
          hired_on        = COALESCE($6, hired_on),
          last_day        = COALESCE($7, last_day),
-         pay_rate        = COALESCE($8, pay_rate)
-       WHERE id = $9
-       RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, created_at`,
+         pay_rate        = COALESCE($8, pay_rate),
+         photo_url       = COALESCE($9, photo_url)
+       WHERE id = $10
+       RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url, created_at`,
       [full_name !== undefined ? String(full_name).trim() : null,
        department ?? null, position ?? null, et ?? null, st ?? null,
-       hired_on ?? null, last_day ?? null, pr, req.params.id]
+       hired_on ?? null, last_day ?? null, pr, ph, req.params.id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Person not found' });
     res.json(result.rows[0]);
@@ -4548,7 +4571,7 @@ app.post('/api/attendance/scan', requireRole(['station']), async (req, res) => {
   const client = await getClient();
   try {
     await client.query('BEGIN');
-    const pr = await client.query('SELECT id, full_name, position, status FROM persons WHERE qr_token = $1 FOR UPDATE', [token]);
+    const pr = await client.query('SELECT id, full_name, position, status, photo_url FROM persons WHERE qr_token = $1 FOR UPDATE', [token]);
     const person = pr.rows[0];
     if (!person) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Card not recognized' }); }
     if (person.status === 'resigned') { await client.query('ROLLBACK'); return res.status(403).json({ error: `${person.full_name} is no longer active` }); }
@@ -4569,7 +4592,7 @@ app.post('/api/attendance/scan', requireRole(['station']), async (req, res) => {
     // rare and is handled by an Admin correction later, not by the scanner.
     if (latest && latest.punch_type === 'out') {
       await client.query('ROLLBACK');
-      return res.json({ ignored: true, reason: 'already_out', person: { id: person.id, name: person.full_name, position: person.position },
+      return res.json({ ignored: true, reason: 'already_out', person: { id: person.id, name: person.full_name, position: person.position, photo: person.photo_url },
         message: 'Already clocked out today.' });
     }
 
@@ -4579,7 +4602,7 @@ app.post('/api/attendance/scan', requireRole(['station']), async (req, res) => {
     // ignore it (no row written) rather than closing the day the instant they clocked in.
     if (hasOpenIn && Number(latest.age_sec) < 60) {
       await client.query('ROLLBACK');
-      return res.json({ ignored: true, reason: 'cooldown', person: { id: person.id, name: person.full_name, position: person.position },
+      return res.json({ ignored: true, reason: 'cooldown', person: { id: person.id, name: person.full_name, position: person.position, photo: person.photo_url },
         message: 'Just clocked in — scan again in a moment to clock out.' });
     }
 
@@ -4592,7 +4615,7 @@ app.post('/api/attendance/scan', requireRole(['station']), async (req, res) => {
     );
     await client.query('COMMIT');
     res.json({ ok: true, punch_type: ins.rows[0].punch_type, punched_at: ins.rows[0].punched_at,
-      person: { id: person.id, name: person.full_name, position: person.position } });
+      person: { id: person.id, name: person.full_name, position: person.position, photo: person.photo_url } });
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
     res.status(500).json({ error: err.message });
@@ -4605,7 +4628,7 @@ app.post('/api/attendance/scan', requireRole(['station']), async (req, res) => {
 app.get('/api/attendance/today', requireRole(['station']), async (req, res) => {
   try {
     const result = await query(
-      `SELECT ap.id, ap.punch_type, ap.punched_at, p.full_name, p.position
+      `SELECT ap.id, ap.punch_type, ap.punched_at, p.full_name, p.position, p.photo_url
          FROM attendance_punches ap
          JOIN persons p ON p.id = ap.person_id
         WHERE ap.station_id = $1

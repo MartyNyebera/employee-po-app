@@ -105,8 +105,21 @@ function StationSetup({ connecting, error, hasSecret, onActivate, onReset }: {
 }
 
 // ---- The live clock + scan capture ---------------------------------------
-interface PunchRow { id: number; punch_type: 'in' | 'out'; punched_at: string; full_name: string; position?: string | null; }
-type Flash = { kind: 'in' | 'out' | 'info' | 'error'; name?: string; position?: string | null; time?: string; message?: string } | null;
+interface PunchRow { id: number; punch_type: 'in' | 'out'; punched_at: string; full_name: string; position?: string | null; photo_url?: string | null; }
+type Flash = { kind: 'in' | 'out' | 'info' | 'error'; name?: string; position?: string | null; time?: string; message?: string; photo?: string | null } | null;
+
+// Round avatar with an initials fallback — a missing photo never breaks the flash or the list.
+const initialsOf = (name?: string) =>
+  (name || '').trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() || '').join('') || '?';
+function StationAvatar({ src, name, size }: { src?: string | null; name?: string; size: number }) {
+  const common: React.CSSProperties = { width: size, height: size, borderRadius: '50%', flexShrink: 0, objectFit: 'cover', border: '2px solid rgba(255,255,255,0.5)' };
+  if (src) return <img src={src} alt="" style={common} />;
+  return (
+    <span style={{ ...common, background: 'rgba(255,255,255,0.15)', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: Math.round(size * 0.36) }}>
+      {initialsOf(name)}
+    </span>
+  );
+}
 
 const fmtClock = (d: Date) => d.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 const fmtTime = (s: string) => new Date(s).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' });
@@ -153,8 +166,8 @@ function ClockView({ secret, stationName, onSignOut }: { secret: string; station
       const res = await stationFetch('/api/attendance/scan', { method: 'POST', body: JSON.stringify({ token: code }) }, secret);
       const data = await res.json().catch(() => ({} as any));
       if (!res.ok) showFlash({ kind: 'error', message: data.error || 'Scan failed' });
-      else if (data.ignored) showFlash({ kind: 'info', name: data.person?.name, position: data.person?.position, message: data.message });
-      else { showFlash({ kind: data.punch_type, name: data.person?.name, position: data.person?.position, time: data.punched_at }); loadToday(); }
+      else if (data.ignored) showFlash({ kind: 'info', name: data.person?.name, position: data.person?.position, photo: data.person?.photo, message: data.message });
+      else { showFlash({ kind: data.punch_type, name: data.person?.name, position: data.person?.position, photo: data.person?.photo, time: data.punched_at }); loadToday(); }
     } catch { showFlash({ kind: 'error', message: 'Network error — try again' }); }
     finally { setBusy(false); refocus(); }
   }, [busy, secret, showFlash, loadToday, refocus]);
@@ -201,9 +214,12 @@ function ClockView({ secret, stationName, onSignOut }: { secret: string; station
             <div style={{ padding: '18px', color: '#64748b', fontSize: '14px' }}>No scans yet today.</div>
           ) : today.slice(0, 5).map(r => (
             <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #0f172a' }}>
-              <span style={{ display: 'flex', flexDirection: 'column' }}>
-                <span style={{ fontWeight: 600 }}>{r.full_name}</span>
-                {r.position ? <span style={{ fontSize: '12px', color: '#94a3b8' }}>{r.position}</span> : null}
+              <span style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <StationAvatar src={r.photo_url} name={r.full_name} size={36} />
+                <span style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontWeight: 600 }}>{r.full_name}</span>
+                  {r.position ? <span style={{ fontSize: '12px', color: '#94a3b8' }}>{r.position}</span> : null}
+                </span>
               </span>
               <span style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                 <span style={{ fontSize: '12px', fontWeight: 700, padding: '2px 10px', borderRadius: '999px', background: r.punch_type === 'in' ? '#065f46' : '#1e40af' }}>{r.punch_type === 'in' ? 'IN' : 'OUT'}</span>
@@ -218,6 +234,7 @@ function ClockView({ secret, stationName, onSignOut }: { secret: string; station
       <div style={flashStyle()}>
         {flash && (
           <>
+            {flash.name ? <div style={{ marginBottom: '20px' }}><StationAvatar src={flash.photo} name={flash.name} size={220} /></div> : null}
             <div style={{ fontSize: 'min(12vw, 84px)', fontWeight: 800, lineHeight: 1 }}>
               {flash.kind === 'in' ? '✓ Time In' : flash.kind === 'out' ? '✓ Time Out' : flash.kind === 'error' ? '✕' : '•'}
             </div>
