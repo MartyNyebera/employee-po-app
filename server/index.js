@@ -904,6 +904,15 @@ async function runMigrations() {
       console.log('✅ inventory_item_requests table ready');
     } catch (err) { console.log('ℹ️ inventory_item_requests table skipped:', err.message); }
 
+    // material_requests.reviewed_by was declared INTEGER, but this route's reviewer is an
+    // admin whose users.id is TEXT ('super-admin-owner'). Widen to TEXT so the authenticated
+    // reviewer's id stores directly, matching the client type and the inventory_item_requests
+    // fix above. Nothing JOINs or filters this column numerically.
+    try {
+      await query(`ALTER TABLE material_requests ALTER COLUMN reviewed_by TYPE TEXT USING reviewed_by::text`);
+      console.log('✅ material_requests.reviewed_by widened to TEXT');
+    } catch (err) { console.log('ℹ️ material_requests.reviewed_by migration skipped:', err.message); }
+
     console.log('✅ All migrations complete');
   } catch (err) {
     console.error('❌ Migration error:', err.message);
@@ -4152,18 +4161,24 @@ app.get('/api/material-requests', async (req, res) => {
   }
 });
 
-// Admin approve/reject material request
-app.put('/api/material-requests/:id/review', async (req, res) => {
+// Admin approve/reject material request. requireRole(['admin']) — the guard the #2
+// hardening pass missed while it was fixing the sibling DELETE route below.
+app.put('/api/material-requests/:id/review', requireRole(['admin']), async (req, res) => {
   try {
-    const { status, admin_notes, reviewed_by } = req.body;
-    
+    const { status, admin_notes } = req.body;
+    // Approve/reject only — mirror the status allow-list on /inventory-withdrawals/:id/review.
+    if (!['approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ error: "status must be 'approved' or 'rejected'" });
+    }
+    // reviewed_by is derived from the authenticated reviewer, never the request body.
+    // (reviewed_by is TEXT — see the runMigrations widening — so the admin's users.id fits.)
     const result = await query(
-      `UPDATE material_requests 
-       SET status=$1, admin_notes=$2, 
+      `UPDATE material_requests
+       SET status=$1, admin_notes=$2,
            reviewed_by=$3, reviewed_at=NOW(),
            updated_at=NOW()
        WHERE id=$4 RETURNING *`,
-      [status, admin_notes, reviewed_by, req.params.id]
+      [status, admin_notes, req.user.id, req.params.id]
     );
     
     const request = result.rows[0];

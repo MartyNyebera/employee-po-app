@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Package, Clock, CheckCircle, XCircle, User, Calendar, Tag, Filter, Search, RefreshCw, X, Trash2, Printer, Eye } from 'lucide-react';
-import { fetchApi, getStoredAuth } from '../api/client';
+import { fetchApi } from '../api/client';
 import { confirmDialog } from '../lib/confirm';
 import { renderPrintDocument } from '../lib/printChrome';
 import { SummaryStats } from './SummaryStats';
@@ -401,15 +401,12 @@ export function MaterialRequests({ onBack }: MaterialRequestsProps) {
   const handleReview = async (requestId: number, status: 'approved' | 'rejected', adminNotes?: string) => {
     setProcessingId(requestId);
     try {
-      const auth = getStoredAuth();
-      const adminId = auth?.user?.id ? parseInt(auth.user.id) : 1; // Fallback to ID 1
-      
+      // reviewed_by is now derived server-side from the authenticated admin, not sent here.
       await fetchApi(`/material-requests/${requestId}/review`, {
         method: 'PUT',
         body: JSON.stringify({
           status,
           admin_notes: adminNotes || '',
-          reviewed_by: adminId,
         }),
       });
 
