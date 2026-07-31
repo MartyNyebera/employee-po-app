@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Plus, Search, Pencil, QrCode, RefreshCw } from 'lucide-react';
+import { Plus, Search, Pencil, QrCode, RefreshCw, Printer } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
-import { printQrCard } from '../../lib/qrCard';
+import { printQrCard, printQrCards } from '../../lib/qrCard';
 import { S, Modal, Field, TextInput, Select, PrimaryBtn, GhostBtn, pill, peso } from './crmKit';
 
 // Server returns snake_case straight from the `persons` table.
@@ -73,6 +73,13 @@ export function RosterList() {
     catch (e: any) { toast.error(e.message || 'Could not print QR card'); }
   };
 
+  // Batch-print every card currently shown (respects the search + status filter), tiled on A4.
+  const onPrintAll = async () => {
+    if (filtered.length === 0) { toast.error('No people to print'); return; }
+    try { await printQrCards(filtered); }
+    catch (e: any) { toast.error(e.message || 'Could not print QR cards'); }
+  };
+
   const onReissue = async (p: Person) => {
     if (!(await confirmDialog({ title: `Reissue QR for "${p.full_name}"?`, message: 'The current card stops working immediately. Print a new one after.', confirmLabel: 'Reissue', tone: 'danger' }))) return;
     try {
@@ -86,7 +93,12 @@ export function RosterList() {
     <div style={S.page}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
         <div><h1 style={S.h1}>Roster</h1><p style={S.sub}>Employees and their scannable QR ID cards for the time station.</p></div>
-        <button style={S.addBtn} onClick={() => { setEditing(null); setShowModal(true); }}><Plus size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />Person</button>
+        <div style={{ display: 'flex', gap: '10px', flexShrink: 0 }}>
+          <button style={{ ...S.addBtn, background: '#fff', color: '#262626', border: '1px solid #d6d6d6' }} onClick={onPrintAll} title="Print all shown cards on A4">
+            <Printer size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />Print QR cards
+          </button>
+          <button style={S.addBtn} onClick={() => { setEditing(null); setShowModal(true); }}><Plus size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />Person</button>
+        </div>
       </div>
 
       <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
