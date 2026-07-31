@@ -931,10 +931,17 @@ async function runMigrations() {
           last_day DATE,
           qr_token TEXT UNIQUE NOT NULL,
           biometric_id TEXT,
+          pay_rate NUMERIC(12,2),
           created_at TIMESTAMPTZ DEFAULT NOW()
         )
       `);
       await query(`CREATE INDEX IF NOT EXISTS idx_persons_status ON persons(status)`);
+      // Admin-input pay. Its meaning is disambiguated by employment_type: for 'daily' it is the
+      // daily rate, for 'monthly' the agreed monthly salary. Nullable. Added via ALTER for DBs
+      // that created persons before this column. Payroll math is a later phase — this only stores
+      // the number. NOTE: pay_rate is admin/roster-only and is deliberately never exposed on any
+      // attendance/timesheet endpoint (Finance must not see salary on the attendance sheet).
+      await query(`ALTER TABLE persons ADD COLUMN IF NOT EXISTS pay_rate NUMERIC(12,2)`);
       console.log('✅ persons table ready');
     } catch (err) { console.log('ℹ️ persons table skipped:', err.message); }
 
@@ -4381,12 +4388,23 @@ app.delete('/api/material-requests/:id', requireRole(['admin']), async (req, res
 // old card. Additive — touches only the new `persons` table.
 // ============================================================================
 
+// pay_rate normalizer shared by create/update. Blank/undefined/null -> null (no value / keep on
+// update via COALESCE); a non-negative number -> that number; anything else -> INVALID_PAY so the
+// route can 400. Admin-input only; no computation happens on it here.
+const INVALID_PAY = Symbol('invalid_pay');
+function normalizePayRate(v) {
+  if (v === undefined || v === null || v === '') return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return INVALID_PAY;
+  return n;
+}
+
 // List all persons (roster)
 app.get('/api/persons', requireRole(['admin']), async (req, res) => {
   try {
     const result = await query(
       `SELECT id, full_name, department, position, employment_type, status,
-              hired_on, last_day, qr_token, created_at
+              hired_on, last_day, qr_token, pay_rate, created_at
          FROM persons
         ORDER BY (status = 'active') DESC, full_name ASC`
     );
@@ -4399,18 +4417,20 @@ app.get('/api/persons', requireRole(['admin']), async (req, res) => {
 // Create a person. qr_token is minted server-side, never accepted from the client.
 app.post('/api/persons', requireRole(['admin']), async (req, res) => {
   try {
-    const { full_name, department, position, employment_type, status, hired_on, last_day } = req.body;
+    const { full_name, department, position, employment_type, status, hired_on, last_day, pay_rate } = req.body;
     if (!full_name || !String(full_name).trim()) {
       return res.status(400).json({ error: 'full_name is required' });
     }
     const et = employment_type === 'daily' || employment_type === 'monthly' ? employment_type : null;
     const st = status === 'resigned' ? 'resigned' : 'active';
+    const pr = normalizePayRate(pay_rate);
+    if (pr === INVALID_PAY) return res.status(400).json({ error: 'pay_rate must be a non-negative number or blank' });
     const result = await query(
-      `INSERT INTO persons (full_name, department, position, employment_type, status, hired_on, last_day, qr_token)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-       RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, created_at`,
+      `INSERT INTO persons (full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, created_at`,
       [String(full_name).trim(), department || null, position || null, et, st,
-       hired_on || null, last_day || null, randomUUID()]
+       hired_on || null, last_day || null, randomUUID(), pr]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -4421,13 +4441,15 @@ app.post('/api/persons', requireRole(['admin']), async (req, res) => {
 // Update a person. qr_token is intentionally NOT updatable here — use the reissue route.
 app.patch('/api/persons/:id', requireRole(['admin']), async (req, res) => {
   try {
-    const { full_name, department, position, employment_type, status, hired_on, last_day } = req.body;
+    const { full_name, department, position, employment_type, status, hired_on, last_day, pay_rate } = req.body;
     if (full_name !== undefined && !String(full_name).trim()) {
       return res.status(400).json({ error: 'full_name cannot be empty' });
     }
     const et = employment_type === undefined ? undefined
       : (employment_type === 'daily' || employment_type === 'monthly' ? employment_type : null);
     const st = status === undefined ? undefined : (status === 'resigned' ? 'resigned' : 'active');
+    const pr = normalizePayRate(pay_rate);
+    if (pr === INVALID_PAY) return res.status(400).json({ error: 'pay_rate must be a non-negative number or blank' });
     // COALESCE keeps the stored value when a field is omitted; only sent fields change.
     const result = await query(
       `UPDATE persons SET
@@ -4437,12 +4459,13 @@ app.patch('/api/persons/:id', requireRole(['admin']), async (req, res) => {
          employment_type = COALESCE($4, employment_type),
          status          = COALESCE($5, status),
          hired_on        = COALESCE($6, hired_on),
-         last_day        = COALESCE($7, last_day)
-       WHERE id = $8
-       RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, created_at`,
+         last_day        = COALESCE($7, last_day),
+         pay_rate        = COALESCE($8, pay_rate)
+       WHERE id = $9
+       RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, created_at`,
       [full_name !== undefined ? String(full_name).trim() : null,
        department ?? null, position ?? null, et ?? null, st ?? null,
-       hired_on ?? null, last_day ?? null, req.params.id]
+       hired_on ?? null, last_day ?? null, pr, req.params.id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Person not found' });
     res.json(result.rows[0]);

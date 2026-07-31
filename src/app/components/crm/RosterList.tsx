@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
 import { printQrCard } from '../../lib/qrCard';
-import { S, Modal, Field, TextInput, Select, PrimaryBtn, GhostBtn, pill } from './crmKit';
+import { S, Modal, Field, TextInput, Select, PrimaryBtn, GhostBtn, pill, peso } from './crmKit';
 
 // Server returns snake_case straight from the `persons` table.
 interface Person {
@@ -17,6 +17,9 @@ interface Person {
   hired_on?: string | null;
   last_day?: string | null;
   qr_token: string;
+  // Admin-input pay. Meaning follows employment_type (daily rate vs monthly salary). Postgres
+  // NUMERIC comes back as a string, so allow both. Admin/roster-only — never on the attendance sheet.
+  pay_rate?: number | string | null;
   created_at?: string;
 }
 
@@ -25,6 +28,9 @@ const TYPES = ['daily', 'monthly'];
 const statusBadge = (s: string) => s === 'resigned' ? pill('Resigned', 'bad') : pill('Active', 'good');
 const fmtDate = (d?: string | null) => (d ? new Date(d).toLocaleDateString() : '—');
 const todayInput = () => new Date().toISOString().slice(0, 10);
+// A person's pay follows their employment_type: daily rate vs monthly salary.
+const payLabelFor = (t?: string | null) => t === 'daily' ? 'Daily rate' : t === 'monthly' ? 'Monthly salary' : 'Pay rate';
+const paySuffixFor = (t?: string | null) => t === 'daily' ? '/day' : t === 'monthly' ? '/mo' : '';
 
 export function RosterList() {
   const [rows, setRows] = useState<Person[]>([]);
@@ -97,16 +103,17 @@ export function RosterList() {
         <table style={S.table}>
           <thead><tr>
             <th style={S.th}>Name</th><th style={S.th}>Department / Position</th><th style={S.th}>Type</th>
-            <th style={S.th}>Status</th><th style={S.th}>Hired</th><th style={{ ...S.th, textAlign: 'right' }}>Actions</th>
+            <th style={S.th}>Pay</th><th style={S.th}>Status</th><th style={S.th}>Hired</th><th style={{ ...S.th, textAlign: 'right' }}>Actions</th>
           </tr></thead>
           <tbody>
-            {loading ? <tr><td style={S.td} colSpan={6}>Loading…</td></tr>
-              : filtered.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={6}>No people yet.</td></tr>
+            {loading ? <tr><td style={S.td} colSpan={7}>Loading…</td></tr>
+              : filtered.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={7}>No people yet.</td></tr>
               : filtered.map(p => (
                 <tr key={p.id}>
                   <td style={{ ...S.td, fontWeight: 600, color: '#000000' }}>{p.full_name}</td>
                   <td style={S.td}>{[p.department, p.position].filter(Boolean).join(' · ') || '—'}</td>
                   <td style={S.td}>{p.employment_type ? p.employment_type.charAt(0).toUpperCase() + p.employment_type.slice(1) : '—'}</td>
+                  <td style={S.td}>{p.pay_rate === null || p.pay_rate === undefined || p.pay_rate === '' ? '—' : <>{peso(Number(p.pay_rate))}<span style={{ color: '#8a8a8a', fontSize: '12px' }}>{paySuffixFor(p.employment_type)}</span></>}</td>
                   <td style={S.td}>
                     <button title={p.status === 'active' ? 'Mark resigned' : 'Reactivate'} onClick={() => toggleStatus(p)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>{statusBadge(p.status)}</button>
                   </td>
@@ -136,6 +143,7 @@ function PersonModal({ initial, onClose, onSaved }: { initial: Person | null; on
     status: initial?.status || 'active',
     hired_on: initial?.hired_on ? String(initial.hired_on).slice(0, 10) : '',
     last_day: initial?.last_day ? String(initial.last_day).slice(0, 10) : '',
+    pay_rate: initial?.pay_rate === null || initial?.pay_rate === undefined ? '' : String(initial.pay_rate),
   });
   const [saving, setSaving] = useState(false);
   const set = (k: string, v: any) => setF(p => ({ ...p, [k]: v }));
@@ -152,6 +160,7 @@ function PersonModal({ initial, onClose, onSaved }: { initial: Person | null; on
         status: f.status || 'active',
         hired_on: f.hired_on || null,
         last_day: f.last_day || null,
+        pay_rate: f.pay_rate.trim() === '' ? null : Number(f.pay_rate),
       };
       if (initial) await fetchApi(`/persons/${initial.id}`, { method: 'PATCH', body: JSON.stringify(body) });
       else await fetchApi('/persons', { method: 'POST', body: JSON.stringify(body) });
@@ -172,6 +181,10 @@ function PersonModal({ initial, onClose, onSaved }: { initial: Person | null; on
         <Field label="Employment type"><Select value={f.employment_type} onChange={v => set('employment_type', v)} options={TYPES} placeholder="Select type" /></Field>
         <Field label="Status"><Select value={f.status} onChange={v => set('status', v)} options={STATUSES} /></Field>
       </div>
+      <Field label={payLabelFor(f.employment_type)}>
+        <TextInput type="number" min="0" step="0.01" inputMode="decimal" value={f.pay_rate}
+          onChange={e => set('pay_rate', e.target.value)} placeholder="Leave blank if not set" />
+      </Field>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
         <Field label="Hired on"><TextInput type="date" value={f.hired_on} onChange={e => set('hired_on', e.target.value)} /></Field>
         <Field label="Last day"><TextInput type="date" value={f.last_day} onChange={e => set('last_day', e.target.value)} /></Field>
