@@ -284,7 +284,7 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
           <Row k="Hourly" v={peso(ref.hourly)} />
           <Row k="Per minute" v={peso(ref.per_minute)} />
           <Row k="Paid / lunch hrs" v={`${ref.paid_hours} / ${ref.lunch_hours}`} />
-          <Row k="Work hours" v={`${ref.work_start}–${ref.work_end}`} />
+          <Row k="Work hours" v={`${ref.work_start}–${ref.work_end}${ref.work_end_sat ? ` (Sat –${ref.work_end_sat})` : ''}`} />
         </div>
         <div>
           <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#7a6a0c', marginBottom: '6px' }}>Totals</div>

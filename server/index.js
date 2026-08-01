@@ -1085,6 +1085,10 @@ async function runMigrations() {
           id INTEGER PRIMARY KEY DEFAULT 1,
           work_start TEXT NOT NULL DEFAULT '08:00',
           work_end TEXT NOT NULL DEFAULT '17:00',
+          -- Saturday is a shorter working day: same 08:00 start, ends earlier (default 16:00). Only
+          -- the scheduled end differs — late is still from 08:00, and a present Saturday still pays a
+          -- FULL day (not pro-rated).
+          work_end_sat TEXT NOT NULL DEFAULT '16:00',
           paid_hours NUMERIC(5,2) NOT NULL DEFAULT 8,
           lunch_hours NUMERIC(5,2) NOT NULL DEFAULT 1,
           monthly_divisor NUMERIC(6,2) NOT NULL DEFAULT 26,
@@ -1105,8 +1109,9 @@ async function runMigrations() {
           CONSTRAINT payroll_settings_singleton CHECK (id = 1)
         )
       `);
-      // Added via ALTER for DBs created before this column existed.
+      // Added via ALTER for DBs created before these columns existed.
       await query(`ALTER TABLE payroll_settings ADD COLUMN IF NOT EXISTS special_holiday_not_worked_paid BOOLEAN NOT NULL DEFAULT false`);
+      await query(`ALTER TABLE payroll_settings ADD COLUMN IF NOT EXISTS work_end_sat TEXT NOT NULL DEFAULT '16:00'`);
       // Seed the single policy row with the defaults above (no-op once it exists).
       await query(`INSERT INTO payroll_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
 
@@ -4698,9 +4703,10 @@ app.put('/api/payroll/settings', requireRole(['admin']), async (req, res) => {
     v[f] = n;
   }
   const asTime = (x) => (x === undefined || x === null || x === '') ? null : (/^\d{1,2}:\d{2}$/.test(String(x)) ? String(x) : INVALID_PAY);
-  const ws = asTime(b.work_start), we = asTime(b.work_end);
+  const ws = asTime(b.work_start), we = asTime(b.work_end), wesat = asTime(b.work_end_sat);
   if (ws === INVALID_PAY) return res.status(400).json({ error: 'work_start must be HH:MM' });
   if (we === INVALID_PAY) return res.status(400).json({ error: 'work_end must be HH:MM' });
+  if (wesat === INVALID_PAY) return res.status(400).json({ error: 'work_end_sat must be HH:MM' });
   // Boolean policy: undefined -> keep (COALESCE null), else coerce.
   const snwp = b.special_holiday_not_worked_paid === undefined ? null : (b.special_holiday_not_worked_paid === true || b.special_holiday_not_worked_paid === 'true');
   try {
@@ -4720,11 +4726,12 @@ app.put('/api/payroll/settings', requireRole(['admin']), async (req, res) => {
          regular_holiday_multiplier = COALESCE($12, regular_holiday_multiplier),
          special_holiday_multiplier = COALESCE($13, special_holiday_multiplier),
          special_holiday_not_worked_paid = COALESCE($14, special_holiday_not_worked_paid),
+         work_end_sat = COALESCE($15, work_end_sat),
          updated_at = NOW()
        WHERE id = 1 RETURNING *`,
       [ws, we, v.paid_hours, v.lunch_hours, v.monthly_divisor, v.grace_minutes,
        v.tardy_mid_deduct_minutes, v.tardy_max_start_minutes, v.tardy_max_deduct_minutes,
-       v.ot_multiplier, v.sunday_multiplier, v.regular_holiday_multiplier, v.special_holiday_multiplier, snwp]
+       v.ot_multiplier, v.sunday_multiplier, v.regular_holiday_multiplier, v.special_holiday_multiplier, snwp, wesat]
     );
     res.json(r.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -4833,7 +4840,10 @@ async function computePayroll(periodId) {
   const grace = Number(s.grace_minutes), midDed = Number(s.tardy_mid_deduct_minutes), maxStart = Number(s.tardy_max_start_minutes), maxDed = Number(s.tardy_max_deduct_minutes);
   const otMult = Number(s.ot_multiplier), sunMult = Number(s.sunday_multiplier), regMult = Number(s.regular_holiday_multiplier), spcMult = Number(s.special_holiday_multiplier);
   const specialNotWorkedPaid = s.special_holiday_not_worked_paid === true;
+  // Saturday ends earlier (default 16:00) than Mon–Fri (17:00). Start (08:00) and late measurement
+  // are unchanged; only the scheduled END differs, which drives undertime and OT on Saturdays.
   const startMin = hhmmToMin(s.work_start), endMin = hhmmToMin(s.work_end);
+  const satEndMin = hhmmToMin(s.work_end_sat || s.work_end);
 
   const holidayMap = {};
   (await query(`SELECT to_char(holiday_date,'YYYY-MM-DD') AS d, type FROM holidays`)).rows.forEach(h => { holidayMap[h.d] = h.type; });
@@ -4929,7 +4939,10 @@ async function computePayroll(periodId) {
           Object.assign(day, { kind: 'sunday_worked', net_hours: round2(netHours), mult: sunMult, amount: round2(amt) });
         } else { day.kind = 'sunday_off'; }
       } else {
-        // scheduled working day
+        // scheduled working day (Mon–Sat, non-holiday). Saturday ends earlier, so undertime and OT
+        // are measured from the Saturday end; late is always from the 08:00 start. A present
+        // Saturday is still a FULL day at the full daily rate — only the end time is shorter.
+        const dayEndMin = dowYMD(d) === 6 ? satEndMin : endMin;
         if (hasIN) {
           const rawLate = Math.max(0, inMin - startMin);
           const counted = rawLate <= grace ? 0 : (rawLate < maxStart ? midDed : maxDed);
@@ -4945,9 +4958,9 @@ async function computePayroll(periodId) {
             Object.assign(day, { kind: 'no_out_half', late_min: rawLate, counted_late_min: counted, undertime_min: 0, ot_hours: 0, half_basis: round2(dailyBasis / 2), amount: round2(dailyBasis / 2), note: 'no OUT — paid half day' });
           } else {
             daysPresent++;
-            const ut = outMin < endMin ? (endMin - outMin) : 0;
+            const ut = outMin < dayEndMin ? (dayEndMin - outMin) : 0;
             undertimeMin += ut;
-            const oth = (person.ot_eligible && row.ot_approved && outMin > endMin) ? (outMin - endMin) / 60 : 0;
+            const oth = (person.ot_eligible && row.ot_approved && outMin > dayEndMin) ? (outMin - dayEndMin) / 60 : 0;
             otHours += oth;
             Object.assign(day, { kind: 'work', late_min: rawLate, counted_late_min: counted, undertime_min: ut, ot_hours: round2(oth) });
           }
@@ -4991,7 +5004,7 @@ async function computePayroll(periodId) {
         paid_hours: paidHours, lunch_hours: lunch, monthly_divisor: divisor,
         multipliers: { ot: otMult, sunday: sunMult, regular_holiday: regMult, special_holiday: spcMult },
         tardiness: { grace_minutes: grace, mid_deduct_minutes: midDed, max_start_minutes: maxStart, max_deduct_minutes: maxDed },
-        work_start: s.work_start, work_end: s.work_end, special_holiday_not_worked_paid: specialNotWorkedPaid,
+        work_start: s.work_start, work_end: s.work_end, work_end_sat: s.work_end_sat, special_holiday_not_worked_paid: specialNotWorkedPaid,
       },
       totals: {
         days_present: daysPresent, half_days: halfDays, absent_days: absentDays, late_minutes: lateMin, counted_late_minutes: countedLate,
