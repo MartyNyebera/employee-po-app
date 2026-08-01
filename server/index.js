@@ -936,6 +936,8 @@ async function runMigrations() {
           sss_ee NUMERIC(12,2),
           philhealth_ee NUMERIC(12,2),
           pagibig_ee NUMERIC(12,2),
+          ot_eligible BOOLEAN DEFAULT false,
+          withholding NUMERIC(12,2),
           created_at TIMESTAMPTZ DEFAULT NOW()
         )
       `);
@@ -958,6 +960,11 @@ async function runMigrations() {
       await query(`ALTER TABLE persons ADD COLUMN IF NOT EXISTS sss_ee NUMERIC(12,2)`);
       await query(`ALTER TABLE persons ADD COLUMN IF NOT EXISTS philhealth_ee NUMERIC(12,2)`);
       await query(`ALTER TABLE persons ADD COLUMN IF NOT EXISTS pagibig_ee NUMERIC(12,2)`);
+      // Phase 4a payroll fields. ot_eligible: who is allowed OT at all (not sensitive — the OT
+      // toggle on the sheet reads it). withholding: admin-input withholding tax amount — SENSITIVE,
+      // treated exactly like pay_rate/sss_ee and never exposed on any attendance/timesheet endpoint.
+      await query(`ALTER TABLE persons ADD COLUMN IF NOT EXISTS ot_eligible BOOLEAN DEFAULT false`);
+      await query(`ALTER TABLE persons ADD COLUMN IF NOT EXISTS withholding NUMERIC(12,2)`);
       console.log('✅ persons table ready');
     } catch (err) { console.log('ℹ️ persons table skipped:', err.message); }
 
@@ -1012,6 +1019,7 @@ async function runMigrations() {
           pay_period_id INTEGER,
           is_locked BOOLEAN DEFAULT FALSE,
           is_adjusted BOOLEAN DEFAULT FALSE,
+          ot_approved BOOLEAN DEFAULT FALSE,
           created_at TIMESTAMPTZ DEFAULT NOW(),
           UNIQUE (person_id, work_date)
         )
@@ -1020,6 +1028,9 @@ async function runMigrations() {
       // rebuild (rebuild skips locked AND adjusted rows). Added via ALTER for DBs that already
       // created attendance_days before Phase 3.
       await query(`ALTER TABLE attendance_days ADD COLUMN IF NOT EXISTS is_adjusted BOOLEAN DEFAULT FALSE`);
+      // Phase 4a: per-day OT authorization (admin toggles it on the sheet). It is an approval flag
+      // only — no OT pay is computed here; rebuild does NOT touch it (it's not punch-derived).
+      await query(`ALTER TABLE attendance_days ADD COLUMN IF NOT EXISTS ot_approved BOOLEAN DEFAULT FALSE`);
       await query(`CREATE INDEX IF NOT EXISTS idx_attendance_days_date ON attendance_days(work_date)`);
       console.log('✅ attendance_days table ready');
     } catch (err) { console.log('ℹ️ attendance_days table skipped:', err.message); }
@@ -1057,6 +1068,63 @@ async function runMigrations() {
       await query(`CREATE INDEX IF NOT EXISTS idx_attendance_adjustments_day ON attendance_adjustments(day_id)`);
       console.log('✅ pay_periods + attendance_adjustments tables ready');
     } catch (err) { console.log('ℹ️ pay_periods/attendance_adjustments tables skipped:', err.message); }
+
+    // ===== Payroll — Phase 4a (config + holidays + BALE). Additive, new tables only. =====
+    // NO pay is computed anywhere in 4a — these just STORE company-policy values and inputs for
+    // the Phase 4b payroll run to read. payroll_settings is a single editable row (id = 1) holding
+    // every rate/rule so policy changes never need a code change.
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS payroll_settings (
+          id INTEGER PRIMARY KEY DEFAULT 1,
+          work_start TEXT NOT NULL DEFAULT '08:00',
+          work_end TEXT NOT NULL DEFAULT '17:00',
+          paid_hours NUMERIC(5,2) NOT NULL DEFAULT 8,
+          lunch_hours NUMERIC(5,2) NOT NULL DEFAULT 1,
+          monthly_divisor NUMERIC(6,2) NOT NULL DEFAULT 26,
+          grace_minutes INTEGER NOT NULL DEFAULT 5,
+          -- Tardiness ladder: 1..grace -> 0; (grace, tardy_max_start) -> tardy_mid_deduct_minutes;
+          -- >= tardy_max_start -> tardy_max_deduct_minutes (cap). Defaults encode 1-5→0, 6-29→30, ≥30→60.
+          tardy_mid_deduct_minutes INTEGER NOT NULL DEFAULT 30,
+          tardy_max_start_minutes INTEGER NOT NULL DEFAULT 30,
+          tardy_max_deduct_minutes INTEGER NOT NULL DEFAULT 60,
+          ot_multiplier NUMERIC(5,2) NOT NULL DEFAULT 1.25,
+          sunday_multiplier NUMERIC(5,2) NOT NULL DEFAULT 1.30,
+          regular_holiday_multiplier NUMERIC(5,2) NOT NULL DEFAULT 2.00,
+          special_holiday_multiplier NUMERIC(5,2) NOT NULL DEFAULT 1.30,
+          updated_at TIMESTAMPTZ DEFAULT NOW(),
+          CONSTRAINT payroll_settings_singleton CHECK (id = 1)
+        )
+      `);
+      // Seed the single policy row with the defaults above (no-op once it exists).
+      await query(`INSERT INTO payroll_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS holidays (
+          id SERIAL PRIMARY KEY,
+          holiday_date DATE NOT NULL,
+          name TEXT,
+          type TEXT NOT NULL DEFAULT 'regular',
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE (holiday_date)
+        )
+      `);
+
+      // Per-period cash advance (BALE) per person — admin-input, captured for 4b to deduct. One
+      // amount per (period, person). No FKs beyond the logical link, matching pay_period_id usage.
+      await query(`
+        CREATE TABLE IF NOT EXISTS payroll_bale (
+          id SERIAL PRIMARY KEY,
+          pay_period_id INTEGER NOT NULL,
+          person_id INTEGER NOT NULL REFERENCES persons(id),
+          amount NUMERIC(12,2),
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE (pay_period_id, person_id)
+        )
+      `);
+      console.log('✅ payroll_settings + holidays + payroll_bale tables ready');
+    } catch (err) { console.log('ℹ️ payroll 4a tables skipped:', err.message); }
 
     console.log('✅ All migrations complete');
   } catch (err) {
@@ -4433,7 +4501,7 @@ app.get('/api/persons', requireRole(['admin']), async (req, res) => {
     const result = await query(
       `SELECT id, full_name, department, position, employment_type, status,
               hired_on, last_day, qr_token, pay_rate, photo_url,
-              sss_ee, philhealth_ee, pagibig_ee, created_at
+              sss_ee, philhealth_ee, pagibig_ee, ot_eligible, withholding, created_at
          FROM persons
         ORDER BY (status = 'active') DESC, full_name ASC`
     );
@@ -4447,7 +4515,7 @@ app.get('/api/persons', requireRole(['admin']), async (req, res) => {
 app.post('/api/persons', requireRole(['admin']), async (req, res) => {
   try {
     const { full_name, department, position, employment_type, status, hired_on, last_day, pay_rate, photo_url,
-            sss_ee, philhealth_ee, pagibig_ee } = req.body;
+            sss_ee, philhealth_ee, pagibig_ee, ot_eligible, withholding } = req.body;
     if (!full_name || !String(full_name).trim()) {
       return res.status(400).json({ error: 'full_name is required' });
     }
@@ -4457,17 +4525,20 @@ app.post('/api/persons', requireRole(['admin']), async (req, res) => {
     if (pr === INVALID_PAY) return res.status(400).json({ error: 'pay_rate must be a non-negative number or blank' });
     const ph = normalizePhoto(photo_url);
     if (ph === INVALID_PHOTO) return res.status(400).json({ error: 'photo_url must be an image under ~2MB, or blank' });
-    // Government deduction amounts (employee share) — same validation as pay_rate.
+    // Government deduction amounts (employee share) + withholding — same validation as pay_rate.
     const sss = normalizePayRate(sss_ee), phic = normalizePayRate(philhealth_ee), pgib = normalizePayRate(pagibig_ee);
     if (sss === INVALID_PAY) return res.status(400).json({ error: 'sss_ee must be a non-negative number or blank' });
     if (phic === INVALID_PAY) return res.status(400).json({ error: 'philhealth_ee must be a non-negative number or blank' });
     if (pgib === INVALID_PAY) return res.status(400).json({ error: 'pagibig_ee must be a non-negative number or blank' });
+    const wtax = normalizePayRate(withholding);
+    if (wtax === INVALID_PAY) return res.status(400).json({ error: 'withholding must be a non-negative number or blank' });
+    const otEl = !!ot_eligible;
     const result = await query(
-      `INSERT INTO persons (full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url, sss_ee, philhealth_ee, pagibig_ee)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-       RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url, sss_ee, philhealth_ee, pagibig_ee, created_at`,
+      `INSERT INTO persons (full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url, sss_ee, philhealth_ee, pagibig_ee, ot_eligible, withholding)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+       RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url, sss_ee, philhealth_ee, pagibig_ee, ot_eligible, withholding, created_at`,
       [String(full_name).trim(), department || null, position || null, et, st,
-       hired_on || null, last_day || null, randomUUID(), pr, ph, sss, phic, pgib]
+       hired_on || null, last_day || null, randomUUID(), pr, ph, sss, phic, pgib, otEl, wtax]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -4479,7 +4550,7 @@ app.post('/api/persons', requireRole(['admin']), async (req, res) => {
 app.patch('/api/persons/:id', requireRole(['admin']), async (req, res) => {
   try {
     const { full_name, department, position, employment_type, status, hired_on, last_day, pay_rate, photo_url,
-            sss_ee, philhealth_ee, pagibig_ee } = req.body;
+            sss_ee, philhealth_ee, pagibig_ee, ot_eligible, withholding } = req.body;
     if (full_name !== undefined && !String(full_name).trim()) {
       return res.status(400).json({ error: 'full_name cannot be empty' });
     }
@@ -4494,6 +4565,10 @@ app.patch('/api/persons/:id', requireRole(['admin']), async (req, res) => {
     if (sss === INVALID_PAY) return res.status(400).json({ error: 'sss_ee must be a non-negative number or blank' });
     if (phic === INVALID_PAY) return res.status(400).json({ error: 'philhealth_ee must be a non-negative number or blank' });
     if (pgib === INVALID_PAY) return res.status(400).json({ error: 'pagibig_ee must be a non-negative number or blank' });
+    const wtax = normalizePayRate(withholding);
+    if (wtax === INVALID_PAY) return res.status(400).json({ error: 'withholding must be a non-negative number or blank' });
+    // ot_eligible is a checkbox: undefined -> keep (COALESCE), else set the boolean.
+    const otEl = ot_eligible === undefined ? null : !!ot_eligible;
     // COALESCE keeps the stored value when a field is omitted; only sent fields change.
     const result = await query(
       `UPDATE persons SET
@@ -4508,12 +4583,14 @@ app.patch('/api/persons/:id', requireRole(['admin']), async (req, res) => {
          photo_url       = COALESCE($9, photo_url),
          sss_ee          = COALESCE($10, sss_ee),
          philhealth_ee   = COALESCE($11, philhealth_ee),
-         pagibig_ee      = COALESCE($12, pagibig_ee)
-       WHERE id = $13
-       RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url, sss_ee, philhealth_ee, pagibig_ee, created_at`,
+         pagibig_ee      = COALESCE($12, pagibig_ee),
+         ot_eligible     = COALESCE($13, ot_eligible),
+         withholding     = COALESCE($14, withholding)
+       WHERE id = $15
+       RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url, sss_ee, philhealth_ee, pagibig_ee, ot_eligible, withholding, created_at`,
       [full_name !== undefined ? String(full_name).trim() : null,
        department ?? null, position ?? null, et ?? null, st ?? null,
-       hired_on ?? null, last_day ?? null, pr, ph, sss, phic, pgib, req.params.id]
+       hired_on ?? null, last_day ?? null, pr, ph, sss, phic, pgib, otEl, wtax, req.params.id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Person not found' });
     res.json(result.rows[0]);
@@ -4535,6 +4612,113 @@ app.post('/api/persons/:id/reissue-qr', requireRole(['admin']), async (req, res)
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ============================================================================
+// Payroll — Phase 4a: editable policy settings + holidays. Admin-only. No pay is computed here;
+// these just store the company-policy values and the holiday calendar for Phase 4b to read.
+// ============================================================================
+const isDateStr = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+
+// The single settings row (id = 1). Every rate/rule payroll will use lives here so policy can be
+// changed without a code change.
+app.get('/api/payroll/settings', requireRole(['admin']), async (req, res) => {
+  try {
+    const r = await query('SELECT * FROM payroll_settings WHERE id = 1');
+    res.json(r.rows[0] || null);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/payroll/settings', requireRole(['admin']), async (req, res) => {
+  const b = req.body || {};
+  // Numeric policy fields — each validated as a non-negative number (blank/omitted keeps current).
+  const numFields = ['paid_hours', 'lunch_hours', 'monthly_divisor', 'grace_minutes',
+    'tardy_mid_deduct_minutes', 'tardy_max_start_minutes', 'tardy_max_deduct_minutes',
+    'ot_multiplier', 'sunday_multiplier', 'regular_holiday_multiplier', 'special_holiday_multiplier'];
+  const v = {};
+  for (const f of numFields) {
+    const n = normalizePayRate(b[f]);
+    if (n === INVALID_PAY) return res.status(400).json({ error: `${f} must be a non-negative number` });
+    v[f] = n;
+  }
+  const asTime = (x) => (x === undefined || x === null || x === '') ? null : (/^\d{1,2}:\d{2}$/.test(String(x)) ? String(x) : INVALID_PAY);
+  const ws = asTime(b.work_start), we = asTime(b.work_end);
+  if (ws === INVALID_PAY) return res.status(400).json({ error: 'work_start must be HH:MM' });
+  if (we === INVALID_PAY) return res.status(400).json({ error: 'work_end must be HH:MM' });
+  try {
+    const r = await query(
+      `UPDATE payroll_settings SET
+         work_start = COALESCE($1, work_start),
+         work_end = COALESCE($2, work_end),
+         paid_hours = COALESCE($3, paid_hours),
+         lunch_hours = COALESCE($4, lunch_hours),
+         monthly_divisor = COALESCE($5, monthly_divisor),
+         grace_minutes = COALESCE($6, grace_minutes),
+         tardy_mid_deduct_minutes = COALESCE($7, tardy_mid_deduct_minutes),
+         tardy_max_start_minutes = COALESCE($8, tardy_max_start_minutes),
+         tardy_max_deduct_minutes = COALESCE($9, tardy_max_deduct_minutes),
+         ot_multiplier = COALESCE($10, ot_multiplier),
+         sunday_multiplier = COALESCE($11, sunday_multiplier),
+         regular_holiday_multiplier = COALESCE($12, regular_holiday_multiplier),
+         special_holiday_multiplier = COALESCE($13, special_holiday_multiplier),
+         updated_at = NOW()
+       WHERE id = 1 RETURNING *`,
+      [ws, we, v.paid_hours, v.lunch_hours, v.monthly_divisor, v.grace_minutes,
+       v.tardy_mid_deduct_minutes, v.tardy_max_start_minutes, v.tardy_max_deduct_minutes,
+       v.ot_multiplier, v.sunday_multiplier, v.regular_holiday_multiplier, v.special_holiday_multiplier]
+    );
+    res.json(r.rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Holidays calendar — add/edit/delete regular or special dates (including off-calendar ones).
+app.get('/api/holidays', requireRole(['admin']), async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT id, to_char(holiday_date,'YYYY-MM-DD') AS holiday_date, name, type, created_at
+         FROM holidays ORDER BY holiday_date DESC`);
+    res.json(r.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/holidays', requireRole(['admin']), async (req, res) => {
+  const { holiday_date, name, type } = req.body || {};
+  if (!isDateStr(holiday_date)) return res.status(400).json({ error: 'holiday_date must be YYYY-MM-DD' });
+  const t = type === 'special' ? 'special' : 'regular';
+  try {
+    const r = await query(
+      `INSERT INTO holidays (holiday_date, name, type) VALUES ($1,$2,$3)
+       ON CONFLICT (holiday_date) DO UPDATE SET name = EXCLUDED.name, type = EXCLUDED.type
+       RETURNING id, to_char(holiday_date,'YYYY-MM-DD') AS holiday_date, name, type, created_at`,
+      [holiday_date, name || null, t]);
+    res.status(201).json(r.rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.patch('/api/holidays/:id', requireRole(['admin']), async (req, res) => {
+  const { holiday_date, name, type } = req.body || {};
+  if (holiday_date !== undefined && !isDateStr(holiday_date)) return res.status(400).json({ error: 'holiday_date must be YYYY-MM-DD' });
+  const t = type === undefined ? null : (type === 'special' ? 'special' : 'regular');
+  try {
+    const r = await query(
+      `UPDATE holidays SET
+         holiday_date = COALESCE($1, holiday_date),
+         name = COALESCE($2, name),
+         type = COALESCE($3, type)
+       WHERE id = $4
+       RETURNING id, to_char(holiday_date,'YYYY-MM-DD') AS holiday_date, name, type, created_at`,
+      [holiday_date ?? null, name ?? null, t, req.params.id]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Holiday not found' });
+    res.json(r.rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/holidays/:id', requireRole(['admin']), async (req, res) => {
+  try {
+    const r = await query('DELETE FROM holidays WHERE id = $1 RETURNING id', [req.params.id]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Holiday not found' });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ============================================================================
@@ -4838,17 +5022,21 @@ app.get('/api/attendance/periods/:id/sheet', requireRole(attendanceReviewRoles),
     const period = pr.rows[0];
     if (!period) return res.status(404).json({ error: 'Pay period not found' });
     const rows = await query(
+      // ot_eligible + ot_approved back the per-day OT toggle. Sensitive pay fields (pay_rate,
+      // withholding, sss/philhealth/pagibig) are deliberately NOT selected — Finance never sees them.
       `SELECT ad.id, ad.person_id, to_char(ad.work_date,'YYYY-MM-DD') AS work_date,
               ad.first_in, ad.last_out, ad.worked_minutes, ad.status, ad.flags,
-              ad.pay_period_id, ad.is_locked, ad.is_adjusted,
-              p.full_name, p.department, p.position
+              ad.pay_period_id, ad.is_locked, ad.is_adjusted, ad.ot_approved,
+              p.full_name, p.department, p.position, p.ot_eligible
          FROM attendance_days ad
          JOIN persons p ON p.id = ad.person_id
         WHERE ad.work_date BETWEEN $1 AND $2
         ORDER BY p.full_name ASC, ad.work_date ASC`,
       [period.start_date, period.end_date]
     );
-    res.json({ period, rows: rows.rows });
+    // Per-person BALE (cash advance) captured for this period — [{ person_id, amount }].
+    const bale = await query('SELECT person_id, amount FROM payroll_bale WHERE pay_period_id = $1', [period.id]);
+    res.json({ period, rows: rows.rows, bale: bale.rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -4930,6 +5118,61 @@ app.post('/api/attendance/days/:id/adjust', requireRole(['admin']), async (req, 
     res.status(500).json({ error: err.message });
   } finally {
     client.release();
+  }
+});
+
+// Phase 4a: toggle a day's OT approval. ADMIN ONLY (Finance is view-only). This is an
+// authorization flag, not a correction — it may be set on a locked day, and the OT person must be
+// ot_eligible on the roster. No OT pay is computed here; the change is logged like an adjustment.
+app.post('/api/attendance/days/:id/ot', requireRole(['admin']), async (req, res) => {
+  const approved = !!(req.body && req.body.approved);
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const dr = await client.query(
+      `SELECT ad.id, ad.ot_approved, p.ot_eligible
+         FROM attendance_days ad JOIN persons p ON p.id = ad.person_id
+        WHERE ad.id = $1 FOR UPDATE OF ad`,
+      [req.params.id]
+    );
+    const day = dr.rows[0];
+    if (!day) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Day not found' }); }
+    if (approved && !day.ot_eligible) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'This person is not OT-eligible — enable it on the roster first.' });
+    }
+    const oldVal = day.ot_approved ? 'true' : 'false';
+    await client.query('UPDATE attendance_days SET ot_approved = $1 WHERE id = $2', [approved, day.id]);
+    await client.query(
+      `INSERT INTO attendance_adjustments (day_id, field, old_value, new_value, reason, adjusted_by)
+       VALUES ($1, 'ot_approved', $2, $3, 'OT approval toggle', $4)`,
+      [day.id, oldVal, approved ? 'true' : 'false', req.user.id]
+    );
+    await client.query('COMMIT');
+    res.json({ id: day.id, ot_approved: approved });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Phase 4a: set a person's BALE (cash advance) for a period. ADMIN ONLY (Finance can see it on the
+// sheet but not edit). Upsert on (period, person). Stored only — 4b will deduct it. Blank clears it.
+app.put('/api/attendance/periods/:id/bale/:personId', requireRole(['admin']), async (req, res) => {
+  const amount = normalizePayRate(req.body ? req.body.amount : null);
+  if (amount === INVALID_PAY) return res.status(400).json({ error: 'amount must be a non-negative number or blank' });
+  try {
+    const r = await query(
+      `INSERT INTO payroll_bale (pay_period_id, person_id, amount) VALUES ($1, $2, $3)
+       ON CONFLICT (pay_period_id, person_id) DO UPDATE SET amount = EXCLUDED.amount, updated_at = NOW()
+       RETURNING pay_period_id, person_id, amount`,
+      [req.params.id, req.params.personId, amount]
+    );
+    res.json(r.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

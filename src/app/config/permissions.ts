@@ -37,6 +37,8 @@ const BASE_ACCESS: Record<string, Partial<Record<Role, Access>>> = {
   roster:               { owner: 'manage', admin: 'manage' },
   stations:             { owner: 'manage', admin: 'manage' },
   timesheet:            { owner: 'manage', admin: 'manage' },
+  'payroll-settings':   { owner: 'manage', admin: 'manage' },
+  holidays:             { owner: 'manage', admin: 'manage' },
   'employee-accounts':  { owner: 'manage', admin: 'manage' },
   'purchasing-accounts':{ owner: 'manage', admin: 'manage' },
   'warehouse-accounts': { owner: 'manage', admin: 'manage' },

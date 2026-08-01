@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { RefreshCw, Lock, Plus, Search, Pencil, History, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
-import { S, Modal, Field, TextInput, TextArea, PrimaryBtn, GhostBtn, pill } from './crmKit';
+import { S, Modal, Field, TextInput, TextArea, PrimaryBtn, GhostBtn, pill, peso } from './crmKit';
 
 // ============================================================================
 // Attendance review sheet (Phase 3) — shared by the Admin dashboard and the
@@ -26,14 +26,15 @@ interface Day {
   id: number; person_id: number; work_date: string;
   first_in: string | null; last_out: string | null; worked_minutes: number | null;
   status: string | null; flags: string[]; pay_period_id: number | null;
-  is_locked: boolean; is_adjusted: boolean;
-  full_name: string; department?: string | null; position?: string | null;
+  is_locked: boolean; is_adjusted: boolean; ot_approved: boolean;
+  full_name: string; department?: string | null; position?: string | null; ot_eligible?: boolean;
 }
 interface Adjustment {
   id: number; field: string; old_value: string | null; new_value: string | null;
   reason: string | null; adjusted_by: string | null; adjusted_at: string;
 }
-interface Sheet { period: Period; rows: Day[]; }
+interface Bale { person_id: number; amount: number | string | null; }
+interface Sheet { period: Period; rows: Day[]; bale?: Bale[]; }
 
 const fmtDay = (ymd: string) => new Date(ymd + 'T00:00:00').toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric' });
 const fmtTime = (iso: string | null) => iso ? new Date(iso).toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit', hour12: true }) : '—';
@@ -68,6 +69,8 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<Day | null>(null);
   const [historyOf, setHistoryOf] = useState<Day | null>(null);
+  // person_id -> BALE amount (string, for the input). Populated from the sheet on load.
+  const [baleMap, setBaleMap] = useState<Record<number, string>>({});
 
   const loadPeriods = async () => {
     try {
@@ -80,8 +83,13 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
 
   const loadSheet = async (id: number) => {
     setLoading(true);
-    try { setSheet(await api<Sheet>(`/attendance/periods/${id}/sheet`)); }
-    catch { toast.error('Failed to load the review sheet'); }
+    try {
+      const s = await api<Sheet>(`/attendance/periods/${id}/sheet`);
+      setSheet(s);
+      const bm: Record<number, string> = {};
+      (s.bale || []).forEach(b => { bm[b.person_id] = b.amount === null || b.amount === undefined ? '' : String(b.amount); });
+      setBaleMap(bm);
+    } catch { toast.error('Failed to load the review sheet'); }
     finally { setLoading(false); }
   };
   useEffect(() => { if (selectedId !== null) loadSheet(selectedId); }, [selectedId]);
@@ -142,6 +150,25 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
     } catch (e: any) { toast.error(e.message || 'Lock failed'); } finally { setBusy(false); }
   };
 
+  // Toggle a day's OT approval (admin-only; server also enforces admin + ot_eligible). Not a
+  // pay computation — just the authorization flag. Optimistically update the row.
+  const toggleOt = async (day: Day, approved: boolean) => {
+    try {
+      await api(`/attendance/days/${day.id}/ot`, { method: 'POST', body: JSON.stringify({ approved }) });
+      setSheet(s => s ? { ...s, rows: s.rows.map(r => r.id === day.id ? { ...r, ot_approved: approved } : r) } : s);
+    } catch (e: any) { toast.error(e.message || 'Could not update OT approval'); }
+  };
+
+  // Save a person's BALE for the selected period (admin-only). Blank clears it.
+  const saveBale = async (personId: number, amount: string) => {
+    if (selectedId === null) return;
+    try {
+      await api(`/attendance/periods/${selectedId}/bale/${personId}`, { method: 'PUT', body: JSON.stringify({ amount: amount.trim() === '' ? null : Number(amount) }) });
+      setBaleMap(m => ({ ...m, [personId]: amount }));
+      toast.success('BALE saved');
+    } catch (e: any) { toast.error(e.message || 'Could not save BALE'); }
+  };
+
   return (
     <div style={S.page}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', gap: '16px', flexWrap: 'wrap' }}>
@@ -192,14 +219,16 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
         <table style={S.table}>
           <thead><tr>
             <th style={S.th}>Date</th><th style={S.th}>In</th><th style={S.th}>Out</th>
-            <th style={S.th}>Hours</th><th style={S.th}>Status</th><th style={{ ...S.th, textAlign: 'right' }}>Actions</th>
+            <th style={S.th}>Hours</th><th style={S.th}>Status</th><th style={S.th}>OT</th><th style={{ ...S.th, textAlign: 'right' }}>Actions</th>
           </tr></thead>
           <tbody>
-            {loading ? <tr><td style={S.td} colSpan={6}>Loading…</td></tr>
-              : !period ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={6}>Create or select a pay period to begin.</td></tr>
-              : groups.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={6}>No punched days in this period yet. Click <strong>Rebuild from punches</strong>.</td></tr>
+            {loading ? <tr><td style={S.td} colSpan={7}>Loading…</td></tr>
+              : !period ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={7}>Create or select a pay period to begin.</td></tr>
+              : groups.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={7}>No punched days in this period yet. Click <strong>Rebuild from punches</strong>.</td></tr>
               : groups.map(g => (
-                <PersonGroup key={g.person.person_id} group={g} canEditRow={canEditRow} onEdit={setEditing} onHistory={setHistoryOf} />
+                <PersonGroup key={g.person.person_id} group={g} role={role} canEditRow={canEditRow}
+                  onEdit={setEditing} onHistory={setHistoryOf} onToggleOt={toggleOt}
+                  bale={baleMap[g.person.person_id] ?? ''} onSaveBale={saveBale} periodLocked={locked} />
               ))}
           </tbody>
         </table>
@@ -215,18 +244,62 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
   );
 }
 
-function PersonGroup({ group, canEditRow, onEdit, onHistory }: {
+// OT cell: '—' for non-eligible people; a read-only Yes/No for Finance; a clickable toggle for
+// admin. Toggling is an authorization flag only — no pay is computed.
+function otCell(d: Day, role: 'admin' | 'accounting', onToggleOt: (d: Day, approved: boolean) => void) {
+  if (!d.ot_eligible) return <span style={{ fontSize: '12px', color: '#b0b0b0' }} title="Not OT-eligible">—</span>;
+  if (role !== 'admin') return d.ot_approved ? pill('Yes', 'good') : <span style={{ fontSize: '12px', color: '#8a8a8a' }}>No</span>;
+  const on = d.ot_approved;
+  return (
+    <button onClick={() => onToggleOt(d, !on)} title="Toggle OT approval for this day"
+      style={{ padding: '3px 14px', borderRadius: '999px', cursor: 'pointer', fontSize: '12px', fontWeight: 600, fontFamily: 'inherit',
+        border: '1px solid', ...(on ? { background: '#ececec', borderColor: '#e3ca63', color: '#7a6a0c' } : { background: '#fff', borderColor: '#d6d6d6', color: '#8a8a8a' }) }}>
+      {on ? 'Yes' : 'No'}
+    </button>
+  );
+}
+
+// BALE input — editable for admin (saves on blur/Enter), read-only peso text for Finance.
+function BaleInput({ personId, value, onSave, editable }: { personId: number; value: string; onSave: (id: number, v: string) => void; editable: boolean }) {
+  const [v, setV] = useState(value);
+  useEffect(() => { setV(value); }, [value]);
+  if (!editable) return <span style={{ fontSize: '13px', color: '#5a5a5a', fontVariantNumeric: 'tabular-nums' }}>{value.trim() === '' ? '—' : peso(Number(value))}</span>;
+  return (
+    <input type="number" min="0" step="0.01" inputMode="decimal" value={v} placeholder="0.00"
+      onChange={e => setV(e.target.value)}
+      onBlur={() => { if (v !== value) onSave(personId, v); }}
+      onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+      style={{ width: '110px', padding: '5px 8px', borderRadius: '6px', border: '1px solid #d6d6d6', fontSize: '13px', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+  );
+}
+
+function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, bale, onSaveBale }: {
   group: { person: Day; days: Day[]; totalMin: number };
+  role: 'admin' | 'accounting';
   canEditRow: (d: Day) => boolean; onEdit: (d: Day) => void; onHistory: (d: Day) => void;
+  onToggleOt: (d: Day, approved: boolean) => void;
+  bale: string; onSaveBale: (personId: number, amount: string) => void;
+  periodLocked: boolean;
 }) {
   const { person, days, totalMin } = group;
+  const meta = [person.department, person.position].filter(Boolean).join(' · ');
   return (
     <>
       <tr>
-        <td colSpan={6} style={{ padding: '12px 16px', background: '#f7f7f7', borderBottom: '1px solid #e6e6e6', borderTop: '1px solid #e6e6e6' }}>
-          <span style={{ fontWeight: 700, color: '#000' }}>{person.full_name}</span>
-          <span style={{ color: '#8a8a8a', fontSize: '13px' }}>{[person.department, person.position].filter(Boolean).length ? '  ·  ' + [person.department, person.position].filter(Boolean).join(' · ') : ''}</span>
-          <span style={{ float: 'right', color: '#5a5a5a', fontSize: '13px' }}>{days.length} day{days.length === 1 ? '' : 's'} · {fmtHours(totalMin)} total</span>
+        <td colSpan={7} style={{ padding: '12px 16px', background: '#f7f7f7', borderBottom: '1px solid #e6e6e6', borderTop: '1px solid #e6e6e6' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+            <div>
+              <span style={{ fontWeight: 700, color: '#000' }}>{person.full_name}</span>
+              {meta ? <span style={{ color: '#8a8a8a', fontSize: '13px' }}>{'  ·  ' + meta}</span> : null}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '18px' }}>
+              <span style={{ color: '#5a5a5a', fontSize: '13px' }}>{days.length} day{days.length === 1 ? '' : 's'} · {fmtHours(totalMin)} total</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }} title="Cash advance (BALE) for this period">
+                <span style={{ fontSize: '11px', color: '#8a8a8a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>BALE</span>
+                <BaleInput personId={person.person_id} value={bale} onSave={onSaveBale} editable={role === 'admin'} />
+              </span>
+            </div>
+          </div>
         </td>
       </tr>
       {days.map(d => (
@@ -243,6 +316,7 @@ function PersonGroup({ group, canEditRow, onEdit, onHistory }: {
             {(d.flags || []).map(f => <span key={f} style={{ marginLeft: '6px', fontSize: '12px', color: '#b91c1c' }}>{FLAG_LABEL[f] || f}</span>)}
             {d.is_adjusted ? <span style={{ marginLeft: '6px', fontSize: '11px', color: '#7a6a0c', fontWeight: 600 }}>· edited</span> : null}
           </td>
+          <td style={S.td}>{otCell(d, role, onToggleOt)}</td>
           <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
             {d.is_adjusted ? <button title="Correction history" style={S.rowBtn} onClick={() => onHistory(d)}><History size={13} /></button> : null}
             {canEditRow(d) ? <button title="Correct this day" style={S.rowBtn} onClick={() => onEdit(d)}><Pencil size={13} /></button> : null}
