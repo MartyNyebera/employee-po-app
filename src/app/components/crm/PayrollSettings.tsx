@@ -25,10 +25,18 @@ const toForm = (s: any): Settings => {
   return f;
 };
 
+// Reserve two lines of height for every field label so a label that wraps (e.g. "Heavy-late
+// deduction (min, cap)") doesn't push its input below the others in the same row. All inputs in a
+// row then start at the same y regardless of how many lines each label takes.
+const labelStyle: React.CSSProperties = {
+  fontSize: '12px', fontWeight: 600, color: '#262626', marginBottom: '5px',
+  lineHeight: '15px', minHeight: '30px',
+};
+
 function NumField({ label, hint, value, onChange }: { label: string; hint?: string; value: string; onChange: (v: string) => void }) {
   return (
     <div>
-      <div style={{ fontSize: '12px', fontWeight: 600, color: '#262626', marginBottom: '5px' }}>{label}</div>
+      <div style={labelStyle}>{label}</div>
       <TextInput type="number" min="0" step="0.01" inputMode="decimal" value={value} onChange={e => onChange(e.target.value)} />
       {hint ? <div style={{ fontSize: '11px', color: '#8a8a8a', marginTop: '4px' }}>{hint}</div> : null}
     </div>
@@ -84,11 +92,11 @@ export function PayrollSettings() {
       <Group title="Work schedule">
         <div style={grid(4)}>
           <div>
-            <div style={{ fontSize: '12px', fontWeight: 600, color: '#262626', marginBottom: '5px' }}>Start</div>
+            <div style={labelStyle}>Start</div>
             <TextInput type="time" value={f.work_start} onChange={e => set('work_start', e.target.value)} />
           </div>
           <div>
-            <div style={{ fontSize: '12px', fontWeight: 600, color: '#262626', marginBottom: '5px' }}>End</div>
+            <div style={labelStyle}>End</div>
             <TextInput type="time" value={f.work_end} onChange={e => set('work_end', e.target.value)} />
           </div>
           <NumField label="Paid hours" value={f.paid_hours} onChange={v => set('paid_hours', v)} />
