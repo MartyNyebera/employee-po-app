@@ -214,6 +214,7 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
           <Row k="Undertime (min)" v={b.totals?.undertime_minutes} />
           <Row k="OT hours" v={b.totals?.ot_hours} />
           <div style={{ fontSize: '11px', color: '#8a8a8a', marginTop: '6px' }}>Multipliers — OT {ref.multipliers?.ot} · Sun {ref.multipliers?.sunday} · Reg hol {ref.multipliers?.regular_holiday} · Spc hol {ref.multipliers?.special_holiday}</div>
+          <div style={{ fontSize: '11px', color: '#8a8a8a', marginTop: '3px' }}>Special holiday not worked: {ref.special_holiday_not_worked_paid ? 'paid 1 day (eligible)' : 'no work, no pay'}</div>
         </div>
       </div>
 

@@ -22,6 +22,7 @@ const FIELD_ORDER = [
 const toForm = (s: any): Settings => {
   const f: Settings = {};
   for (const k of FIELD_ORDER) f[k] = s?.[k] === null || s?.[k] === undefined ? '' : String(s[k]);
+  f.special_holiday_not_worked_paid = s?.special_holiday_not_worked_paid ? 'true' : 'false';
   return f;
 };
 
@@ -64,7 +65,8 @@ export function PayrollSettings() {
     if (!f) return;
     setSaving(true);
     try {
-      const saved = await fetchApi<any>('/payroll/settings', { method: 'PUT', body: JSON.stringify(f) });
+      const body = { ...f, special_holiday_not_worked_paid: f.special_holiday_not_worked_paid === 'true' };
+      const saved = await fetchApi<any>('/payroll/settings', { method: 'PUT', body: JSON.stringify(body) });
       setF(toForm(saved));
       toast.success('Payroll settings saved');
     } catch (e: any) { toast.error(e.message || 'Save failed'); } finally { setSaving(false); }
@@ -129,6 +131,20 @@ export function PayrollSettings() {
           <NumField label="Regular holiday ×" value={f.regular_holiday_multiplier} onChange={v => set('regular_holiday_multiplier', v)} />
           <NumField label="Special holiday ×" value={f.special_holiday_multiplier} onChange={v => set('special_holiday_multiplier', v)} />
         </div>
+      </Group>
+
+      <Group title="Holiday policy">
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' }}>
+          <input type="checkbox" checked={f.special_holiday_not_worked_paid === 'true'}
+            onChange={e => set('special_holiday_not_worked_paid', e.target.checked ? 'true' : 'false')}
+            style={{ width: '16px', height: '16px', marginTop: '2px', cursor: 'pointer' }} />
+          <span>
+            <span style={{ fontSize: '13px', fontWeight: 600, color: '#262626' }}>Pay special holiday when not worked</span>
+            <span style={{ display: 'block', fontSize: '12px', color: '#8a8a8a', marginTop: '3px' }}>
+              Off (default) = DOLE “no work, no pay” — an unworked special holiday pays ₱0. On = eligible people (present the working day before) get one day’s pay, like a regular holiday. Regular holidays and all worked holidays are unaffected.
+            </span>
+          </span>
+        </label>
       </Group>
     </div>
   );

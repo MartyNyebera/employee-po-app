@@ -1092,10 +1092,15 @@ async function runMigrations() {
           sunday_multiplier NUMERIC(5,2) NOT NULL DEFAULT 1.30,
           regular_holiday_multiplier NUMERIC(5,2) NOT NULL DEFAULT 2.00,
           special_holiday_multiplier NUMERIC(5,2) NOT NULL DEFAULT 1.30,
+          -- Whether a SPECIAL holiday that is NOT worked pays 1 day to eligible people. Default
+          -- FALSE = DOLE "no work, no pay". Regular not-worked holidays always pay (per labor law).
+          special_holiday_not_worked_paid BOOLEAN NOT NULL DEFAULT false,
           updated_at TIMESTAMPTZ DEFAULT NOW(),
           CONSTRAINT payroll_settings_singleton CHECK (id = 1)
         )
       `);
+      // Added via ALTER for DBs created before this column existed.
+      await query(`ALTER TABLE payroll_settings ADD COLUMN IF NOT EXISTS special_holiday_not_worked_paid BOOLEAN NOT NULL DEFAULT false`);
       // Seed the single policy row with the defaults above (no-op once it exists).
       await query(`INSERT INTO payroll_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
 
@@ -4682,6 +4687,8 @@ app.put('/api/payroll/settings', requireRole(['admin']), async (req, res) => {
   const ws = asTime(b.work_start), we = asTime(b.work_end);
   if (ws === INVALID_PAY) return res.status(400).json({ error: 'work_start must be HH:MM' });
   if (we === INVALID_PAY) return res.status(400).json({ error: 'work_end must be HH:MM' });
+  // Boolean policy: undefined -> keep (COALESCE null), else coerce.
+  const snwp = b.special_holiday_not_worked_paid === undefined ? null : (b.special_holiday_not_worked_paid === true || b.special_holiday_not_worked_paid === 'true');
   try {
     const r = await query(
       `UPDATE payroll_settings SET
@@ -4698,11 +4705,12 @@ app.put('/api/payroll/settings', requireRole(['admin']), async (req, res) => {
          sunday_multiplier = COALESCE($11, sunday_multiplier),
          regular_holiday_multiplier = COALESCE($12, regular_holiday_multiplier),
          special_holiday_multiplier = COALESCE($13, special_holiday_multiplier),
+         special_holiday_not_worked_paid = COALESCE($14, special_holiday_not_worked_paid),
          updated_at = NOW()
        WHERE id = 1 RETURNING *`,
       [ws, we, v.paid_hours, v.lunch_hours, v.monthly_divisor, v.grace_minutes,
        v.tardy_mid_deduct_minutes, v.tardy_max_start_minutes, v.tardy_max_deduct_minutes,
-       v.ot_multiplier, v.sunday_multiplier, v.regular_holiday_multiplier, v.special_holiday_multiplier]
+       v.ot_multiplier, v.sunday_multiplier, v.regular_holiday_multiplier, v.special_holiday_multiplier, snwp]
     );
     res.json(r.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -4800,6 +4808,7 @@ async function computePayroll(periodId) {
   const paidHours = Number(s.paid_hours), lunch = Number(s.lunch_hours), divisor = Number(s.monthly_divisor);
   const grace = Number(s.grace_minutes), midDed = Number(s.tardy_mid_deduct_minutes), maxStart = Number(s.tardy_max_start_minutes), maxDed = Number(s.tardy_max_deduct_minutes);
   const otMult = Number(s.ot_multiplier), sunMult = Number(s.sunday_multiplier), regMult = Number(s.regular_holiday_multiplier), spcMult = Number(s.special_holiday_multiplier);
+  const specialNotWorkedPaid = s.special_holiday_not_worked_paid === true;
   const startMin = hhmmToMin(s.work_start), endMin = hhmmToMin(s.work_end);
 
   const holidayMap = {};
@@ -4863,10 +4872,14 @@ async function computePayroll(periodId) {
         } else {
           const pw = priorWorkingDate(d);
           const eligible = pw ? !!(pAtt[pw] && pAtt[pw].in_min != null) : false;
+          // Regular not-worked holiday always pays 1 day (eligible). Special not-worked pays only
+          // when the company opts in via special_holiday_not_worked_paid; default is no-work-no-pay.
+          const paysWhenOff = holType === 'special' ? specialNotWorkedPaid : true;
           let amt = 0;
-          if (eligible && type === 'daily') { amt = dailyBasis; holidayPay += amt; }
+          if (eligible && type === 'daily' && paysWhenOff) { amt = dailyBasis; holidayPay += amt; }
           Object.assign(day, { kind: 'holiday_not_worked', eligible, prior_working_day: pw, amount: round2(amt) });
           if (type === 'monthly') day.note = 'holiday covered by monthly salary';
+          else if (holType === 'special' && !specialNotWorkedPaid) day.note = 'special holiday — no work, no pay';
         }
       } else if (sunday) {
         if (hasIN) {
@@ -4909,7 +4922,7 @@ async function computePayroll(periodId) {
         paid_hours: paidHours, lunch_hours: lunch, monthly_divisor: divisor,
         multipliers: { ot: otMult, sunday: sunMult, regular_holiday: regMult, special_holiday: spcMult },
         tardiness: { grace_minutes: grace, mid_deduct_minutes: midDed, max_start_minutes: maxStart, max_deduct_minutes: maxDed },
-        work_start: s.work_start, work_end: s.work_end,
+        work_start: s.work_start, work_end: s.work_end, special_holiday_not_worked_paid: specialNotWorkedPaid,
       },
       totals: {
         days_present: daysPresent, absent_days: absentDays, late_minutes: lateMin, counted_late_minutes: countedLate,
