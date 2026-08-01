@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Calculator, Search, FileSearch, Lock, Printer } from 'lucide-react';
+import { Calculator, Search, FileSearch, Lock, Unlock, Printer, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { S, Modal, TextInput, GhostBtn, pill, peso } from './crmKit';
 import { printPayslip, printPayslips } from '../../lib/payslipPrint';
@@ -13,7 +13,8 @@ import { printPayslip, printPayslips } from '../../lib/payslipPrint';
 
 type Api = <T = any>(path: string, init?: RequestInit) => Promise<T>;
 
-interface Period { id: number; start_date: string; end_date: string; status: 'open' | 'locked'; }
+interface Period { id: number; start_date: string; end_date: string; status: 'open' | 'locked'; payroll_finalized?: boolean; finalized_by?: string | null; finalized_at?: string | null; }
+interface Warnings { no_pay_rate?: Array<{ person_id: number; full_name: string }>; deduction_exceeds_pay?: Array<{ person_id: number; full_name: string; shortfall: number }>; }
 interface DayDetail {
   date: string; dow: number; sunday: boolean; holiday: string | null; present: boolean;
   in_min: number | null; out_min: number | null; kind: string;
@@ -53,6 +54,7 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState('');
   const [detail, setDetail] = useState<Line | null>(null);
+  const [warnings, setWarnings] = useState<Warnings | null>(null);
 
   useEffect(() => {
     api<Period[]>('/attendance/periods').then(rows => {
@@ -70,18 +72,39 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
     } catch { toast.error('Failed to load payroll'); }
     finally { setLoading(false); }
   };
-  useEffect(() => { if (selectedId !== null) loadLines(selectedId); }, [selectedId]);
+  useEffect(() => { if (selectedId !== null) { setWarnings(null); loadLines(selectedId); } }, [selectedId]);
 
   const locked = period?.status === 'locked';
+  const finalized = period?.payroll_finalized === true;
 
   const compute = async () => {
     if (selectedId === null) return;
     setBusy(true);
     try {
-      const r = await api<{ count: number }>(`/payroll/periods/${selectedId}/compute`, { method: 'POST' });
+      const r = await api<{ count: number; warnings?: Warnings }>(`/payroll/periods/${selectedId}/compute`, { method: 'POST' });
       await loadLines(selectedId);
+      setWarnings(r.warnings || null);
       toast.success(`Computed ${r.count} payroll line${r.count === 1 ? '' : 's'}`);
     } catch (e: any) { toast.error(e.message || 'Compute failed'); } finally { setBusy(false); }
+  };
+
+  const finalize = async () => {
+    if (selectedId === null) return;
+    setBusy(true);
+    try {
+      await api(`/payroll/periods/${selectedId}/finalize`, { method: 'POST' });
+      await loadLines(selectedId);
+      toast.success('Payroll finalized — recompute is now locked');
+    } catch (e: any) { toast.error(e.message || 'Finalize failed'); } finally { setBusy(false); }
+  };
+  const unfinalize = async () => {
+    if (selectedId === null) return;
+    setBusy(true);
+    try {
+      await api(`/payroll/periods/${selectedId}/unfinalize`, { method: 'POST' });
+      await loadLines(selectedId);
+      toast.success('Payroll un-finalized — you can recompute now');
+    } catch (e: any) { toast.error(e.message || 'Un-finalize failed'); } finally { setBusy(false); }
   };
 
   // Print pulls straight from the loaded payroll_lines (no recompute). Both admin and accounting
@@ -120,10 +143,24 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
             </button>
           )}
           {role === 'admin' && (
-            <button style={{ ...S.addBtn, opacity: (!locked || busy) ? 0.55 : 1, cursor: (!locked || busy) ? 'default' : 'pointer' }}
-              onClick={compute} disabled={!locked || busy}>
+            <button style={{ ...S.addBtn, opacity: (!locked || busy || finalized) ? 0.55 : 1, cursor: (!locked || busy || finalized) ? 'default' : 'pointer' }}
+              onClick={compute} disabled={!locked || busy || finalized}
+              title={finalized ? 'Finalized — un-finalize first to recompute' : ''}>
               <Calculator size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />{busy ? 'Computing…' : 'Compute payroll'}
             </button>
+          )}
+          {role === 'admin' && lines.length > 0 && (
+            finalized ? (
+              <button style={{ ...S.rowBtn, padding: '9px 14px', fontWeight: 600, opacity: busy ? 0.55 : 1 }} onClick={unfinalize} disabled={busy}
+                title="Re-open this payroll so it can be recomputed">
+                <Unlock size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />Un-finalize
+              </button>
+            ) : (
+              <button style={{ ...S.rowBtn, padding: '9px 14px', fontWeight: 600, opacity: busy ? 0.55 : 1 }} onClick={finalize} disabled={busy}
+                title="Lock this payroll so a later settings change can't restate it">
+                <Lock size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />Finalize
+              </button>
+            )
           )}
         </div>
       </div>
@@ -136,11 +173,30 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
           </select>
         </div>
         {period && (locked ? pill('Locked', 'good') : pill('Open — lock it first', 'bad'))}
+        {finalized && pill('Finalized', 'good')}
         <div style={{ position: 'relative', flex: 1, minWidth: '220px' }}>
           <Search size={15} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#8a8a8a' }} />
           <TextInput placeholder="Search name, position or department…" value={search} onChange={e => setSearch(e.target.value)} style={{ paddingLeft: '34px' }} />
         </div>
       </div>
+
+      {finalized && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', marginBottom: '16px', borderRadius: '8px', background: '#eef7ee', border: '1px solid #b9dcb9', fontSize: '13px', color: '#2f6b2f' }}>
+          <Lock size={15} /> This payroll is <strong>finalized</strong>{period?.finalized_at ? ` (${new Date(period.finalized_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })})` : ''}. Recompute is locked so a later settings change can't restate it. Un-finalize to recompute.
+        </div>
+      )}
+
+      {warnings && ((warnings.no_pay_rate?.length || 0) > 0 || (warnings.deduction_exceeds_pay?.length || 0) > 0) && (
+        <div style={{ padding: '12px 14px', marginBottom: '16px', borderRadius: '8px', background: '#fff8e6', border: '1px solid #e8cf8a', fontSize: '13px', color: '#7a5c0c' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, marginBottom: '4px' }}><AlertTriangle size={15} /> Compute warnings</div>
+          {(warnings.no_pay_rate?.length || 0) > 0 && (
+            <div style={{ marginTop: '4px' }}>No pay rate set (skipped, not paid): {warnings.no_pay_rate!.map(p => p.full_name).join(', ')} — set a rate on the roster and recompute.</div>
+          )}
+          {(warnings.deduction_exceeds_pay?.length || 0) > 0 && (
+            <div style={{ marginTop: '4px' }}>Deductions exceeded pay (net floored to ₱0): {warnings.deduction_exceeds_pay!.map(p => `${p.full_name} (short ${peso(p.shortfall)})`).join(', ')} — the uncollected remainder needs handling (e.g. carry the BALE forward).</div>
+          )}
+        </div>
+      )}
 
       {period && !locked && (
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', marginBottom: '16px', borderRadius: '8px', background: '#f4f4f4', border: '1px solid #d6d6d6', fontSize: '13px', color: '#5a5a5a' }}>

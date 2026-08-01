@@ -1053,6 +1053,12 @@ async function runMigrations() {
           UNIQUE (start_date, end_date)
         )
       `);
+      // L5 — payroll finalize lock. Once a computed period is finalized, recompute is blocked so a
+      // later settings change can't silently restate reviewed/approved payroll_lines. Admin must
+      // explicitly un-finalize to recompute. Additive columns; existing rows default to not-final.
+      await query(`ALTER TABLE pay_periods ADD COLUMN IF NOT EXISTS payroll_finalized BOOLEAN NOT NULL DEFAULT false`);
+      await query(`ALTER TABLE pay_periods ADD COLUMN IF NOT EXISTS finalized_by TEXT`);
+      await query(`ALTER TABLE pay_periods ADD COLUMN IF NOT EXISTS finalized_at TIMESTAMPTZ`);
       await query(`
         CREATE TABLE IF NOT EXISTS attendance_adjustments (
           id SERIAL PRIMARY KEY,
@@ -4804,11 +4810,14 @@ const dateListYMD = (start, end) => { const out = []; let c = start; while (c <=
 
 async function computePayroll(periodId) {
   const pr = await query(
-    `SELECT id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date, status
+    `SELECT id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date, status, payroll_finalized
        FROM pay_periods WHERE id = $1`, [periodId]);
   const period = pr.rows[0];
   if (!period) return { error: 'not_found' };
   if (period.status !== 'locked') return { error: 'not_locked' };
+  // L5: a finalized period is frozen — recompute would overwrite reviewed/approved lines. Admin must
+  // un-finalize first (an explicit, logged decision) before recomputing.
+  if (period.payroll_finalized === true) return { error: 'finalized' };
   const start = period.start_date, end = period.end_date;
 
   // Missing-punch handling (was the H2 "refuse to compute" block): compute now always proceeds.
@@ -4835,7 +4844,8 @@ async function computePayroll(periodId) {
   // the last_day clause and silently omit their final pay). Someone whose last_day is before the
   // period start, or whose hire is after the period end, is excluded by the date window.
   const persons = (await query(
-    `SELECT id, full_name, employment_type, pay_rate, sss_ee, philhealth_ee, pagibig_ee, withholding, ot_eligible
+    `SELECT id, full_name, employment_type, pay_rate, sss_ee, philhealth_ee, pagibig_ee, withholding, ot_eligible,
+            to_char(hired_on,'YYYY-MM-DD') AS hired_on, to_char(last_day,'YYYY-MM-DD') AS last_day
        FROM persons
       WHERE (last_day IS NULL OR last_day >= $1) AND (hired_on IS NULL OR hired_on <= $2)
       ORDER BY full_name ASC`, [start, end])).rows;
@@ -4861,10 +4871,21 @@ async function computePayroll(periodId) {
   const dates = dateListYMD(start, end);
 
   const lines = [];
+  const noPayRate = [];          // L1: employed people with no pay_rate set — skipped, not paid ₱0
+  const deductionExceedsPay = []; // L3: people whose deductions exceeded gross (net floored to 0)
   for (const person of persons) {
+    // L1: a blank pay_rate means no rate has been set — never silently pay ₱0. Skip the person from
+    // payroll_lines and surface them in the compute warnings so Admin can set a rate and recompute.
+    if (person.pay_rate === null || person.pay_rate === undefined || person.pay_rate === '') {
+      noPayRate.push({ person_id: person.id, full_name: person.full_name });
+      continue;
+    }
     const type = person.employment_type === 'monthly' ? 'monthly' : 'daily';
     const rate = Number(person.pay_rate) || 0;
     const dailyBasis = type === 'monthly' ? (divisor > 0 ? rate / divisor : 0) : rate;
+    // M1: only days within [hired_on, last_day] count as employed. Days before hire or after the
+    // last day are neither present nor absent — a mid-period hire/resignation is not over-deducted.
+    const employed = (d) => (!person.hired_on || d >= person.hired_on) && (!person.last_day || d <= person.last_day);
     const hourly = paidHours > 0 ? dailyBasis / paidHours : 0;
     const perMin = hourly / 60;
     const pAtt = attMap[person.id] || {};
@@ -4930,9 +4951,12 @@ async function computePayroll(periodId) {
             otHours += oth;
             Object.assign(day, { kind: 'work', late_min: rawLate, counted_late_min: counted, undertime_min: ut, ot_hours: round2(oth) });
           }
-        } else {
+        } else if (employed(d)) {
           absentDays++;
           day.kind = 'absent';
+        } else {
+          // Outside the employment window (before hire / after last day) — not an absence.
+          day.kind = 'not_employed';
         }
       }
       perDay.push(day);
@@ -4943,15 +4967,23 @@ async function computePayroll(periodId) {
     // on those days is in the deduction bucket below, so the net effect is (½ basis − late) per
     // half day. Monthly: a half day likewise deducts ½ of the daily-equivalent (like half an
     // absence), and its late is deducted the same way.
-    const basePay = type === 'daily'
+    // M1: floor base at 0 — heavy absences (or a monthly with many unworked days) can never make
+    // base go negative.
+    const basePay = Math.max(0, type === 'daily'
       ? rate * (daysPresent + 0.5 * halfDays)
-      : (rate / 2) - (dailyBasis * absentDays) - (dailyBasis * 0.5 * halfDays);
+      : (rate / 2) - (dailyBasis * absentDays) - (dailyBasis * 0.5 * halfDays));
     const lateUndertimeDed = (countedLate + undertimeMin) * perMin;
     const sss = Number(person.sss_ee) || 0, phic = Number(person.philhealth_ee) || 0, pgib = Number(person.pagibig_ee) || 0, wtax = Number(person.withholding) || 0;
     const bale = baleMap[person.id] || 0;
     const gross = basePay + otPay + sundayPay + holidayPay;
     const deductions = lateUndertimeDed + sss + phic + pgib + wtax + bale;
-    const net = gross - deductions;
+    // L3: net can't go negative — if deductions (typically a large BALE) exceed gross, floor net at
+    // 0 and record the shortfall so Admin knows the remainder wasn't collected and needs handling
+    // (e.g. carry the unpaid BALE to the next period).
+    const rawNet = gross - deductions;
+    const net = Math.max(0, rawNet);
+    const deductionShortfall = rawNet < 0 ? round2(-rawNet) : 0;
+    if (deductionShortfall > 0) deductionExceedsPay.push({ person_id: person.id, full_name: person.full_name, shortfall: deductionShortfall });
 
     const breakdown = {
       reference: {
@@ -4966,7 +4998,7 @@ async function computePayroll(periodId) {
         undertime_minutes: undertimeMin, ot_hours: round2(otHours),
       },
       deductions: { late_undertime: round2(lateUndertimeDed), sss_ee: round2(sss), philhealth_ee: round2(phic), pagibig_ee: round2(pgib), withholding: round2(wtax), bale: round2(bale), total: round2(deductions) },
-      pay: { base: round2(basePay), ot: round2(otPay), sunday: round2(sundayPay), holiday: round2(holidayPay), gross: round2(gross), net: round2(net) },
+      pay: { base: round2(basePay), ot: round2(otPay), sunday: round2(sundayPay), holiday: round2(holidayPay), gross: round2(gross), net: round2(net), net_raw: round2(rawNet), deduction_shortfall: deductionShortfall },
       days: perDay,
     };
 
@@ -4984,6 +5016,13 @@ async function computePayroll(periodId) {
   const client = await getClient();
   try {
     await client.query('BEGIN');
+    // L1: people skipped for a missing pay_rate must not keep a stale line from a prior compute.
+    if (noPayRate.length > 0) {
+      await client.query(
+        `DELETE FROM payroll_lines WHERE pay_period_id = $1 AND person_id = ANY($2::int[])`,
+        [periodId, noPayRate.map(p => p.person_id)]
+      );
+    }
     for (const l of lines) {
       await client.query(
         `INSERT INTO payroll_lines (pay_period_id, person_id, employment_type, days_present, absent_days, base_pay, ot_hours, ot_pay, sunday_pay, holiday_pay, late_minutes, undertime_minutes, late_undertime_deduction, sss_ee, philhealth_ee, pagibig_ee, withholding, bale, gross, net, breakdown, computed_at)
@@ -5005,7 +5044,7 @@ async function computePayroll(periodId) {
   } finally {
     client.release();
   }
-  return { period, count: lines.length, lines };
+  return { period, count: lines.length, lines, warnings: { no_pay_rate: noPayRate, deduction_exceeds_pay: deductionExceedsPay } };
 }
 
 // Compute payroll for a LOCKED period. ADMIN ONLY (it writes results). Idempotent.
@@ -5015,7 +5054,46 @@ app.post('/api/payroll/periods/:id/compute', requireRole(['admin']), async (req,
     if (r.error === 'not_found') return res.status(404).json({ error: 'Pay period not found' });
     if (r.error === 'not_locked') return res.status(400).json({ error: 'Payroll can only be computed for a LOCKED pay period. Lock it on the Attendance Sheet first.' });
     if (r.error === 'no_settings') return res.status(400).json({ error: 'Payroll settings are missing.' });
-    res.json({ ok: true, period: r.period, count: r.count, lines: r.lines });
+    if (r.error === 'finalized') return res.status(409).json({ error: 'This payroll is finalized. Un-finalize it first if you really need to recompute — this protects the approved payroll from being restated by a later settings change.' });
+    res.json({ ok: true, period: r.period, count: r.count, lines: r.lines, warnings: r.warnings });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// L5 — Finalize a computed payroll period. ADMIN ONLY. After this, recompute is blocked (409) until
+// un-finalized, so a later settings change can't silently restate approved pay. Requires computed
+// lines to exist (nothing to finalize otherwise).
+app.post('/api/payroll/periods/:id/finalize', requireRole(['admin']), async (req, res) => {
+  try {
+    const pr = await query('SELECT id, status, payroll_finalized FROM pay_periods WHERE id = $1', [req.params.id]);
+    const period = pr.rows[0];
+    if (!period) return res.status(404).json({ error: 'Pay period not found' });
+    if (period.payroll_finalized) return res.status(400).json({ error: 'This payroll is already finalized.' });
+    const cnt = (await query('SELECT COUNT(*)::int AS n FROM payroll_lines WHERE pay_period_id = $1', [req.params.id])).rows[0].n;
+    if (cnt === 0) return res.status(400).json({ error: 'Nothing to finalize — compute payroll first.' });
+    const upd = await query(
+      `UPDATE pay_periods SET payroll_finalized = true, finalized_by = $1, finalized_at = NOW() WHERE id = $2
+       RETURNING id, payroll_finalized, finalized_by, finalized_at`,
+      [req.user.id, req.params.id]
+    );
+    res.json({ ok: true, period: upd.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// L5 — Un-finalize a period so it can be recomputed. ADMIN ONLY. Explicit, deliberate re-open of an
+// already-approved payroll.
+app.post('/api/payroll/periods/:id/unfinalize', requireRole(['admin']), async (req, res) => {
+  try {
+    const upd = await query(
+      `UPDATE pay_periods SET payroll_finalized = false, finalized_by = NULL, finalized_at = NULL WHERE id = $1
+       RETURNING id, payroll_finalized`,
+      [req.params.id]
+    );
+    if (!upd.rows[0]) return res.status(404).json({ error: 'Pay period not found' });
+    res.json({ ok: true, period: upd.rows[0] });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -5025,7 +5103,8 @@ app.post('/api/payroll/periods/:id/compute', requireRole(['admin']), async (req,
 app.get('/api/payroll/periods/:id/lines', requireRole(['admin', 'accounting']), async (req, res) => {
   try {
     const pr = await query(
-      `SELECT id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date, status
+      `SELECT id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date, status,
+              payroll_finalized, finalized_by, finalized_at
          FROM pay_periods WHERE id = $1`, [req.params.id]);
     const period = pr.rows[0];
     if (!period) return res.status(404).json({ error: 'Pay period not found' });
