@@ -55,42 +55,56 @@ function payPeriodLabel(start: string, end: string): string {
   return `${MONTHS[sm - 1]} ${sd}, ${sy} – ${MONTHS[em - 1]} ${ed}, ${ey}`;
 }
 
+// Fixed real-world size: every slip is exactly 86mm × 60mm (the physical Kimoel payslip). All
+// font sizes, cell padding and gaps are scaled down in mm/pt so the full slip — letterhead, the
+// Employee/Position/Pay-Period/ID row, the earnings table, the deductions column, the
+// GROSS/Less/NET band and the Received By line — fits inside the box without overflowing.
+//
+// Batch layout: slips are inline-block tiles inside a font-size:0 container (which kills the
+// inter-tile whitespace), so they flow left-to-right and wrap — ~2 across × 4 down (~8) on an A4
+// page — then continue onto further A4 pages. break-inside:avoid keeps any one slip from being
+// split across a page boundary; the faint dashed border is a cut guide.
+const SLIP_W = '86mm', SLIP_H = '60mm';
 const PAYSLIP_CSS = `
-  @page { size: A4; margin: 10mm; }
+  @page { size: A4; margin: 8mm; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body { font-family: Arial, Helvetica, sans-serif; color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  /* Each payslip is a self-contained bordered block. break-inside:avoid keeps a slip whole, and a
-     forced page break after every 2nd slip gives a clean 2-up-per-A4 batch. */
-  .slip { border: 1px solid #000; padding: 7mm 8mm; break-inside: avoid; }
-  .slip + .slip { margin-top: 7mm; }
-  .slip:nth-of-type(2n) { page-break-after: always; }
-  .slip:last-of-type { page-break-after: auto; }
-  .ph { text-align: center; margin-bottom: 4px; }
-  .co { font-size: 12.5pt; font-weight: bold; letter-spacing: .2px; }
-  .ln { font-size: 8pt; line-height: 1.35; }
+  /* font-size:0 removes the whitespace gaps between inline-block tiles. */
+  .batch { font-size: 0; }
+  .slip {
+    display: inline-block; vertical-align: top;
+    width: ${SLIP_W}; height: ${SLIP_H};
+    padding: 1.6mm 2mm; margin: 0 3mm 3mm 0;
+    border: 0.2mm dashed #b0b0b0; overflow: hidden;
+    break-inside: avoid; page-break-inside: avoid;
+    font-size: 4pt; line-height: 1.12;
+  }
+  .ph { text-align: center; margin-bottom: 0.6mm; }
+  .co { font-size: 6pt; font-weight: bold; line-height: 1.05; }
+  .ln { font-size: 3.6pt; line-height: 1.25; }
   table { border-collapse: collapse; width: 100%; }
-  .meta td { font-size: 8.5pt; padding: 2px 4px; vertical-align: bottom; }
-  .meta .k { font-weight: bold; white-space: nowrap; width: 1%; padding-right: 6px; }
-  .meta .v { border-bottom: 1px solid #999; }
-  .cols { display: flex; gap: 7mm; margin-top: 9px; align-items: flex-start; }
+  .meta td { font-size: 4pt; padding: 0.2mm 0.4mm; vertical-align: bottom; }
+  .meta .k { font-weight: bold; white-space: nowrap; width: 1%; padding-right: 1mm; }
+  .meta .v { border-bottom: 0.2mm solid #999; }
+  .cols { display: flex; gap: 2mm; margin-top: 1mm; align-items: flex-start; }
   .cols > div { flex: 1; min-width: 0; }
-  .sect { font-size: 8pt; font-weight: bold; letter-spacing: .5px; text-transform: uppercase; margin-bottom: 3px; }
-  .grid th, .grid td { border: 1px solid #000; padding: 3px 6px; font-size: 8.5pt; }
+  .sect { font-size: 3.6pt; font-weight: bold; letter-spacing: .2px; text-transform: uppercase; margin-bottom: 0.3mm; }
+  .grid th, .grid td { border: 0.2mm solid #000; padding: 0.25mm 0.6mm; font-size: 3.8pt; line-height: 1.1; }
   .grid th { background: #ececec; font-weight: bold; text-align: center; }
   .grid .lbl { text-align: left; white-space: nowrap; }
   .grid .num { text-align: right; font-variant-numeric: tabular-nums; }
   .grid .tot td { font-weight: bold; background: #f6f6f6; }
-  .totband { margin-top: 9px; border: 1px solid #000; }
-  .totband .row { display: flex; justify-content: space-between; padding: 4px 10px; font-size: 9.5pt; }
-  .totband .row + .row { border-top: 1px solid #ccc; }
-  .totband .k { font-weight: bold; letter-spacing: .3px; }
+  .totband { margin-top: 1mm; border: 0.2mm solid #000; }
+  .totband .row { display: flex; justify-content: space-between; padding: 0.3mm 1mm; font-size: 4.2pt; }
+  .totband .row + .row { border-top: 0.2mm solid #ccc; }
+  .totband .k { font-weight: bold; letter-spacing: .2px; }
   .totband .v { font-variant-numeric: tabular-nums; }
-  .totband .net { font-weight: bold; font-size: 11pt; background: #eee; }
-  .sign { display: flex; gap: 8mm; margin-top: 12px; }
-  .sign > div { flex: 1; text-align: center; font-size: 8pt; }
-  .sign .line { border-top: 1px solid #000; margin-top: 26px; padding-top: 2px; }
-  .foot { text-align: center; font-size: 7pt; color: #444; margin-top: 8px; font-style: italic; }
+  .totband .net { font-weight: bold; font-size: 5pt; background: #eee; }
+  .sign { display: flex; gap: 3mm; margin-top: 1mm; }
+  .sign > div { flex: 1; text-align: center; font-size: 3.6pt; }
+  .sign .line { border-top: 0.2mm solid #000; margin-top: 3.5mm; padding-top: 0.4mm; }
+  .foot { text-align: center; font-size: 3pt; color: #444; margin-top: 0.6mm; font-style: italic; }
 `;
 
 function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
@@ -119,7 +133,7 @@ function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
       <div class="ln">Tel. No. (043)-741-2023</div>
       <div class="ln">Email: kimoel_leotagle@yahoo.com</div>
     </div>
-    <table class="meta" style="margin-top:8px"><tbody>
+    <table class="meta" style="margin-top:1mm"><tbody>
       <tr>
         <td class="k">Employee:</td><td class="v">${esc(l.full_name)}</td>
         <td class="k">Pay Period:</td><td class="v">${esc(payPeriodLabel(period.start_date, period.end_date))}</td>
@@ -174,7 +188,7 @@ function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
 
 function renderDocument(title: string, slips: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
-<style>${PAYSLIP_CSS}</style></head><body>${slips}</body></html>`;
+<style>${PAYSLIP_CSS}</style></head><body><div class="batch">${slips}</div></body></html>`;
 }
 
 function openAndPrint(title: string, slips: string): { ok: boolean; error?: string } {
