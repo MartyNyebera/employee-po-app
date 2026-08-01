@@ -4811,6 +4811,18 @@ async function computePayroll(periodId) {
   if (period.status !== 'locked') return { error: 'not_locked' };
   const start = period.start_date, end = period.end_date;
 
+  // H2: refuse to compute while any day in the period has an unresolved missing punch — an IN with
+  // no OUT ('no_out') or an OUT with no IN ('incomplete'). Such a day mispays both ways: on a
+  // scheduled day a missing OUT would pay a full base with zero undertime, and on a Sunday/holiday a
+  // missing OUT pays ₱0 premium. Admin must correct the punch time on the Attendance Sheet (which is
+  // logged) before payroll can run. We never silently pay a flagged day.
+  const unresolved = (await query(
+    `SELECT p.full_name, to_char(ad.work_date,'YYYY-MM-DD') AS d, ad.status
+       FROM attendance_days ad JOIN persons p ON p.id = ad.person_id
+      WHERE ad.work_date BETWEEN $1 AND $2 AND ad.status IN ('no_out', 'incomplete')
+      ORDER BY p.full_name ASC, ad.work_date ASC`, [start, end])).rows;
+  if (unresolved.length > 0) return { error: 'unresolved_punches', unresolved };
+
   const s = (await query('SELECT * FROM payroll_settings WHERE id = 1')).rows[0];
   if (!s) return { error: 'no_settings' };
   const paidHours = Number(s.paid_hours), lunch = Number(s.lunch_hours), divisor = Number(s.monthly_divisor);
@@ -4822,10 +4834,15 @@ async function computePayroll(periodId) {
   const holidayMap = {};
   (await query(`SELECT to_char(holiday_date,'YYYY-MM-DD') AS d, type FROM holidays`)).rows.forEach(h => { holidayMap[h.d] = h.type; });
 
+  // H1: include everyone employed for ANY part of the period — the date window decides, NOT status.
+  // A worker marked 'resigned' with a last_day inside the period must still be paid for the days they
+  // were present, so we deliberately drop the hard status='active' filter (which used to cancel out
+  // the last_day clause and silently omit their final pay). Someone whose last_day is before the
+  // period start, or whose hire is after the period end, is excluded by the date window.
   const persons = (await query(
     `SELECT id, full_name, employment_type, pay_rate, sss_ee, philhealth_ee, pagibig_ee, withholding, ot_eligible
        FROM persons
-      WHERE status = 'active' AND (hired_on IS NULL OR hired_on <= $2) AND (last_day IS NULL OR last_day >= $1)
+      WHERE (last_day IS NULL OR last_day >= $1) AND (hired_on IS NULL OR hired_on <= $2)
       ORDER BY full_name ASC`, [start, end])).rows;
 
   // Attendance from 14 days before the period (to resolve the "prior working day" for holiday
@@ -4986,6 +5003,14 @@ app.post('/api/payroll/periods/:id/compute', requireRole(['admin']), async (req,
     if (r.error === 'not_found') return res.status(404).json({ error: 'Pay period not found' });
     if (r.error === 'not_locked') return res.status(400).json({ error: 'Payroll can only be computed for a LOCKED pay period. Lock it on the Attendance Sheet first.' });
     if (r.error === 'no_settings') return res.status(400).json({ error: 'Payroll settings are missing.' });
+    if (r.error === 'unresolved_punches') {
+      const list = r.unresolved.map(u => `${u.full_name} — ${u.d} (${u.status === 'no_out' ? 'missing OUT' : 'missing IN'})`);
+      const preview = list.slice(0, 8).join('; ') + (list.length > 8 ? ` …and ${list.length - 8} more` : '');
+      return res.status(400).json({
+        error: `Payroll blocked — ${list.length} day(s) have a missing punch. Fix these on the Attendance Sheet first (correct the IN/OUT time), then compute again: ${preview}`,
+        unresolved: r.unresolved,
+      });
+    }
     res.json({ ok: true, period: r.period, count: r.count, lines: r.lines });
   } catch (err) {
     res.status(500).json({ error: err.message });
