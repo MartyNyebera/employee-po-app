@@ -16,6 +16,7 @@ import { StationsList } from './crm/StationsList';
 import { TimesheetReview } from './crm/TimesheetReview';
 import { PayrollSettings } from './crm/PayrollSettings';
 import { HolidaysList } from './crm/HolidaysList';
+import { PayrollReview } from './crm/PayrollReview';
 import { PurchaseRequestsReview } from './crm/PurchaseRequestsReview';
 import { AdminSignature } from './crm/AdminSignature';
 import { WithdrawalRequestsReview } from './crm/WithdrawalRequestsReview';
@@ -46,7 +47,7 @@ interface AdminDashboardProps {
   onLogout: () => void;
 }
 
-type View = 'home' | 'orders' | 'transactions' | 'material-requests' | 'employee-accounts' | 'purchasing-accounts' | 'warehouse-accounts' | 'accounting-accounts' | 'sales-accounts' | 'logistics-accounts' | 'projects' | 'purchase-requests' | 'withdrawal-requests' | 'purchase-orders' | 'discrepancies' | 'inventory' | 'miscellaneous' | 'request-form' | 'suppliers' | 'customers' | 'inquiries' | 'staff' | 'signature' | 'roster' | 'stations' | 'timesheet' | 'payroll-settings' | 'holidays';
+type View = 'home' | 'orders' | 'transactions' | 'material-requests' | 'employee-accounts' | 'purchasing-accounts' | 'warehouse-accounts' | 'accounting-accounts' | 'sales-accounts' | 'logistics-accounts' | 'projects' | 'purchase-requests' | 'withdrawal-requests' | 'purchase-orders' | 'discrepancies' | 'inventory' | 'miscellaneous' | 'request-form' | 'suppliers' | 'customers' | 'inquiries' | 'staff' | 'signature' | 'roster' | 'stations' | 'timesheet' | 'payroll-settings' | 'holidays' | 'payroll';
 
 // Sidebar entries, in display order. An entry is either a leaf (navigates to a view) or a
 // group (a collapsible dropdown holding leaves). Visibility + write access come from MODULE_ACCESS.
@@ -87,6 +88,7 @@ const NAV_ENTRIES: NavEntry[] = [
   { view: 'roster', label: 'Roster', icon: IdCard, module: 'roster' },
   { view: 'stations', label: 'Time Stations', icon: ScanLine, module: 'stations' },
   { view: 'timesheet', label: 'Attendance Sheet', icon: CalendarCheck, module: 'timesheet' },
+  { view: 'payroll', label: 'Payroll', icon: Calculator, module: 'payroll' },
   { view: 'holidays', label: 'Holidays', icon: CalendarDays, module: 'holidays' },
   { view: 'payroll-settings', label: 'Payroll Settings', icon: SlidersHorizontal, module: 'payroll-settings' },
   { group: 'accounts', label: 'Accounts', icon: UserCog, children: [
@@ -279,6 +281,10 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
 
     if (currentView === 'payroll-settings') {
       return <PayrollSettings />;
+    }
+
+    if (currentView === 'payroll') {
+      return <PayrollReview api={fetchApi} role="admin" />;
     }
 
     if (currentView === 'purchase-requests') {

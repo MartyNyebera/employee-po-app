@@ -1126,6 +1126,43 @@ async function runMigrations() {
       console.log('✅ payroll_settings + holidays + payroll_bale tables ready');
     } catch (err) { console.log('ℹ️ payroll 4a tables skipped:', err.message); }
 
+    // ===== Payroll — Phase 4b (computed results). Additive, new table only. =====
+    // One computed line per person per LOCKED period, with the full breakdown so the numbers can be
+    // verified against a real payslip. `breakdown` (JSONB) holds the reference values and per-day
+    // detail. Compute is idempotent — re-running upserts the same rows. All inputs are READ from
+    // locked attendance + roster + payroll_settings; nothing here modifies those sources.
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS payroll_lines (
+          id SERIAL PRIMARY KEY,
+          pay_period_id INTEGER NOT NULL,
+          person_id INTEGER NOT NULL REFERENCES persons(id),
+          employment_type TEXT,
+          days_present INTEGER,
+          absent_days INTEGER,
+          base_pay NUMERIC(12,2),
+          ot_hours NUMERIC(8,2),
+          ot_pay NUMERIC(12,2),
+          sunday_pay NUMERIC(12,2),
+          holiday_pay NUMERIC(12,2),
+          late_minutes INTEGER,
+          undertime_minutes INTEGER,
+          late_undertime_deduction NUMERIC(12,2),
+          sss_ee NUMERIC(12,2),
+          philhealth_ee NUMERIC(12,2),
+          pagibig_ee NUMERIC(12,2),
+          withholding NUMERIC(12,2),
+          bale NUMERIC(12,2),
+          gross NUMERIC(12,2),
+          net NUMERIC(12,2),
+          breakdown JSONB,
+          computed_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE (pay_period_id, person_id)
+        )
+      `);
+      console.log('✅ payroll_lines table ready');
+    } catch (err) { console.log('ℹ️ payroll_lines table skipped:', err.message); }
+
     console.log('✅ All migrations complete');
   } catch (err) {
     console.error('❌ Migration error:', err.message);
@@ -4719,6 +4756,237 @@ app.delete('/api/holidays/:id', requireRole(['admin']), async (req, res) => {
     if (!r.rows[0]) return res.status(404).json({ error: 'Holiday not found' });
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ============================================================================
+// Payroll — Phase 4b: computation engine. Computes ONE line per active person for a LOCKED pay
+// period, reading every rate/rule from payroll_settings + the roster (nothing hardcoded), and the
+// hours from the (locked) attendance_days. It never modifies punches, attendance, roster, or
+// settings — it only READS them and writes payroll_lines. Idempotent (upsert). NO payslip
+// printing here (4c). The full per-day breakdown is stored so the numbers can be verified.
+//
+// Model (documented so it can be checked against a real payslip):
+//   • Scheduled working day = Mon–Sat AND not a holiday. Sundays and holidays are not scheduled.
+//   • Base — daily: pay_rate × (scheduled working days with a valid IN "present").
+//            monthly: (monthly ÷ 2) − dailyEquiv × absent_days, where absent = scheduled day, no IN.
+//   • Late/undertime/OT apply ONLY on scheduled working days (Sunday/holiday pay is a full-day
+//     premium bucket, so those days are not also counted in base — no double counting).
+//   • Late ladder from settings: ≤grace→0, <max_start→mid_deduct, ≥max_start→max_deduct (counted
+//     minutes). Undertime is proportional (17:00 − OUT). OT = (OUT − 17:00) decimal hours, only if
+//     ot_eligible AND the day is ot_approved.
+//   • Sunday worked → netHours × hourly × sunday_mult. Holiday worked → netHours × hourly ×
+//     (regular/special mult). Holiday NOT worked but eligible (present the prior working day) →
+//     one day's pay (daily only; a monthly salary already covers it).
+//   • netHours = worked span − lunch_hours (floored at 0).
+// ============================================================================
+const hhmmToMin = (s) => { const [h, m] = String(s || '0:0').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+const round2 = (x) => Math.round((Number(x) || 0) * 100) / 100;
+const round4 = (x) => Math.round((Number(x) || 0) * 10000) / 10000;
+const addDaysYMD = (ymd, n) => { const [y, m, d] = ymd.split('-').map(Number); const dt = new Date(Date.UTC(y, m - 1, d + n)); return dt.toISOString().slice(0, 10); };
+const dowYMD = (ymd) => { const [y, m, d] = ymd.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)).getUTCDay(); }; // 0=Sun
+const dateListYMD = (start, end) => { const out = []; let c = start; while (c <= end) { out.push(c); c = addDaysYMD(c, 1); } return out; };
+
+async function computePayroll(periodId) {
+  const pr = await query(
+    `SELECT id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date, status
+       FROM pay_periods WHERE id = $1`, [periodId]);
+  const period = pr.rows[0];
+  if (!period) return { error: 'not_found' };
+  if (period.status !== 'locked') return { error: 'not_locked' };
+  const start = period.start_date, end = period.end_date;
+
+  const s = (await query('SELECT * FROM payroll_settings WHERE id = 1')).rows[0];
+  if (!s) return { error: 'no_settings' };
+  const paidHours = Number(s.paid_hours), lunch = Number(s.lunch_hours), divisor = Number(s.monthly_divisor);
+  const grace = Number(s.grace_minutes), midDed = Number(s.tardy_mid_deduct_minutes), maxStart = Number(s.tardy_max_start_minutes), maxDed = Number(s.tardy_max_deduct_minutes);
+  const otMult = Number(s.ot_multiplier), sunMult = Number(s.sunday_multiplier), regMult = Number(s.regular_holiday_multiplier), spcMult = Number(s.special_holiday_multiplier);
+  const startMin = hhmmToMin(s.work_start), endMin = hhmmToMin(s.work_end);
+
+  const holidayMap = {};
+  (await query(`SELECT to_char(holiday_date,'YYYY-MM-DD') AS d, type FROM holidays`)).rows.forEach(h => { holidayMap[h.d] = h.type; });
+
+  const persons = (await query(
+    `SELECT id, full_name, employment_type, pay_rate, sss_ee, philhealth_ee, pagibig_ee, withholding, ot_eligible
+       FROM persons
+      WHERE status = 'active' AND (hired_on IS NULL OR hired_on <= $2) AND (last_day IS NULL OR last_day >= $1)
+      ORDER BY full_name ASC`, [start, end])).rows;
+
+  // Attendance from 14 days before the period (to resolve the "prior working day" for holiday
+  // eligibility) through the period end. Manila minute-of-day for IN/OUT precomputed in SQL.
+  const attMap = {};
+  (await query(
+    `SELECT person_id, to_char(work_date,'YYYY-MM-DD') AS d, worked_minutes, ot_approved,
+            CASE WHEN first_in IS NULL THEN NULL ELSE EXTRACT(EPOCH FROM ((first_in AT TIME ZONE 'Asia/Manila')::time)) / 60 END AS in_min,
+            CASE WHEN last_out IS NULL THEN NULL ELSE EXTRACT(EPOCH FROM ((last_out AT TIME ZONE 'Asia/Manila')::time)) / 60 END AS out_min
+       FROM attendance_days
+      WHERE work_date BETWEEN ($1::date - 14) AND $2::date`, [start, end])
+  ).rows.forEach(r => { (attMap[r.person_id] || (attMap[r.person_id] = {}))[r.d] = r; });
+
+  const baleMap = {};
+  (await query('SELECT person_id, amount FROM payroll_bale WHERE pay_period_id = $1', [periodId])).rows
+    .forEach(b => { baleMap[b.person_id] = Number(b.amount) || 0; });
+
+  const isHoliday = (d) => holidayMap[d]; // 'regular' | 'special' | undefined
+  const isScheduled = (d) => dowYMD(d) !== 0 && !isHoliday(d);
+  const priorWorkingDate = (d) => { let c = d; for (let i = 0; i < 14; i++) { c = addDaysYMD(c, -1); if (isScheduled(c)) return c; } return null; };
+  const dates = dateListYMD(start, end);
+
+  const lines = [];
+  for (const person of persons) {
+    const type = person.employment_type === 'monthly' ? 'monthly' : 'daily';
+    const rate = Number(person.pay_rate) || 0;
+    const dailyBasis = type === 'monthly' ? (divisor > 0 ? rate / divisor : 0) : rate;
+    const hourly = paidHours > 0 ? dailyBasis / paidHours : 0;
+    const perMin = hourly / 60;
+    const pAtt = attMap[person.id] || {};
+
+    let daysPresent = 0, absentDays = 0, otHours = 0, sundayPay = 0, holidayPay = 0;
+    let lateMin = 0, countedLate = 0, undertimeMin = 0;
+    const perDay = [];
+
+    for (const d of dates) {
+      const holType = isHoliday(d);
+      const sunday = dowYMD(d) === 0;
+      const row = pAtt[d];
+      const inMin = row && row.in_min !== null && row.in_min !== undefined ? Math.round(Number(row.in_min)) : null;
+      const outMin = row && row.out_min !== null && row.out_min !== undefined ? Math.round(Number(row.out_min)) : null;
+      const hasIN = inMin !== null;
+      const netHours = Math.max(0, (row && row.worked_minutes != null ? Number(row.worked_minutes) : 0) / 60 - lunch);
+      const day = { date: d, dow: dowYMD(d), sunday, holiday: holType || null, present: hasIN, in_min: inMin, out_min: outMin };
+
+      if (holType) {
+        if (hasIN) {
+          const mult = holType === 'special' ? spcMult : regMult;
+          const amt = netHours * hourly * mult;
+          holidayPay += amt;
+          Object.assign(day, { kind: 'holiday_worked', net_hours: round2(netHours), mult, amount: round2(amt) });
+        } else {
+          const pw = priorWorkingDate(d);
+          const eligible = pw ? !!(pAtt[pw] && pAtt[pw].in_min != null) : false;
+          let amt = 0;
+          if (eligible && type === 'daily') { amt = dailyBasis; holidayPay += amt; }
+          Object.assign(day, { kind: 'holiday_not_worked', eligible, prior_working_day: pw, amount: round2(amt) });
+          if (type === 'monthly') day.note = 'holiday covered by monthly salary';
+        }
+      } else if (sunday) {
+        if (hasIN) {
+          const amt = netHours * hourly * sunMult;
+          sundayPay += amt;
+          Object.assign(day, { kind: 'sunday_worked', net_hours: round2(netHours), mult: sunMult, amount: round2(amt) });
+        } else { day.kind = 'sunday_off'; }
+      } else {
+        // scheduled working day
+        if (hasIN) {
+          daysPresent++;
+          const rawLate = Math.max(0, inMin - startMin);
+          const counted = rawLate <= grace ? 0 : (rawLate < maxStart ? midDed : maxDed);
+          lateMin += rawLate; countedLate += counted;
+          const ut = (outMin !== null && outMin < endMin) ? (endMin - outMin) : 0;
+          undertimeMin += ut;
+          const oth = (person.ot_eligible && row.ot_approved && outMin !== null && outMin > endMin) ? (outMin - endMin) / 60 : 0;
+          otHours += oth;
+          Object.assign(day, { kind: 'work', late_min: rawLate, counted_late_min: counted, undertime_min: ut, ot_hours: round2(oth) });
+        } else {
+          absentDays++;
+          day.kind = 'absent';
+        }
+      }
+      perDay.push(day);
+    }
+
+    const otPay = otHours * hourly * otMult;
+    const basePay = type === 'daily' ? rate * daysPresent : (rate / 2) - (dailyBasis * absentDays);
+    const lateUndertimeDed = (countedLate + undertimeMin) * perMin;
+    const sss = Number(person.sss_ee) || 0, phic = Number(person.philhealth_ee) || 0, pgib = Number(person.pagibig_ee) || 0, wtax = Number(person.withholding) || 0;
+    const bale = baleMap[person.id] || 0;
+    const gross = basePay + otPay + sundayPay + holidayPay;
+    const deductions = lateUndertimeDed + sss + phic + pgib + wtax + bale;
+    const net = gross - deductions;
+
+    const breakdown = {
+      reference: {
+        employment_type: type, rate, daily_basis: round2(dailyBasis), hourly: round2(hourly), per_minute: round4(perMin),
+        paid_hours: paidHours, lunch_hours: lunch, monthly_divisor: divisor,
+        multipliers: { ot: otMult, sunday: sunMult, regular_holiday: regMult, special_holiday: spcMult },
+        tardiness: { grace_minutes: grace, mid_deduct_minutes: midDed, max_start_minutes: maxStart, max_deduct_minutes: maxDed },
+        work_start: s.work_start, work_end: s.work_end,
+      },
+      totals: {
+        days_present: daysPresent, absent_days: absentDays, late_minutes: lateMin, counted_late_minutes: countedLate,
+        undertime_minutes: undertimeMin, ot_hours: round2(otHours),
+      },
+      deductions: { late_undertime: round2(lateUndertimeDed), sss_ee: round2(sss), philhealth_ee: round2(phic), pagibig_ee: round2(pgib), withholding: round2(wtax), bale: round2(bale), total: round2(deductions) },
+      pay: { base: round2(basePay), ot: round2(otPay), sunday: round2(sundayPay), holiday: round2(holidayPay), gross: round2(gross), net: round2(net) },
+      days: perDay,
+    };
+
+    lines.push({
+      person_id: person.id, full_name: person.full_name, employment_type: type,
+      days_present: daysPresent, absent_days: absentDays, base_pay: round2(basePay),
+      ot_hours: round2(otHours), ot_pay: round2(otPay), sunday_pay: round2(sundayPay), holiday_pay: round2(holidayPay),
+      late_minutes: lateMin, undertime_minutes: undertimeMin, late_undertime_deduction: round2(lateUndertimeDed),
+      sss_ee: round2(sss), philhealth_ee: round2(phic), pagibig_ee: round2(pgib), withholding: round2(wtax), bale: round2(bale),
+      gross: round2(gross), net: round2(net), breakdown,
+    });
+  }
+
+  // Persist idempotently in one transaction.
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    for (const l of lines) {
+      await client.query(
+        `INSERT INTO payroll_lines (pay_period_id, person_id, employment_type, days_present, absent_days, base_pay, ot_hours, ot_pay, sunday_pay, holiday_pay, late_minutes, undertime_minutes, late_undertime_deduction, sss_ee, philhealth_ee, pagibig_ee, withholding, bale, gross, net, breakdown, computed_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21, NOW())
+         ON CONFLICT (pay_period_id, person_id) DO UPDATE SET
+           employment_type = EXCLUDED.employment_type, days_present = EXCLUDED.days_present, absent_days = EXCLUDED.absent_days,
+           base_pay = EXCLUDED.base_pay, ot_hours = EXCLUDED.ot_hours, ot_pay = EXCLUDED.ot_pay, sunday_pay = EXCLUDED.sunday_pay,
+           holiday_pay = EXCLUDED.holiday_pay, late_minutes = EXCLUDED.late_minutes, undertime_minutes = EXCLUDED.undertime_minutes,
+           late_undertime_deduction = EXCLUDED.late_undertime_deduction, sss_ee = EXCLUDED.sss_ee, philhealth_ee = EXCLUDED.philhealth_ee,
+           pagibig_ee = EXCLUDED.pagibig_ee, withholding = EXCLUDED.withholding, bale = EXCLUDED.bale, gross = EXCLUDED.gross,
+           net = EXCLUDED.net, breakdown = EXCLUDED.breakdown, computed_at = NOW()`,
+        [periodId, l.person_id, l.employment_type, l.days_present, l.absent_days, l.base_pay, l.ot_hours, l.ot_pay, l.sunday_pay, l.holiday_pay, l.late_minutes, l.undertime_minutes, l.late_undertime_deduction, l.sss_ee, l.philhealth_ee, l.pagibig_ee, l.withholding, l.bale, l.gross, l.net, JSON.stringify(l.breakdown)]
+      );
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
+    throw err;
+  } finally {
+    client.release();
+  }
+  return { period, count: lines.length, lines };
+}
+
+// Compute payroll for a LOCKED period. ADMIN ONLY (it writes results). Idempotent.
+app.post('/api/payroll/periods/:id/compute', requireRole(['admin']), async (req, res) => {
+  try {
+    const r = await computePayroll(req.params.id);
+    if (r.error === 'not_found') return res.status(404).json({ error: 'Pay period not found' });
+    if (r.error === 'not_locked') return res.status(400).json({ error: 'Payroll can only be computed for a LOCKED pay period. Lock it on the Attendance Sheet first.' });
+    if (r.error === 'no_settings') return res.status(400).json({ error: 'Payroll settings are missing.' });
+    res.json({ ok: true, period: r.period, count: r.count, lines: r.lines });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// View computed payroll lines for a period (full breakdown). Admin + accounting (Finance verifies).
+app.get('/api/payroll/periods/:id/lines', requireRole(['admin', 'accounting']), async (req, res) => {
+  try {
+    const pr = await query(
+      `SELECT id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date, status
+         FROM pay_periods WHERE id = $1`, [req.params.id]);
+    const period = pr.rows[0];
+    if (!period) return res.status(404).json({ error: 'Pay period not found' });
+    const rows = await query(
+      `SELECT pl.*, p.full_name, p.department, p.position
+         FROM payroll_lines pl JOIN persons p ON p.id = pl.person_id
+        WHERE pl.pay_period_id = $1 ORDER BY p.full_name ASC`, [req.params.id]);
+    res.json({ period, lines: rows.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ============================================================================
