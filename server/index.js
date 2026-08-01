@@ -4589,50 +4589,58 @@ app.post('/api/persons', requireRole(['admin']), async (req, res) => {
 });
 
 // Update a person. qr_token is intentionally NOT updatable here — use the reissue route.
+//
+// Key-presence semantics (NOT COALESCE): a field is written only when its key is present in the
+// request body — and when present, its value is applied verbatim, INCLUDING null to clear a field
+// back to blank. A field whose key is absent is left untouched. This is what lets the roster form
+// change a money field to a different number AND clear it to blank, and lets the resign/reactivate
+// toggle set last_day = NULL. (The old COALESCE approach treated null as "keep", so blanks could
+// never be cleared and reactivation silently failed to clear last_day.)
 app.patch('/api/persons/:id', requireRole(['admin']), async (req, res) => {
   try {
-    const { full_name, department, position, employment_type, status, hired_on, last_day, pay_rate, photo_url,
-            sss_ee, philhealth_ee, pagibig_ee, ot_eligible, withholding } = req.body;
-    if (full_name !== undefined && !String(full_name).trim()) {
-      return res.status(400).json({ error: 'full_name cannot be empty' });
+    const b = req.body || {};
+    const has = (k) => Object.prototype.hasOwnProperty.call(b, k);
+
+    const sets = [];
+    const vals = [];
+    const push = (col, val) => { vals.push(val); sets.push(`${col} = $${vals.length}`); };
+
+    if (has('full_name')) {
+      if (!String(b.full_name).trim()) return res.status(400).json({ error: 'full_name cannot be empty' });
+      push('full_name', String(b.full_name).trim());
     }
-    const et = employment_type === undefined ? undefined
-      : (employment_type === 'daily' || employment_type === 'monthly' ? employment_type : null);
-    const st = status === undefined ? undefined : (status === 'resigned' ? 'resigned' : 'active');
-    const pr = normalizePayRate(pay_rate);
-    if (pr === INVALID_PAY) return res.status(400).json({ error: 'pay_rate must be a non-negative number or blank' });
-    const ph = normalizePhoto(photo_url);
-    if (ph === INVALID_PHOTO) return res.status(400).json({ error: 'photo_url must be an image under ~2MB, or blank' });
-    const sss = normalizePayRate(sss_ee), phic = normalizePayRate(philhealth_ee), pgib = normalizePayRate(pagibig_ee);
-    if (sss === INVALID_PAY) return res.status(400).json({ error: 'sss_ee must be a non-negative number or blank' });
-    if (phic === INVALID_PAY) return res.status(400).json({ error: 'philhealth_ee must be a non-negative number or blank' });
-    if (pgib === INVALID_PAY) return res.status(400).json({ error: 'pagibig_ee must be a non-negative number or blank' });
-    const wtax = normalizePayRate(withholding);
-    if (wtax === INVALID_PAY) return res.status(400).json({ error: 'withholding must be a non-negative number or blank' });
-    // ot_eligible is a checkbox: undefined -> keep (COALESCE), else set the boolean.
-    const otEl = ot_eligible === undefined ? null : !!ot_eligible;
-    // COALESCE keeps the stored value when a field is omitted; only sent fields change.
+    if (has('department')) push('department', b.department || null);
+    if (has('position')) push('position', b.position || null);
+    if (has('employment_type')) push('employment_type', (b.employment_type === 'daily' || b.employment_type === 'monthly') ? b.employment_type : null);
+    if (has('status')) push('status', b.status === 'resigned' ? 'resigned' : 'active');
+    if (has('hired_on')) push('hired_on', b.hired_on || null);
+    if (has('last_day')) push('last_day', b.last_day || null);
+
+    // Money fields (pay_rate + sensitive government deductions + withholding): same non-negative-
+    // number-or-blank validation. When present, the parsed value (a number, or null to clear) is
+    // written directly.
+    for (const col of ['pay_rate', 'sss_ee', 'philhealth_ee', 'pagibig_ee', 'withholding']) {
+      if (has(col)) {
+        const n = normalizePayRate(b[col]);
+        if (n === INVALID_PAY) return res.status(400).json({ error: `${col} must be a non-negative number or blank` });
+        push(col, n);
+      }
+    }
+    if (has('photo_url')) {
+      const ph = normalizePhoto(b.photo_url);
+      if (ph === INVALID_PHOTO) return res.status(400).json({ error: 'photo_url must be an image under ~2MB, or blank' });
+      push('photo_url', ph);
+    }
+    if (has('ot_eligible')) push('ot_eligible', !!b.ot_eligible);
+
+    if (sets.length === 0) return res.status(400).json({ error: 'no fields to update' });
+
+    vals.push(req.params.id);
     const result = await query(
-      `UPDATE persons SET
-         full_name       = COALESCE($1, full_name),
-         department      = COALESCE($2, department),
-         position        = COALESCE($3, position),
-         employment_type = COALESCE($4, employment_type),
-         status          = COALESCE($5, status),
-         hired_on        = COALESCE($6, hired_on),
-         last_day        = COALESCE($7, last_day),
-         pay_rate        = COALESCE($8, pay_rate),
-         photo_url       = COALESCE($9, photo_url),
-         sss_ee          = COALESCE($10, sss_ee),
-         philhealth_ee   = COALESCE($11, philhealth_ee),
-         pagibig_ee      = COALESCE($12, pagibig_ee),
-         ot_eligible     = COALESCE($13, ot_eligible),
-         withholding     = COALESCE($14, withholding)
-       WHERE id = $15
-       RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url, sss_ee, philhealth_ee, pagibig_ee, ot_eligible, withholding, created_at`,
-      [full_name !== undefined ? String(full_name).trim() : null,
-       department ?? null, position ?? null, et ?? null, st ?? null,
-       hired_on ?? null, last_day ?? null, pr, ph, sss, phic, pgib, otEl, wtax, req.params.id]
+      `UPDATE persons SET ${sets.join(', ')}
+        WHERE id = $${vals.length}
+        RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url, sss_ee, philhealth_ee, pagibig_ee, ot_eligible, withholding, created_at`,
+      vals
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Person not found' });
     res.json(result.rows[0]);
