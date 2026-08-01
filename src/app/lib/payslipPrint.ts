@@ -31,7 +31,7 @@ export interface PayslipLine {
   bale: number | string;
   gross: number | string;
   net: number | string;
-  breakdown?: { reference?: any; days?: Array<{ holiday?: string | null; amount?: number }> } | null;
+  breakdown?: { reference?: any; totals?: any; days?: Array<{ holiday?: string | null; amount?: number }> } | null;
 }
 export interface PayslipPeriod { id: number; start_date: string; end_date: string; }
 
@@ -114,6 +114,11 @@ function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
   const otRate = hourly * otMult;
   const dailyRate = Number(ref.daily_basis) || Number(ref.rate) || 0;
 
+  // Reg. day quantity includes half days (missing-OUT days count as 0.5), so Qty × Rate = base_pay.
+  const halfDays = Number(l.breakdown && l.breakdown.totals && l.breakdown.totals.half_days) || 0;
+  const regQty = (Number(l.days_present) || 0) + 0.5 * halfDays;
+  const regQtyStr = Number.isInteger(regQty) ? String(regQty) : regQty.toFixed(1);
+
   // Reg./Special holiday split from the stored per-day breakdown (already-computed amounts).
   let regHol = 0, specHol = 0;
   for (const d of (l.breakdown && l.breakdown.days) || []) {
@@ -149,7 +154,7 @@ function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
         <div class="sect">Earnings</div>
         <table class="grid"><tbody>
           <tr><th class="lbl" style="text-align:left">Earnings</th><th>Qty</th><th>Rate</th><th>Amount</th></tr>
-          <tr><td class="lbl">Reg. day</td><td class="num">${esc(l.days_present)}</td><td class="num">${money(dailyRate)}</td><td class="num">${money(l.base_pay)}</td></tr>
+          <tr><td class="lbl">Reg. day</td><td class="num">${esc(regQtyStr)}</td><td class="num">${money(dailyRate)}</td><td class="num">${money(l.base_pay)}</td></tr>
           <tr><td class="lbl">Reg. OT</td><td class="num">${esc(l.ot_hours)}</td><td class="num">${money(otRate)}</td><td class="num">${money(l.ot_pay)}</td></tr>
           <tr><td class="lbl">Sunday</td><td class="num"></td><td class="num"></td><td class="num">${money(l.sunday_pay)}</td></tr>
           <tr><td class="lbl">Reg. Hol.</td><td class="num"></td><td class="num"></td><td class="num">${money(regHol)}</td></tr>

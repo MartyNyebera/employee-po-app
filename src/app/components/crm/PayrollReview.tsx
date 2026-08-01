@@ -18,7 +18,7 @@ interface DayDetail {
   date: string; dow: number; sunday: boolean; holiday: string | null; present: boolean;
   in_min: number | null; out_min: number | null; kind: string;
   late_min?: number; counted_late_min?: number; undertime_min?: number; ot_hours?: number;
-  net_hours?: number; mult?: number; amount?: number; eligible?: boolean; prior_working_day?: string | null; note?: string;
+  net_hours?: number; mult?: number; amount?: number; half_basis?: number; eligible?: boolean; prior_working_day?: string | null; note?: string;
 }
 interface Breakdown {
   reference: any; totals: any; deductions: any; pay: any; days: DayDetail[];
@@ -41,7 +41,7 @@ const minToTime = (m: number | null) => {
 };
 const KIND_LABEL: Record<string, string> = {
   work: 'Worked', absent: 'Absent', sunday_worked: 'Sunday worked', sunday_off: 'Sunday (off)',
-  holiday_worked: 'Holiday worked', holiday_not_worked: 'Holiday (not worked)',
+  holiday_worked: 'Holiday worked', holiday_not_worked: 'Holiday (not worked)', no_out_half: 'No OUT (½ day)',
 };
 
 export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accounting' }) {
@@ -233,6 +233,7 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
         <div>
           <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#7a6a0c', marginBottom: '6px' }}>Totals</div>
           <Row k="Days present" v={b.totals?.days_present} />
+          {b.totals?.half_days ? <Row k="Half days (no OUT)" v={b.totals.half_days} /> : null}
           <Row k="Absent days" v={b.totals?.absent_days} />
           <Row k="Late (raw / counted min)" v={`${b.totals?.late_minutes} / ${b.totals?.counted_late_minutes}`} />
           <Row k="Undertime (min)" v={b.totals?.undertime_minutes} />
@@ -259,7 +260,7 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
                   <td style={td}>{KIND_LABEL[d.kind] || d.kind}{d.holiday ? ` (${d.holiday})` : ''}</td>
                   <td style={td}>{minToTime(d.in_min)}</td>
                   <td style={td}>{minToTime(d.out_min)}</td>
-                  <td style={td}>{d.kind === 'work' ? (d.late_min ? `${d.late_min}→${d.counted_late_min}m` : '0') : '—'}</td>
+                  <td style={td}>{(d.kind === 'work' || d.kind === 'no_out_half') ? (d.late_min ? `${d.late_min}→${d.counted_late_min}m` : '0') : '—'}</td>
                   <td style={td}>{d.kind === 'work' ? (d.undertime_min ? `${d.undertime_min}m` : '0') : '—'}</td>
                   <td style={td}>{d.kind === 'work' ? (d.ot_hours ? `${d.ot_hours}h` : '0') : '—'}</td>
                   <td style={{ ...td, fontVariantNumeric: 'tabular-nums' }}>{d.amount ? peso(d.amount) : (d.kind === 'holiday_not_worked' && !d.eligible ? '—' : (d.amount === 0 && d.kind !== 'work' && d.kind !== 'absent' ? peso(0) : '—'))}</td>

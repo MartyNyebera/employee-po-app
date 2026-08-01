@@ -4811,18 +4811,13 @@ async function computePayroll(periodId) {
   if (period.status !== 'locked') return { error: 'not_locked' };
   const start = period.start_date, end = period.end_date;
 
-  // H2: refuse to compute while any day in the period has an unresolved missing punch — an IN with
-  // no OUT ('no_out') or an OUT with no IN ('incomplete'). Such a day mispays both ways: on a
-  // scheduled day a missing OUT would pay a full base with zero undertime, and on a Sunday/holiday a
-  // missing OUT pays ₱0 premium. Admin must correct the punch time on the Attendance Sheet (which is
-  // logged) before payroll can run. We never silently pay a flagged day.
-  const unresolved = (await query(
-    `SELECT p.full_name, to_char(ad.work_date,'YYYY-MM-DD') AS d, ad.status
-       FROM attendance_days ad JOIN persons p ON p.id = ad.person_id
-      WHERE ad.work_date BETWEEN $1 AND $2 AND ad.status IN ('no_out', 'incomplete')
-      ORDER BY p.full_name ASC, ad.work_date ASC`, [start, end])).rows;
-  if (unresolved.length > 0) return { error: 'unresolved_punches', unresolved };
-
+  // Missing-punch handling (was the H2 "refuse to compute" block): compute now always proceeds.
+  //   • Missing OUT (IN but no OUT, status no_out): paid as a HALF day (see the scheduled-day
+  //     branch below) — half the daily basis, minus that day's late deduction if late; no
+  //     undertime/OT/premium; not counted as a full present day. The day stays flagged on the
+  //     sheet, so admin can still set the real OUT time (which then computes as a normal full day).
+  //   • Missing IN (OUT but no IN, status incomplete): no proof of arrival, so it counts as an
+  //     absent day (₱0) and stays flagged for admin to correct — handled like any absence, not paid.
   const s = (await query('SELECT * FROM payroll_settings WHERE id = 1')).rows[0];
   if (!s) return { error: 'no_settings' };
   const paidHours = Number(s.paid_hours), lunch = Number(s.lunch_hours), divisor = Number(s.monthly_divisor);
@@ -4874,7 +4869,7 @@ async function computePayroll(periodId) {
     const perMin = hourly / 60;
     const pAtt = attMap[person.id] || {};
 
-    let daysPresent = 0, absentDays = 0, otHours = 0, sundayPay = 0, holidayPay = 0;
+    let daysPresent = 0, halfDays = 0, absentDays = 0, otHours = 0, sundayPay = 0, holidayPay = 0;
     let lateMin = 0, countedLate = 0, undertimeMin = 0;
     const perDay = [];
 
@@ -4915,15 +4910,26 @@ async function computePayroll(periodId) {
       } else {
         // scheduled working day
         if (hasIN) {
-          daysPresent++;
           const rawLate = Math.max(0, inMin - startMin);
           const counted = rawLate <= grace ? 0 : (rawLate < maxStart ? midDed : maxDed);
+          // Late applies to both full and half days — it flows into the late-deduction bucket.
           lateMin += rawLate; countedLate += counted;
-          const ut = (outMin !== null && outMin < endMin) ? (endMin - outMin) : 0;
-          undertimeMin += ut;
-          const oth = (person.ot_eligible && row.ot_approved && outMin !== null && outMin > endMin) ? (outMin - endMin) / 60 : 0;
-          otHours += oth;
-          Object.assign(day, { kind: 'work', late_min: rawLate, counted_late_min: counted, undertime_min: ut, ot_hours: round2(oth) });
+          if (outMin === null) {
+            // Missing OUT (no_out): HALF day. Contributes half the daily basis to base (via the
+            // half-day count below), and the day's late is already in countedLate — so the net for
+            // the day is (dailyBasis/2 − lateDeduction). NO undertime (no OUT to measure) and NO OT.
+            // Not counted as a full present day, so there is no double-pay. Day stays flagged on the
+            // sheet; if admin sets the real OUT time it recomputes as a normal full day.
+            halfDays++;
+            Object.assign(day, { kind: 'no_out_half', late_min: rawLate, counted_late_min: counted, undertime_min: 0, ot_hours: 0, half_basis: round2(dailyBasis / 2), amount: round2(dailyBasis / 2), note: 'no OUT — paid half day' });
+          } else {
+            daysPresent++;
+            const ut = outMin < endMin ? (endMin - outMin) : 0;
+            undertimeMin += ut;
+            const oth = (person.ot_eligible && row.ot_approved && outMin > endMin) ? (outMin - endMin) / 60 : 0;
+            otHours += oth;
+            Object.assign(day, { kind: 'work', late_min: rawLate, counted_late_min: counted, undertime_min: ut, ot_hours: round2(oth) });
+          }
         } else {
           absentDays++;
           day.kind = 'absent';
@@ -4933,7 +4939,13 @@ async function computePayroll(periodId) {
     }
 
     const otPay = otHours * hourly * otMult;
-    const basePay = type === 'daily' ? rate * daysPresent : (rate / 2) - (dailyBasis * absentDays);
+    // Base includes a half day's basis for each missing-OUT day (no full-day pay for it). The late
+    // on those days is in the deduction bucket below, so the net effect is (½ basis − late) per
+    // half day. Monthly: a half day likewise deducts ½ of the daily-equivalent (like half an
+    // absence), and its late is deducted the same way.
+    const basePay = type === 'daily'
+      ? rate * (daysPresent + 0.5 * halfDays)
+      : (rate / 2) - (dailyBasis * absentDays) - (dailyBasis * 0.5 * halfDays);
     const lateUndertimeDed = (countedLate + undertimeMin) * perMin;
     const sss = Number(person.sss_ee) || 0, phic = Number(person.philhealth_ee) || 0, pgib = Number(person.pagibig_ee) || 0, wtax = Number(person.withholding) || 0;
     const bale = baleMap[person.id] || 0;
@@ -4950,7 +4962,7 @@ async function computePayroll(periodId) {
         work_start: s.work_start, work_end: s.work_end, special_holiday_not_worked_paid: specialNotWorkedPaid,
       },
       totals: {
-        days_present: daysPresent, absent_days: absentDays, late_minutes: lateMin, counted_late_minutes: countedLate,
+        days_present: daysPresent, half_days: halfDays, absent_days: absentDays, late_minutes: lateMin, counted_late_minutes: countedLate,
         undertime_minutes: undertimeMin, ot_hours: round2(otHours),
       },
       deductions: { late_undertime: round2(lateUndertimeDed), sss_ee: round2(sss), philhealth_ee: round2(phic), pagibig_ee: round2(pgib), withholding: round2(wtax), bale: round2(bale), total: round2(deductions) },
@@ -5003,14 +5015,6 @@ app.post('/api/payroll/periods/:id/compute', requireRole(['admin']), async (req,
     if (r.error === 'not_found') return res.status(404).json({ error: 'Pay period not found' });
     if (r.error === 'not_locked') return res.status(400).json({ error: 'Payroll can only be computed for a LOCKED pay period. Lock it on the Attendance Sheet first.' });
     if (r.error === 'no_settings') return res.status(400).json({ error: 'Payroll settings are missing.' });
-    if (r.error === 'unresolved_punches') {
-      const list = r.unresolved.map(u => `${u.full_name} — ${u.d} (${u.status === 'no_out' ? 'missing OUT' : 'missing IN'})`);
-      const preview = list.slice(0, 8).join('; ') + (list.length > 8 ? ` …and ${list.length - 8} more` : '');
-      return res.status(400).json({
-        error: `Payroll blocked — ${list.length} day(s) have a missing punch. Fix these on the Attendance Sheet first (correct the IN/OUT time), then compute again: ${preview}`,
-        unresolved: r.unresolved,
-      });
-    }
     res.json({ ok: true, period: r.period, count: r.count, lines: r.lines });
   } catch (err) {
     res.status(500).json({ error: err.message });
