@@ -92,8 +92,8 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
     if (!r.ok) toast.error(r.error || 'Could not open the payslip');
   };
   const printAll = () => {
-    if (!period || lines.length === 0) return;
-    const r = printPayslips(period, lines as any);
+    if (!period || filtered.length === 0) return;
+    const r = printPayslips(period, filtered as any);
     if (!r.ok) toast.error(r.error || 'Could not open the payslips');
   };
 
@@ -113,9 +113,10 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
         </div>
         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
           {lines.length > 0 && (
-            <button style={{ ...S.rowBtn, padding: '9px 14px', fontWeight: 600 }}
-              onClick={printAll} title="Print every payslip in this period (2 per A4 page)">
-              <Printer size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />Print all payslips
+            <button style={{ ...S.rowBtn, padding: '9px 14px', fontWeight: 600, opacity: filtered.length === 0 ? 0.55 : 1, cursor: filtered.length === 0 ? 'default' : 'pointer' }}
+              onClick={printAll} disabled={filtered.length === 0}
+              title={search ? `Print the ${filtered.length} filtered payslip${filtered.length === 1 ? '' : 's'} (2 per A4 page)` : 'Print every payslip in this period (2 per A4 page)'}>
+              <Printer size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />Print all payslips{search && filtered.length !== lines.length ? ` (${filtered.length})` : ''}
             </button>
           )}
           {role === 'admin' && (

@@ -69,7 +69,6 @@ const PAYSLIP_CSS = `
   .ph { text-align: center; margin-bottom: 4px; }
   .co { font-size: 12.5pt; font-weight: bold; letter-spacing: .2px; }
   .ln { font-size: 8pt; line-height: 1.35; }
-  .title { text-align: center; font-size: 10.5pt; font-weight: bold; letter-spacing: 4px; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 3px 0; margin: 7px 0 9px; }
   table { border-collapse: collapse; width: 100%; }
   .meta td { font-size: 8.5pt; padding: 2px 4px; vertical-align: bottom; }
   .meta .k { font-weight: bold; white-space: nowrap; width: 1%; padding-right: 6px; }
@@ -120,9 +119,7 @@ function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
       <div class="ln">Tel. No. (043)-741-2023</div>
       <div class="ln">Email: kimoel_leotagle@yahoo.com</div>
     </div>
-    <div class="title">PAYSLIP</div>
-
-    <table class="meta"><tbody>
+    <table class="meta" style="margin-top:8px"><tbody>
       <tr>
         <td class="k">Employee:</td><td class="v">${esc(l.full_name)}</td>
         <td class="k">Pay Period:</td><td class="v">${esc(payPeriodLabel(period.start_date, period.end_date))}</td>
@@ -168,7 +165,7 @@ function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
     </div>
 
     <div class="sign">
-      <div><div class="line">Prepared By</div></div>
+      <div class="spacer"></div>
       <div><div class="line">Received By</div></div>
     </div>
     <div class="foot">Computer generated payslip — ${esc(payPeriodLabel(period.start_date, period.end_date))}</div>
