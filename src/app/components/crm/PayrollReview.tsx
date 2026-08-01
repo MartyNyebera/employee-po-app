@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Calculator, Search, FileSearch, Lock } from 'lucide-react';
+import { Calculator, Search, FileSearch, Lock, Printer } from 'lucide-react';
 import { toast } from 'sonner';
 import { S, Modal, TextInput, GhostBtn, pill, peso } from './crmKit';
+import { printPayslip, printPayslips } from '../../lib/payslipPrint';
 
 // ============================================================================
 // Payroll Review (Phase 4b) — shared by the Admin dashboard and the Accounting portal. Shows the
@@ -83,6 +84,19 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
     } catch (e: any) { toast.error(e.message || 'Compute failed'); } finally { setBusy(false); }
   };
 
+  // Print pulls straight from the loaded payroll_lines (no recompute). Both admin and accounting
+  // can print. "Print all" covers everyone in the period; the per-row button prints one.
+  const printOne = (l: Line) => {
+    if (!period) return;
+    const r = printPayslip(period, l as any);
+    if (!r.ok) toast.error(r.error || 'Could not open the payslip');
+  };
+  const printAll = () => {
+    if (!period || lines.length === 0) return;
+    const r = printPayslips(period, lines as any);
+    if (!r.ok) toast.error(r.error || 'Could not open the payslips');
+  };
+
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
     return lines.filter(l => !q || l.full_name.toLowerCase().includes(q) || (l.department || '').toLowerCase().includes(q) || (l.position || '').toLowerCase().includes(q));
@@ -95,14 +109,22 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', gap: '16px', flexWrap: 'wrap' }}>
         <div>
           <h1 style={S.h1}>Payroll</h1>
-          <p style={S.sub}>Computed pay per person for a locked period, with a full line-by-line breakdown to verify against a payslip. Rates and rules come from Payroll Settings and the roster. No payslip printing yet.</p>
+          <p style={S.sub}>Computed pay per person for a locked period, with a full line-by-line breakdown to verify against a payslip. Rates and rules come from Payroll Settings and the roster. Print payslips once the numbers check out.</p>
         </div>
-        {role === 'admin' && (
-          <button style={{ ...S.addBtn, opacity: (!locked || busy) ? 0.55 : 1, cursor: (!locked || busy) ? 'default' : 'pointer' }}
-            onClick={compute} disabled={!locked || busy}>
-            <Calculator size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />{busy ? 'Computing…' : 'Compute payroll'}
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+          {lines.length > 0 && (
+            <button style={{ ...S.rowBtn, padding: '9px 14px', fontWeight: 600 }}
+              onClick={printAll} title="Print every payslip in this period (2 per A4 page)">
+              <Printer size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />Print all payslips
+            </button>
+          )}
+          {role === 'admin' && (
+            <button style={{ ...S.addBtn, opacity: (!locked || busy) ? 0.55 : 1, cursor: (!locked || busy) ? 'default' : 'pointer' }}
+              onClick={compute} disabled={!locked || busy}>
+              <Calculator size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />{busy ? 'Computing…' : 'Compute payroll'}
+            </button>
+          )}
+        </div>
       </div>
 
       <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -153,8 +175,9 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
                     <td style={{ ...S.td, fontWeight: 600 }}>{peso(l.gross)}</td>
                     <td style={S.td}>{peso(totalDed)}</td>
                     <td style={{ ...S.td, fontWeight: 700, color: '#000' }}>{peso(l.net)}</td>
-                    <td style={{ ...S.td, textAlign: 'right' }}>
-                      <button title="Line-by-line breakdown" style={S.rowBtn} onClick={() => setDetail(l)}><FileSearch size={14} /></button>
+                    <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <button title="Print payslip" style={S.rowBtn} onClick={() => printOne(l)}><Printer size={14} /></button>
+                      <button title="Line-by-line breakdown" style={{ ...S.rowBtn, marginLeft: '6px' }} onClick={() => setDetail(l)}><FileSearch size={14} /></button>
                     </td>
                   </tr>
                 );
@@ -272,7 +295,7 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
         <span style={{ fontWeight: 700, fontSize: '15px' }}>NET PAY</span>
         <span style={{ fontWeight: 800, fontSize: '18px', fontVariantNumeric: 'tabular-nums' }}>{peso(pay.net)}</span>
       </div>
-      <p style={{ fontSize: '11px', color: '#8a8a8a', marginTop: '12px' }}>Computed {line.computed_at ? new Date(line.computed_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }) : ''}. Late shows raw→counted minutes. Sunday/holiday amounts use net hours (worked span − lunch). No payslip printing yet.</p>
+      <p style={{ fontSize: '11px', color: '#8a8a8a', marginTop: '12px' }}>Computed {line.computed_at ? new Date(line.computed_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }) : ''}. Late shows raw→counted minutes. Sunday/holiday amounts use net hours (worked span − lunch).</p>
     </Modal>
   );
 }
