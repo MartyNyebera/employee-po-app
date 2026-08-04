@@ -9,6 +9,7 @@ import ErrorBoundary from '../components/ErrorBoundary';
 import { PageErrorFallback } from '../components/PageErrorFallback';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { confirmDialog } from '../lib/confirm';
+import { allowedUnitsForName } from '../lib/inventoryUnits';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { printPurchaseOrder, parsePOLineItems } from '../lib/orderPrint';
 import { printReceivingReport, type ReceivedLine } from '../lib/deliveryReceiptPrint';
@@ -200,6 +201,15 @@ function AddItemModal({ onClose, onSaved, title, subtitle, initial, save: saveOv
   const [saving, setSaving] = useState(false);
   const set = (k: string, v: string) => setF(p => ({ ...p, [k]: v }));
 
+  // The item name (type) decides the Unit choices: a matching rule limits the dropdown to those
+  // units, otherwise the default UNITS list is used. Snap to the first allowed unit if needed.
+  const allowedUnits = allowedUnitsForName(f.itemName);
+  useEffect(() => {
+    const a = allowedUnitsForName(f.itemName);
+    if (a && !a.includes(f.unit)) setF(p => ({ ...p, unit: a[0] }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [f.itemName]);
+
   const save = async () => {
     if (!f.itemName.trim()) { toast.error('Item name is required'); return; }
     setSaving(true);
@@ -237,7 +247,7 @@ function AddItemModal({ onClose, onSaved, title, subtitle, initial, save: saveOv
               <label className="block text-sm font-medium text-gray-700 mb-1">Unit</label>
               <select value={f.unit} onChange={e => set('unit', e.target.value)}
                 className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500">
-                {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                {(allowedUnits || UNITS).map(u => <option key={u} value={u}>{u}</option>)}
               </select>
             </div>
             <div>
@@ -268,6 +278,15 @@ function UpdateItemModal({ item, onClose, onSaved }: { item: InventoryItem; onCl
   });
   const [saving, setSaving] = useState(false);
   const set = (k: string, v: string) => setF(p => ({ ...p, [k]: v }));
+
+  // The item's name (type) decides the Unit choices — same rule config as the other forms. The name
+  // isn't edited here, so it's a one-time computation; snap the stored unit to the first allowed one
+  // if it isn't in the allowed set.
+  const allowedUnits = allowedUnitsForName(item.itemName);
+  useEffect(() => {
+    if (allowedUnits && !allowedUnits.includes(f.unit)) setF(p => ({ ...p, unit: allowedUnits[0] }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const save = async () => {
     setSaving(true);
@@ -303,7 +322,7 @@ function UpdateItemModal({ item, onClose, onSaved }: { item: InventoryItem; onCl
               <label className="block text-sm font-medium text-gray-700 mb-1">Unit</label>
               <select value={f.unit} onChange={e => set('unit', e.target.value)}
                 className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500">
-                {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                {(allowedUnits || UNITS).map(u => <option key={u} value={u}>{u}</option>)}
               </select>
             </div>
             <div>

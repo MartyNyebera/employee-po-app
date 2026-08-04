@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, Package, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { fetchApi } from '../api/client';
+import { allowedUnitsForName } from '../lib/inventoryUnits';
 
 interface EditInventoryModalSimpleProps {
   isOpen: boolean;
@@ -31,6 +32,16 @@ export function EditInventoryModalSimple({ isOpen, onClose, item, onSuccess }: E
     unitCost: item.unitCost
   });
   const [loading, setLoading] = useState(false);
+
+  // The item name (type) decides the Unit choices. When a rule matches, Unit becomes a dropdown
+  // limited to those units; otherwise it stays free text. If the current unit isn't allowed, snap to
+  // the first allowed unit.
+  const allowedUnits = allowedUnitsForName(formData.itemName);
+  useEffect(() => {
+    const a = allowedUnitsForName(formData.itemName);
+    if (a && !a.includes(formData.unit)) setFormData(prev => ({ ...prev, unit: a[0] }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.itemName]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -175,13 +186,23 @@ export function EditInventoryModalSimple({ isOpen, onClose, item, onSuccess }: E
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Unit
               </label>
-              <input
-                type="text"
-                value={formData.unit}
-                onChange={(e) => handleChange('unit', e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="mm, pcs, kg…"
-              />
+              {allowedUnits ? (
+                <select
+                  value={formData.unit}
+                  onChange={(e) => handleChange('unit', e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  {allowedUnits.map((u) => <option key={u} value={u}>{u}</option>)}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={formData.unit}
+                  onChange={(e) => handleChange('unit', e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="mm, pcs, kg…"
+                />
+              )}
             </div>
           </div>
 

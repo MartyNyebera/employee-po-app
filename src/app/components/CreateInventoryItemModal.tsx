@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { allowedUnitsForName } from '../lib/inventoryUnits';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -32,6 +33,15 @@ export function CreateInventoryItemModal({ onClose, onCreated }: CreateInventory
   });
 
   const [loading, setLoading] = useState(false);
+
+  // The item name (type) decides the Unit choices. When a rule matches, the Unit dropdown is limited
+  // to those units; otherwise it keeps the default list. Snap to the first allowed unit if needed.
+  const allowedUnits = allowedUnitsForName(form.itemName);
+  useEffect(() => {
+    const a = allowedUnitsForName(form.itemName);
+    if (a && !a.includes(form.unit)) setForm(prev => ({ ...prev, unit: a[0] }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.itemName]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -145,13 +155,19 @@ export function CreateInventoryItemModal({ onClose, onCreated }: CreateInventory
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="pcs">Pieces</SelectItem>
-                    <SelectItem value="box">Box</SelectItem>
-                    <SelectItem value="kg">Kilograms</SelectItem>
-                    <SelectItem value="liters">Liters</SelectItem>
-                    <SelectItem value="meters">Meters</SelectItem>
-                    <SelectItem value="sets">Sets</SelectItem>
-                    <SelectItem value="units">Units</SelectItem>
+                    {allowedUnits ? (
+                      allowedUnits.map((u) => <SelectItem key={u} value={u}>{u}</SelectItem>)
+                    ) : (
+                      <>
+                        <SelectItem value="pcs">Pieces</SelectItem>
+                        <SelectItem value="box">Box</SelectItem>
+                        <SelectItem value="kg">Kilograms</SelectItem>
+                        <SelectItem value="liters">Liters</SelectItem>
+                        <SelectItem value="meters">Meters</SelectItem>
+                        <SelectItem value="sets">Sets</SelectItem>
+                        <SelectItem value="units">Units</SelectItem>
+                      </>
+                    )}
                   </SelectContent>
                 </Select>
               </div>
