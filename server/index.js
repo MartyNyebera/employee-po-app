@@ -6386,9 +6386,19 @@ app.post('/api/purchase-requests', requireAuth, async (req, res) => {
     if (items.length === 0) return res.status(400).json({ error: 'At least one item with a description and quantity is required' });
     const total = items.reduce((t, it) => t + (Number(it.quantity) || 0) * (Number(it.unitCost) || 0), 0);
 
-    // Requester identity comes from the token, never the client body.
-    const employeeId = req.user?.id ?? null;
+    // Requester identity comes from the token, never the client body. The PR form is shared across
+    // portals (admin, warehouse, logistics, accounting, production), but purchase_requests.employee_id
+    // is an FK to employee_accounts — where only Production accounts live. So keep the id ONLY when it
+    // matches a real employee_accounts row (a Production employee); for any other filer store NULL and
+    // rely on employee_name for attribution. This prevents the FK violation while still recording who
+    // filed the request.
     const employeeName = req.user?.name || 'Unknown';
+    let employeeId = null;
+    const rawId = req.user?.id;
+    if (rawId !== undefined && rawId !== null && String(rawId).trim() !== '' && Number.isInteger(Number(rawId))) {
+      const chk = await query('SELECT 1 FROM employee_accounts WHERE id = $1', [Number(rawId)]);
+      if (chk.rows[0]) employeeId = Number(rawId);
+    }
 
     // Generate PR-YYYY-#### from the current max.
     const year = new Date().getFullYear();
