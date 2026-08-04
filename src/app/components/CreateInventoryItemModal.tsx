@@ -134,6 +134,7 @@ export function CreateInventoryItemModal({ onClose, onCreated }: CreateInventory
                   onChange={(e) => setForm({ ...form, quantity: e.target.value })}
                   placeholder="0"
                   min="0"
+                  step="0.01"
                   className="w-full"
                 />
               </div>

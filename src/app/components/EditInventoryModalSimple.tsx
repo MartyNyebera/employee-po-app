@@ -154,10 +154,11 @@ export function EditInventoryModalSimple({ isOpen, onClose, item, onSuccess }: E
                 <input
                   type="number"
                   value={formData.quantity}
-                  onChange={(e) => handleChange('quantity', parseInt(e.target.value) || 0)}
+                  onChange={(e) => handleChange('quantity', parseFloat(e.target.value) || 0)}
                   className={`w-full pl-4 ${formData.unit ? 'pr-14' : 'pr-4'} py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent`}
                   placeholder="0"
                   min="0"
+                  step="0.01"
                 />
                 {formData.unit ? (
                   <span className="absolute inset-y-0 right-3 flex items-center text-sm text-gray-400 pointer-events-none">
