@@ -31,13 +31,63 @@ const pool = new Pool({
   ssl: useSsl ? { rejectUnauthorized: false } : false,
 });
 
+// Handle errors on IDLE pooled clients (a hosted DB like Supabase drops idle connections after a
+// network blip or reboot). Without this listener the pg Pool re-emits 'error' with no handler,
+// which Node turns into an uncaught exception — previously only survived because of the global
+// uncaughtException catch-all. Handling it here lets the pool quietly discard the dead client; the
+// next query() opens a fresh connection.
+pool.on('error', (err) => {
+  console.error('idle pool client error:', err.message);
+});
+
+// A transient connectivity error (dropped/reset idle connection, connect timeout) that is safe to
+// retry once: the statement almost certainly never ran, and query() only issues single, auto-
+// committed statements (multi-statement transactions use getClient() and manage their own retries).
+function isTransientConnError(err) {
+  const msg = (err && err.message) || '';
+  const code = err && err.code;
+  return code === 'ECONNRESET' || code === 'ETIMEDOUT' ||
+    /Connection terminated|ECONNRESET|connection timeout|timeout exceeded when trying to connect/i.test(msg);
+}
+
 export async function query(text, params) {
   try {
     return await pool.query(text, params);
   } catch (err) {
+    // One automatic retry on a transient connection drop, so a brief blip is a transparent success
+    // instead of a 500. A fresh connection is taken from the pool on the retry.
+    if (isTransientConnError(err)) {
+      console.warn('Database transient error — retrying once:', err.message);
+      await new Promise((r) => setTimeout(r, 250));
+      try {
+        return await pool.query(text, params);
+      } catch (err2) {
+        console.error('Database query error (after retry):', err2.message);
+        throw err2;
+      }
+    }
     console.error('Database query error:', err.message);
     throw err;
   }
+}
+
+// Startup DB-readiness gate: probe SELECT 1 with retries so a boot-before-network start (e.g. the
+// Pi's Wi-Fi not up yet after a power cycle) waits for connectivity instead of coming up DB-less.
+// Returns true once reachable; after exhausting retries it returns false and the caller starts
+// anyway (query() retries + the idle-error handler recover once the network returns).
+export async function waitForDbReady({ retries = 12, delayMs = 3000 } = {}) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      await pool.query('SELECT 1');
+      console.log(`✅ Database reachable (attempt ${attempt}/${retries}).`);
+      return true;
+    } catch (err) {
+      console.warn(`⏳ Database not ready (attempt ${attempt}/${retries}): ${err.message}`);
+      if (attempt < retries) await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  console.error(`❌ Database still unreachable after ${retries} attempts — starting anyway; queries will retry as connectivity returns.`);
+  return false;
 }
 
 // Checkout a dedicated pooled client for a multi-statement transaction.

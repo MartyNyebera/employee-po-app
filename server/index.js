@@ -6,7 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
-import { query, getClient, testConnection, createNewTables } from './db.js';
+import { query, getClient, testConnection, createNewTables, waitForDbReady } from './db.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Global error handlers to prevent crashes
@@ -1283,11 +1283,9 @@ app.post('/api/auth/register', async (req, res) => {
 // POST /api/auth/login
 app.post('/api/auth/login', async (req, res) => {
   try {
-    // Safe request logging
-    console.log(`🔑 Login attempt: ${req.method} ${req.path}`);
-    console.log(`📋 Content-Type: ${req.headers['content-type'] || 'missing'}`);
-    console.log(`📧 Email present: ${!!req.body?.email}`);
-    
+    // Minimal request log — no email/content-type (PII + noise).
+    console.log('🔑 Login attempt');
+
     const { email, password } = req.body;
 
     if (!email || !password) {
@@ -1331,7 +1329,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(403).json({ error: 'This account has been deactivated', reason: 'ACCOUNT_DEACTIVATED' });
     }
 
-    console.log(`✅ Login successful for: ${email.toLowerCase()}`);
+    console.log(`✅ Login successful (role: ${user.role})`);
     const isSuperAdmin = !!user.is_super_admin;
     // `id` alongside `userId`: every portal login signs `id` and all shared code reads it, so
     // omitting it here is what made `req.user.id` undefined for admins. requireAuth normalises
@@ -7317,6 +7315,9 @@ const startServer = async () => {
   if (!process.env.DATABASE_URL) {
     console.log('⚠️ DATABASE_URL not set - starting server without database (login will be limited)');
   } else {
+    // Wait for the database before listening, so a boot-before-network start (Pi Wi-Fi not up yet)
+    // recovers on its own instead of coming up DB-less and needing a manual restart.
+    await waitForDbReady();
     try {
       await createNewTables();
       console.log('✅ Database connection established');
