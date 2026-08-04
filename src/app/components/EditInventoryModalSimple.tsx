@@ -76,7 +76,7 @@ export function EditInventoryModalSimple({ isOpen, onClose, item, onSuccess }: E
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
           <div className="flex items-center gap-3">
@@ -141,20 +141,30 @@ export function EditInventoryModalSimple({ isOpen, onClose, item, onSuccess }: E
             />
           </div>
 
-          {/* Quantity and Unit */}
+          {/* Quantity (with unit suffix) and Unit */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Quantity
               </label>
-              <input
-                type="number"
-                value={formData.quantity}
-                onChange={(e) => handleChange('quantity', parseInt(e.target.value) || 0)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="0"
-                min="0"
-              />
+              {/* The suffix mirrors the item's Unit so the quantity reads clearly as its unit —
+                  e.g. "120 mm". Change the Unit field and this follows it. When Unit is blank we
+                  show no suffix (a unit-less item is more likely a plain count than millimeters). */}
+              <div className="relative">
+                <input
+                  type="number"
+                  value={formData.quantity}
+                  onChange={(e) => handleChange('quantity', parseInt(e.target.value) || 0)}
+                  className={`w-full pl-4 ${formData.unit ? 'pr-14' : 'pr-4'} py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent`}
+                  placeholder="0"
+                  min="0"
+                />
+                {formData.unit ? (
+                  <span className="absolute inset-y-0 right-3 flex items-center text-sm text-gray-400 pointer-events-none">
+                    {formData.unit}
+                  </span>
+                ) : null}
+              </div>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -165,53 +175,56 @@ export function EditInventoryModalSimple({ isOpen, onClose, item, onSuccess }: E
                 value={formData.unit}
                 onChange={(e) => handleChange('unit', e.target.value)}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="pcs, kg, etc."
+                placeholder="mm, pcs, kg…"
               />
             </div>
           </div>
 
-          {/* Location */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Location
-            </label>
-            <input
-              type="text"
-              value={formData.location}
-              onChange={(e) => handleChange('location', e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="Warehouse, Shelf, etc."
-            />
+          {/* Location + Supplier */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Location
+              </label>
+              <input
+                type="text"
+                value={formData.location}
+                onChange={(e) => handleChange('location', e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Warehouse, Shelf, etc."
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Supplier
+              </label>
+              <input
+                type="text"
+                value={formData.supplier}
+                onChange={(e) => handleChange('supplier', e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Supplier name"
+              />
+            </div>
           </div>
 
-          {/* Supplier */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Supplier
-            </label>
-            <input
-              type="text"
-              value={formData.supplier}
-              onChange={(e) => handleChange('supplier', e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="Supplier name"
-            />
-          </div>
-
-          {/* Unit Cost */}
+          {/* Unit Cost (peso) */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Unit Cost
             </label>
-            <input
-              type="number"
-              value={formData.unitCost}
-              onChange={(e) => handleChange('unitCost', parseFloat(e.target.value) || 0)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="0.00"
-              step="0.01"
-              min="0"
-            />
+            <div className="relative">
+              <span className="absolute inset-y-0 left-3 flex items-center text-sm text-gray-400 pointer-events-none">₱</span>
+              <input
+                type="number"
+                value={formData.unitCost}
+                onChange={(e) => handleChange('unitCost', parseFloat(e.target.value) || 0)}
+                className="w-full pl-8 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="0.00"
+                step="0.01"
+                min="0"
+              />
+            </div>
           </div>
 
           {/* Actions */}
@@ -226,7 +239,7 @@ export function EditInventoryModalSimple({ isOpen, onClose, item, onSuccess }: E
             </button>
             <button
               type="submit"
-              className="flex-1 px-4 py-2 bg-blue-600 text-black rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               disabled={loading}
             >
               {loading ? (
