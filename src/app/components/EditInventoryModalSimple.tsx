@@ -76,9 +76,10 @@ export function EditInventoryModalSimple({ isOpen, onClose, item, onSuccess }: E
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200">
+      {/* Flex column capped at the viewport: header + footer stay pinned, the body scrolls. */}
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] flex flex-col overflow-hidden">
+        {/* Header (pinned) */}
+        <div className="flex items-center justify-between p-6 border-b border-gray-200 shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
               <Package className="w-5 h-5 text-blue-600" />
@@ -96,8 +97,11 @@ export function EditInventoryModalSimple({ isOpen, onClose, item, onSuccess }: E
           </button>
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        {/* Form: flex column so the fields scroll and the footer stays pinned. min-h-0 lets the
+            scroll area shrink within the flex parent. */}
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+          {/* Scrollable body */}
+          <div className="p-6 space-y-4 overflow-y-auto flex-1">
           {/* Item Code (Read-only) */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -227,9 +231,10 @@ export function EditInventoryModalSimple({ isOpen, onClose, item, onSuccess }: E
               />
             </div>
           </div>
+          </div>{/* end scrollable body */}
 
-          {/* Actions */}
-          <div className="flex gap-3 pt-4">
+          {/* Actions (pinned footer) */}
+          <div className="flex gap-3 p-6 border-t border-gray-200 bg-white shrink-0">
             <button
               type="button"
               onClick={onClose}
