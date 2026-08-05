@@ -251,7 +251,7 @@ export function CreatePurchaseRequestForm({ fetchApi, session, onSubmitted }: {
 
   const handleSubmit = async () => {
     if (!projectId) { toast.error('Choose what this request is for'); return; }
-    if (!neededBy) { toast.error('Set the date this is needed by'); return; }
+    if (!neededBy) { toast.error('Set the required date'); return; }
     if (lineItems.length === 0) { toast.error('Add at least one item'); return; }
     // #3 — a labor line has no qty/unit; it only needs a description and a cost. Item lines
     // still require description, quantity, unit and est. cost.
@@ -319,7 +319,7 @@ export function CreatePurchaseRequestForm({ fetchApi, session, onSubmitted }: {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Needed By <span className="text-red-500">*</span></label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Required Date <span className="text-red-500">*</span></label>
               <input type="date" value={neededBy} onChange={(e) => setNeededBy(e.target.value)}
                 className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>

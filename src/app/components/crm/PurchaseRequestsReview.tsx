@@ -237,7 +237,7 @@ function PREditModal({ pr, onClose, onSaved }: { pr: PurchaseRequest; onClose: (
     <Modal title={`Edit ${pr.prNumber}`} onClose={onClose} wide
       footer={<><GhostBtn onClick={onClose}>Cancel</GhostBtn><PrimaryBtn onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save & re-submit'}</PrimaryBtn></>}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
-        <Field label="Needed by"><TextInput type="date" value={neededBy} onChange={e => setNeededBy(e.target.value)} /></Field>
+        <Field label="Required Date"><TextInput type="date" value={neededBy} onChange={e => setNeededBy(e.target.value)} /></Field>
         <Field label="Project"><TextInput value={pr.projectName || 'Personal use'} onChange={() => {}} disabled /></Field>
       </div>
       <div style={{ marginTop: '4px' }}>
