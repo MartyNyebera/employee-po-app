@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   FileText, ClipboardList, Package, Menu, X, Plus, Trash2, Search,
-  Clock, Calendar, AlertTriangle, PackageMinus, PackagePlus, LogOut, User, Printer, PenTool, Upload, Eraser,
+  Clock, Calendar, AlertTriangle, PackageMinus, PackagePlus, LogOut, User, Printer, PenTool, Upload, Eraser, Wrench,
   PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -12,6 +12,7 @@ import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { printWithdrawalReceipt } from '../lib/withdrawalReceiptPrint';
 import { printPurchaseRequest } from '../lib/purchaseRequestPrint';
+import { printBlankJobOrder } from '../lib/jobOrderPrint';
 import { esc } from '../lib/orderPrint';
 import { renderPrintDocument } from '../lib/printChrome';
 
@@ -23,7 +24,7 @@ import { renderPrintDocument } from '../lib/printChrome';
 // ============================================================================
 
 type RequestStatus = 'pending' | 'reviewed' | 'verified' | 'ordered' | 'approved' | 'disapproved';
-type RequestView = 'new' | 'history' | 'withdrawals' | 'itemRequests' | 'signature';
+type RequestView = 'new' | 'history' | 'withdrawals' | 'itemRequests' | 'jobOrders' | 'signature';
 
 // `description` holds the inventory item's NAME; `inventoryId` is the item it actually is.
 // The id is what lets a delivered purchase order add stock back to the right row — matching on
@@ -113,6 +114,7 @@ const NAV_ITEMS: { id: RequestView; label: string; icon: any }[] = [
   { id: 'history',      label: 'Request History',      icon: ClipboardList },
   { id: 'withdrawals',  label: 'Withdrawals Request',  icon: PackageMinus },
   { id: 'itemRequests', label: 'Item Requests',        icon: PackagePlus },
+  { id: 'jobOrders',    label: 'Job Orders',           icon: Wrench },
   { id: 'signature',    label: 'My Signature',         icon: PenTool },
 ];
 
@@ -1176,6 +1178,32 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
                     ))}
                   </div>
                 )}
+            </div>
+          )}
+
+          {view === 'jobOrders' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div>
+                  <h2 className="font-semibold text-gray-900">Job Orders</h2>
+                  <p className="text-sm text-gray-500 mt-0.5">Print a blank Job Order form to fill in by hand. Nothing is saved — it just opens the print dialog with the empty Kimoel template.</p>
+                </div>
+                <button
+                  onClick={() => {
+                    const r = printBlankJobOrder();
+                    if (!r.ok) toast.error(r.error || 'Could not open the print dialog');
+                  }}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  <Printer className="w-4 h-4" /> Print Job Order
+                </button>
+              </div>
+
+              <div className="flex flex-col items-center justify-center h-64 text-gray-400 bg-white rounded-xl border border-gray-200 text-center px-6">
+                <Wrench className="w-10 h-10 mb-3 text-gray-300" />
+                <p className="font-medium text-gray-500">Blank Job Order form</p>
+                <p className="text-xs mt-1 max-w-sm">Hit “Print Job Order” to open a fresh, empty form — Job Order #, client details, job description, schedule, and signature lines — ready to write on by hand.</p>
+              </div>
             </div>
           )}
         </main>
