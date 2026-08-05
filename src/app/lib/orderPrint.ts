@@ -64,6 +64,7 @@ export interface PrintablePO {
   approvedAt?: string | null;
   paymentTerms?: string | null;
   poType?: string | null;
+  paymentMode?: string | null;
   termsAndConditions?: string | null;
   prNumber?: string | null;
   prStatus?: string | null;
@@ -263,6 +264,10 @@ export async function printPurchaseOrder(
   // #7 — domestic vs foreign. Real column first; legacy orders read it from the description blob.
   const poTypeRaw = (po.poType || blobLine(description, 'PO Type:') || 'domestic').trim().toLowerCase();
   const poType = poTypeRaw === 'foreign' ? 'Foreign' : 'Domestic';
+  // Mode of Payment (Cash / Credit). Real column first, then the blob. Legacy orders (no mode
+  // recorded) always carried payment terms, so they resolve to Credit and keep showing them.
+  const paymentModeRaw = (po.paymentMode || blobLine(description, 'Mode of Payment:') || '').trim().toLowerCase();
+  const paymentMode = paymentModeRaw === 'cash' ? 'Cash' : 'Credit';
 
   // Section C — #12: three signatories, in the order they act. Prepared By is the purchasing
   // staffer who raised the order (processedBy); a hand-raised order with no purchasing account
@@ -339,7 +344,8 @@ export async function printPurchaseOrder(
         ${po.prNumber ? `<strong>PR Number:</strong> ${esc(po.prNumber)}<br>` : ''}
         <strong>Type:</strong> ${esc(poType)}<br>
         <strong>Delivery Date:</strong> ${esc(fmtDate(po.deliveryDate))}<br>
-        <strong>Payment Terms:</strong> ${esc(paymentTerms)}<br>
+        <strong>Mode of Payment:</strong> ${esc(paymentMode)}<br>
+        ${paymentMode === 'Credit' ? `<strong>Payment Terms:</strong> ${esc(paymentTerms)}<br>` : ''}
         <strong>Page:</strong> 1 of 1
       </div>
     </div>

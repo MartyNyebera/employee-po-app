@@ -65,7 +65,7 @@ interface PurchaseOrder {
   // Carried for the printed document. All returned by GET /purchase-orders already.
   description?: string | null; docDate?: string | null; reviewedBy?: string | null;
   supplierAddress?: string | null; supplierContact?: string | null; supplierTin?: string | null;
-  paymentTerms?: string | null; termsAndConditions?: string | null;
+  paymentTerms?: string | null; poType?: string | null; paymentMode?: string | null; termsAndConditions?: string | null;
 }
 
 // Section C — #12: a PO now carries its own two-gate status. 'rejected' means an admin or
@@ -582,6 +582,8 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
   // #4 — the buyer picks whether this order is domestic or foreign, and types the payment-terms
   // days. Both are new inputs on this form (the admin-side modal already had the type selector).
   const [poType, setPoType] = useState<'domestic' | 'foreign'>('domestic');
+  // Mode of Payment gates the terms: Cash hides Payment terms, Credit shows them.
+  const [paymentMode, setPaymentMode] = useState<'Cash' | 'Credit'>('Cash');
   const [termsDays, setTermsDays] = useState('30');
   const [saving, setSaving] = useState(false);
   const set = (k: string, v: string) => setF(p => ({ ...p, [k]: v }));
@@ -657,7 +659,9 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
           poDate: f.poDate,
           createdDate: f.poDate,
           deliveryDate: f.deliveryDate,
-          paymentTerms: terms,
+          paymentMode,
+          // Credit carries the days-based terms; Cash carries none.
+          paymentTerms: paymentMode === 'Credit' ? terms : null,
           poType,
           preparedBy: session.full_name,
         }),
@@ -712,8 +716,9 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
             </div>
           )}
 
-          {/* #4 — PO type (domestic/foreign) and the manually-typed payment-terms days. */}
-          <div className="grid grid-cols-2 gap-3">
+          {/* #4 — PO type (domestic/foreign) and Mode of Payment. Payment terms (days) only
+              appears for Credit; a Cash order carries no terms. */}
+          <div className="grid grid-cols-2 gap-3 items-start">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1 whitespace-nowrap">PO type</label>
               <select value={poType} onChange={e => setPoType(e.target.value as 'domestic' | 'foreign')} className={`${input} bg-white`}>
@@ -722,11 +727,20 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1 whitespace-nowrap">Payment terms (days)</label>
-              <input type="number" min="0" step="1" value={termsDays}
-                onChange={e => setTermsDays(e.target.value)} placeholder="30" className={input} />
-              <p className="text-xs text-gray-400 mt-1">Stored as “{terms}”.</p>
+              <label className="block text-sm font-medium text-gray-700 mb-1 whitespace-nowrap">Mode of Payment</label>
+              <select value={paymentMode} onChange={e => setPaymentMode(e.target.value as 'Cash' | 'Credit')} className={`${input} bg-white`}>
+                <option value="Cash">Cash</option>
+                <option value="Credit">Credit</option>
+              </select>
             </div>
+            {paymentMode === 'Credit' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1 whitespace-nowrap">Payment terms (days)</label>
+                <input type="number" min="0" step="1" value={termsDays}
+                  onChange={e => setTermsDays(e.target.value)} placeholder="30" className={input} />
+                <p className="text-xs text-gray-400 mt-1">Stored as “{terms}”.</p>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
