@@ -477,6 +477,11 @@ function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; 
   };
 
   const input = 'w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500';
+  // Grid-field label: reserves a consistent two-line height so a wrapping label (e.g.
+  // "Contract Price (₱)") and a single-line one both start their input on the same line.
+  // Paired with items-start on the grid, this keeps every row's inputs level regardless of
+  // label wrapping or helper text below a field.
+  const flabel = 'block text-sm font-medium text-gray-700 mb-1 leading-5 min-h-[2.5rem]';
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
@@ -493,42 +498,42 @@ function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; 
             <label className="block text-sm font-medium text-gray-700 mb-1">Project Description</label>
             <textarea value={f.description} onChange={e => set('description', e.target.value)} rows={2} className={`${input} resize-none`} />
           </div>
-          {/* items-end bottom-aligns each field so the input boxes line up even when a label
-              wraps to two lines (e.g. "Contract Price (₱)"). Rows with only single-line labels
-              stay compact. */}
-          <div className="grid grid-cols-2 gap-3 items-end">
+          {/* items-start top-aligns every field and each label reserves a fixed two-line height
+              (flabel), so inputs in a row start on the same line even when one label wraps.
+              Helper text sits below its input and can't push a sibling out of line. */}
+          <div className="grid grid-cols-2 gap-3 items-start">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Contract Price (₱)</label>
+              <label className={flabel}>Contract Price (₱)</label>
               <input type="number" min="0" step="0.01" value={f.contractPrice} onChange={e => set('contractPrice', e.target.value)} placeholder="0.00" className={input} />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Net Profit %</label>
+              <label className={flabel}>Net Profit %</label>
               <select value={f.netProfitPercent} onChange={e => set('netProfitPercent', e.target.value)} className={`${input} bg-white`}>
                 <option value="">Select %</option>
                 {NET_PROFIT_OPTIONS.map(p => <option key={p} value={p}>{p}%</option>)}
               </select>
             </div>
             <div className="col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Budget Allocation (₱) <span className="text-xs font-normal text-gray-400">· auto-calculated</span></label>
+              <label className={flabel}>Budget Allocation (₱) <span className="text-xs font-normal text-gray-400">· auto-calculated</span></label>
               <input type="text" readOnly value={peso(computedBudget)} tabIndex={-1} className={`${input} bg-gray-100 text-gray-700 cursor-not-allowed`} />
               <p className="mt-1 text-xs text-gray-400">Contract Price × (1 − Net Profit% ÷ 100)</p>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+              <label className={flabel}>Status</label>
               <select value={f.status} onChange={e => set('status', e.target.value)} className={`${input} bg-white`}>
                 {PROJECT_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
+              <label className={flabel}>Location</label>
               <input value={f.location} onChange={e => set('location', e.target.value)} className={input} />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Start date</label>
+              <label className={flabel}>Start date</label>
               <input type="date" value={f.startDate} onChange={e => set('startDate', e.target.value)} className={input} />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">End date</label>
+              <label className={flabel}>End date</label>
               <input type="date" value={f.endDate} onChange={e => set('endDate', e.target.value)} className={input} />
             </div>
           </div>
