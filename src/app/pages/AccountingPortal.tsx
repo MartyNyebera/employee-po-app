@@ -493,7 +493,10 @@ function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; 
             <label className="block text-sm font-medium text-gray-700 mb-1">Project Description</label>
             <textarea value={f.description} onChange={e => set('description', e.target.value)} rows={2} className={`${input} resize-none`} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          {/* items-end bottom-aligns each field so the input boxes line up even when a label
+              wraps to two lines (e.g. "Contract Price (₱)"). Rows with only single-line labels
+              stay compact. */}
+          <div className="grid grid-cols-2 gap-3 items-end">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Contract Price (₱)</label>
               <input type="number" min="0" step="0.01" value={f.contractPrice} onChange={e => set('contractPrice', e.target.value)} placeholder="0.00" className={input} />
