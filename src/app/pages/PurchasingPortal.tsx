@@ -731,8 +731,13 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">PO date</label>
-              <input type="date" value={f.poDate} onChange={e => set('poDate', e.target.value)} className={input} />
+              <label className="block text-sm font-medium text-gray-700 mb-1">PO date <span className="text-xs font-normal text-gray-400">· auto-set</span></label>
+              {/* Read-only: the PO date is fixed to when the PO is raised and must not be
+                  tampered with. Value still comes from f.poDate (used on submit); disabling the
+                  input only removes editing, not the stored value. */}
+              <input type="date" value={f.poDate} disabled readOnly tabIndex={-1}
+                title="PO date is set automatically and cannot be changed"
+                className={`${input} bg-gray-100 text-gray-600 cursor-not-allowed`} />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Delivery date <span className="text-red-500">*</span></label>
