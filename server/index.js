@@ -3072,20 +3072,21 @@ function parsePOLineItems(description) {
   } catch { return []; }
 }
 
-// Rebuild a PO's description blob to hold only the OUTSTANDING quantities after a short/defective
-// receipt (#partial-receipt). Per line, outstanding = ordered − usable (usable = the `added`
-// recorded by the receiving helper = received − defective); lines fully received are dropped. The
-// Line Items / Sub Total / Total Amount blob lines and the returned amount are recomputed; VAT and
-// Other Charges are zeroed on the remainder (a deliberate simplification — the reduced PO tracks
-// what the supplier still owes, not a fresh tax computation). All other blob lines (Address,
-// Contact, PO Type, Payment Terms, Terms & Conditions) are preserved untouched.
+// Rebuild a PO's description blob to hold only the OUTSTANDING quantities after a short receipt
+// (#partial-receipt). Per line, outstanding = ordered − received (what the supplier still owes);
+// lines fully received are dropped regardless of their remarks disposition. The Line Items / Sub
+// Total / Total Amount blob lines and the returned amount are recomputed; VAT and Other Charges
+// are zeroed on the remainder (a deliberate simplification — the reduced PO tracks what the
+// supplier still owes, not a fresh tax computation). All other blob lines (Address, Contact, PO
+// Type, Payment Terms, Terms & Conditions) are preserved untouched.
 function rewritePOOutstanding(description, parsedLines, receivedLines) {
   const outLines = [];
   let subTotal = 0;
   parsedLines.forEach((li, i) => {
     const ordered = Number(li.quantity) || 0;
-    const usable = Number(receivedLines[i]?.added) || 0;
-    const outstanding = Math.max(0, ordered - usable);
+    const rl = receivedLines[i];
+    const arrived = rl?.received != null ? Number(rl.received) : (Number(rl?.added) || 0);
+    const outstanding = Math.max(0, ordered - arrived);
     if (outstanding <= 0) return;
     const unitCost = Number(li.unitCost ?? li.unitPrice) || 0;
     subTotal += outstanding * unitCost;
@@ -3105,11 +3106,11 @@ function rewritePOOutstanding(description, parsedLines, receivedLines) {
 
 // Receive an order's lines into stock, inside the caller's transaction (Section E — #14).
 //
-// The warehouse enters, per line, how many actually ARRIVED and how many are DEFECTIVE; only the
-// USABLE quantity (received − defective) is added to inventory. `clientLines` carries that,
-// matched to the ordered lines BY INDEX (the receiving grid is built from the same parsed order,
-// in order). With no clientLines — a legacy/blind receipt — a line defaults to fully received,
-// none defective, preserving the old behaviour.
+// The warehouse enters, per line, how many actually ARRIVED and a REMARKS disposition (Approve /
+// For Delivery / Cancelled). Approve and For Delivery shelve the received quantity; Cancelled
+// shelves nothing. `clientLines` carries that, matched to the ordered lines BY INDEX (the
+// receiving grid is built from the same parsed order, in order). With no clientLines — a
+// legacy/blind receipt — a line defaults to fully received, Approve, preserving the old behaviour.
 //
 // Resolution is by inventoryId — carried from the employee's picker through the request onto the
 // order — falling back to a case-insensitive name match for older lines. An unresolvable line
@@ -3134,8 +3135,10 @@ async function receiveLinesIntoInventory(client, lines, clientLines) {
 
     const cl = Array.isArray(clientLines) ? clientLines[i] : null;
     const received = cl && cl.received != null ? Math.max(0, Number(cl.received) || 0) : ordered;
-    const defective = cl && cl.defective != null ? Math.max(0, Number(cl.defective) || 0) : 0;
-    const usable = Math.max(0, received - defective);
+    // Remarks disposition decides what is shelved: Approve / For Delivery add the received qty;
+    // Cancelled adds nothing. Legacy/blind receipts (no remarks) default to Approve.
+    const remarks = cl && cl.remarks ? String(cl.remarks) : 'Approve';
+    const usable = remarks === 'Cancelled' ? 0 : received;
 
     // FOR UPDATE: two receipts touching the same item must not interleave their read-modify-write.
     let row;
@@ -3161,7 +3164,7 @@ async function receiveLinesIntoInventory(client, lines, clientLines) {
       const newCost = newQty > 0 ? (onHandQty * onHandCost + usable * cost) / newQty : cost;
       await client.query('UPDATE inventory SET quantity = $1, unit_cost = $2, updated_at = NOW() WHERE id = $3', [newQty, newCost, row.id]);
     }
-    const entry = { inventoryId: row.id, itemName: row.item_name, ordered, received, defective, added: usable, newQuantity: newQty };
+    const entry = { inventoryId: row.id, itemName: row.item_name, ordered, received, remarks, added: usable, newQuantity: newQty };
     receivedLines.push(entry);
     if (usable > 0) applied.push(entry);
   }
@@ -3169,7 +3172,7 @@ async function receiveLinesIntoInventory(client, lines, clientLines) {
 }
 
 // A hand-raised order's lines are free-text (services, one-offs) — not inventory, so nothing is
-// shelved. But the warehouse can still record ordered/received/defective against them, so this
+// shelved. But the warehouse can still record ordered/received/remarks against them, so this
 // captures the discrepancy breakdown (#6) without touching stock. Matched by index, like above.
 function buildReceiptLinesNoInventory(lines, clientLines) {
   const receivedLines = [];
@@ -3179,8 +3182,8 @@ function buildReceiptLinesNoInventory(lines, clientLines) {
     const ordered = Number(lines[i]?.quantity) || 0;
     const cl = Array.isArray(clientLines) ? clientLines[i] : null;
     const received = cl && cl.received != null ? Math.max(0, Number(cl.received) || 0) : ordered;
-    const defective = cl && cl.defective != null ? Math.max(0, Number(cl.defective) || 0) : 0;
-    receivedLines.push({ inventoryId: null, itemName: name, ordered, received, defective, added: 0, newQuantity: null });
+    const remarks = cl && cl.remarks ? String(cl.remarks) : 'Approve';
+    receivedLines.push({ inventoryId: null, itemName: name, ordered, received, remarks, added: 0, newQuantity: null });
   }
   return receivedLines;
 }
@@ -3248,9 +3251,10 @@ app.put('/api/purchase-orders/:id/delivery', requireRole(['admin', 'warehouse'])
       // hand (Purchase Orders ▸ New) has free-text lines — services, one-offs, "1 Lot" — which
       // are not inventory and must not be invented as items, nor block the receipt.
       //
-      // Section E — #14: the warehouse may pass `lines` = per-line { received, defective } so
-      // only the usable quantity is shelved; received_lines records the full ordered/received/
-      // defective/added breakdown for the receipt and the "short N" label.
+      // Section E — #14: the warehouse may pass `lines` = per-line { received, remarks } so only
+      // the shelved quantity (Approve / For Delivery add received; Cancelled adds nothing) moves;
+      // received_lines records the full ordered/received/remarks/added breakdown for the receipt
+      // and the "short N" label.
       const parsedLines = parsePOLineItems(cur.rows[0].description);
       if (cur.rows[0].purchase_request_id) {
         const result = await receiveLinesIntoInventory(client, parsedLines, req.body.lines);
@@ -3258,17 +3262,15 @@ app.put('/api/purchase-orders/:id/delivery', requireRole(['admin', 'warehouse'])
         applied = result.applied;
       } else if (Array.isArray(req.body.lines) && req.body.lines.length) {
         // Hand-raised order: nothing is inventory, so nothing is shelved, but still record the
-        // ordered/received/defective breakdown so discrepancies show on the receipt + report (#6).
+        // ordered/received/remarks breakdown so discrepancies show on the receipt + report (#6).
         receivedLines = buildReceiptLinesNoInventory(parsedLines, req.body.lines);
       }
 
-      // #partial — per line, outstanding = ordered − usable (usable = `added` = received − defective),
-      // i.e. missing + defective. If anything is still owed, the PO STAYS OPEN reduced to just the
-      // outstanding quantities ('partially-received') instead of closing; the supplier will fulfil
-      // the balance and it is received again until zero. Any DEFECTIVE units are shipped back to the
-      // supplier via an auto-created logistics return delivery (pending → dispatched → delivered).
-      const totalOutstanding = receivedLines.reduce((t, l) => t + Math.max(0, (Number(l.ordered) || 0) - (Number(l.added) || 0)), 0);
-      const totalDefective = receivedLines.reduce((t, l) => t + (Number(l.defective) || 0), 0);
+      // #partial — per line, outstanding = ordered − received (the balance the supplier still
+      // owes), independent of the remarks disposition. If anything is still owed, the PO STAYS
+      // OPEN reduced to just the outstanding quantities ('partially-received') instead of closing;
+      // the supplier fulfils the balance and it is received again until zero.
+      const totalOutstanding = receivedLines.reduce((t, l) => t + Math.max(0, (Number(l.ordered) || 0) - (Number(l.received) || 0)), 0);
 
       if (receivedLines.length && totalOutstanding > 0) {
         const rewritten = rewritePOOutstanding(cur.rows[0].description, parsedLines, receivedLines);
@@ -3279,29 +3281,6 @@ app.put('/api/purchase-orders/:id/delivery', requireRole(['admin', 'warehouse'])
            WHERE id=$6 RETURNING *`,
           [String(receivedBy).trim(), orNull(notes), JSON.stringify(receivedLines), rewritten.description, rewritten.amount, req.params.id]
         );
-        if (totalDefective > 0) {
-          const defItems = receivedLines
-            .filter((l) => (Number(l.defective) || 0) > 0)
-            .map((l) => ({ itemName: l.itemName, quantity: Number(l.defective) || 0, unit: l.unit || null }));
-          // Destination = the supplier (id → name/location), else the PO's free-text header fields.
-          let dest = cur.rows[0].client || '';
-          if (cur.rows[0].supplier_id) {
-            const s = (await client.query('SELECT name, location FROM suppliers WHERE id = $1', [cur.rows[0].supplier_id])).rows[0];
-            if (s) dest = [s.name, s.location].filter(Boolean).join(' — ') || dest;
-          } else if (cur.rows[0].supplier_address) {
-            dest = [cur.rows[0].client, cur.rows[0].supplier_address].filter(Boolean).join(' — ') || dest;
-          }
-          const yr = new Date().getFullYear();
-          const lastDr = await client.query(`SELECT delivery_number FROM deliveries WHERE delivery_number LIKE $1 ORDER BY delivery_number DESC LIMIT 1`, [`DR-${yr}-%`]);
-          let drc = 1;
-          if (lastDr.rows[0]) { const n = parseInt(String(lastDr.rows[0].delivery_number).split('-')[2], 10); if (!isNaN(n)) drc = n + 1; }
-          const drNumber = `DR-${yr}-${String(drc).padStart(4, '0')}`;
-          await client.query(
-            `INSERT INTO deliveries (id, delivery_number, sales_order_id, return_of_po_id, destination, items, status, notes)
-             VALUES ($1, $2, NULL, $3, $4, $5::jsonb, 'pending', $6)`,
-            [`DEL-${drNumber}`, drNumber, cur.rows[0].id, dest || 'Supplier', JSON.stringify(defItems), `Return of defective items — ${cur.rows[0].po_number}`]
-          );
-        }
       } else {
         // Fully received (or a blind receipt with no line data) — the terminal close, unchanged.
         // Stored, not just returned: the delivery receipt has to be printable again later, and

@@ -786,8 +786,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                           <p className="text-xs text-gray-400 mt-0.5">From <span className="text-gray-600 font-medium">{po.client || '—'}</span></p>
                           {po.supplierAddress && <p className="text-xs text-gray-400 mt-0.5">{po.supplierAddress}</p>}
                           {po.status === 'RECEIVED' && (() => {
-                            // Section E — #14: total units short of what was ordered (a shortfall or defects).
-                            const shortN = (po.receivedLines || []).reduce((n, l) => n + Math.max(0, (Number(l.ordered ?? l.added) || 0) - (Number(l.added) || 0)), 0);
+                            // Section E — #14: total units short of what was ordered (ordered − received).
+                            const shortN = (po.receivedLines || []).reduce((n, l) => n + Math.max(0, (Number(l.ordered ?? l.received ?? l.added) || 0) - (Number(l.received ?? l.added) || 0)), 0);
                             return (
                               <p className="text-xs text-gray-400 mt-1">
                                 Received by <span className="text-gray-600 font-medium">{po.receivedBy || '—'}</span>
@@ -931,11 +931,10 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                 { method: 'PUT', body: JSON.stringify({ status: 'RECEIVED', receivedBy, notes, lines: lineResults }) },
               );
               const n = r.inventoryApplied?.length || 0;
-              const hadDefect = (lineResults || []).some(l => (Number(l.defective) || 0) > 0);
               if (r.status === 'partially-received') {
-                // Short/defective: the PO stays open for the outstanding balance, and any defective
-                // units were queued for return to the supplier through logistics.
-                toast.success(`${receivingPO.poNumber} partially received — ${n} shelved; balance still outstanding${hadDefect ? '; defective units sent to logistics for return' : ''}`);
+                // Short receipt: the PO stays open for the outstanding balance (ordered − received);
+                // the supplier fulfils the rest and it is received again until zero.
+                toast.success(`${receivingPO.poNumber} partially received — ${n} shelved; balance still outstanding`);
               } else {
                 toast.success(n ? `${receivingPO.poNumber} received — ${n} item${n > 1 ? 's' : ''} added to inventory` : `${receivingPO.poNumber} marked received`);
               }

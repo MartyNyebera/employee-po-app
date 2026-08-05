@@ -102,15 +102,17 @@ export function printDeliveryReceipt(d: PrintableDelivery): { ok: boolean; error
 // number are what tell them apart on the page.
 // ============================================================================
 
-// Section E — #14: a received line records what was ordered, what actually arrived, how many
-// were defective, how many usable units were added, and the resulting stock. ordered/received/
-// defective are optional so legacy receipts (which only stored added/newQuantity) still print.
+// Section E — #14: a received line records what was ordered, what actually arrived, its remarks
+// disposition (Approve / For Delivery / Cancelled), how many units were added to stock, and the
+// resulting stock. ordered/received/remarks are optional so legacy receipts (which only stored
+// added/newQuantity, or an older defective field) still print.
 export interface ReceivedLine {
   itemName: string;
   added: number;
   newQuantity?: number;
   ordered?: number;
   received?: number;
+  remarks?: string;
   defective?: number;
 }
 
@@ -137,21 +139,21 @@ export function printReceivingReport(r: PrintableReceipt): { ok: boolean; error?
   if (!w) return { ok: false, error: 'Please allow popups to print the delivery receipt' };
 
   const recorded = Array.isArray(r.items);
-  // Section E — #14: show the full Ordered / Received / Defective / Added breakdown when the
-  // receipt recorded it. Older receipts stored only `added`, so fall back to a two-column view.
-  const detailed = (r.items || []).some(it => it.ordered !== undefined || it.defective !== undefined);
-  // Any line short of what was ordered (received+defective < ordered, or defective units) so the
-  // receipt can flag it. No re-order is raised — this is a record, not an action.
+  // Section E — #14: show the full Ordered / Received / Missing / Remarks / Added breakdown when
+  // the receipt recorded it. Older receipts stored only `added`, so fall back to a two-column view.
+  const detailed = (r.items || []).some(it => it.ordered !== undefined || it.remarks !== undefined || it.defective !== undefined);
+  // Any line short of what was ordered (received < ordered) so the receipt can flag it. No
+  // re-order is raised — this is a record, not an action.
   const short = (it: ReceivedLine) =>
-    (it.ordered !== undefined && (Number(it.received ?? it.ordered) - Number(it.defective ?? 0)) < it.ordered);
+    (it.ordered !== undefined && Number(it.received ?? it.ordered) < it.ordered);
   const rows = (r.items || []).map((it, i) => detailed ? `
     <tr>
       <td>${i + 1}</td>
-      <td>${esc(it.itemName)}${short(it) ? ` <span style="color:#b45309;font-weight:bold">(short ${esc(Number(it.ordered) - Number(it.added))})</span>` : ''}</td>
+      <td>${esc(it.itemName)}${short(it) ? ` <span style="color:#b45309;font-weight:bold">(short ${esc(Number(it.ordered) - Number(it.received ?? it.ordered))})</span>` : ''}</td>
       <td style="text-align:center">${it.ordered === undefined ? '' : esc(it.ordered)}</td>
       <td style="text-align:center">${it.received === undefined ? esc(it.added) : esc(it.received)}</td>
       <td style="text-align:center">${it.ordered === undefined ? '' : esc(Math.max(0, Number(it.ordered) - Number(it.received ?? it.ordered)))}</td>
-      <td style="text-align:center">${esc(it.defective ?? 0)}</td>
+      <td style="text-align:center">${esc(it.remarks ?? '')}</td>
       <td style="text-align:center">${esc(it.added)}</td>
       <td style="text-align:center">${it.newQuantity === undefined ? '' : esc(it.newQuantity)}</td>
     </tr>` : `
@@ -195,7 +197,7 @@ export function printReceivingReport(r: PrintableReceipt): { ok: boolean; error?
   ${rows ? `
   <table class="items">
     <thead><tr>${detailed
-      ? '<th style="width:34px">No</th><th>Item</th><th style="width:64px">Ordered</th><th style="width:64px">Received</th><th style="width:60px">Missing</th><th style="width:64px">Defective</th><th style="width:56px">Added</th><th style="width:72px">New stock</th>'
+      ? '<th style="width:34px">No</th><th>Item</th><th style="width:60px">Ordered</th><th style="width:60px">Received</th><th style="width:56px">Missing</th><th style="width:88px">Remarks</th><th style="width:52px">Added</th><th style="width:68px">New stock</th>'
       : '<th style="width:40px">No</th><th>Item added to inventory</th><th style="width:90px">Received</th><th style="width:110px">New stock</th>'}</tr></thead>
     <tbody>${rows}</tbody>
   </table>`

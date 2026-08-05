@@ -16,11 +16,15 @@ import { toast } from 'sonner';
 // ============================================================================
 
 // Section E — #14: when `lines` is given (warehouse PO receiving), the modal shows a per-line
-// grid — Ordered (read-only), Received, Defective — and reports the { received, defective } for
-// each line back through onSave. Logistics (outbound delivery) passes no lines and just captures
-// the received-by name + notes.
+// grid — Ordered (read-only), Received, Missing, Remarks — and reports the { received, remarks }
+// for each line back through onSave. Logistics (outbound delivery) passes no lines and just
+// captures the received-by name + notes.
 export interface ReceiveLineInput { description: string; ordered: number; unit?: string | null }
-export interface ReceiveLineResult { description: string; received: number; defective: number }
+export interface ReceiveLineResult { description: string; received: number; remarks: string }
+
+// Per-line disposition. Approve / For Delivery shelve the received qty; Cancelled adds nothing.
+// Add options here to extend the dropdown.
+export const REMARKS_OPTIONS = ['Approve', 'For Delivery', 'Cancelled'] as const;
 
 export function ReceivingModal({
   title = 'Mark Delivered',
@@ -44,12 +48,12 @@ export function ReceivingModal({
   const [receivedBy, setReceivedBy] = useState('');
   const [notes, setNotes] = useState(initialNotes || '');
   const [saving, setSaving] = useState(false);
-  // Per-line received/defective. Default: everything received, none defective.
-  const [grid, setGrid] = useState<{ received: string; defective: string }[]>(
-    () => (lines || []).map(l => ({ received: String(l.ordered), defective: '0' })),
+  // Per-line received qty + remarks (disposition). Default: everything received, Approve.
+  const [grid, setGrid] = useState<{ received: string; remarks: string }[]>(
+    () => (lines || []).map(l => ({ received: String(l.ordered), remarks: 'Approve' })),
   );
 
-  const setCell = (i: number, key: 'received' | 'defective', v: string) =>
+  const setCell = (i: number, key: 'received' | 'remarks', v: string) =>
     setGrid(g => g.map((row, idx) => idx === i ? { ...row, [key]: v } : row));
 
   const save = async () => {
@@ -59,13 +63,8 @@ export function ReceivingModal({
       lineResults = lines.map((l, i) => ({
         description: l.description,
         received: Math.max(0, Number(grid[i]?.received) || 0),
-        defective: Math.max(0, Number(grid[i]?.defective) || 0),
+        remarks: grid[i]?.remarks || 'Approve',
       }));
-      for (let i = 0; i < lines.length; i++) {
-        if (lineResults[i].defective > lineResults[i].received) {
-          toast.error(`Defective can't exceed received for "${lines[i].description}"`); return;
-        }
-      }
     }
     setSaving(true);
     try {
@@ -90,7 +89,7 @@ export function ReceivingModal({
           {lines && lines.length > 0 && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Items received</label>
-              <p className="text-xs text-gray-400 mb-2">Enter how many actually arrived and how many are defective — only the usable ones (received − defective) are added to inventory.</p>
+              <p className="text-xs text-gray-400 mb-2">Enter how many actually arrived; Missing is the balance still owed. Remarks sets the disposition — Approve or For Delivery shelve the received quantity; Cancelled adds nothing.</p>
               <div className="overflow-x-auto border border-gray-200 rounded-lg">
                 <table className="w-full text-sm">
                   <thead>
@@ -99,23 +98,24 @@ export function ReceivingModal({
                       <th className="px-3 py-2 text-center">Ordered</th>
                       <th className="px-3 py-2 text-center">Received</th>
                       <th className="px-3 py-2 text-center">Missing</th>
-                      <th className="px-3 py-2 text-center">Defective</th>
-                      <th className="px-3 py-2 text-center">Usable</th>
+                      <th className="px-3 py-2 text-center">Remarks</th>
                     </tr>
                   </thead>
                   <tbody>
                     {lines.map((l, i) => {
-                      const usable = Math.max(0, (Number(grid[i]?.received) || 0) - (Number(grid[i]?.defective) || 0));
                       const missing = Math.max(0, l.ordered - (Number(grid[i]?.received) || 0));
-                      const shortfall = usable < l.ordered;
                       return (
                         <tr key={i} className="border-t border-gray-100">
                           <td className="px-3 py-2 text-gray-800">{l.description}</td>
                           <td className="px-3 py-2 text-center text-gray-500">{l.ordered} {l.unit || ''}</td>
                           <td className="px-3 py-2 text-center"><input type="number" min="0" value={grid[i]?.received ?? ''} onChange={e => setCell(i, 'received', e.target.value)} className={cell} /></td>
                           <td className={`px-3 py-2 text-center font-semibold ${missing > 0 ? 'text-red-600' : 'text-gray-400'}`}>{missing}</td>
-                          <td className="px-3 py-2 text-center"><input type="number" min="0" value={grid[i]?.defective ?? ''} onChange={e => setCell(i, 'defective', e.target.value)} className={cell} /></td>
-                          <td className={`px-3 py-2 text-center font-semibold ${shortfall ? 'text-amber-600' : 'text-gray-800'}`}>{usable}{shortfall ? ` (short ${l.ordered - usable})` : ''}</td>
+                          <td className="px-3 py-2 text-center">
+                            <select value={grid[i]?.remarks ?? 'Approve'} onChange={e => setCell(i, 'remarks', e.target.value)}
+                              className="w-32 px-2 py-1 text-sm border border-gray-200 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                              {REMARKS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                            </select>
+                          </td>
                         </tr>
                       );
                     })}
