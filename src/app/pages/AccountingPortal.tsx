@@ -61,12 +61,15 @@ interface PurchaseRequest {
 interface Project {
   id: string; name: string; description?: string; status?: string; client?: string;
   location?: string; startDate?: string; endDate?: string; budgetAllocation?: number;
+  contractPrice?: number | null; netProfitPercent?: number | null;
 }
 interface Session { id: number; full_name: string; email: string; phone?: string; }
 
 const TOKEN_KEY = 'accounting_token';
 const SESSION_KEY = 'accounting_session';
 const PROJECT_STATUSES = ['Active', 'On Hold', 'Completed'];
+// Net Profit % choices for the Project Allocation form. Add values here to extend the dropdown.
+const NET_PROFIT_OPTIONS = [10, 20, 30, 40, 50];
 
 const peso = (n: number) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -438,20 +441,33 @@ function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; 
     name: initial?.name || '', description: initial?.description || '', status: initial?.status || 'Active',
     client: initial?.client || '', location: initial?.location || '',
     startDate: (initial?.startDate || '').slice(0, 10), endDate: (initial?.endDate || '').slice(0, 10),
-    budgetAllocation: String(initial?.budgetAllocation ?? ''),
+    contractPrice: initial?.contractPrice != null ? String(initial.contractPrice) : '',
+    netProfitPercent: initial?.netProfitPercent != null ? String(initial.netProfitPercent) : '',
   });
   const [saving, setSaving] = useState(false);
   const set = (k: string, v: string) => setF(p => ({ ...p, [k]: v }));
 
+  // Budget Allocation is auto-calculated and locked to this formula:
+  //   Budget = Contract Price × (1 − Net Profit% / 100)
+  // Recomputes live on every Contract Price / Net Profit % change. For legacy projects with no
+  // contract price yet, we fall back to the saved budget so editing an old record doesn't wipe it.
+  const cp = parseFloat(f.contractPrice);
+  const np = parseInt(f.netProfitPercent, 10);
+  const computedBudget = Number.isFinite(cp)
+    ? Math.round(cp * (1 - (Number.isFinite(np) ? np : 0) / 100) * 100) / 100
+    : (initial?.budgetAllocation ?? 0);
+
   const save = async () => {
-    if (!f.name.trim()) { toast.error('Project name is required'); return; }
+    if (!f.name.trim()) { toast.error('Client name is required'); return; }
     setSaving(true);
     try {
       const body = {
         name: f.name.trim(), description: f.description.trim() || null, status: f.status,
         client: f.client.trim() || null, location: f.location.trim() || null,
         startDate: f.startDate || null, endDate: f.endDate || null,
-        budgetAllocation: Number(f.budgetAllocation) || 0,
+        budgetAllocation: computedBudget,
+        contractPrice: f.contractPrice === '' ? null : Number(f.contractPrice),
+        netProfitPercent: f.netProfitPercent === '' ? null : parseInt(f.netProfitPercent, 10),
       };
       if (initial) await aFetch(`/projects/${initial.id}`, { method: 'PATCH', body: JSON.stringify(body) });
       else await aFetch('/projects', { method: 'POST', body: JSON.stringify(body) });
@@ -470,23 +486,35 @@ function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; 
         </div>
         <div className="p-5 overflow-y-auto space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Project name <span className="text-red-500">*</span></label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Client Name <span className="text-red-500">*</span></label>
             <input value={f.name} onChange={e => set('name', e.target.value)} className={input} />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Project Description</label>
             <textarea value={f.description} onChange={e => set('description', e.target.value)} rows={2} className={`${input} resize-none`} />
           </div>
           <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Contract Price (₱)</label>
+              <input type="number" min="0" step="0.01" value={f.contractPrice} onChange={e => set('contractPrice', e.target.value)} placeholder="0.00" className={input} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Net Profit %</label>
+              <select value={f.netProfitPercent} onChange={e => set('netProfitPercent', e.target.value)} className={`${input} bg-white`}>
+                <option value="">Select %</option>
+                {NET_PROFIT_OPTIONS.map(p => <option key={p} value={p}>{p}%</option>)}
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Budget Allocation (₱) <span className="text-xs font-normal text-gray-400">· auto-calculated</span></label>
+              <input type="text" readOnly value={peso(computedBudget)} tabIndex={-1} className={`${input} bg-gray-100 text-gray-700 cursor-not-allowed`} />
+              <p className="mt-1 text-xs text-gray-400">Contract Price × (1 − Net Profit% ÷ 100)</p>
+            </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
               <select value={f.status} onChange={e => set('status', e.target.value)} className={`${input} bg-white`}>
                 {PROJECT_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Budget allocation (₱)</label>
-              <input type="number" min="0" step="0.01" value={f.budgetAllocation} onChange={e => set('budgetAllocation', e.target.value)} placeholder="0.00" className={input} />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Client / owner</label>

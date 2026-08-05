@@ -589,6 +589,10 @@ async function runMigrations() {
           updated_at TIMESTAMPTZ DEFAULT NOW()
         )
       `);
+      // Additive: contract price + net-profit% feed the auto-calculated budget_allocation.
+      // Kept nullable so existing rows (which only have budget_allocation) are untouched.
+      await query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS contract_price NUMERIC(14,2)`);
+      await query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS net_profit_percent INT`);
       console.log('✅ projects table ready');
     } catch (err) { console.log('ℹ️ projects table skipped:', err.message); }
 
@@ -6114,6 +6118,8 @@ function mapProject(r) {
     id: r.id, name: r.name, description: r.description, status: r.status,
     client: r.client, location: r.location, startDate: r.start_date, endDate: r.end_date,
     budgetAllocation: r.budget_allocation === null ? 0 : parseFloat(r.budget_allocation),
+    contractPrice: r.contract_price === null || r.contract_price === undefined ? null : parseFloat(r.contract_price),
+    netProfitPercent: r.net_profit_percent === null || r.net_profit_percent === undefined ? null : parseInt(r.net_profit_percent, 10),
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
@@ -6347,9 +6353,11 @@ app.post('/api/projects', requireRole(['owner','admin','accounting']), async (re
     if (!b.name || !String(b.name).trim()) return res.status(400).json({ error: 'Project name is required' });
     const id = newId('PRJ');
     const r = await query(
-      `INSERT INTO projects (id,name,description,status,client,location,start_date,end_date,budget_allocation)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-      [id, b.name, orNull(b.description), orNull(b.status) || 'Active', orNull(b.client), orNull(b.location), orNull(b.startDate), orNull(b.endDate), Number(b.budgetAllocation) || 0]
+      `INSERT INTO projects (id,name,description,status,client,location,start_date,end_date,budget_allocation,contract_price,net_profit_percent)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [id, b.name, orNull(b.description), orNull(b.status) || 'Active', orNull(b.client), orNull(b.location), orNull(b.startDate), orNull(b.endDate), Number(b.budgetAllocation) || 0,
+       b.contractPrice === undefined || b.contractPrice === null || b.contractPrice === '' ? null : Number(b.contractPrice),
+       b.netProfitPercent === undefined || b.netProfitPercent === null || b.netProfitPercent === '' ? null : parseInt(b.netProfitPercent, 10)]
     );
     res.status(201).json(mapProject(r.rows[0]));
   } catch (err) { console.error('project create error:', err); res.status(500).json({ error: err.message }); }
@@ -6357,10 +6365,15 @@ app.post('/api/projects', requireRole(['owner','admin','accounting']), async (re
 app.patch('/api/projects/:id', requireRole(['owner','admin','accounting']), async (req, res) => {
   try {
     const b = req.body;
-    const cols = { name:b.name, description:b.description, status:b.status, client:b.client, location:b.location, start_date:b.startDate, end_date:b.endDate, budget_allocation:b.budgetAllocation };
+    const cols = { name:b.name, description:b.description, status:b.status, client:b.client, location:b.location, start_date:b.startDate, end_date:b.endDate, budget_allocation:b.budgetAllocation, contract_price:b.contractPrice, net_profit_percent:b.netProfitPercent };
     const sets = []; const params = []; let i = 1;
     for (const [k, v] of Object.entries(cols)) {
-      if (v !== undefined) { sets.push(`${k} = $${i++}`); params.push(k === 'budget_allocation' ? (Number(v) || 0) : orNull(v)); }
+      if (v === undefined) continue;
+      sets.push(`${k} = $${i++}`);
+      if (k === 'budget_allocation') params.push(Number(v) || 0);
+      else if (k === 'contract_price') params.push(v === null || v === '' ? null : Number(v));
+      else if (k === 'net_profit_percent') params.push(v === null || v === '' ? null : parseInt(v, 10));
+      else params.push(orNull(v));
     }
     if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
     sets.push('updated_at = NOW()'); params.push(req.params.id);
