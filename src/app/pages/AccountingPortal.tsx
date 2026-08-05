@@ -619,7 +619,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     { id: 'new-pr', label: 'New Purchase Request', icon: FileText },
     { id: 'requests', label: 'Purchase Requests', icon: ClipboardList },
     { id: 'orders', label: 'Purchase Orders', icon: FileText },
-    { id: 'projects', label: 'Projects', icon: Briefcase },
+    { id: 'projects', label: 'Project Allocation', icon: Briefcase },
     { id: 'withdrawals', label: 'Withdrawals', icon: PackageMinus },
     { id: 'timesheet', label: 'Attendance Sheet', icon: CalendarCheck },
     { id: 'payroll', label: 'Payroll', icon: Calculator },
@@ -699,7 +699,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
             <div className="space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                  <h2 className="font-semibold text-gray-900">Projects</h2>
+                  <h2 className="font-semibold text-gray-900">Project Allocation</h2>
                   <p className="text-sm text-gray-500">Project master data — these appear in the employee's "For (Project)" picker.</p>
                 </div>
                 <button onClick={() => { setEditingProject(null); setShowProjectModal(true); }} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Plus className="w-4 h-4" /> New Project</button>
