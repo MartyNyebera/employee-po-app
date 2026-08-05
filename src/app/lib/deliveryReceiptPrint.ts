@@ -103,7 +103,7 @@ export function printDeliveryReceipt(d: PrintableDelivery): { ok: boolean; error
 // ============================================================================
 
 // Section E — #14: a received line records what was ordered, what actually arrived, its remarks
-// disposition (Approve / For Delivery / Cancelled), how many units were added to stock, and the
+// disposition (Approve / Incomplete / Cancelled), how many units were added to stock, and the
 // resulting stock. ordered/received/remarks are optional so legacy receipts (which only stored
 // added/newQuantity, or an older defective field) still print.
 export interface ReceivedLine {

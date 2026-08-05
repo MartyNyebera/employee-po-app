@@ -3107,10 +3107,11 @@ function rewritePOOutstanding(description, parsedLines, receivedLines) {
 // Receive an order's lines into stock, inside the caller's transaction (Section E — #14).
 //
 // The warehouse enters, per line, how many actually ARRIVED and a REMARKS disposition (Approve /
-// For Delivery / Cancelled). Approve and For Delivery shelve the received quantity; Cancelled
-// shelves nothing. `clientLines` carries that, matched to the ordered lines BY INDEX (the
-// receiving grid is built from the same parsed order, in order). With no clientLines — a
-// legacy/blind receipt — a line defaults to fully received, Approve, preserving the old behaviour.
+// Incomplete / Cancelled). ONLY Approve shelves the received quantity; Incomplete (defective/short)
+// and Cancelled shelve nothing but stay on the record for follow-up. `clientLines` carries that,
+// matched to the ordered lines BY INDEX (the receiving grid is built from the same parsed order,
+// in order). With no clientLines — a legacy/blind receipt — a line defaults to fully received,
+// Approve, preserving the old behaviour.
 //
 // Resolution is by inventoryId — carried from the employee's picker through the request onto the
 // order — falling back to a case-insensitive name match for older lines. An unresolvable line
@@ -3135,10 +3136,11 @@ async function receiveLinesIntoInventory(client, lines, clientLines) {
 
     const cl = Array.isArray(clientLines) ? clientLines[i] : null;
     const received = cl && cl.received != null ? Math.max(0, Number(cl.received) || 0) : ordered;
-    // Remarks disposition decides what is shelved: Approve / For Delivery add the received qty;
-    // Cancelled adds nothing. Legacy/blind receipts (no remarks) default to Approve.
+    // Remarks disposition decides what is shelved: ONLY Approve adds the received qty. Incomplete
+    // (defective/short, pending return/replacement) and Cancelled add nothing but stay on the
+    // record for follow-up. Legacy/blind receipts (no remarks) default to Approve.
     const remarks = cl && cl.remarks ? String(cl.remarks) : 'Approve';
-    const usable = remarks === 'Cancelled' ? 0 : received;
+    const usable = remarks === 'Approve' ? received : 0;
 
     // FOR UPDATE: two receipts touching the same item must not interleave their read-modify-write.
     let row;
@@ -3252,7 +3254,7 @@ app.put('/api/purchase-orders/:id/delivery', requireRole(['admin', 'warehouse'])
       // are not inventory and must not be invented as items, nor block the receipt.
       //
       // Section E — #14: the warehouse may pass `lines` = per-line { received, remarks } so only
-      // the shelved quantity (Approve / For Delivery add received; Cancelled adds nothing) moves;
+      // the shelved quantity (ONLY Approve adds received; Incomplete/Cancelled add nothing) moves;
       // received_lines records the full ordered/received/remarks/added breakdown for the receipt
       // and the "short N" label.
       const parsedLines = parsePOLineItems(cur.rows[0].description);

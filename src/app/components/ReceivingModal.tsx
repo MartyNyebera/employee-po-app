@@ -16,15 +16,15 @@ import { toast } from 'sonner';
 // ============================================================================
 
 // Section E — #14: when `lines` is given (warehouse PO receiving), the modal shows a per-line
-// grid — Ordered (read-only), Received, Missing, Remarks — and reports the { received, remarks }
-// for each line back through onSave. Logistics (outbound delivery) passes no lines and just
-// captures the received-by name + notes.
+// grid — Ordered (read-only), Received, Missing, Remarks (Approve / Incomplete / Cancelled) — and
+// reports the { received, remarks } for each line back through onSave. Only Approve lines add to
+// stock. Logistics (outbound delivery) passes no lines and just captures the received-by name + notes.
 export interface ReceiveLineInput { description: string; ordered: number; unit?: string | null }
 export interface ReceiveLineResult { description: string; received: number; remarks: string }
 
-// Per-line disposition. Approve / For Delivery shelve the received qty; Cancelled adds nothing.
-// Add options here to extend the dropdown.
-export const REMARKS_OPTIONS = ['Approve', 'For Delivery', 'Cancelled'] as const;
+// Per-line disposition. Only Approve shelves the received qty; Incomplete (defective/short,
+// pending return/replacement) and Cancelled add nothing. Add options here to extend the dropdown.
+export const REMARKS_OPTIONS = ['Approve', 'Incomplete', 'Cancelled'] as const;
 
 export function ReceivingModal({
   title = 'Mark Delivered',
@@ -89,7 +89,7 @@ export function ReceivingModal({
           {lines && lines.length > 0 && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Items received</label>
-              <p className="text-xs text-gray-400 mb-2">Enter how many actually arrived; Missing is the balance still owed. Remarks sets the disposition — Approve or For Delivery shelve the received quantity; Cancelled adds nothing.</p>
+              <p className="text-xs text-gray-400 mb-2">Enter how many actually arrived; Missing is the balance still owed. Remarks sets the disposition — only Approve shelves the received quantity; Incomplete (defective/short, pending return) and Cancelled add nothing.</p>
               <div className="overflow-x-auto border border-gray-200 rounded-lg">
                 <table className="w-full text-sm">
                   <thead>
