@@ -111,7 +111,7 @@ async function empFetch<T = any>(path: string, options?: RequestInit): Promise<T
 const NAV_ITEMS: { id: RequestView; label: string; icon: any }[] = [
   { id: 'new',          label: 'New Purchase Request', icon: FileText },
   { id: 'history',      label: 'Request History',      icon: ClipboardList },
-  { id: 'withdrawals',  label: 'Withdrawals',          icon: PackageMinus },
+  { id: 'withdrawals',  label: 'Withdrawals Request',  icon: PackageMinus },
   { id: 'itemRequests', label: 'Item Requests',        icon: PackagePlus },
   { id: 'signature',    label: 'My Signature',         icon: PenTool },
 ];

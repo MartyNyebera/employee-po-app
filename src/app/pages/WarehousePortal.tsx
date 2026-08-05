@@ -558,7 +558,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     { id: 'inventory',    label: 'Inventory', icon: Boxes },
     { id: 'itemRequests', label: 'Item Requests', icon: ClipboardList },
     { id: 'orders',       label: 'Purchase Orders', icon: FileText },
-    { id: 'withdrawals',  label: 'Withdrawals', icon: PackageMinus },
+    { id: 'withdrawals',  label: 'Withdrawals Request', icon: PackageMinus },
     { id: 'myWithdrawals', label: 'My Withdrawals', icon: PackageMinus },
     { id: 'signature',    label: 'My Signature', icon: PenTool },
   ];
@@ -842,7 +842,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 
           {view === 'withdrawals' && <>
           <div>
-            <h2 className="font-bold text-gray-900">Withdrawal Requests</h2>
+            <h2 className="font-bold text-gray-900">Withdrawals Request</h2>
             <p className="text-sm text-gray-500 mt-0.5">
               Confirm the stock is on the shelf and release it — the admin approves after you, and that is when it leaves inventory.
               {pendingWithdrawals > 0 && <> <strong className="text-brand-gold">{pendingWithdrawals} awaiting you.</strong></>}

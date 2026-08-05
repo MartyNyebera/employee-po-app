@@ -460,7 +460,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     { id: 'orders', label: 'Sales Orders', icon: FileText },
     { id: 'quotations', label: 'Quotations', icon: MessageSquare },
     { id: 'clients', label: 'Clients', icon: Users },
-    { id: 'withdrawals', label: 'Withdrawals', icon: PackageMinus },
+    { id: 'withdrawals', label: 'Withdrawals Request', icon: PackageMinus },
     { id: 'signature', label: 'My Signature', icon: PenTool },
   ];
 

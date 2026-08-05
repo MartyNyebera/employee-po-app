@@ -391,7 +391,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const NAV: { id: PortalView; label: string; icon: any; badge?: number }[] = [
     { id: 'new-pr', label: 'New Purchase Request', icon: FileText },
     { id: 'deliveries', label: 'Deliveries', icon: Truck, badge: pendingCount },
-    { id: 'withdrawals', label: 'Withdrawals', icon: PackageMinus },
+    { id: 'withdrawals', label: 'Withdrawals Request', icon: PackageMinus },
     { id: 'signature', label: 'My Signature', icon: PenTool },
   ];
 
@@ -601,7 +601,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
             <div className="space-y-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h2 className="font-bold text-gray-900">Stock Withdrawals</h2>
+                  <h2 className="font-bold text-gray-900">Withdrawals Request</h2>
                   <p className="text-sm text-gray-500 mt-0.5">Request stock out of inventory to a destination. The warehouse releases it, an admin approves, and it then appears under Deliveries.</p>
                 </div>
                 <button onClick={() => setRequesting(true)} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex-shrink-0"><Plus className="w-4 h-4" /> Request withdrawal</button>

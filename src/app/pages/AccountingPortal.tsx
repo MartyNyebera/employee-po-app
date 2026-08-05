@@ -652,7 +652,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     { id: 'requests', label: 'Purchase Requests', icon: ClipboardList },
     { id: 'orders', label: 'Purchase Orders', icon: FileText },
     { id: 'projects', label: 'Project Allocation', icon: Briefcase },
-    { id: 'withdrawals', label: 'Withdrawals', icon: PackageMinus },
+    { id: 'withdrawals', label: 'Withdrawals Request', icon: PackageMinus },
     { id: 'timesheet', label: 'Attendance Sheet', icon: CalendarCheck },
     { id: 'payroll', label: 'Payroll', icon: Calculator },
     { id: 'signature', label: 'My Signature', icon: PenTool },
