@@ -136,7 +136,7 @@ export interface PrintableReceipt {
 
 export function printReceivingReport(r: PrintableReceipt): { ok: boolean; error?: string } {
   const w = window.open('', '_blank');
-  if (!w) return { ok: false, error: 'Please allow popups to print the delivery receipt' };
+  if (!w) return { ok: false, error: 'Please allow popups to print the receiving report' };
 
   const recorded = Array.isArray(r.items);
   // Section E — #14: show the full Ordered / Received / Missing / Remarks / Added breakdown when
@@ -222,8 +222,8 @@ export function printReceivingReport(r: PrintableReceipt): { ok: boolean; error?
   </div>`;
 
   const html = renderPrintDocument({
-    title: `Delivery Receipt - ${r.poNumber}`,
-    docTitle: 'DELIVERY RECEIPT',
+    title: `Receiving Report - ${r.poNumber}`,
+    docTitle: 'RECEIVING REPORT',
     css,
     body,
   });
