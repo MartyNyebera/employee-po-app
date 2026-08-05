@@ -65,7 +65,7 @@ interface PurchaseOrder {
   // Carried for the printed document. All returned by GET /purchase-orders already.
   description?: string | null; docDate?: string | null; reviewedBy?: string | null;
   supplierAddress?: string | null; supplierContact?: string | null; supplierTin?: string | null;
-  paymentTerms?: string | null; poType?: string | null; paymentMode?: string | null; termsAndConditions?: string | null;
+  paymentTerms?: string | null; poType?: string | null; paymentMode?: string | null; vatType?: string | null; termsAndConditions?: string | null;
 }
 
 // Section C — #12: a PO now carries its own two-gate status. 'rejected' means an admin or
@@ -595,12 +595,17 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
   const [vatType, setVatType] = useState<'vatable' | 'non-vatable'>('vatable');
 
   const num = (s: string) => { const n = parseFloat(s); return isNaN(n) ? 0 : n; };
+  const round2 = (n: number) => Math.round(n * 100) / 100;
   const lineAmount = (i: number) => (Number(pr.items[i]?.quantity) || 0) * num(prices[i] ?? '0');
-  const subTotal = pr.items.reduce((t, _it, i) => t + lineAmount(i), 0);
-  // VAT is 12% of a vatable sale, nothing on a non-vatable one.
-  const vatAmount = vatType === 'vatable' ? subTotal * 0.12 : 0;
-  const totalAmount = subTotal + vatAmount;
-  const estimateDelta = pr.total ? ((subTotal - pr.total) / pr.total) * 100 : 0;
+  // Entered unit prices are treated as VAT-INCLUSIVE. The gross (sum of line amounts) is the
+  // total payable and is never inflated. For a VATable PO we break the gross into Net of VAT
+  // (gross ÷ 1.12) and 12% VAT (gross − net); Non-VAT has no breakdown (Net = Total, VAT = 0).
+  const isVatable = vatType === 'vatable';
+  const grossTotal = pr.items.reduce((t, _it, i) => t + lineAmount(i), 0);
+  const totalAmount = round2(grossTotal);
+  const netOfVat = isVatable ? round2(grossTotal / 1.12) : totalAmount;
+  const vatAmount = isVatable ? round2(totalAmount - netOfVat) : 0;
+  const estimateDelta = pr.total ? ((grossTotal - pr.total) / pr.total) * 100 : 0;
 
   useEffect(() => {
     (async () => {
@@ -651,8 +656,10 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
             inventoryId: it.inventoryId ?? null,
             quantity: it.quantity, unit: it.unit, unitCost: num(prices[i] ?? '0'), amount: lineAmount(i),
           })),
-          subTotal,
+          // subTotal carries the Net of VAT (VAT-exclusive) figure for the printout.
+          subTotal: netOfVat,
           vatAmount,
+          vatType,
           // `amount` is the PO's headline figure — the total payable, VAT included.
           amount: totalAmount,
           totalAmount,
@@ -801,20 +808,29 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">VAT type</label>
             <select value={vatType} onChange={e => setVatType(e.target.value as any)} className={`${input} bg-white`}>
-              <option value="vatable">VATable (12%)</option>
-              <option value="non-vatable">Non-VATable</option>
+              <option value="vatable">Vatable</option>
+              <option value="non-vatable">Non-VAT</option>
             </select>
+            <p className="text-xs text-gray-400 mt-1">
+              {isVatable ? 'Unit prices are VAT-inclusive; the 12% VAT is broken out below.' : 'No VAT — the price is the total.'}
+            </p>
           </div>
 
+          {/* VATable breaks the (VAT-inclusive) gross into Net of VAT + 12% VAT; Non-VAT shows
+              just the Total. */}
           <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 text-sm">
-            <div className="flex justify-between px-3 py-2">
-              <span className="text-gray-500">Sub total</span>
-              <span className="text-gray-900 tabular-nums">{peso(subTotal)}</span>
-            </div>
-            <div className="flex justify-between px-3 py-2">
-              <span className="text-gray-500">VAT {vatType === 'vatable' ? '(12%)' : '(non-VATable)'}</span>
-              <span className="text-gray-900 tabular-nums">{peso(vatAmount)}</span>
-            </div>
+            {isVatable && (
+              <>
+                <div className="flex justify-between px-3 py-2">
+                  <span className="text-gray-500">Net of VAT</span>
+                  <span className="text-gray-900 tabular-nums">{peso(netOfVat)}</span>
+                </div>
+                <div className="flex justify-between px-3 py-2">
+                  <span className="text-gray-500">VAT (12%)</span>
+                  <span className="text-gray-900 tabular-nums">{peso(vatAmount)}</span>
+                </div>
+              </>
+            )}
             <div className="flex justify-between px-3 py-2.5 bg-gray-50">
               <span className="font-semibold text-gray-900">Total</span>
               <span className="font-semibold text-gray-900 tabular-nums">{peso(totalAmount)}</span>
@@ -825,7 +841,7 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
               here rather than letting it be discovered at approval time. */}
           {Math.abs(estimateDelta) >= 0.5 && (
             <p className="text-xs text-gray-500">
-              Sub total is <span className="font-semibold text-brand-gold">{estimateDelta > 0 ? '+' : ''}{estimateDelta.toFixed(1)}%</span> against the employee's estimate of {peso(pr.total)}. The estimate stays on the request.
+              Total is <span className="font-semibold text-brand-gold">{estimateDelta > 0 ? '+' : ''}{estimateDelta.toFixed(1)}%</span> against the employee's estimate of {peso(pr.total)}. The estimate stays on the request.
             </p>
           )}
         </div>

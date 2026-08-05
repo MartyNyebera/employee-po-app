@@ -65,6 +65,7 @@ export interface PrintablePO {
   paymentTerms?: string | null;
   poType?: string | null;
   paymentMode?: string | null;
+  vatType?: string | null;
   termsAndConditions?: string | null;
   prNumber?: string | null;
   prStatus?: string | null;
@@ -292,6 +293,11 @@ export async function printPurchaseOrder(
   const otherCharges = blobMoney(description, 'Other Charges:') ?? 0;
   const vatAmount = blobMoney(description, 'VAT Amount:') ?? 0;
   const totalAmount = blobMoney(description, 'Total Amount:') ?? po.amount;
+  // VAT type decides the breakdown: VATable shows Net of VAT + 12% VAT + Total; Non-VAT shows
+  // just the Total. Real column first, then the blob; legacy orders (no type recorded) fall
+  // back to "has a VAT amount → VATable" so their existing breakdown still prints.
+  const vatTypeRaw = (po.vatType || blobLine(description, 'VAT Type:') || '').trim().toLowerCase();
+  const isVatablePo = vatTypeRaw ? vatTypeRaw === 'vatable' : vatAmount > 0;
 
   const termLines = po.termsAndConditions
     ? String(po.termsAndConditions).split('\n').map(l => l.replace(/^\s*\d+\.\s*/, '').trim()).filter(Boolean)
@@ -367,8 +373,9 @@ export async function printPurchaseOrder(
 
   <div class="summary-section">
     <div class="summary-box">
-      <div class="summary-row"><div class="summary-label">Sub Total:</div><div class="summary-value">${peso(subTotal)}</div></div>
-      <div class="summary-row"><div class="summary-label">VAT Amount:</div><div class="summary-value">${peso(vatAmount)}</div></div>
+      ${isVatablePo ? `
+      <div class="summary-row"><div class="summary-label">Net of VAT:</div><div class="summary-value">${peso(subTotal)}</div></div>
+      <div class="summary-row"><div class="summary-label">VAT (12%):</div><div class="summary-value">${peso(vatAmount)}</div></div>` : ''}
       <div class="summary-row"><div class="summary-label">Total Amount:</div><div class="summary-value">${peso(totalAmount)}</div></div>
     </div>
   </div>

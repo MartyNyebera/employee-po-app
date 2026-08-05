@@ -530,6 +530,10 @@ async function runMigrations() {
       // always carried payment_terms, so the print layer reads a null mode as Credit and still
       // shows their terms. New orders always send an explicit mode from the create form.
       await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS payment_mode TEXT`);
+      // VAT type (vatable / non-vatable). Nullable and not backfilled: the print/summary layer
+      // reads a null type as "vatable when a VAT amount was stored", so legacy orders keep their
+      // breakdown. New orders always send an explicit type from the create form.
+      await query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS vat_type TEXT`);
       // Backfill existing orders so old/pre-change records show proper header values too.
       // [removed] the prepared_by = 'Kim Karen D. Tagle' backfill — it stamped one real person's
       // name onto every order that had no preparer, which is the same untruth the print layer
@@ -1420,7 +1424,7 @@ app.get('/api/purchase-orders', requireAuth, async (req, res) => {
     const result = await query(
       `SELECT po.id, po.po_number, po.client, po.description, po.amount, po.status, po.created_date, po.delivery_date,
               po.assigned_assets, po.order_type, po.doc_date, po.prepared_by, po.reviewed_by, po.supplier_address,
-              po.supplier_contact, po.payment_terms, po.terms_and_conditions, po.supplier_id, po.po_type, po.payment_mode,
+              po.supplier_contact, po.payment_terms, po.terms_and_conditions, po.supplier_id, po.po_type, po.payment_mode, po.vat_type,
               po.purchase_request_id, po.approved_by, po.approved_at, pr.pr_number, pr.status AS pr_status,
               po.in_transit_at, po.in_transit_by, po.received_at, po.received_by,
               po.cancelled_at, po.cancelled_by, po.delivery_notes, po.received_lines,
@@ -1462,6 +1466,7 @@ app.get('/api/purchase-orders', requireAuth, async (req, res) => {
       paymentTerms: row.payment_terms,
       poType: row.po_type ?? null,
       paymentMode: row.payment_mode ?? null,
+      vatType: row.vat_type ?? null,
       termsAndConditions: row.terms_and_conditions,
       supplierId: row.supplier_id ?? null,
       // From the linked supplier record. Null on orders raised before supplier_id was
@@ -2754,6 +2759,7 @@ app.post('/api/purchase-orders', requireRole(['admin','purchasing','office_admin
       poDate,
       poType,
       paymentMode,
+      vatType,
       paymentTerms,
       termsAndConditions,
       preparedBy,
@@ -2825,6 +2831,7 @@ app.post('/api/purchase-orders', requireRole(['admin','purchasing','office_admin
     // client sends them.
     const normMode = paymentMode === 'Credit' ? 'Credit' : 'Cash';
     const storedTerms = normMode === 'Credit' ? (paymentTerms || '30 days from receipt/acceptance') : null;
+    const normVat = vatType === 'non-vatable' ? 'non-vatable' : 'vatable';
 
     // Create extended description with all the new data
     const extendedDescription = `${description || ''}
@@ -2836,6 +2843,7 @@ Reviewed By: ${reviewedBy || '[Reviewed By]'}
 PO Type: ${poType || 'domestic'}
 Mode of Payment: ${normMode}
 Payment Terms: ${storedTerms || 'N/A (Cash)'}
+VAT Type: ${normVat}
 Line Items: ${JSON.stringify(lineItems || [])}
 Sub Total: ${subTotal || amount}
 Other Charges: ${otherCharges || 0}
@@ -2860,14 +2868,14 @@ Terms & Conditions: ${termsAndConditions || 'Standard terms apply'}`;
       await client_.query(
         `INSERT INTO purchase_orders (id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets, order_type,
           doc_date, prepared_by, reviewed_by, supplier_address, supplier_contact, payment_terms, terms_and_conditions, purchase_request_id, supplier_id,
-          processed_by, processed_by_id, po_type, payment_mode, processed_at)
-         VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, NOW())`,
+          processed_by, processed_by_id, po_type, payment_mode, vat_type, processed_at)
+         VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, NOW())`,
         // reviewed_by is left NULL at creation (Section C — #12): "Reviewed By" now names the
         // accounting reviewer and is stamped only by the accounting-review route, never the form.
         [id, poNumber, client || customerName, extendedDescription, amount || totalAmount, finalCreatedDate, deliveryDate, assignedAssets, finalOrderType,
          poDate || finalCreatedDate, preparedBy || null, null, customerAddress || null, customerContact || null,
          storedTerms, termsAndConditions || null, purchaseRequestId || null, supplierId || null,
-         req.user?.name || null, processedById, poType || 'domestic', normMode]
+         req.user?.name || null, processedById, poType || 'domestic', normMode, normVat]
       );
 
       // Advance the request to 'ordered' so Purchasing can see it's handled and the employee
@@ -2889,7 +2897,7 @@ Terms & Conditions: ${termsAndConditions || 'Standard terms apply'}`;
 
     const result = await query(
       `SELECT id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets, order_type,
-              doc_date, prepared_by, reviewed_by, supplier_address, supplier_contact, payment_terms, terms_and_conditions, po_type, payment_mode, purchase_request_id
+              doc_date, prepared_by, reviewed_by, supplier_address, supplier_contact, payment_terms, terms_and_conditions, po_type, payment_mode, vat_type, purchase_request_id
        FROM purchase_orders WHERE id = $1`,
       [id]
     );
@@ -2913,6 +2921,7 @@ Terms & Conditions: ${termsAndConditions || 'Standard terms apply'}`;
       paymentTerms: row.payment_terms,
       poType: row.po_type ?? null,
       paymentMode: row.payment_mode ?? null,
+      vatType: row.vat_type ?? null,
       termsAndConditions: row.terms_and_conditions,
       purchaseRequestId: row.purchase_request_id,
     });
@@ -3416,6 +3425,7 @@ app.patch('/api/purchase-orders/:id', requireRole(['admin','purchasing','office_
       payment_terms: req.body.paymentTerms,
       po_type: req.body.poType,
       payment_mode: req.body.paymentMode,
+      vat_type: req.body.vatType,
       terms_and_conditions: req.body.termsAndConditions,
     };
     const updates = [];
@@ -3438,7 +3448,7 @@ app.patch('/api/purchase-orders/:id', requireRole(['admin','purchasing','office_
     );
     const result = await query(
       `SELECT id, po_number, client, description, amount, status, created_date, delivery_date, assigned_assets, order_type,
-              doc_date, prepared_by, reviewed_by, supplier_address, supplier_contact, payment_terms, terms_and_conditions, po_type, payment_mode
+              doc_date, prepared_by, reviewed_by, supplier_address, supplier_contact, payment_terms, terms_and_conditions, po_type, payment_mode, vat_type
        FROM purchase_orders WHERE id = $1`,
       [req.params.id]
     );
@@ -3463,6 +3473,7 @@ app.patch('/api/purchase-orders/:id', requireRole(['admin','purchasing','office_
       paymentTerms: row.payment_terms,
       poType: row.po_type ?? null,
       paymentMode: row.payment_mode ?? null,
+      vatType: row.vat_type ?? null,
       termsAndConditions: row.terms_and_conditions,
     });
   } catch (err) {
