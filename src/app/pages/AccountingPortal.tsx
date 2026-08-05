@@ -439,7 +439,7 @@ function DetailModal({ pr, busy, onReview, onReject, onPrint, onClose }: {
 function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; onClose: () => void; onSaved: () => void }) {
   const [f, setF] = useState({
     name: initial?.name || '', description: initial?.description || '', status: initial?.status || 'Active',
-    client: initial?.client || '', location: initial?.location || '',
+    location: initial?.location || '',
     startDate: (initial?.startDate || '').slice(0, 10), endDate: (initial?.endDate || '').slice(0, 10),
     contractPrice: initial?.contractPrice != null ? String(initial.contractPrice) : '',
     netProfitPercent: initial?.netProfitPercent != null ? String(initial.netProfitPercent) : '',
@@ -463,7 +463,7 @@ function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; 
     try {
       const body = {
         name: f.name.trim(), description: f.description.trim() || null, status: f.status,
-        client: f.client.trim() || null, location: f.location.trim() || null,
+        location: f.location.trim() || null,
         startDate: f.startDate || null, endDate: f.endDate || null,
         budgetAllocation: computedBudget,
         contractPrice: f.contractPrice === '' ? null : Number(f.contractPrice),
@@ -515,10 +515,6 @@ function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; 
               <select value={f.status} onChange={e => set('status', e.target.value)} className={`${input} bg-white`}>
                 {PROJECT_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Client / owner</label>
-              <input value={f.client} onChange={e => set('client', e.target.value)} className={input} />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
@@ -742,7 +738,6 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                         <thead>
                           <tr className="border-b border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-700 uppercase tracking-wide">
                             <th className="px-4 py-3">Project</th>
-                            <th className="px-4 py-3">Client</th>
                             <th className="px-4 py-3">Status</th>
                             <th className="px-4 py-3">Timeline</th>
                             <th className="px-4 py-3 text-right">Budget</th>
@@ -756,7 +751,6 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                                 <div className="font-medium text-gray-900">{p.name}</div>
                                 {p.location && <div className="text-xs text-gray-400">{p.location}</div>}
                               </td>
-                              <td className="px-4 py-3 text-gray-500">{p.client || '—'}</td>
                               <td className="px-4 py-3"><span className="text-xs font-medium px-2.5 py-1 rounded-full border bg-gray-50 text-gray-700 border-gray-200">{p.status || 'Active'}</span></td>
                               <td className="px-4 py-3 text-gray-500 text-xs">
                                 {p.startDate ? new Date(p.startDate).toLocaleDateString() : '—'} → {p.endDate ? new Date(p.endDate).toLocaleDateString() : '—'}
