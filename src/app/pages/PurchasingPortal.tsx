@@ -672,6 +672,10 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
   };
 
   const input = 'w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500';
+  // Grid-field label: reserves a consistent two-line height so single- and two-line labels
+  // start their inputs on the same line. Paired with items-start on each grid (and helper text
+  // kept below the input), every row's fields stay aligned regardless of wrapping or notes.
+  const flabel = 'block text-sm font-medium text-gray-700 mb-1 leading-5 min-h-[2.5rem]';
   const noSuppliers = !loadingSuppliers && suppliers.length === 0;
 
   return (
@@ -720,14 +724,14 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
               appears for Credit; a Cash order carries no terms. */}
           <div className="grid grid-cols-2 gap-3 items-start">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1 whitespace-nowrap">PO type</label>
+              <label className={flabel}>PO type</label>
               <select value={poType} onChange={e => setPoType(e.target.value as 'domestic' | 'foreign')} className={`${input} bg-white`}>
                 <option value="domestic">Domestic</option>
                 <option value="foreign">Foreign</option>
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1 whitespace-nowrap">Mode of Payment</label>
+              <label className={flabel}>Mode of Payment</label>
               <select value={paymentMode} onChange={e => setPaymentMode(e.target.value as 'Cash' | 'Credit')} className={`${input} bg-white`}>
                 <option value="Cash">Cash</option>
                 <option value="Credit">Credit</option>
@@ -735,7 +739,7 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
             </div>
             {paymentMode === 'Credit' && (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1 whitespace-nowrap">Payment terms (days)</label>
+                <label className={flabel}>Payment terms (days)</label>
                 <input type="number" min="0" step="1" value={termsDays}
                   onChange={e => setTermsDays(e.target.value)} placeholder="30" className={input} />
                 <p className="text-xs text-gray-400 mt-1">Stored as “{terms}”.</p>
@@ -743,9 +747,9 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3 items-start">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">PO date <span className="text-xs font-normal text-gray-400">· auto-set</span></label>
+              <label className={flabel}>PO date <span className="text-xs font-normal text-gray-400">· auto-set</span></label>
               {/* Read-only: the PO date is fixed to when the PO is raised and must not be
                   tampered with. Value still comes from f.poDate (used on submit); disabling the
                   input only removes editing, not the stored value. */}
@@ -754,7 +758,7 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
                 className={`${input} bg-gray-100 text-gray-600 cursor-not-allowed`} />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Delivery date <span className="text-red-500">*</span></label>
+              <label className={flabel}>Delivery date <span className="text-red-500">*</span></label>
               <input type="date" value={f.deliveryDate} onChange={e => set('deliveryDate', e.target.value)} className={input} />
             </div>
           </div>
