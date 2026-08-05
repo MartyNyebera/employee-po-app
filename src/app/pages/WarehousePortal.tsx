@@ -826,7 +826,11 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                             <button onClick={() => printPOReceipt(po, po.receivedLines)}
                               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><PackageCheck className="w-3.5 h-3.5" /> Receipt</button>
                           )}
-                          <button onClick={() => printPO(po)} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Printer className="w-3.5 h-3.5" /> Print</button>
+                          {/* A received PO already shows Receipt, which is the document to reprint; the
+                              generic Print (the blank PO) is redundant there, so hide it once RECEIVED. */}
+                          {po.status !== 'RECEIVED' && (
+                            <button onClick={() => printPO(po)} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Printer className="w-3.5 h-3.5" /> Print</button>
+                          )}
                         </div>
                       </div>
                     </div>
