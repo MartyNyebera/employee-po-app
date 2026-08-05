@@ -382,7 +382,7 @@ async function printCheckReport(pr: PurchaseRequest) {
     <div class="meta">
       <div class="meta-left">
         <div><span>For (Project):</span> ${esc(pr.projectName || 'Personal use')}</div>
-        <div><span>Request Date:</span> ${esc(pr.createdAt ? new Date(pr.createdAt).toLocaleDateString() : '—')}</div>
+        <div><span>Requested Date:</span> ${esc(pr.createdAt ? new Date(pr.createdAt).toLocaleDateString() : '—')}</div>
         <div><span>Required Date:</span> ${esc(pr.neededBy ? new Date(pr.neededBy).toLocaleDateString() : '—')}</div>
       </div>
       <div class="meta-right"><span>PR No.:</span> ${esc(pr.prNumber)}</div>
@@ -844,7 +844,7 @@ function DetailModal({ pr, onCreatePO, onPrint, onClose }: {
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3 text-sm">
             <Meta label="Prepared by" value={pr.employeeName || '—'} />
             <Meta label="For (Project)" value={pr.projectName || 'Personal use'} />
-            <Meta label="Request Date" value={pr.createdAt ? new Date(pr.createdAt).toLocaleDateString() : '—'} />
+            <Meta label="Requested Date" value={pr.createdAt ? new Date(pr.createdAt).toLocaleDateString() : '—'} />
             <Meta label="Required Date" value={pr.neededBy ? new Date(pr.neededBy).toLocaleDateString() : '—'} />
             <Meta label="Supplier" value={pr.supplier || '—'} />
             <Meta label="Checked by" value={pr.checkedBy || '—'} />

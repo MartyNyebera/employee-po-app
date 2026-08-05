@@ -119,7 +119,7 @@ export async function printPurchaseRequest(
       <div class="meta">
         <div class="meta-left">
           <div><span>For (Project):</span> ${esc(req.projectName || 'Personal use')}</div>
-          <div><span>Request Date:</span> ${esc(req.createdAt ? new Date(req.createdAt).toLocaleDateString() : '—')}</div>
+          <div><span>Requested Date:</span> ${esc(req.createdAt ? new Date(req.createdAt).toLocaleDateString() : '—')}</div>
           <div><span>Required Date:</span> ${esc(req.neededBy ? new Date(req.neededBy).toLocaleDateString() : '—')}</div>
         </div>
         <div class="meta-right"><span>PR No.:</span> ${esc(req.prNumber)}</div>

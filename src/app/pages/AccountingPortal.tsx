@@ -219,7 +219,7 @@ async function printReviewReport(pr: PurchaseRequest) {
     <div class="meta">
       <div class="meta-left">
         <div><span>For (Project):</span> ${esc(pr.projectName || 'Personal use')}</div>
-        <div><span>Request Date:</span> ${esc(pr.createdAt ? new Date(pr.createdAt).toLocaleDateString() : '—')}</div>
+        <div><span>Requested Date:</span> ${esc(pr.createdAt ? new Date(pr.createdAt).toLocaleDateString() : '—')}</div>
         <div><span>Required Date:</span> ${esc(pr.neededBy ? new Date(pr.neededBy).toLocaleDateString() : '—')}</div>
       </div>
       <div class="meta-right"><span>PR No.:</span> ${esc(pr.prNumber)}</div>
@@ -380,7 +380,7 @@ function DetailModal({ pr, busy, onReview, onReject, onPrint, onClose }: {
             <Meta label="Status" value={<span className={`text-xs font-semibold ${statusPill(pr.status)}`}>{statusLabel(pr.status)}</span>} />
             <Meta label="For (Project)" value={pr.projectName || 'Personal use'} />
             <Meta label="Prepared by" value={pr.employeeName} />
-            <Meta label="Request Date" value={pr.createdAt ? new Date(pr.createdAt).toLocaleDateString() : '—'} />
+            <Meta label="Requested Date" value={pr.createdAt ? new Date(pr.createdAt).toLocaleDateString() : '—'} />
             <Meta label="Required Date" value={pr.neededBy ? new Date(pr.neededBy).toLocaleDateString() : '—'} />
             <Meta label="Reviewed by (Accounting)" value={pr.checkedBy} />
           </div>
