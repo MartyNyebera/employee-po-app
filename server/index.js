@@ -86,6 +86,30 @@ function sendDbError(res, err, context) {
   }
 }
 
+// A tiny in-process rate limiter for the PUBLIC, unauthenticated register route. Without it an
+// attacker can hammer POST /api/auth/register to flood admins with notification emails and pile up
+// admin_approval_requests rows. Keyed per client IP over a sliding window; in-process state is
+// enough for the single-Pi deployment (no external store / dependency). Not for authenticated
+// routes — those are already gated by role.
+const REGISTER_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+const REGISTER_MAX = 5;                     // attempts per IP per window
+const registerHits = new Map();             // ip -> number[] (timestamps within the window)
+function registerRateLimit(req, res, next) {
+  const ip = req.ip || (req.headers && req.headers['x-forwarded-for']) || req.socket?.remoteAddress || 'unknown';
+  const now = Date.now();
+  const recent = (registerHits.get(ip) || []).filter(t => now - t < REGISTER_WINDOW_MS);
+  if (recent.length >= REGISTER_MAX) {
+    return res.status(429).json({ error: 'Too many sign-up attempts. Please try again later.' });
+  }
+  recent.push(now);
+  registerHits.set(ip, recent);
+  // Opportunistic prune so the map can't grow without bound across many distinct IPs.
+  if (registerHits.size > 5000) {
+    for (const [k, v] of registerHits) { if (!v.some(t => now - t < REGISTER_WINDOW_MS)) registerHits.delete(k); }
+  }
+  next();
+}
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -1275,7 +1299,7 @@ testConnection().then(async () => {
 
 // ----- Auth (no auth required) -----
 // POST /api/auth/register
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', registerRateLimit, async (req, res) => {
   try {
     const { email, password, name, role } = req.body;
     if (!email || !password || !name || !role) {
@@ -1724,16 +1748,12 @@ app.post('/api/employee/login', async (req, res) => {
       });
     }
     
-        const token = jwt.sign(
-      { 
-        id: employee.id, 
-        email: employee.email,
-        role: 'employee',
-        name: employee.full_name
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: '24h' }
-    );
+    const token = signToken({
+      id: employee.id,
+      email: employee.email,
+      role: 'employee',
+      name: employee.full_name,
+    });
     
     res.json({ 
       token, 
@@ -1762,11 +1782,7 @@ app.post('/api/purchasing/login', async (req, res) => {
     if (acct.status === 'deactivated') return res.status(403).json({ error: 'This account has been deactivated' });
     const valid = await bcrypt.compare(password, acct.password_hash);
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
-    const token = jwt.sign(
-      { id: acct.id, email: acct.email, role: 'purchasing', name: acct.full_name },
-      process.env.JWT_SECRET,
-      { expiresIn: '24h' }
-    );
+    const token = signToken({ id: acct.id, email: acct.email, role: 'purchasing', name: acct.full_name });
     res.json({ token, purchasing: { id: acct.id, full_name: acct.full_name, email: acct.email, phone: acct.phone } });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1785,11 +1801,7 @@ app.post('/api/warehouse/login', async (req, res) => {
     if (acct.status === 'deactivated') return res.status(403).json({ error: 'This account has been deactivated' });
     const valid = await bcrypt.compare(password, acct.password_hash);
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
-    const token = jwt.sign(
-      { id: acct.id, email: acct.email, role: 'warehouse', name: acct.full_name },
-      process.env.JWT_SECRET,
-      { expiresIn: '24h' }
-    );
+    const token = signToken({ id: acct.id, email: acct.email, role: 'warehouse', name: acct.full_name });
     res.json({ token, warehouse: { id: acct.id, full_name: acct.full_name, email: acct.email, phone: acct.phone } });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1808,11 +1820,7 @@ app.post('/api/accounting/login', async (req, res) => {
     if (acct.status === 'deactivated') return res.status(403).json({ error: 'This account has been deactivated' });
     const valid = await bcrypt.compare(password, acct.password_hash);
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
-    const token = jwt.sign(
-      { id: acct.id, email: acct.email, role: 'accounting', name: acct.full_name },
-      process.env.JWT_SECRET,
-      { expiresIn: '24h' }
-    );
+    const token = signToken({ id: acct.id, email: acct.email, role: 'accounting', name: acct.full_name });
     res.json({ token, accounting: { id: acct.id, full_name: acct.full_name, email: acct.email, phone: acct.phone } });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1830,11 +1838,7 @@ app.post('/api/sales/login', async (req, res) => {
     if (acct.status === 'deactivated') return res.status(403).json({ error: 'This account has been deactivated' });
     const valid = await bcrypt.compare(password, acct.password_hash);
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
-    const token = jwt.sign(
-      { id: acct.id, email: acct.email, role: 'sales', name: acct.full_name },
-      process.env.JWT_SECRET,
-      { expiresIn: '24h' }
-    );
+    const token = signToken({ id: acct.id, email: acct.email, role: 'sales', name: acct.full_name });
     res.json({ token, sales: { id: acct.id, full_name: acct.full_name, email: acct.email, phone: acct.phone } });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1852,11 +1856,7 @@ app.post('/api/logistics/login', async (req, res) => {
     if (acct.status === 'deactivated') return res.status(403).json({ error: 'This account has been deactivated' });
     const valid = await bcrypt.compare(password, acct.password_hash);
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
-    const token = jwt.sign(
-      { id: acct.id, email: acct.email, role: 'logistics', name: acct.full_name },
-      process.env.JWT_SECRET,
-      { expiresIn: '24h' }
-    );
+    const token = signToken({ id: acct.id, email: acct.email, role: 'logistics', name: acct.full_name });
     res.json({ token, logistics: { id: acct.id, full_name: acct.full_name, email: acct.email, phone: acct.phone } });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2356,7 +2356,7 @@ app.post('/api/material-requests/:id/approve', requireRole(['admin','purchasing'
 /**
  * FIX #5: Get Accurate Dashboard Metrics
  */
-app.get('/api/dashboard/financial-summary', async (req, res) => {
+app.get('/api/dashboard/financial-summary', requireRole(['admin','accounting','owner']), async (req, res) => {
   try {
     // Revenue is recognized directly from sales orders past 'pending' (approved / PAID /
     // completed). The financial_transactions REVENUE rows are only written by the unused
@@ -2420,7 +2420,7 @@ app.get('/api/dashboard/financial-summary', async (req, res) => {
 /**
  * FIX #7: Comprehensive Business Logic Validation
  */
-app.get('/api/validate/business-logic', async (req, res) => {
+app.get('/api/validate/business-logic', requireRole(['admin','accounting','owner']), async (req, res) => {
   try {
     const validations = [];
 
@@ -4489,16 +4489,15 @@ app.put('/api/notifications/:id/read', async (req, res) => {
 // --- MATERIAL REQUEST ENDPOINTS ---
 
 // Submit material request
-app.post('/api/material-requests', async (req, res) => {
+app.post('/api/material-requests', requireAuth, async (req, res) => {
   try {
-    const {
-      employee_id, employee_name, item_name,
-      item_code, quantity_requested, unit,
-      purpose, urgency
-    } = req.body;
-    
+    const { item_name, item_code, quantity_requested, unit, purpose, urgency } = req.body;
+    // Identity comes from the TOKEN, never the body. The old route trusted body
+    // employee_id/employee_name, so any authenticated caller could file a request as anyone.
+    const employee_id = req.user?.id ?? null;
+    const employee_name = req.user?.name || 'Unknown';
+
     const reqNum = 'REQ-' + Date.now();
-    
     const result = await query(
       `INSERT INTO material_requests
        (request_number, employee_id, employee_name,
@@ -4507,41 +4506,49 @@ app.post('/api/material-requests', async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending')
        RETURNING *`,
       [reqNum, employee_id, employee_name, item_name,
-       item_code, quantity_requested, unit, 
+       item_code, quantity_requested, unit,
        purpose, urgency || 'normal']
     );
-    
-    res.json(result.rows[0]);
+
+    res.status(201).json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendDbError(res, err, 'material request create');
   }
 });
 
-// Get material requests for employee
-app.get('/api/material-requests/employee/:id', async (req, res) => {
+// Get material requests for one employee — a user may only read their OWN; admin/purchasing/
+// office_admin may read anyone's. Without this any authenticated user could read another
+// employee's request history by id.
+app.get('/api/material-requests/employee/:id', requireAuth, async (req, res) => {
   try {
+    const role = effectiveRole(req.user);
+    const privileged = ['admin', 'owner', 'purchasing', 'office_admin'].includes(role);
+    if (!privileged && String(req.params.id) !== String(req.user?.id ?? '')) {
+      return res.status(403).json({ error: 'You can only view your own material requests' });
+    }
     const result = await query(
-      `SELECT * FROM material_requests 
+      `SELECT * FROM material_requests
        WHERE employee_id = $1
        ORDER BY created_at DESC`,
       [req.params.id]
     );
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendDbError(res, err, 'material requests by employee');
   }
 });
 
-// Get ALL material requests (admin)
-app.get('/api/material-requests', async (req, res) => {
+// Get ALL material requests — a review surface, so restricted to the roles that act on them
+// (matches the approve route's guard). Previously any authenticated user could read everyone's.
+app.get('/api/material-requests', requireRole(['admin','purchasing','office_admin']), async (req, res) => {
   try {
     const result = await query(
-      `SELECT * FROM material_requests 
+      `SELECT * FROM material_requests
        ORDER BY created_at DESC`
     );
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendDbError(res, err, 'material requests list');
   }
 });
 
