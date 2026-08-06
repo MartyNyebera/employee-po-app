@@ -10,6 +10,7 @@ import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { confirmDialog } from '../lib/confirm';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { printDeliveryReceipt } from '../lib/deliveryReceiptPrint';
+import { printWithdrawalReceipt } from '../lib/withdrawalReceiptPrint';
 import { ReceivingModal } from '../components/ReceivingModal';
 import { NavBadge } from '../components/NavBadge';
 import { AttentionCard } from '../components/AttentionCard';
@@ -382,6 +383,14 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     if (!r.ok) toast.error(r.error || 'Failed to open the print window');
   };
 
+  // The withdrawal document itself (distinct from printWD above, which is the delivery receipt):
+  // WITHDRAWAL REQUEST before approval, STOCK WITHDRAWAL RECEIPT once approved. Signatures resolve
+  // through this portal's own authed fetch.
+  const printWithdrawal = async (w: WithdrawalRequest) => {
+    const r = await printWithdrawalReceipt(w as any, () => lFetch(`/inventory-withdrawals/${w.id}/signatures`));
+    if (!r.ok) toast.error(r.error || 'Could not open the print dialog');
+  };
+
   const requestWithdrawal = async (inventoryId: string, quantity: number, destination: string, reason: string | null) => {
     await lFetch(`/inventory/${inventoryId}/withdraw`, { method: 'POST', body: JSON.stringify({ quantity, destination, reason }) });
     toast.success('Withdrawal requested — the warehouse releases it, then an admin approves');
@@ -623,7 +632,11 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                             {w.destination && <p className="text-xs text-gray-400 mt-0.5">To <span className="text-gray-600 font-medium">{w.destination}</span></p>}
                             {w.reason && <p className="text-xs text-gray-400 mt-0.5">{w.reason}</p>}
                           </div>
-                          <span className="flex-shrink-0 text-xs font-semibold text-brand-gold">{WD_STATUS_LABEL[w.status] || w.status}</span>
+                          <div className="flex-shrink-0 flex items-center gap-2">
+                            <span className="text-xs font-semibold text-brand-gold">{WD_STATUS_LABEL[w.status] || w.status}</span>
+                            <button onClick={() => printWithdrawal(w)} title="Print"
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Printer className="w-3.5 h-3.5" /> Print</button>
+                          </div>
                         </div>
                       </div>
                     ))}

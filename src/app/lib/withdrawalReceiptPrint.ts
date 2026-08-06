@@ -66,6 +66,10 @@ export async function printWithdrawalReceipt(
   // A rejected request never reached the admin, so its reviewed_* is the refusal, not an
   // approval — don't print a refusal over an "Approved By" line.
   const approved = w0.status === 'approved';
+  // Before approval the same document prints as the REQUEST form — the later signature blocks
+  // simply come back blank ruled lines, so it's routable for wet signatures. Once approved it
+  // becomes the receipt (stock has left the shelf). All three blocks stay in both states.
+  const isReceipt = approved;
   const blocks = [
     { title: 'Requested By', name: w0.requestedByName || '—', sig: sigs.requestedSignature, date: w0.createdAt },
     { title: 'Released By', name: w0.warehouseBy || '', sig: sigs.releasedSignature, date: w0.warehouseAt },
@@ -99,8 +103,9 @@ export async function printWithdrawalReceipt(
     ${w0.prNumber ? `<div><span>For request:</span> ${esc(w0.prNumber)}</div>` : ''}
     <div><span>Requested:</span> ${esc(fmt(w0.createdAt))}</div>
     <!-- "Withdrawn", not "Released": this is when the stock actually left, i.e. the admin's
-         approval. "Released By" below names the warehouse — an earlier, different step. -->
-    <div><span>Withdrawn:</span> ${esc(fmt(w0.deductedAt))}</div>
+         approval. "Released By" below names the warehouse — an earlier, different step. Only the
+         receipt carries it; on the request form nothing has been withdrawn yet. -->
+    ${isReceipt ? `<div><span>Withdrawn:</span> ${esc(fmt(w0.deductedAt))}</div>` : ''}
   </div>
 
   <table class="items">
@@ -117,8 +122,11 @@ export async function printWithdrawalReceipt(
   ${w0.reason ? `<div class="cert"><span style="font-weight:bold">Purpose:</span> ${esc(w0.reason)}</div>` : ''}
 
   <div class="cert">
-    This certifies that the stock above was <b>withdrawn from inventory</b> and released on
-    ${esc(fmt(w0.deductedAt))}, on the authority of the approval recorded below.
+    ${isReceipt
+      ? `This certifies that the stock above was <b>withdrawn from inventory</b> and released on
+         ${esc(fmt(w0.deductedAt))}, on the authority of the approval recorded below.`
+      : `<b>Request for withdrawal</b> of the item(s) below. Release and approval are recorded by
+         signature below as each step is completed.`}
   </div>
 
   <div class="sign-row">
@@ -133,8 +141,8 @@ export async function printWithdrawalReceipt(
   </div>`;
 
   const html = renderPrintDocument({
-    title: `Withdrawal Receipt - ${w0.withdrawalNumber || ''}`,
-    docTitle: 'STOCK WITHDRAWAL RECEIPT',
+    title: `${isReceipt ? 'Withdrawal Receipt' : 'Withdrawal Request'} - ${w0.withdrawalNumber || ''}`,
+    docTitle: isReceipt ? 'STOCK WITHDRAWAL RECEIPT' : 'WITHDRAWAL REQUEST',
     css,
     body,
   });

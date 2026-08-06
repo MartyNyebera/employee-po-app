@@ -13,6 +13,7 @@ import { allowedUnitsForName } from '../lib/inventoryUnits';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { printPurchaseOrder, parsePOLineItems } from '../lib/orderPrint';
 import { printReceivingReport, type ReceivedLine } from '../lib/deliveryReceiptPrint';
+import { printWithdrawalReceipt } from '../lib/withdrawalReceiptPrint';
 import { ReceivingModal } from '../components/ReceivingModal';
 import { WithdrawalTab } from '../components/WithdrawalTab';
 import { CreatePurchaseRequestForm } from '../components/CreatePurchaseRequestForm';
@@ -508,6 +509,14 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 
   const pendingWithdrawals = withdrawals.filter(w => w.status === 'pending').length;
 
+  // The document prints in either state: WITHDRAWAL REQUEST before approval (later signature
+  // blocks blank), STOCK WITHDRAWAL RECEIPT once approved. Signatures resolve through the
+  // warehouse's own authed fetch, same pattern as Production/Admin.
+  const printWithdrawal = async (w: WithdrawalRequest) => {
+    const r = await printWithdrawalReceipt(w as any, () => wFetch(`/inventory-withdrawals/${w.id}/signatures`));
+    if (!r.ok) toast.error(r.error || 'Could not open the print dialog');
+  };
+
   // ---- Inbound purchase orders (Section D — #10, moved from Logistics) -----------------
   const filteredPOs = useMemo(() => purchaseOrders.filter(po => {
     const q = search.toLowerCase();
@@ -881,18 +890,22 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                           <td className="px-4 py-3 text-gray-500">{w.requestedByName || '—'}</td>
                           <td className="px-4 py-3"><span className="text-xs font-semibold text-brand-gold">{WD_STATUS_LABEL[w.status] || w.status}</span></td>
                           <td className="px-4 py-3 text-right">
-                            {w.status === 'pending' ? (
-                              <div className="flex items-center justify-end gap-2">
-                                <button onClick={() => reviewWithdrawal(w, 'warehouse-approved')} disabled={busyId === w.id}
-                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50"><Check className="w-3.5 h-3.5" /> Release</button>
-                                <button onClick={() => reviewWithdrawal(w, 'rejected')} disabled={busyId === w.id}
-                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"><X className="w-3.5 h-3.5" /> Decline</button>
-                              </div>
-                            ) : w.status === 'warehouse-approved' ? (
-                              <span className="text-xs text-gray-400">released by {w.warehouseBy || 'you'}</span>
-                            ) : (
-                              <span className="text-xs text-gray-400">{w.reviewedBy ? `by ${w.reviewedBy}` : '—'}</span>
-                            )}
+                            <div className="flex items-center justify-end gap-2">
+                              {w.status === 'pending' ? (
+                                <>
+                                  <button onClick={() => reviewWithdrawal(w, 'warehouse-approved')} disabled={busyId === w.id}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50"><Check className="w-3.5 h-3.5" /> Release</button>
+                                  <button onClick={() => reviewWithdrawal(w, 'rejected')} disabled={busyId === w.id}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"><X className="w-3.5 h-3.5" /> Decline</button>
+                                </>
+                              ) : w.status === 'warehouse-approved' ? (
+                                <span className="text-xs text-gray-400">released by {w.warehouseBy || 'you'}</span>
+                              ) : (
+                                <span className="text-xs text-gray-400">{w.reviewedBy ? `by ${w.reviewedBy}` : '—'}</span>
+                              )}
+                              <button onClick={() => printWithdrawal(w)} title="Print"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Printer className="w-3.5 h-3.5" /> Print</button>
+                            </div>
                           </td>
                         </tr>
                       ))}

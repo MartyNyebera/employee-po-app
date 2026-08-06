@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { PackageMinus, X, RefreshCw } from 'lucide-react';
+import { PackageMinus, X, RefreshCw, Printer } from 'lucide-react';
 import { toast } from 'sonner';
+import { printWithdrawalReceipt } from '../lib/withdrawalReceiptPrint';
 
 // ============================================================================
 // Shared "Withdraw from Warehouse" tab (#5). Every department can raise a stock withdrawal —
@@ -53,6 +54,13 @@ export function WithdrawalTab({ fetchFn }: { fetchFn: FetchFn }) {
     load();
   };
 
+  // Prints the WITHDRAWAL REQUEST form before approval (later signature blocks blank) or the
+  // STOCK WITHDRAWAL RECEIPT once approved. Signatures resolve through this portal's own fetch.
+  const printWithdrawal = async (w: WithdrawalRow) => {
+    const r = await printWithdrawalReceipt(w as any, () => fetchFn(`/inventory-withdrawals/${w.id}/signatures`));
+    if (!r.ok) toast.error(r.error || 'Could not open the print dialog');
+  };
+
   return (
     <div className="p-4 sm:p-6 max-w-3xl mx-auto">
       <div className="flex items-start justify-between gap-3 mb-5">
@@ -82,7 +90,11 @@ export function WithdrawalTab({ fetchFn }: { fetchFn: FetchFn }) {
                   </div>
                   {w.reason && <p className="text-xs text-gray-400 mt-0.5">{w.reason}</p>}
                 </div>
-                <span className="flex-shrink-0 text-xs font-semibold text-brand-gold">{WD_STATUS_LABEL[w.status] || w.status}</span>
+                <div className="flex-shrink-0 flex items-center gap-2">
+                  <span className="text-xs font-semibold text-brand-gold">{WD_STATUS_LABEL[w.status] || w.status}</span>
+                  <button onClick={() => printWithdrawal(w)} title="Print"
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Printer className="w-3.5 h-3.5" /> Print</button>
+                </div>
               </div>
             </div>
           ))}
