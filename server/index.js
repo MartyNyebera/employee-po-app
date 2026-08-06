@@ -1987,7 +1987,10 @@ app.post('/api/sales-orders/:id/approve', requireRole(['admin']), async (req, re
       `INSERT INTO business_logic_audit_log
        (entity_type, entity_id, action, field_name, old_value, new_value, changed_by, changed_by_name, reason)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      ['SALES_ORDER', sales_order_id, 'APPROVE', 'status', 'pending', 'approved', approver_id, approver_name, notes]
+      // The UPDATE above sets 'PAID' (the status revenue recognition + the charts key off). The
+      // audit log and the response must state the SAME value, not 'approved' — the old mismatch
+      // is what made callers believe the order was 'approved' while the row was 'PAID'.
+      ['SALES_ORDER', sales_order_id, 'APPROVE', 'status', order.rows[0].status, 'PAID', approver_id, approver_name, notes]
     );
 
     await client.query('COMMIT');
@@ -1997,7 +2000,7 @@ app.post('/api/sales-orders/:id/approve', requireRole(['admin']), async (req, re
       message: 'Sales order approved successfully',
       data: {
         sales_order_id,
-        status: 'approved',
+        status: 'PAID',
         approval_date: new Date(),
         next_step: 'Order ready for fulfillment. Revenue will be recognized upon delivery.'
       }
@@ -3317,6 +3320,31 @@ app.put('/api/purchase-orders/:id/delivery', requireRole(['admin', 'warehouse'])
           [String(receivedBy).trim(), orNull(notes), JSON.stringify(receivedLines), req.params.id]
         );
       }
+
+      // Section D — #H5: any line the warehouse marked 'Incomplete' (defective/short) goes back to
+      // the supplier. Create ONE return delivery listing those lines, tagged to this PO via
+      // return_of_po_id, so it surfaces in Logistics' "Returns to supplier" queue (pending →
+      // dispatched → delivered). No stock moved for these lines — Incomplete shelves nothing — so
+      // this is purely the return record. Created in THIS transaction with the receipt, and only
+      // when there is at least one defective line, so a clean receipt raises no return.
+      const defectiveLines = receivedLines.filter(l => l.remarks === 'Incomplete');
+      if (defectiveLines.length) {
+        const ry = new Date().getFullYear();
+        const rlast = await client.query(`SELECT delivery_number FROM deliveries WHERE delivery_number LIKE $1 ORDER BY delivery_number DESC LIMIT 1 FOR UPDATE`, [`DR-${ry}-%`]);
+        let rc = 1;
+        if (rlast.rows[0]) { const n = parseInt(rlast.rows[0].delivery_number.split('-')[2], 10); if (!isNaN(n)) rc = n + 1; }
+        const returnNumber = `DR-${ry}-${String(rc).padStart(4, '0')}`;
+        const returnItems = JSON.stringify(defectiveLines.map(l => ({
+          itemName: l.itemName, quantity: Number(l.received) || 0, ordered: Number(l.ordered) || 0, unit: null,
+        })));
+        await client.query(
+          `INSERT INTO deliveries (id, delivery_number, sales_order_id, withdrawal_id, return_of_po_id, destination, items, status, notes)
+           VALUES ($1,$2,NULL,NULL,$3,$4,$5::jsonb,'pending',$6)`,
+          [`DEL-RET-${req.params.id}-${Date.now()}`, returnNumber, req.params.id,
+           cur.rows[0].client || 'Supplier', returnItems,
+           `Defective/short units returned for ${cur.rows[0].po_number}`]
+        );
+      }
     } else {
       r = await client.query(
         `UPDATE purchase_orders SET status='cancelled', cancelled_by=$1, cancelled_at=NOW(),
@@ -3990,7 +4018,10 @@ app.post('/api/deliveries', requireRole(['admin', 'logistics']), async (req, res
 
     const so = await query('SELECT id, status FROM sales_orders WHERE id = $1', [salesOrderId]);
     if (!so.rows[0]) return res.status(404).json({ error: 'Sales order not found' });
-    if (so.rows[0].status !== 'approved') {
+    // Approval stamps the order 'PAID' (the status revenue recognition keys off); 'approved' can
+    // also appear on legacy/interim rows. Both are dispatchable — the old check accepted only
+    // 'approved', so a normally-approved (PAID) order could never be dispatched.
+    if (!['approved', 'PAID'].includes(so.rows[0].status)) {
       return res.status(400).json({ error: 'Only an approved sales order can be dispatched' });
     }
     const dupe = await query(`SELECT id FROM deliveries WHERE sales_order_id = $1 AND status <> 'cancelled' LIMIT 1`, [salesOrderId]);

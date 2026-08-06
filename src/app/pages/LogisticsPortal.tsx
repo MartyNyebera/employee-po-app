@@ -294,7 +294,10 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
       if (d.salesOrderId && d.status !== 'cancelled') byOrder.set(d.salesOrderId, d);
     }
     return orders
-      .filter(so => so.status === 'approved')
+      // Approval stamps the order 'PAID' (revenue recognised); 'approved' also appears on
+      // legacy/interim rows. Both are dispatchable — filtering only 'approved' hid every
+      // normally-approved order from Logistics.
+      .filter(so => ['approved', 'PAID'].includes(so.status as string))
       .map(so => {
         const delivery = byOrder.get(so.id) || null;
         const state = (delivery?.status as Job['state']) || 'pending';
