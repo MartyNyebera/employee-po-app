@@ -163,11 +163,13 @@ export function WithdrawalRequestsReview({ isAdmin }: { isAdmin: boolean }) {
                       {w.status === 'pending' && (
                         <span style={{ color: '#8a8a8a', fontSize: '12px' }}>Awaiting the warehouse</span>
                       )}
-                      {w.status === 'approved' && (
-                        <button className="crm-row-btn" title="Print receipt" style={{ ...S.rowBtn, marginLeft: 0, display: 'inline-flex', alignItems: 'center', gap: '5px' }}
-                          onClick={() => print(w)}><Printer size={13} /></button>
-                      )}
                       {w.status === 'rejected' && <span style={{ color: '#8a8a8a', fontSize: '12px' }}>{w.reviewedBy ? `by ${w.reviewedBy}` : '—'}</span>}
+                      {/* Print on EVERY row — the admin opens a pending/awaiting request to see the
+                          requester's (and warehouse's) signatures before approving. Not approved yet
+                          prints as the "WITHDRAWAL REQUEST" form (blank Released/Approved lines);
+                          approved prints as the "STOCK WITHDRAWAL RECEIPT". */}
+                      <button className="crm-row-btn" title={w.status === 'approved' ? 'Print receipt' : 'Print request form'} style={{ ...S.rowBtn, marginLeft: 0, display: 'inline-flex', alignItems: 'center', gap: '5px' }}
+                        onClick={() => print(w)}><Printer size={13} /></button>
                       {isAdmin && (
                         <button className="crm-row-btn" title="Delete request" style={{ ...S.rowBtn, marginLeft: 0, color: '#b91c1c' }} disabled={processing === w.id}
                           onClick={() => removeWithdrawal(w)}><Trash2 size={13} /></button>
