@@ -56,6 +56,36 @@ import { hashPassword, comparePassword, signToken, requireAuth, requireAdmin, re
 import { createSalesOrder, createPurchaseOrder } from './order-service.js';
 import { sendEmailToAdminsNewRequest, sendEmailToApplicant } from './email.js';
 
+// One place to turn a thrown error into a client response. A bare
+// `res.status(500).json({ error: err.message })` leaks raw Postgres text —
+// constraint, table and column names — to the client, and reports plain bad
+// input (a nonexistent FK, a missing required field, a non-numeric id) as a
+// 500 instead of a 4xx. This maps the pg error codes we actually hit to clean
+// statuses with a GENERIC message, logs the real error server-side, and only
+// ever returns a non-generic message for a validation error we raised ourselves
+// (err.statusCode set) — never the database's own words.
+//   23505 unique_violation      -> 409  (duplicate)
+//   23503 foreign_key_violation -> 400  (references something that doesn't exist)
+//   23502 not_null_violation    -> 400  (a required field was missing)
+//   22P02 invalid_text_repr     -> 400  (bad id / non-numeric where a number was needed)
+//   23514 check_violation       -> 400  (a value outside its allowed set)
+// Anything else is an unexpected server fault: 500 with "Something went wrong".
+function sendDbError(res, err, context) {
+  if (context) console.error(`${context}:`, err); else console.error(err);
+  // A guard we raised on purpose (e.statusCode + a safe, human message) passes through as-is.
+  if (err && err.statusCode && err.statusCode >= 400 && err.statusCode < 500) {
+    return res.status(err.statusCode).json({ error: err.message || 'Request could not be completed' });
+  }
+  switch (err && err.code) {
+    case '23505': return res.status(409).json({ error: 'That record already exists' });
+    case '23503': return res.status(400).json({ error: 'References a record that does not exist' });
+    case '23502': return res.status(400).json({ error: 'A required field is missing' });
+    case '22P02': return res.status(400).json({ error: 'Invalid value or identifier' });
+    case '23514': return res.status(400).json({ error: 'A value is not allowed' });
+    default:      return res.status(500).json({ error: 'Something went wrong' });
+  }
+}
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -2448,44 +2478,55 @@ console.log('🔧 Business logic API fixes loaded successfully');
 // PUT /api/inventory/:id/reserve
 app.put('/api/inventory/:id/reserve', requireRole(['admin','purchasing','office_admin']), async (req, res) => {
   try {
-    const { quantity } = req.body;
+    // A positive number is required: a negative or non-numeric quantity must never reach the
+    // UPDATE, where `- $1` on a negative would ADD stock (or reservation) instead of removing it.
+    const qty = Number(req.body.quantity);
+    if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ error: 'A positive quantity is required' });
     const item = await query('SELECT quantity, reserved_quantity, in_transit_quantity FROM inventory WHERE id=$1', [req.params.id]);
     if (!item.rows[0]) return res.status(404).json({ error: 'Item not found' });
     const available = parseFloat(item.rows[0].quantity) - parseFloat(item.rows[0].reserved_quantity || 0) - parseFloat(item.rows[0].in_transit_quantity || 0);
-    if (quantity > available) return res.status(400).json({ error: `Only ${available} units available` });
-    await query('UPDATE inventory SET reserved_quantity = COALESCE(reserved_quantity,0) + $1, updated_at=NOW() WHERE id=$2', [quantity, req.params.id]);
-    res.json({ ok: true, reserved: quantity });
+    if (qty > available) return res.status(400).json({ error: `Only ${available} units available` });
+    await query('UPDATE inventory SET reserved_quantity = COALESCE(reserved_quantity,0) + $1, updated_at=NOW() WHERE id=$2', [qty, req.params.id]);
+    res.json({ ok: true, reserved: qty });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendDbError(res, err, 'inventory reserve');
   }
 });
 
 // PUT /api/inventory/:id/unreserve
 app.put('/api/inventory/:id/unreserve', requireRole(['admin','purchasing','office_admin']), async (req, res) => {
   try {
-    const { quantity } = req.body;
-    await query('UPDATE inventory SET reserved_quantity = GREATEST(0, COALESCE(reserved_quantity,0) - $1), updated_at=NOW() WHERE id=$2', [quantity, req.params.id]);
+    const qty = Number(req.body.quantity);
+    if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ error: 'A positive quantity is required' });
+    const item = await query('SELECT id FROM inventory WHERE id=$1', [req.params.id]);
+    if (!item.rows[0]) return res.status(404).json({ error: 'Item not found' });
+    await query('UPDATE inventory SET reserved_quantity = GREATEST(0, COALESCE(reserved_quantity,0) - $1), updated_at=NOW() WHERE id=$2', [qty, req.params.id]);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendDbError(res, err, 'inventory unreserve');
   }
 });
 
 // PUT /api/inventory/:id/deduct
 app.put('/api/inventory/:id/deduct', requireRole(['admin','purchasing','office_admin']), async (req, res) => {
   try {
-    const { quantity } = req.body;
+    // Guard BOTH the value and the item. A negative qty turned `quantity - $1` into an addition
+    // (silent stock inflation); a missing id updated 0 rows yet still returned a false 200 {ok}.
+    const qty = Number(req.body.quantity);
+    if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ error: 'A positive quantity is required' });
+    const item = await query('SELECT id FROM inventory WHERE id=$1', [req.params.id]);
+    if (!item.rows[0]) return res.status(404).json({ error: 'Item not found' });
     await query(
       `UPDATE inventory SET
         quantity = GREATEST(0, quantity - $1),
         in_transit_quantity = GREATEST(0, COALESCE(in_transit_quantity,0) - $1),
         updated_at=NOW()
        WHERE id=$2`,
-      [quantity, req.params.id]
+      [qty, req.params.id]
     );
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendDbError(res, err, 'inventory deduct');
   }
 });
 
@@ -2951,7 +2992,7 @@ Terms & Conditions: ${termsAndConditions || 'Standard terms apply'}`;
       purchaseRequestId: row.purchase_request_id,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendDbError(res, err, 'purchase order create');
   }
 });
 
@@ -3681,8 +3722,7 @@ app.post('/api/sales-orders', requireRole(['admin', 'sales']), async (req, res) 
       assignedAssets: row.assigned_assets || [],
     });
   } catch (err) {
-    console.error('Sales order creation error:', err);
-    res.status(500).json({ error: err.message });
+    sendDbError(res, err, 'sales order create');
   }
 });
 
@@ -4007,7 +4047,7 @@ app.get('/api/deliveries', requireRole(['admin', 'logistics']), async (req, res)
        ORDER BY d.created_at DESC`
     );
     res.json(r.rows.map(mapDelivery));
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { sendDbError(res, err, 'deliveries list'); }
 });
 
 // Dispatch — creates the delivery record for a sales order.
@@ -4047,7 +4087,7 @@ app.post('/api/deliveries', requireRole(['admin', 'logistics']), async (req, res
     }
     const r = await query('SELECT * FROM deliveries WHERE id = $1', [id]);
     res.status(201).json(mapDelivery(r.rows[0]));
-  } catch (err) { console.error('delivery create error:', err); res.status(500).json({ error: err.message }); }
+  } catch (err) { sendDbError(res, err, 'delivery create'); }
 });
 
 // Dispatch, complete or cancel a delivery.
@@ -4087,7 +4127,7 @@ app.put('/api/deliveries/:id', requireRole(['admin', 'logistics']), async (req, 
       [orNull(notes), req.params.id]
     );
     res.json(mapDelivery(r.rows[0]));
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { sendDbError(res, err, 'delivery update'); }
 });
 
 // ─── Inventory API ─────────────────────────────────────────
@@ -4172,8 +4212,7 @@ app.post('/api/inventory', requireRole(['admin','purchasing','office_admin','war
       supplier: row.supplier,
     });
   } catch (err) {
-    console.error('Inventory creation error:', err);
-    res.status(500).json({ error: err.message });
+    sendDbError(res, err, 'inventory create');
   }
 });
 
@@ -4255,8 +4294,7 @@ app.patch('/api/inventory/:id', requireRole(['admin','purchasing','office_admin'
       supplier: row.supplier,
     });
   } catch (err) {
-    console.error('Inventory update error:', err);
-    res.status(500).json({ error: err.message });
+    sendDbError(res, err, 'inventory update');
   }
 });
 
@@ -4268,8 +4306,7 @@ app.delete('/api/inventory/:id', requireRole(['admin','purchasing','office_admin
     console.log('Inventory item deleted successfully');
     res.json({ message: 'Inventory item deleted' });
   } catch (err) {
-    console.error('Inventory deletion error:', err);
-    res.status(500).json({ error: err.message });
+    sendDbError(res, err, 'inventory delete');
   }
 });
 
@@ -5849,7 +5886,8 @@ console.log(`🔍 Employee review request: ID=${req.params.id}, status=${status}
         `UPDATE employee_accounts
          SET status=$1, approved_by=$2,
              approved_at=NOW()
-         WHERE id=$3 RETURNING *`,
+         WHERE id=$3
+         RETURNING id, full_name, email, department, position, phone, status, approved_at, approved_by, created_at`,
         [status, reviewed_by, req.params.id]
       );
       
@@ -5880,7 +5918,8 @@ console.log(`🔍 Employee review request: ID=${req.params.id}, status=${status}
         `UPDATE employee_accounts
          SET status=$1, approved_by=$2,
              approved_at=NOW()
-         WHERE id=$3 RETURNING *`,
+         WHERE id=$3
+         RETURNING id, full_name, email, department, position, phone, status, approved_at, approved_by, created_at`,
         [status, reviewerId, req.params.id]
       );
       
@@ -6488,7 +6527,7 @@ app.post('/api/purchase-requests', requireAuth, async (req, res) => {
       [id, prNumber, employeeId, employeeName, orNull(b.projectId), orNull(b.neededBy), orNull(b.supplier), orNull(b.notes), JSON.stringify(items), total]
     );
     res.status(201).json(mapPurchaseRequest(r.rows[0]));
-  } catch (err) { console.error('purchase-request create error:', err); res.status(500).json({ error: err.message }); }
+  } catch (err) { sendDbError(res, err, 'purchase-request create'); }
 });
 app.get('/api/purchase-requests/mine', requireAuth, async (req, res) => {
   try {
@@ -6823,7 +6862,7 @@ app.post('/api/inventory/:id/withdraw', requireAuth, async (req, res) => {
       if (e.code === '23505') return res.status(409).json({ error: 'That withdrawal number was just taken — try again' });
       throw e;
     }
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { sendDbError(res, err, 'inventory withdraw'); }
 });
 
 // [removed] POST /api/inventory/:id/deduct-fulfill — it deducted stock immediately when an
