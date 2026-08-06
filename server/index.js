@@ -110,6 +110,28 @@ function registerRateLimit(req, res, next) {
   next();
 }
 
+// OPT-IN pagination for the ERP list endpoints. Returns a `LIMIT/OFFSET` fragment + params ONLY
+// when the caller explicitly asks (limit, offset, or page) — otherwise it returns an empty
+// fragment and the query is unchanged, so the endpoint still returns the FULL array. This matters:
+// the current frontend derives revenue/expense KPIs, per-project spend, NavBadge counts, and the
+// NEXT PO/SO number by reducing/scanning the whole list client-side, so a silent default cap would
+// corrupt those (and cause duplicate document numbers). Callers that want a page pass ?limit=&
+// offset= (or ?page=, 1-based); everyone else is untouched. `startIndex` is the next positional
+// placeholder ($N) after the query's existing params.
+function pageClause(req, startIndex) {
+  const q = req.query || {};
+  const rawLimit = parseInt(q.limit, 10);
+  const rawOffset = parseInt(q.offset, 10);
+  const rawPage = parseInt(q.page, 10);
+  if (!Number.isFinite(rawLimit) && !Number.isFinite(rawOffset) && !Number.isFinite(rawPage)) {
+    return { sql: '', params: [] }; // no pagination requested → unchanged, full-array behaviour
+  }
+  const limit = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : 100, 1), 1000);
+  let offset = Number.isFinite(rawOffset) ? Math.max(rawOffset, 0) : 0;
+  if (Number.isFinite(rawPage) && rawPage > 0) offset = (rawPage - 1) * limit;
+  return { sql: ` LIMIT $${startIndex} OFFSET $${startIndex + 1}`, params: [limit, offset] };
+}
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -951,6 +973,38 @@ async function runMigrations() {
       console.log('✅ inventory_withdrawal_requests table ready');
     } catch (err) { console.log('ℹ️ inventory_withdrawal_requests table skipped:', err.message); }
 
+    // ── ERP list-endpoint performance indexes (M9) ─────────────────────────────────────────
+    // The high-traffic lists all default to `ORDER BY created_at DESC` and their review screens
+    // filter by status (and, for the "mine" lists, by the requester). Without an index those are
+    // full table scans + a sort that grow linearly as the Pi accumulates months of data. These
+    // back exactly those access paths. Idempotent (IF NOT EXISTS) and each guarded on its own so a
+    // missing table/column (e.g. a legacy `transactions`) can't abort the rest. optimize-db.sql is
+    // the stale source for these — it's never executed at boot and references dropped fleet tables,
+    // so the useful ones are recreated here where they actually run. ERP tables ONLY — the
+    // attendance/payroll indexes live in their own migration block and are deliberately untouched.
+    try {
+      const idx = async (sql) => { try { await query(sql); } catch (e) { console.log('ℹ️ index skipped:', e.message); } };
+      await idx(`CREATE INDEX IF NOT EXISTS idx_po_created_at        ON purchase_orders(created_at)`);
+      await idx(`CREATE INDEX IF NOT EXISTS idx_po_status            ON purchase_orders(status)`);
+      await idx(`CREATE INDEX IF NOT EXISTS idx_po_created_date      ON purchase_orders(created_date)`);
+      await idx(`CREATE INDEX IF NOT EXISTS idx_so_created_date      ON sales_orders(created_date)`);
+      await idx(`CREATE INDEX IF NOT EXISTS idx_so_status            ON sales_orders(status)`);
+      await idx(`CREATE INDEX IF NOT EXISTS idx_pr_created_at        ON purchase_requests(created_at)`);
+      await idx(`CREATE INDEX IF NOT EXISTS idx_pr_status            ON purchase_requests(status)`);
+      await idx(`CREATE INDEX IF NOT EXISTS idx_pr_employee_id       ON purchase_requests(employee_id)`);
+      await idx(`CREATE INDEX IF NOT EXISTS idx_pr_project_id        ON purchase_requests(project_id)`);
+      await idx(`CREATE INDEX IF NOT EXISTS idx_wd_created_at        ON inventory_withdrawal_requests(created_at)`);
+      await idx(`CREATE INDEX IF NOT EXISTS idx_wd_status           ON inventory_withdrawal_requests(status)`);
+      await idx(`CREATE INDEX IF NOT EXISTS idx_wd_requested_by      ON inventory_withdrawal_requests(requested_by_id)`);
+      await idx(`CREATE INDEX IF NOT EXISTS idx_deliveries_created_at ON deliveries(created_at)`);
+      await idx(`CREATE INDEX IF NOT EXISTS idx_deliveries_status    ON deliveries(status)`);
+      await idx(`CREATE INDEX IF NOT EXISTS idx_mr_status            ON material_requests(status)`);
+      await idx(`CREATE INDEX IF NOT EXISTS idx_mr_employee_id       ON material_requests(employee_id)`);
+      await idx(`CREATE INDEX IF NOT EXISTS idx_mr_created_at        ON material_requests(created_at)`);
+      await idx(`CREATE INDEX IF NOT EXISTS idx_transactions_date    ON transactions(date)`);
+      console.log('✅ ERP list-endpoint indexes ready');
+    } catch (err) { console.log('ℹ️ ERP index block skipped:', err.message); }
+
     // New-item requests. The purchase-request item picker is a strict closed list over
     // inventory, so production simply cannot request something the warehouse has never
     // stocked. This is the queue that closes that loop: production asks, the warehouse
@@ -1497,6 +1551,7 @@ app.get('/api/purchase-orders', requireAuth, async (req, res) => {
     if (effectiveRole(req.user) === 'warehouse') {
       whereClause += ` AND po.status IN ('approved','in-progress','RECEIVED','cancelled')`;
     }
+    const pg = pageClause(req, params.length + 1);
     const result = await query(
       `SELECT po.id, po.po_number, po.client, po.description, po.amount, po.status, po.created_date, po.delivery_date,
               po.assigned_assets, po.order_type, po.doc_date, po.prepared_by, po.reviewed_by, po.supplier_address,
@@ -1520,8 +1575,8 @@ app.get('/api/purchase-orders', requireAuth, async (req, res) => {
        -- every order raised on the same day tied and Postgres returned them in arbitrary order —
        -- the newest was NOT reliably on top. po_number is the deterministic final tiebreaker.
        -- created_date stays the user-facing "PO Date" (it can be back-dated via doc_date).
-       ${whereClause} ORDER BY po.created_at DESC, po.po_number DESC`,
-      params
+       ${whereClause} ORDER BY po.created_at DESC, po.po_number DESC${pg.sql}`,
+      [...params, ...pg.params]
     );
     res.json(result.rows.map(row => ({
       id: row.id,
@@ -1604,11 +1659,12 @@ app.get('/api/sales-orders', requireAuth, async (req, res) => {
       whereClause += ` AND status = $${paramIndex++}`;
       params.push(status);
     }
+    const pg = pageClause(req, params.length + 1);
     const result = await query(
       `SELECT id, so_number, client, customer_id, description, amount, cost_amount, line, source, inquiry_id, status, created_date, delivery_date, assigned_assets,
               doc_date, prepared_by, reviewed_by, customer_address, customer_contact, payment_terms, terms_and_conditions
-       FROM sales_orders ${whereClause} ORDER BY created_date DESC`,
-      params
+       FROM sales_orders ${whereClause} ORDER BY created_date DESC${pg.sql}`,
+      [...params, ...pg.params]
     );
     res.json(result.rows.map(row => ({
       id: row.id,
@@ -3556,9 +3612,11 @@ app.patch('/api/purchase-orders/:id', requireRole(['admin','purchasing','office_
 // GET /api/transactions
 app.get('/api/transactions', async (req, res) => {
   try {
+    const pg = pageClause(req, 1);
     const result = await query(
       `SELECT id, po_number, type, description, amount, asset_id, date, receipt
-       FROM transactions ORDER BY date DESC, id`
+       FROM transactions ORDER BY date DESC, id${pg.sql}`,
+      pg.params
     );
     const transactions = result.rows.map((row) => ({
       id: row.id,
@@ -4038,13 +4096,15 @@ function mapDelivery(r) {
 
 app.get('/api/deliveries', requireRole(['admin', 'logistics']), async (req, res) => {
   try {
+    const pg = pageClause(req, 1);
     const r = await query(
       `SELECT d.*, so.so_number, so.client, so.customer_address, so.customer_contact,
               so.amount, so.status AS so_status, so.delivery_date, po.po_number AS return_po_number
        FROM deliveries d
        LEFT JOIN sales_orders so ON so.id = d.sales_order_id
        LEFT JOIN purchase_orders po ON po.id = d.return_of_po_id
-       ORDER BY d.created_at DESC`
+       ORDER BY d.created_at DESC${pg.sql}`,
+      pg.params
     );
     res.json(r.rows.map(mapDelivery));
   } catch (err) { sendDbError(res, err, 'deliveries list'); }
@@ -6557,13 +6617,14 @@ app.get('/api/purchase-requests', requireRole(['admin', 'purchasing', 'accountin
     // not theirs to see. Enforced here rather than in the UI: hiding it client-side would
     // still ship the data. Admin and accounting are unaffected.
     if (effectiveRole(req.user) === 'purchasing') where.push(`pr.status <> 'pending'`);
+    const pg = pageClause(req, params.length + 1);
     const r = await query(
       `SELECT pr.*, p.name AS project_name FROM purchase_requests pr
        LEFT JOIN projects p ON p.id = pr.project_id
        -- created_at is a real TIMESTAMPTZ so this is already newest-first; pr_number is a
        -- deterministic tiebreaker for the theoretical same-instant case, giving a total order.
-       WHERE ${where.join(' AND ')} ORDER BY pr.created_at DESC, pr.pr_number DESC`,
-      params
+       WHERE ${where.join(' AND ')} ORDER BY pr.created_at DESC, pr.pr_number DESC${pg.sql}`,
+      [...params, ...pg.params]
     );
     res.json(r.rows.map(mapPurchaseRequest));
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -6907,8 +6968,9 @@ app.get('/api/inventory-withdrawals', requireRole(['admin', 'warehouse']), async
     const { status } = req.query;
     const where = []; const params = []; let i = 1;
     if (status) { where.push(`w.status = $${i++}`); params.push(status); }
-    const sql = `${WITHDRAWAL_SELECT} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY w.created_at DESC`;
-    const r = await query(sql, params);
+    const pg = pageClause(req, params.length + 1);
+    const sql = `${WITHDRAWAL_SELECT} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY w.created_at DESC${pg.sql}`;
+    const r = await query(sql, [...params, ...pg.params]);
     res.json(r.rows.map(mapWithdrawalRequest));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
