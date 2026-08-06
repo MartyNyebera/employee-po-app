@@ -231,6 +231,8 @@ export async function createPurchaseOrder(po: {
   otherCharges: number;
   vatAmount: number;
   totalAmount: number;
+  paymentMode?: 'Cash' | 'Credit';
+  vatType?: 'vatable' | 'non-vatable';
   createdDate?: string;
   orderType?: string;
 }): Promise<PurchaseOrder> {

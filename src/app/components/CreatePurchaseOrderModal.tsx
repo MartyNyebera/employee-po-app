@@ -36,6 +36,7 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
     poDate: new Date().toISOString().split('T')[0],
     deliveryDate: '',
     poType: 'domestic' as 'domestic' | 'foreign',
+    paymentMode: 'Cash' as 'Cash' | 'Credit',
     paymentTerms: '30 days from receipt/acceptance',
     termsAndConditions: `1. Prices quoted are firm and valid for 30 days from PO date.\n2. Delivery shall be made to the specified address within the agreed timeframe.\n3. Materials shall conform to specifications and quality standards.\n4. Payment shall be made within 30 days from receipt and acceptance of materials.\n5. This PO is governed by the laws of the Republic of the Philippines.`,
     preparedBy: 'Kim Karen D. Tagle',
@@ -43,9 +44,7 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
     vendorName: '',
     vendorAddress: '',
     vendorContact: '',
-    ewt: 0,
     vatType: 'vatable' as 'vatable' | 'non-vatable',
-    vatAmount: 0,
   });
 
   const [lineItems, setLineItems] = useState<LineItem[]>([
@@ -84,22 +83,16 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
     setForm(prev => ({ ...prev, poDate: today }));
   }, []);
 
-  const calculateSubTotal = () => lineItems.reduce((sum, item) => sum + item.amount, 0);
-
-  const calculateVATAmount = () => {
-    if (form.vatType === 'vatable') {
-      return (calculateSubTotal() + form.ewt) * 0.12;
-    }
-    return 0;
-  };
-
-  const calculateTotal = () => calculateSubTotal() + form.ewt + calculateVATAmount();
-
-  // Keep vatAmount in sync
-  useEffect(() => {
-    const vatAmount = calculateVATAmount();
-    setForm(prev => ({ ...prev, vatAmount }));
-  }, [lineItems, form.ewt, form.vatType]);
+  // VAT-INCLUSIVE model — identical to the PR-linked purchasing form (PurchasingPortal.tsx) so the
+  // same line prices total the same no matter which form raised the PO. The entered line amounts
+  // ARE the gross (VAT-inclusive) total: Vatable breaks the 12% out of it (net = price ÷ 1.12),
+  // Non-VAT leaves it whole. This replaces the old VAT-exclusive math (12% added on top).
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const isVatable = form.vatType === 'vatable';
+  const grossTotal = lineItems.reduce((sum, item) => sum + item.amount, 0);
+  const totalAmount = round2(grossTotal);
+  const netOfVat = isVatable ? round2(grossTotal / 1.12) : totalAmount;
+  const vatAmount = isVatable ? round2(totalAmount - netOfVat) : 0;
 
   const updateLineItem = (id: string, field: keyof LineItem, value: string | number) => {
     setLineItems(prev => prev.map(item => {
@@ -170,7 +163,9 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
         poDate: form.poDate,
         deliveryDate: form.deliveryDate,
         poType: form.poType,
-        paymentTerms: form.paymentTerms,
+        paymentMode: form.paymentMode,
+        // Cash carries no terms (the server enforces this too); Credit sends the entered terms.
+        paymentTerms: form.paymentMode === 'Credit' ? form.paymentTerms : '',
         termsAndConditions: form.termsAndConditions,
         preparedBy: form.preparedBy,
         reviewedBy: form.reviewedBy,
@@ -178,10 +173,13 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
         customerAddress: form.vendorAddress,
         customerContact: form.vendorContact,
         lineItems: legacyLineItems,
-        subTotal: calculateSubTotal(),
-        otherCharges: form.ewt,
-        vatAmount: form.vatAmount,
-        totalAmount: calculateTotal(),
+        // subTotal carries the Net of VAT (VAT-exclusive) figure for the printout; totalAmount is
+        // the gross (= entered price). Matches the PR-linked form exactly.
+        subTotal: netOfVat,
+        otherCharges: 0,
+        vatAmount,
+        vatType: form.vatType,
+        totalAmount,
         createdDate: new Date().toISOString().split('T')[0],
         status: 'pending',
         orderType: undefined,
@@ -346,19 +344,34 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
                   </label>
                 </div>
               </div>
-              <div className="col-span-2">
+              <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
-                  Payment Terms <span className="text-red-500">*</span>
+                  Mode of Payment <span className="text-red-500">*</span>
                 </label>
-                <input
-                  type="text"
-                  value={form.paymentTerms}
-                  onChange={e => setForm(f => ({ ...f, paymentTerms: e.target.value }))}
-                  placeholder="e.g., 30 days from receipt/acceptance"
+                <select
+                  value={form.paymentMode}
+                  onChange={e => setForm(f => ({ ...f, paymentMode: e.target.value as 'Cash' | 'Credit' }))}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  required
-                />
+                >
+                  <option value="Cash">Cash</option>
+                  <option value="Credit">Credit</option>
+                </select>
               </div>
+              {form.paymentMode === 'Credit' && (
+                <div className="col-span-2">
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Payment Terms <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={form.paymentTerms}
+                    onChange={e => setForm(f => ({ ...f, paymentTerms: e.target.value }))}
+                    placeholder="e.g., 30 days from receipt/acceptance"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+              )}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
                   VAT Type <span className="text-red-500">*</span>
@@ -474,37 +487,25 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
           {/* ── E. TOTALS SECTION ── */}
           <div className="border border-slate-200 rounded-lg p-4">
             <h3 className="font-bold text-slate-900 mb-3">TOTALS</h3>
-            <div className="grid grid-cols-4 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Sub Total</label>
-                <div className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-slate-50 text-slate-900 text-sm font-medium">
-                  ₱{calculateSubTotal().toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">EWT</label>
-                <input
-                  type="number"
-                  value={form.ewt}
-                  onChange={e => setForm(f => ({ ...f, ewt: Number(e.target.value) }))}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  min="0"
-                  step="0.01"
-                />
-              </div>
-              {form.vatType === 'vatable' && (
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">VAT Amount (12%)</label>
-                  <div className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-slate-50 text-slate-900 text-sm font-medium">
-                    ₱{calculateVATAmount().toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+            <p className="text-xs text-slate-500 mb-3">
+              {isVatable ? 'Unit prices are VAT-inclusive; the 12% VAT is broken out below.' : 'No VAT — the price is the total.'}
+            </p>
+            <div className="max-w-sm ml-auto space-y-2 text-sm">
+              {isVatable && (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">Net of VAT</span>
+                    <span className="font-medium text-slate-900 tabular-nums">₱{netOfVat.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
                   </div>
-                </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">VAT (12%)</span>
+                    <span className="font-medium text-slate-900 tabular-nums">₱{vatAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                </>
               )}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Total Amount</label>
-                <div className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-blue-50 text-blue-900 text-sm font-bold border-blue-200">
-                  ₱{calculateTotal().toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                </div>
+              <div className="flex justify-between border-t border-slate-200 pt-2">
+                <span className="font-semibold text-slate-900">Total Amount</span>
+                <span className="font-bold text-blue-900 tabular-nums">₱{totalAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
               </div>
             </div>
           </div>
