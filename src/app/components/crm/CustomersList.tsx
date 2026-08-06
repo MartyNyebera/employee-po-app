@@ -56,7 +56,13 @@ export function CustomersList({ isAdmin }: { isAdmin: boolean }) {
     <div style={S.page}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
         <div><h1 style={S.h1}>Clients</h1><p style={S.sub}>Who we sell to — contractors, builders, factories, distributors.</p></div>
-        {/* Admin cannot add customers from the admin portal (#10) — Sales owns client creation. */}
+        {/* Sales owns client creation, but Admin can add clients too — needed when Sales is out and
+            Admin covers. Both use the same POST /customers endpoint (requireRole owner/admin/sales). */}
+        {isAdmin && (
+          <button style={{ ...S.addBtn, color: '#000000' }} onClick={() => { setEditing(null); setShowModal(true); }}>
+            <Plus size={16} style={{ marginRight: '6px' }} /> Add Client
+          </button>
+        )}
       </div>
 
       <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
