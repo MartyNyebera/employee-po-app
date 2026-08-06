@@ -511,7 +511,7 @@ export function printSalesOrder(so: PrintableSO): { ok: boolean; error?: string 
 
   <div class="summary-section">
     <div class="summary-box">
-      <div class="summary-row"><div class="summary-label">Sub Total:</div><div class="summary-value">${peso(subTotal)}</div></div>
+      <div class="summary-row"><div class="summary-label">Net of VAT:</div><div class="summary-value">${peso(subTotal)}</div></div>
       <div class="summary-row"><div class="summary-label">Other Charges:</div><div class="summary-value">${peso(otherCharges)}</div></div>
       <div class="summary-row"><div class="summary-label">VAT Amount:</div><div class="summary-value">${peso(vatAmount)}</div></div>
       <div class="summary-row"><div class="summary-label">Total Amount:</div><div class="summary-value">${peso(totalAmount)}</div></div>

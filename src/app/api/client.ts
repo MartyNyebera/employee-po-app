@@ -260,7 +260,7 @@ export async function createPurchaseOrder(po: {
   };
 }
 
-export async function updatePurchaseOrder(id: string, updates: { status?: string; description?: string; client?: string; amount?: number; deliveryDate?: string; docDate?: string | null; preparedBy?: string | null; reviewedBy?: string | null; supplierAddress?: string | null; supplierContact?: string | null; paymentTerms?: string | null; termsAndConditions?: string | null }): Promise<PurchaseOrder> {
+export async function updatePurchaseOrder(id: string, updates: { status?: string; description?: string; client?: string; amount?: number; deliveryDate?: string; docDate?: string | null; preparedBy?: string | null; reviewedBy?: string | null; supplierAddress?: string | null; supplierContact?: string | null; paymentTerms?: string | null; poType?: string | null; paymentMode?: string | null; vatType?: string | null; termsAndConditions?: string | null }): Promise<PurchaseOrder> {
   const data = await fetchApi<{ id: string; poNumber: string; client: string; description: string; amount: number; status: string; createdDate: string; deliveryDate: string; assignedAssets: string[]; docDate?: string | null; preparedBy?: string | null; reviewedBy?: string | null; supplierAddress?: string | null; supplierContact?: string | null; paymentTerms?: string | null; termsAndConditions?: string | null }>(`/purchase-orders/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(updates),

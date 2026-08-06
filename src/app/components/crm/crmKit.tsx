@@ -23,7 +23,10 @@ export const S = {
   // beside a long heading, so without these it gets squeezed and the label wraps under the icon.
   addBtn: { display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap', flexShrink: 0, padding: '10px 18px', backgroundColor: '#d1b01b', color: '#ffffff', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: 600, fontFamily: 'inherit' } as React.CSSProperties,
   input: { width: '100%', padding: '10px 14px', borderRadius: '8px', border: '1px solid #d6d6d6', fontSize: '14px', boxSizing: 'border-box', backgroundColor: '#fff', fontFamily: 'inherit' } as React.CSSProperties,
-  label: { display: 'block', fontSize: '12px', fontWeight: 600, color: '#262626', marginBottom: '6px' } as React.CSSProperties,
+  // minHeight reserves two lines so a label that wraps in a 2-column grid doesn't push its input
+  // out of alignment with the neighbouring field (the inline-style analogue of the flabel
+  // min-h-[2.5rem] pattern used in the Tailwind modals).
+  label: { display: 'block', fontSize: '12px', fontWeight: 600, color: '#262626', marginBottom: '6px', minHeight: '32px' } as React.CSSProperties,
   card: { backgroundColor: '#fff', border: '1px solid #d6d6d6', borderRadius: '14px', overflow: 'hidden' } as React.CSSProperties,
   table: { width: '100%', borderCollapse: 'collapse' as const },
   // Neutral grey band distinguishes the header from the white table body.

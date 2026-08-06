@@ -70,7 +70,7 @@ export function WithdrawalTab({ fetchFn }: { fetchFn: FetchFn }) {
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <button onClick={() => load()} title="Refresh" className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"><RefreshCw className="w-4 h-4" /></button>
-          <button onClick={() => setRequesting(true)} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-brand-gold text-white rounded-lg hover:opacity-90"><PackageMinus className="w-4 h-4" /> Request withdrawal</button>
+          <button onClick={() => setRequesting(true)} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-brand-gold text-gray-900 rounded-lg hover:opacity-90"><PackageMinus className="w-4 h-4" /> Request withdrawal</button>
         </div>
       </div>
 
@@ -163,7 +163,7 @@ function RequestModal({ inventory, onSubmit, onClose, onDone }: {
         </div>
         <div className="flex items-center justify-end gap-2 p-5 border-t border-gray-200">
           <button onClick={onClose} className="px-4 py-2 text-sm font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">Cancel</button>
-          <button onClick={submit} disabled={saving} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-brand-gold text-white rounded-lg hover:opacity-90 disabled:opacity-50"><PackageMinus className="w-4 h-4" /> {saving ? 'Requesting…' : 'Request'}</button>
+          <button onClick={submit} disabled={saving} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-brand-gold text-gray-900 rounded-lg hover:opacity-90 disabled:opacity-50"><PackageMinus className="w-4 h-4" /> {saving ? 'Requesting…' : 'Request'}</button>
         </div>
       </div>
     </div>

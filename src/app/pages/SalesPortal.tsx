@@ -387,7 +387,7 @@ function CreateSOModal({ session, customers, onClose, onCreated }: {
 
         <div className="flex items-center justify-end gap-2 p-5 border-t border-gray-200">
           <button onClick={onClose} className="px-4 py-2 text-sm font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">Cancel</button>
-          <button onClick={save} disabled={saving} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"><FileText className="w-4 h-4" /> {saving ? 'Creating…' : 'Create Sales Order'}</button>
+          <button onClick={save} disabled={saving} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-brand-gold text-gray-900 rounded-lg hover:opacity-90 disabled:opacity-50"><FileText className="w-4 h-4" /> {saving ? 'Creating…' : 'Create Sales Order'}</button>
         </div>
       </div>
     </div>
@@ -530,7 +530,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                   <h1 className="text-lg font-semibold text-gray-900">Quotations</h1>
                   <p className="text-sm text-gray-500 mt-0.5">Quote a client, then turn a won quotation into a sales order.</p>
                 </div>
-                <button onClick={() => setCreatingQuote(true)} className="sm:ml-auto inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-brand-gold text-white rounded-lg hover:opacity-90"><Plus className="w-4 h-4" /> New quotation</button>
+                <button onClick={() => setCreatingQuote(true)} className="sm:ml-auto inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-brand-gold text-gray-900 rounded-lg hover:opacity-90"><Plus className="w-4 h-4" /> New quotation</button>
               </div>
               {loading ? <div className="text-sm text-gray-400 py-10 text-center">Loading…</div>
                 : quotations.length === 0 ? <div className="text-sm text-gray-400 py-10 text-center border border-dashed border-gray-200 rounded-xl">No quotations yet.</div>
@@ -568,7 +568,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                   <h1 className="text-lg font-semibold text-gray-900">Clients</h1>
                   <p className="text-sm text-gray-500 mt-0.5">Who we sell to. New clients appear in the sales-order and quotation pickers.</p>
                 </div>
-                <button onClick={() => setCreatingClient(true)} className="sm:ml-auto inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-brand-gold text-white rounded-lg hover:opacity-90"><Plus className="w-4 h-4" /> New client</button>
+                <button onClick={() => setCreatingClient(true)} className="sm:ml-auto inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-brand-gold text-gray-900 rounded-lg hover:opacity-90"><Plus className="w-4 h-4" /> New client</button>
               </div>
               {loading ? <div className="text-sm text-gray-400 py-10 text-center">Loading…</div>
                 : customers.length === 0 ? <div className="text-sm text-gray-400 py-10 text-center border border-dashed border-gray-200 rounded-xl">No clients yet.</div>
@@ -597,7 +597,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
                   <input type="text" placeholder="Search SO #, client…" value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-4 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
-                <button onClick={() => setCreating(true)} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Plus className="w-4 h-4" /> New Sales Order</button>
+                <button onClick={() => setCreating(true)} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium bg-brand-gold text-gray-900 rounded-lg hover:opacity-90"><Plus className="w-4 h-4" /> New Sales Order</button>
               </div>
 
               {loading ? <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading…</div>
@@ -735,7 +735,7 @@ function CreateQuotationModal({ customers, onClose, onCreated }: {
         </div>
         <div className="flex items-center justify-end gap-2 p-5 border-t border-gray-200">
           <button onClick={onClose} className="px-4 py-2 text-sm font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">Cancel</button>
-          <button onClick={submit} disabled={saving} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-brand-gold text-white rounded-lg hover:opacity-90 disabled:opacity-50">{saving ? 'Saving…' : 'Create quotation'}</button>
+          <button onClick={submit} disabled={saving} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-brand-gold text-gray-900 rounded-lg hover:opacity-90 disabled:opacity-50">{saving ? 'Saving…' : 'Create quotation'}</button>
         </div>
       </div>
     </div>
@@ -808,7 +808,7 @@ function CreateClientModal({ onClose, onCreated }: { onClose: () => void; onCrea
         </div>
         <div className="flex items-center justify-end gap-2 p-5 border-t border-gray-200">
           <button onClick={onClose} className="px-4 py-2 text-sm font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">Cancel</button>
-          <button onClick={submit} disabled={saving} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-brand-gold text-white rounded-lg hover:opacity-90 disabled:opacity-50">{saving ? 'Saving…' : 'Add client'}</button>
+          <button onClick={submit} disabled={saving} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-brand-gold text-gray-900 rounded-lg hover:opacity-90 disabled:opacity-50">{saving ? 'Saving…' : 'Add client'}</button>
         </div>
       </div>
     </div>

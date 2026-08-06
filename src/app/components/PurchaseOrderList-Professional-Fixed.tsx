@@ -60,6 +60,8 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
     reviewedBy: '',
     poType: '',
     paymentTerms: '',
+    paymentMode: '',
+    vatType: '',
     lineItems: [],
     subTotal: 0,
     otherCharges: 0,
@@ -156,6 +158,8 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
     let reviewedBy = '';
     let poType = '';
     let paymentTerms = '';
+    let paymentMode = '';
+    let vatType = '';
     let lineItems = [];
     let subTotal = 0;
     let otherCharges = 0;
@@ -182,8 +186,12 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
           reviewedBy = trimmedLine.replace('Reviewed By:', '').trim();
         } else if (trimmedLine.includes('PO Type:')) {
           poType = trimmedLine.replace('PO Type:', '').trim();
+        } else if (trimmedLine.includes('Mode of Payment:')) {
+          paymentMode = trimmedLine.replace('Mode of Payment:', '').trim();
         } else if (trimmedLine.includes('Payment Terms:')) {
           paymentTerms = trimmedLine.replace('Payment Terms:', '').trim();
+        } else if (trimmedLine.includes('VAT Type:')) {
+          vatType = trimmedLine.replace('VAT Type:', '').trim();
         } else if (trimmedLine.includes('Line Items:')) {
           foundLineItems = true;
           try {
@@ -242,8 +250,12 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
       customerContact: (po as any).supplierContact || customerContact,
       preparedBy: (po as any).preparedBy || preparedBy,
       reviewedBy: (po as any).reviewedBy || reviewedBy,
-      poType: poType,
+      poType: poType || (po as any).poType || 'domestic',
       paymentTerms: (po as any).paymentTerms || paymentTerms,
+      // Prefer the real columns (the list GET returns payment_mode/vat_type); the blob is the
+      // fallback for legacy orders that only carried them in the description text.
+      paymentMode: (po as any).paymentMode || paymentMode || 'Cash',
+      vatType: (po as any).vatType || vatType || 'vatable',
       lineItems: lineItems,
       subTotal: subTotal,
       otherCharges: otherCharges,
@@ -283,17 +295,49 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
     console.log('Saving edit with status:', newStatus);
     
     try {
+      // Rebuild the FULL description blob the same way a fresh PO does (server POST
+      // /api/purchase-orders). The edit modal only exposes the free-text first line + header
+      // fields, so sending `description: editForm.description` alone used to overwrite the blob
+      // with just that line — losing the line items — and never sent amount/poType/paymentMode/
+      // vatType, so those stayed stale on a resubmitted order. Preserve the parsed structured
+      // values (line items, totals) and carry the money fields through.
+      const paymentMode = editForm.paymentMode || 'Cash';
+      const vatType = editForm.vatType || 'vatable';
+      const poType = editForm.poType || 'domestic';
+      const storedTerms = paymentMode === 'Credit' ? (editForm.paymentTerms || '30 days from receipt/acceptance') : null;
+      const rebuiltDescription = `${editForm.description || ''}
+
+Address: ${editForm.customerAddress || '[Customer Address]'}
+Contact: ${editForm.customerContact || '[Customer Contact]'}
+Prepared By: ${editForm.preparedBy || '[Prepared By]'}
+Reviewed By: ${editForm.reviewedBy || '[Reviewed By]'}
+PO Type: ${poType}
+Mode of Payment: ${paymentMode}
+Payment Terms: ${storedTerms || 'N/A (Cash)'}
+VAT Type: ${vatType}
+Line Items: ${JSON.stringify(editForm.lineItems || [])}
+Sub Total: ${editForm.subTotal || 0}
+Other Charges: ${editForm.otherCharges || 0}
+VAT Amount: ${editForm.vatAmount || 0}
+Total Amount: ${editForm.totalAmount || 0}
+Terms & Conditions: ${editForm.termsAndConditions || 'Standard terms apply'}`;
+
       // Only update backend - UI is already updated by dropdown onChange
       const updated = await updatePurchaseOrder(selectedPO.id, {
         status: newStatus,
-        description: editForm.description,
+        description: rebuiltDescription,
+        // carry the money/structured fields through so a resubmitted order isn't left stale
+        amount: editForm.totalAmount || 0,
+        poType,
+        paymentMode,
+        vatType,
         // editable PDF header fields (real columns)
         docDate: editForm.docDate || null,
         preparedBy: editForm.preparedBy || null,
         reviewedBy: editForm.reviewedBy || null,
         supplierAddress: editForm.customerAddress || null,
         supplierContact: editForm.customerContact || null,
-        paymentTerms: editForm.paymentTerms || null,
+        paymentTerms: storedTerms,
         termsAndConditions: editForm.termsAndConditions || null,
       });
       console.log('Backend updated:', updated);
