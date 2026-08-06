@@ -859,6 +859,28 @@ async function runMigrations() {
       // presence is what marks the withdrawal as one that should become a delivery on approval;
       // a production withdrawal (employee stock use) leaves it NULL and creates no delivery.
       await query(`ALTER TABLE inventory_withdrawal_requests ADD COLUMN IF NOT EXISTS destination TEXT`);
+      // A withdrawal can be requested from ANY portal (production/sales/accounting/purchasing/
+      // logistics/warehouse/admin), and each portal's accounts live in a DIFFERENT table whose
+      // SERIAL ids collide with the others'. So requested_by_id alone can't say which table holds
+      // the requester's signature — record the requester's ROLE as the discriminator. And widen
+      // requested_by_id to TEXT (mirrors warehouse_by_id/reviewed_by_id) so an admin id
+      // (users.id, TEXT) fits without a 22P02 cast error. The widen is guarded so the one-time
+      // table rewrite doesn't repeat on every boot.
+      await query(`ALTER TABLE inventory_withdrawal_requests ADD COLUMN IF NOT EXISTS requested_by_role TEXT`);
+      await query(`DO $$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_name = 'inventory_withdrawal_requests'
+                        AND column_name = 'requested_by_id' AND data_type = 'integer') THEN
+            ALTER TABLE inventory_withdrawal_requests
+              ALTER COLUMN requested_by_id TYPE TEXT USING requested_by_id::TEXT;
+          END IF;
+        END $$;`);
+      // Legacy rows predate the discriminator. Every case that ever RESOLVED was a Production
+      // (employee_accounts) request — the only table the old join read — so backfill them to
+      // 'employee'. This keeps old Production receipts printing the requester's signature and
+      // lets the owner still recognise their own historical rows. Runs once (then no NULLs remain).
+      await query(`UPDATE inventory_withdrawal_requests SET requested_by_role = 'employee' WHERE requested_by_role IS NULL`);
       await query(`ALTER TABLE inventory_withdrawal_requests DROP CONSTRAINT IF EXISTS inventory_withdrawal_requests_status_check`);
       await query(`ALTER TABLE inventory_withdrawal_requests ADD CONSTRAINT inventory_withdrawal_requests_status_check
                      CHECK (status IN ('pending','warehouse-approved','approved','rejected'))`);
@@ -6754,10 +6776,12 @@ app.post('/api/inventory/:id/withdraw', requireAuth, async (req, res) => {
       // that should become a delivery once an admin approves it. Production withdrawals omit it.
       await query(
         `INSERT INTO inventory_withdrawal_requests
-           (id, withdrawal_number, inventory_id, item_name, quantity, reason, requested_by_id, requested_by_name, purchase_request_id, destination, status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending')`,
+           (id, withdrawal_number, inventory_id, item_name, quantity, reason, requested_by_id, requested_by_name, requested_by_role, purchase_request_id, destination, status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending')`,
+        // requested_by_role is the discriminator that later tells the signatures endpoint which
+        // account table holds this requester's e-signature (their portal's own table).
         [id, withdrawalNumber, req.params.id, item.rows[0].item_name, qty, orNull(req.body.reason),
-         req.user?.id ?? null, req.user?.name || 'Unknown', orNull(req.body.purchaseRequestId), orNull(req.body.destination)]
+         req.user?.id ?? null, req.user?.name || 'Unknown', effectiveRole(req.user), orNull(req.body.purchaseRequestId), orNull(req.body.destination)]
       );
       // Re-read through the joined SELECT rather than using RETURNING *: a bare row has no
       // pr_number or unit, so the created object would differ in shape from the same row in
@@ -6837,19 +6861,56 @@ app.delete('/api/inventory-withdrawals/:id', requireRole(['admin']), async (req,
 // the other way round — warehouse_by_id also holds a users.id when an admin releases it.
 app.get('/api/inventory-withdrawals/:id/signatures', requireAuth, async (req, res) => {
   try {
+    // H2 — the "requested" signature lives in whichever account table the requester's PORTAL uses,
+    // keyed by requested_by_role (the discriminator captured at create time). All account tables
+    // expose it as column `signature`. requested_by_id is now TEXT, so cast each SERIAL id to TEXT
+    // to join; users.id is already TEXT. Legacy rows (role backfilled to 'employee', or any stray
+    // NULL) fall through to employee_accounts — the only table the old join ever read. The
+    // released/approved blocks are unchanged (they already resolved correctly).
     const r = await query(
-      `SELECT e.signature AS requested_signature,
+      `SELECT w.requested_by_id, w.requested_by_role,
+              COALESCE(
+                CASE w.requested_by_role
+                  WHEN 'sales'      THEN sa.signature
+                  WHEN 'accounting' THEN aa.signature
+                  WHEN 'purchasing' THEN pa.signature
+                  WHEN 'logistics'  THEN la.signature
+                  WHEN 'warehouse'  THEN wha.signature
+                  WHEN 'admin'      THEN au.signature
+                  WHEN 'owner'      THEN au.signature
+                  ELSE e.signature
+                END,
+                e.signature
+              ) AS requested_signature,
               COALESCE(wa.signature, wu.signature) AS released_signature,
               u.signature AS approved_signature
          FROM inventory_withdrawal_requests w
-         LEFT JOIN employee_accounts e ON e.id = w.requested_by_id
-         LEFT JOIN warehouse_accounts wa ON wa.id::TEXT = w.warehouse_by_id
-         LEFT JOIN users wu ON wu.id = w.warehouse_by_id
-         LEFT JOIN users u ON u.id = w.reviewed_by_id
+         LEFT JOIN employee_accounts   e   ON e.id::TEXT   = w.requested_by_id
+         LEFT JOIN sales_accounts      sa  ON sa.id::TEXT  = w.requested_by_id
+         LEFT JOIN accounting_accounts aa  ON aa.id::TEXT  = w.requested_by_id
+         LEFT JOIN purchasing_accounts pa  ON pa.id::TEXT  = w.requested_by_id
+         LEFT JOIN logistics_accounts  la  ON la.id::TEXT  = w.requested_by_id
+         LEFT JOIN warehouse_accounts  wha ON wha.id::TEXT = w.requested_by_id
+         LEFT JOIN users               au  ON au.id        = w.requested_by_id
+         LEFT JOIN warehouse_accounts  wa  ON wa.id::TEXT  = w.warehouse_by_id
+         LEFT JOIN users               wu  ON wu.id        = w.warehouse_by_id
+         LEFT JOIN users               u   ON u.id         = w.reviewed_by_id
         WHERE w.id = $1`,
       [req.params.id]
     );
     if (!r.rows[0]) return res.status(404).json({ error: 'Withdrawal request not found' });
+    // H1 — the signature images are forgeable evidence, so don't hand them to any logged-in user.
+    // Allow the verification roles (admin/owner, and warehouse who release the stock), or the
+    // requester viewing their OWN record (same id AND same role — mirrors the ownership scope on
+    // the PR signatures route). Everyone else is Forbidden.
+    const role = effectiveRole(req.user);
+    const isVerifier = role === 'admin' || role === 'owner' || role === 'warehouse';
+    const isOwnRequest = r.rows[0].requested_by_id != null
+      && String(r.rows[0].requested_by_id) === String(req.user?.id ?? '')
+      && r.rows[0].requested_by_role === role;
+    if (!isVerifier && !isOwnRequest) {
+      return res.status(403).json({ error: 'You can only view signatures on your own withdrawal requests' });
+    }
     res.json({
       requestedSignature: r.rows[0].requested_signature || null,
       releasedSignature: r.rows[0].released_signature || null,
