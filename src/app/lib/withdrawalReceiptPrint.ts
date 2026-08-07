@@ -42,7 +42,9 @@ export interface WithdrawalSignatures {
   approvedSignature?: string | null;
 }
 
-const fmt = (d?: string | null) => (d ? new Date(d).toLocaleString() : '—');
+// Date-only everywhere on the printout — the underlying timestamps keep their time; the receipt
+// just doesn't show it. '' for an empty signature date (no dash under a blank block); header
+// fields add their own '—' fallback where a dash reads better than a blank.
 const fmtDate = (d?: string | null) => (d ? new Date(d).toLocaleDateString() : '');
 
 const esc = (v: unknown): string =>
@@ -111,13 +113,13 @@ export async function printWithdrawalReceipt(
            otherwise "Inhouse" as a display-only fallback (a blank job_order_no still stores NULL). -->
       <div><span>Ref JO#:</span> ${w0.jobOrderNo ? esc(w0.jobOrderNo) : 'Inhouse'}</div>
       ${w0.prNumber ? `<div><span>For request:</span> ${esc(w0.prNumber)}</div>` : ''}
-      <div><span>Date Requested:</span> ${esc(fmt(w0.createdAt))}</div>
+      <div><span>Date Requested:</span> ${esc(fmtDate(w0.createdAt) || '—')}</div>
     </div>
     <div class="meta-right">
       <!-- "Date Withdrawn" is when the stock actually left, i.e. the admin's approval — only the
            receipt carries it. On the pre-approval REQUEST form nothing is withdrawn yet, so the
            label is omitted entirely and the right column is just WD No. (kept graceful). -->
-      ${isReceipt ? `<div><span>Date Withdrawn:</span> ${esc(fmt(w0.deductedAt))}</div>` : ''}
+      ${isReceipt ? `<div><span>Date Withdrawn:</span> ${esc(fmtDate(w0.deductedAt) || '—')}</div>` : ''}
       <div><span>WD No.:</span> ${esc(w0.withdrawalNumber || '—')}</div>
     </div>
   </div>
@@ -138,7 +140,7 @@ export async function printWithdrawalReceipt(
   <div class="cert">
     ${isReceipt
       ? `This certifies that the stock above was <b>withdrawn from inventory</b> and released on
-         ${esc(fmt(w0.deductedAt))}, on the authority of the approval recorded below.`
+         ${esc(fmtDate(w0.deductedAt) || '—')}, on the authority of the approval recorded below.`
       : `<b>Request for withdrawal</b> of the item(s) below. Release and approval are recorded by
          signature below as each step is completed.`}
   </div>
