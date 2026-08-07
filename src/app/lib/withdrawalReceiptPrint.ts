@@ -79,17 +79,22 @@ export async function printWithdrawalReceipt(
   ];
 
   const css = `
-  .meta { display: flex; flex-wrap: wrap; gap: 6px 32px; margin: 14px 0; font-size: 10pt; }
+  /* Header row: reference fields (Ref JO# / Date …) on the left, the WD number in the right
+     corner. space-between pins WD No. to the far right; the left items stack one per line. */
+  .meta { display: flex; justify-content: space-between; align-items: flex-start; margin: 14px 0; font-size: 10pt; }
   .meta div span { font-weight: bold; }
+  .meta-left > div { margin-bottom: 4px; }
+  .meta-right { text-align: right; }
   table.items { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 10pt; }
   table.items th, table.items td { border: 1px solid #000; padding: 5px 6px; }
   table.items th { background: #f0f0f0; }
   .cert { margin: 22px 0 10px; font-size: 10.5pt; line-height: 1.5; }
   /* Three blocks across (Requested / Released / Approved), sharing the width via flex:1 rather
      than a fixed 280px each — 3 × 280 overflows the A4 text column.
-     break-inside keeps a signature from being stranded from its name across a page. */
+     break-inside keeps a signature from being stranded from its name across a page.
+     text-align:center centres the name/role/date (and the signature image) under each rule line. */
   .sign-row { display: flex; gap: 20px; margin-top: 26px; break-inside: avoid; }
-  .sign-wrap { flex: 1; min-width: 0; }
+  .sign-wrap { flex: 1; min-width: 0; text-align: center; }
   /* Fixed height whether or not a signature exists, so all three rule lines stay level. */
   .sign-img { height: 70px; }
   .sign-img img { height: 70px; max-width: 100%; object-fit: contain; }
@@ -101,15 +106,19 @@ export async function printWithdrawalReceipt(
 
   const body = `
   <div class="meta">
-    <div><span>WD No.:</span> ${esc(w0.withdrawalNumber || '—')}</div>
-    <!-- Optional Job Order #: shown only when the requester provided one; otherwise no line at all. -->
-    ${w0.jobOrderNo ? `<div><span>Job Order #:</span> ${esc(w0.jobOrderNo)}</div>` : ''}
-    ${w0.prNumber ? `<div><span>For request:</span> ${esc(w0.prNumber)}</div>` : ''}
-    <div><span>Requested:</span> ${esc(fmt(w0.createdAt))}</div>
-    <!-- "Withdrawn", not "Released": this is when the stock actually left, i.e. the admin's
-         approval. "Released By" below names the warehouse — an earlier, different step. Only the
-         receipt carries it; on the request form nothing has been withdrawn yet. -->
-    ${isReceipt ? `<div><span>Withdrawn:</span> ${esc(fmt(w0.deductedAt))}</div>` : ''}
+    <div class="meta-left">
+      <!-- Optional Ref JO#: shown only when the requester provided one; otherwise no line at all. -->
+      ${w0.jobOrderNo ? `<div><span>Ref JO#:</span> ${esc(w0.jobOrderNo)}</div>` : ''}
+      ${w0.prNumber ? `<div><span>For request:</span> ${esc(w0.prNumber)}</div>` : ''}
+      <div><span>Date:</span> ${esc(fmt(w0.createdAt))}</div>
+      <!-- "Withdrawn", not "Released": this is when the stock actually left, i.e. the admin's
+           approval. "Released By" below names the warehouse — an earlier, different step. Only the
+           receipt carries it; on the request form nothing has been withdrawn yet. -->
+      ${isReceipt ? `<div><span>Withdrawn:</span> ${esc(fmt(w0.deductedAt))}</div>` : ''}
+    </div>
+    <div class="meta-right">
+      <div><span>WD No.:</span> ${esc(w0.withdrawalNumber || '—')}</div>
+    </div>
   </div>
 
   <table class="items">
