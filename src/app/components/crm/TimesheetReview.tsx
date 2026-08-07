@@ -40,6 +40,27 @@ const fmtDay = (ymd: string) => new Date(ymd + 'T00:00:00').toLocaleDateString('
 const fmtTime = (iso: string | null) => iso ? new Date(iso).toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit', hour12: true }) : '—';
 const fmtHours = (m: number | null) => (m === null || m === undefined) ? '—' : `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
 const periodLabel = (p: Period) => `${fmtDay(p.start_date)} – ${fmtDay(p.end_date)}, ${p.start_date.slice(0, 4)}`;
+
+// DISPLAY ONLY. The stored worked_minutes is the raw in-to-out span; the sheet should show PAID
+// hours net of the 12:00–1:00 PM lunch so the column matches what payroll actually pays (a normal
+// 8–5 day is an 8h paid day). Net the lunch as the real OVERLAP with 12:00–13:00 — not a flat −60 —
+// so partial days don't under-count (leaves 11:00 → no overlap → shows the true 3h span). This
+// never touches worked_minutes or any pay math; base pay is a flat daily rate that ignores this.
+const LUNCH_START_MIN = 12 * 60, LUNCH_END_MIN = 13 * 60; // 12:00 PM – 1:00 PM
+const manilaMinuteOfDay = (iso: string) => {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date(iso));
+  const h = Number(parts.find(p => p.type === 'hour')?.value) % 24; // '24' at midnight → 0
+  const m = Number(parts.find(p => p.type === 'minute')?.value);
+  return h * 60 + m;
+};
+// Paid (lunch-netted) minutes for display. Falls back to the raw span if we can't place the times.
+const paidMinutes = (d: Day): number | null => {
+  if (d.worked_minutes === null || d.worked_minutes === undefined) return null;
+  if (!d.first_in || !d.last_out) return d.worked_minutes;
+  const inMin = manilaMinuteOfDay(d.first_in), outMin = manilaMinuteOfDay(d.last_out);
+  const overlap = Math.max(0, Math.min(outMin, LUNCH_END_MIN) - Math.max(inMin, LUNCH_START_MIN));
+  return Math.max(0, d.worked_minutes - overlap);
+};
 const FLAG_LABEL: Record<string, string> = { missing_out: 'Missing OUT', missing_in: 'Missing IN' };
 
 // A stored timestamptz -> the 'YYYY-MM-DDTHH:mm' a <input type="datetime-local"> expects, in Manila.
@@ -124,7 +145,7 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
       if (!map.has(d.person_id)) map.set(d.person_id, { person: d, days: [], totalMin: 0 });
       const g = map.get(d.person_id)!;
       g.days.push(d);
-      g.totalMin += d.worked_minutes || 0;
+      g.totalMin += paidMinutes(d) || 0;
     }
     return Array.from(map.values());
   }, [filtered]);
@@ -318,7 +339,7 @@ function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, b
           </td>
           <td style={S.td}>{fmtTime(d.first_in)}</td>
           <td style={S.td}>{fmtTime(d.last_out)}</td>
-          <td style={S.td}>{fmtHours(d.worked_minutes)}</td>
+          <td style={S.td}>{fmtHours(paidMinutes(d))}</td>
           <td style={S.td}>
             {statusPill(d.status)}
             {(d.flags || []).map(f => <span key={f} style={{ marginLeft: '6px', fontSize: '12px', color: '#b91c1c' }}>{FLAG_LABEL[f] || f}</span>)}
