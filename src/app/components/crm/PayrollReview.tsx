@@ -18,7 +18,7 @@ interface Warnings { no_pay_rate?: Array<{ person_id: number; full_name: string 
 interface DayDetail {
   date: string; dow: number; sunday: boolean; holiday: string | null; present: boolean;
   in_min: number | null; out_min: number | null; kind: string;
-  late_min?: number; counted_late_min?: number; undertime_min?: number; ot_hours?: number;
+  late_min?: number; counted_late_min?: number; undertime_min?: number; ot_hours?: number; early_ot_hours?: number; late_ot_hours?: number;
   net_hours?: number; mult?: number; amount?: number; half_basis?: number; eligible?: boolean; prior_working_day?: string | null; note?: string;
 }
 interface Breakdown {
@@ -293,8 +293,11 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
           <Row k="Absent days" v={b.totals?.absent_days} />
           <Row k="Late (raw / counted min)" v={`${b.totals?.late_minutes} / ${b.totals?.counted_late_minutes}`} />
           <Row k="Undertime (min)" v={b.totals?.undertime_minutes} />
-          <Row k="OT hours" v={b.totals?.ot_hours} />
+          <Row k="OT hours (total)" v={b.totals?.ot_hours} />
+          <Row k="— Early OT" v={b.totals?.early_ot_hours ?? 0} />
+          <Row k="— Late OT" v={b.totals?.late_ot_hours ?? 0} />
           <div style={{ fontSize: '11px', color: '#8a8a8a', marginTop: '6px' }}>Multipliers — OT {ref.multipliers?.ot} · Sun {ref.multipliers?.sunday} · Reg hol {ref.multipliers?.regular_holiday} · Spc hol {ref.multipliers?.special_holiday}</div>
+          <div style={{ fontSize: '11px', color: '#8a8a8a', marginTop: '3px' }}>Late-OT buffer: {ref.ot_grace_hours ?? 1}h past shift end · Early OT: no buffer (real time from IN). Both ×{ref.multipliers?.ot}.</div>
           <div style={{ fontSize: '11px', color: '#8a8a8a', marginTop: '3px' }}>Special holiday not worked: {ref.special_holiday_not_worked_paid ? 'paid 1 day (eligible)' : 'no work, no pay'}</div>
         </div>
       </div>
@@ -318,7 +321,11 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
                   <td style={td}>{minToTime(d.out_min)}</td>
                   <td style={td}>{(d.kind === 'work' || d.kind === 'no_out_half') ? (d.late_min ? `${d.late_min}→${d.counted_late_min}m` : '0') : '—'}</td>
                   <td style={td}>{d.kind === 'work' ? (d.undertime_min ? `${d.undertime_min}m` : '0') : '—'}</td>
-                  <td style={td}>{d.kind === 'work' ? (d.ot_hours ? `${d.ot_hours}h` : '0') : '—'}</td>
+                  <td style={td}>{d.kind === 'work'
+                    ? (d.ot_hours
+                        ? `${d.ot_hours}h` + ((d.early_ot_hours || d.late_ot_hours) ? ` (${d.early_ot_hours || 0}e+${d.late_ot_hours || 0}l)` : '')
+                        : '0')
+                    : '—'}</td>
                   <td style={{ ...td, fontVariantNumeric: 'tabular-nums' }}>{d.amount ? peso(d.amount) : (d.kind === 'holiday_not_worked' && !d.eligible ? '—' : (d.amount === 0 && d.kind !== 'work' && d.kind !== 'absent' ? peso(0) : '—'))}</td>
                   <td style={{ ...td, color: '#8a8a8a', whiteSpace: 'normal' }}>{d.kind === 'holiday_not_worked' ? (d.eligible ? `eligible (prior ${d.prior_working_day})` : 'not eligible') : (d.note || '')}</td>
                 </tr>

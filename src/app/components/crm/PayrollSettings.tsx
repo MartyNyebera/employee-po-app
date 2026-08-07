@@ -16,7 +16,7 @@ type Settings = Record<string, string>;
 const FIELD_ORDER = [
   'work_start', 'work_end', 'work_end_sat', 'paid_hours', 'lunch_hours', 'monthly_divisor', 'grace_minutes',
   'tardy_mid_deduct_minutes', 'tardy_max_start_minutes', 'tardy_max_deduct_minutes',
-  'ot_multiplier', 'sunday_multiplier', 'regular_holiday_multiplier', 'special_holiday_multiplier',
+  'ot_multiplier', 'ot_grace_hours', 'sunday_multiplier', 'regular_holiday_multiplier', 'special_holiday_multiplier',
 ];
 
 const toForm = (s: any): Settings => {
@@ -137,6 +137,16 @@ export function PayrollSettings() {
           <NumField label="Sunday ×" value={f.sunday_multiplier} onChange={v => set('sunday_multiplier', v)} />
           <NumField label="Regular holiday ×" value={f.regular_holiday_multiplier} onChange={v => set('regular_holiday_multiplier', v)} />
           <NumField label="Special holiday ×" value={f.special_holiday_multiplier} onChange={v => set('special_holiday_multiplier', v)} />
+        </div>
+      </Group>
+
+      <Group title="Overtime buffer">
+        <div style={grid(4)}>
+          <NumField label="Late-OT buffer (hours)" hint="Minimum time past shift end before after-shift OT counts (default 1). Once past it, ALL time past shift end is paid OT."
+            value={f.ot_grace_hours} onChange={v => set('ot_grace_hours', v)} />
+        </div>
+        <div style={{ fontSize: '12px', color: '#5a5a5a', marginTop: '10px', padding: '8px 12px', background: '#f7f7f7', borderRadius: '8px' }}>
+          Applies to LATE (after-shift) OT only. EARLY OT (coming in before the start time) has no buffer — it pays the actual time from the real IN to the shift start. Both require the person to be OT-eligible and the matching per-day OT toggle approved on the attendance sheet.
         </div>
       </Group>
 

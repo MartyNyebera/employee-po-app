@@ -1176,6 +1176,10 @@ async function runMigrations() {
       // Phase 4a: per-day OT authorization (admin toggles it on the sheet). It is an approval flag
       // only — no OT pay is computed here; rebuild does NOT touch it (it's not punch-derived).
       await query(`ALTER TABLE attendance_days ADD COLUMN IF NOT EXISTS ot_approved BOOLEAN DEFAULT FALSE`);
+      // Phase 4a: SEPARATE per-day EARLY OT authorization, alongside ot_approved (which is the
+      // regular/late OT toggle). Un-clamps pre-shift-start time to paid early OT — but ONLY when set.
+      // Also admin-only; also not punch-derived, so rebuild leaves it alone.
+      await query(`ALTER TABLE attendance_days ADD COLUMN IF NOT EXISTS early_ot_approved BOOLEAN DEFAULT FALSE`);
       await query(`CREATE INDEX IF NOT EXISTS idx_attendance_days_date ON attendance_days(work_date)`);
       console.log('✅ attendance_days table ready');
     } catch (err) { console.log('ℹ️ attendance_days table skipped:', err.message); }
@@ -1244,6 +1248,10 @@ async function runMigrations() {
           tardy_max_start_minutes INTEGER NOT NULL DEFAULT 30,
           tardy_max_deduct_minutes INTEGER NOT NULL DEFAULT 60,
           ot_multiplier NUMERIC(5,2) NOT NULL DEFAULT 1.25,
+          -- LATE-OT buffer: an employee must stay at least this many hours past shift end before any
+          -- late OT is earned (default 1h). Once past the buffer, ALL time past shift end counts.
+          -- Applies to the late/after-shift side only — early OT has NO buffer (real time from IN).
+          ot_grace_hours NUMERIC(5,2) NOT NULL DEFAULT 1,
           sunday_multiplier NUMERIC(5,2) NOT NULL DEFAULT 1.30,
           regular_holiday_multiplier NUMERIC(5,2) NOT NULL DEFAULT 2.00,
           special_holiday_multiplier NUMERIC(5,2) NOT NULL DEFAULT 1.30,
@@ -1257,6 +1265,7 @@ async function runMigrations() {
       // Added via ALTER for DBs created before these columns existed.
       await query(`ALTER TABLE payroll_settings ADD COLUMN IF NOT EXISTS special_holiday_not_worked_paid BOOLEAN NOT NULL DEFAULT false`);
       await query(`ALTER TABLE payroll_settings ADD COLUMN IF NOT EXISTS work_end_sat TEXT NOT NULL DEFAULT '16:00'`);
+      await query(`ALTER TABLE payroll_settings ADD COLUMN IF NOT EXISTS ot_grace_hours NUMERIC(5,2) NOT NULL DEFAULT 1`);
       // Seed the single policy row with the defaults above (no-op once it exists).
       await query(`INSERT INTO payroll_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
 
@@ -4657,7 +4666,7 @@ app.put('/api/payroll/settings', requireRole(['admin']), async (req, res) => {
   // Numeric policy fields — each validated as a non-negative number (blank/omitted keeps current).
   const numFields = ['paid_hours', 'lunch_hours', 'monthly_divisor', 'grace_minutes',
     'tardy_mid_deduct_minutes', 'tardy_max_start_minutes', 'tardy_max_deduct_minutes',
-    'ot_multiplier', 'sunday_multiplier', 'regular_holiday_multiplier', 'special_holiday_multiplier'];
+    'ot_multiplier', 'ot_grace_hours', 'sunday_multiplier', 'regular_holiday_multiplier', 'special_holiday_multiplier'];
   const v = {};
   for (const f of numFields) {
     const n = normalizePayRate(b[f]);
@@ -4689,11 +4698,12 @@ app.put('/api/payroll/settings', requireRole(['admin']), async (req, res) => {
          special_holiday_multiplier = COALESCE($13, special_holiday_multiplier),
          special_holiday_not_worked_paid = COALESCE($14, special_holiday_not_worked_paid),
          work_end_sat = COALESCE($15, work_end_sat),
+         ot_grace_hours = COALESCE($16, ot_grace_hours),
          updated_at = NOW()
        WHERE id = 1 RETURNING *`,
       [ws, we, v.paid_hours, v.lunch_hours, v.monthly_divisor, v.grace_minutes,
        v.tardy_mid_deduct_minutes, v.tardy_max_start_minutes, v.tardy_max_deduct_minutes,
-       v.ot_multiplier, v.sunday_multiplier, v.regular_holiday_multiplier, v.special_holiday_multiplier, snwp, wesat]
+       v.ot_multiplier, v.sunday_multiplier, v.regular_holiday_multiplier, v.special_holiday_multiplier, snwp, wesat, v.ot_grace_hours]
     );
     res.json(r.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -4801,6 +4811,9 @@ async function computePayroll(periodId) {
   const paidHours = Number(s.paid_hours), lunch = Number(s.lunch_hours), divisor = Number(s.monthly_divisor);
   const grace = Number(s.grace_minutes), midDed = Number(s.tardy_mid_deduct_minutes), maxStart = Number(s.tardy_max_start_minutes), maxDed = Number(s.tardy_max_deduct_minutes);
   const otMult = Number(s.ot_multiplier), sunMult = Number(s.sunday_multiplier), regMult = Number(s.regular_holiday_multiplier), spcMult = Number(s.special_holiday_multiplier);
+  // LATE OT buffer in minutes (default 1h). Late OT only starts once outMin ≥ shift end + this.
+  // Early OT deliberately has NO buffer — it is the real time from actual IN to shift start.
+  const otGraceHours = Number(s.ot_grace_hours ?? 1), otGraceMin = otGraceHours * 60;
   const specialNotWorkedPaid = s.special_holiday_not_worked_paid === true;
   // Saturday ends earlier (default 16:00) than Mon–Fri (17:00). Start (08:00) and late measurement
   // are unchanged; only the scheduled END differs, which drives undertime and OT on Saturdays.
@@ -4826,7 +4839,7 @@ async function computePayroll(periodId) {
   // eligibility) through the period end. Manila minute-of-day for IN/OUT precomputed in SQL.
   const attMap = {};
   (await query(
-    `SELECT person_id, to_char(work_date,'YYYY-MM-DD') AS d, worked_minutes, ot_approved,
+    `SELECT person_id, to_char(work_date,'YYYY-MM-DD') AS d, worked_minutes, ot_approved, early_ot_approved,
             CASE WHEN first_in IS NULL THEN NULL ELSE EXTRACT(EPOCH FROM ((first_in AT TIME ZONE 'Asia/Manila')::time)) / 60 END AS in_min,
             CASE WHEN last_out IS NULL THEN NULL ELSE EXTRACT(EPOCH FROM ((last_out AT TIME ZONE 'Asia/Manila')::time)) / 60 END AS out_min
        FROM attendance_days
@@ -4863,6 +4876,7 @@ async function computePayroll(periodId) {
     const pAtt = attMap[person.id] || {};
 
     let daysPresent = 0, halfDays = 0, absentDays = 0, otHours = 0, sundayPay = 0, holidayPay = 0;
+    let earlyOtHours = 0, lateOtHours = 0; // the two OT buckets that sum into otHours
     let lateMin = 0, countedLate = 0, undertimeMin = 0;
     const perDay = [];
 
@@ -4922,9 +4936,19 @@ async function computePayroll(periodId) {
             daysPresent++;
             const ut = outMin < dayEndMin ? (dayEndMin - outMin) : 0;
             undertimeMin += ut;
-            const oth = (person.ot_eligible && row.ot_approved && outMin > dayEndMin) ? (outMin - dayEndMin) / 60 : 0;
-            otHours += oth;
-            Object.assign(day, { kind: 'work', late_min: rawLate, counted_late_min: counted, undertime_min: ut, ot_hours: round2(oth) });
+            // LATE OT (after shift): only past the buffer — must stay ≥ shift end + ot_grace_hours,
+            // then ALL time past shift end counts (not just past the buffer). Gated by ot_approved.
+            const lateOt = (person.ot_eligible && row.ot_approved && outMin >= dayEndMin + otGraceMin)
+              ? (outMin - dayEndMin) / 60 : 0;
+            // EARLY OT (before shift): NO buffer — the real time from actual IN to shift start, but
+            // ONLY when early_ot_approved un-clamps it. Un-approved early-in stays clamped (0 pay);
+            // late is already Math.max(0, inMin−startMin), so an early IN never creates negative late.
+            const earlyOt = (person.ot_eligible && row.early_ot_approved && inMin < startMin)
+              ? (startMin - inMin) / 60 : 0;
+            const oth = earlyOt + lateOt; // both ×1.25 (same rate); tracked separately below
+            earlyOtHours += earlyOt; lateOtHours += lateOt; otHours += oth;
+            Object.assign(day, { kind: 'work', late_min: rawLate, counted_late_min: counted, undertime_min: ut,
+              ot_hours: round2(oth), early_ot_hours: round2(earlyOt), late_ot_hours: round2(lateOt) });
           }
         } else if (employed(d)) {
           absentDays++;
@@ -4965,12 +4989,15 @@ async function computePayroll(periodId) {
         employment_type: type, rate, daily_basis: round2(dailyBasis), hourly: round2(hourly), per_minute: round4(perMin),
         paid_hours: paidHours, lunch_hours: lunch, monthly_divisor: divisor,
         multipliers: { ot: otMult, sunday: sunMult, regular_holiday: regMult, special_holiday: spcMult },
+        ot_grace_hours: otGraceHours,
         tardiness: { grace_minutes: grace, mid_deduct_minutes: midDed, max_start_minutes: maxStart, max_deduct_minutes: maxDed },
         work_start: s.work_start, work_end: s.work_end, work_end_sat: s.work_end_sat, special_holiday_not_worked_paid: specialNotWorkedPaid,
       },
       totals: {
         days_present: daysPresent, half_days: halfDays, absent_days: absentDays, late_minutes: lateMin, counted_late_minutes: countedLate,
-        undertime_minutes: undertimeMin, ot_hours: round2(otHours),
+        // ot_hours is the total (early + late) that drives ot_pay; the two buckets are tracked
+        // separately for the Verify screen. Same ×1.25 rate for both.
+        undertime_minutes: undertimeMin, ot_hours: round2(otHours), early_ot_hours: round2(earlyOtHours), late_ot_hours: round2(lateOtHours),
       },
       deductions: { late_undertime: round2(lateUndertimeDed), sss_ee: round2(sss), philhealth_ee: round2(phic), pagibig_ee: round2(pgib), withholding: round2(wtax), bale: round2(bale), total: round2(deductions) },
       pay: { base: round2(basePay), ot: round2(otPay), sunday: round2(sundayPay), holiday: round2(holidayPay), gross: round2(gross), net: round2(net), net_raw: round2(rawNet), deduction_shortfall: deductionShortfall },
@@ -5398,7 +5425,7 @@ app.get('/api/attendance/periods/:id/sheet', requireRole(attendanceReviewRoles),
       // withholding, sss/philhealth/pagibig) are deliberately NOT selected — Finance never sees them.
       `SELECT ad.id, ad.person_id, to_char(ad.work_date,'YYYY-MM-DD') AS work_date,
               ad.first_in, ad.last_out, ad.worked_minutes, ad.status, ad.flags,
-              ad.pay_period_id, ad.is_locked, ad.is_adjusted, ad.ot_approved,
+              ad.pay_period_id, ad.is_locked, ad.is_adjusted, ad.ot_approved, ad.early_ot_approved,
               p.full_name, p.department, p.position, p.ot_eligible
          FROM attendance_days ad
          JOIN persons p ON p.id = ad.person_id
@@ -5534,6 +5561,43 @@ app.post('/api/attendance/days/:id/ot', requireRole(['admin']), async (req, res)
     );
     await client.query('COMMIT');
     res.json({ id: day.id, ot_approved: approved });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Phase 4b: toggle a day's EARLY OT approval — the SEPARATE pre-shift-start authorization, distinct
+// from ot_approved (regular/late). ADMIN ONLY (Finance view-only); person must be ot_eligible. Only
+// this flag un-clamps early-in to paid early OT at compute; no pay is computed here. Logged.
+app.post('/api/attendance/days/:id/early-ot', requireRole(['admin']), async (req, res) => {
+  const approved = !!(req.body && req.body.approved);
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const dr = await client.query(
+      `SELECT ad.id, ad.early_ot_approved, p.ot_eligible
+         FROM attendance_days ad JOIN persons p ON p.id = ad.person_id
+        WHERE ad.id = $1 FOR UPDATE OF ad`,
+      [req.params.id]
+    );
+    const day = dr.rows[0];
+    if (!day) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Day not found' }); }
+    if (approved && !day.ot_eligible) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'This person is not OT-eligible — enable it on the roster first.' });
+    }
+    const oldVal = day.early_ot_approved ? 'true' : 'false';
+    await client.query('UPDATE attendance_days SET early_ot_approved = $1 WHERE id = $2', [approved, day.id]);
+    await client.query(
+      `INSERT INTO attendance_adjustments (day_id, field, old_value, new_value, reason, adjusted_by)
+       VALUES ($1, 'early_ot_approved', $2, $3, 'Early OT approval toggle', $4)`,
+      [day.id, oldVal, approved ? 'true' : 'false', req.user.id]
+    );
+    await client.query('COMMIT');
+    res.json({ id: day.id, early_ot_approved: approved });
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
     res.status(500).json({ error: err.message });
