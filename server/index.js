@@ -5459,11 +5459,23 @@ app.post('/api/attendance/days/:id/adjust', requireRole(['admin']), async (req, 
           WHERE id = $2`,
         [clearing ? null : value, day.id]
       );
+      // Recompute the derived roll-up from the corrected times. worked_minutes AND the
+      // status/flags must move together: adding a real OUT to a 'no_out' day has to flip it to
+      // 'complete' and clear the missing_out flag (else the sheet keeps showing "No OUT" and a
+      // reviewer would treat a corrected full day as a half day). Clearing a time correctly
+      // reverts it (e.g. blanking OUT → 'no_out' again). Same logic as rebuildAttendanceDays, so
+      // an adjusted day and a rebuilt day agree; is_adjusted (set above) keeps rebuild off it.
       await client.query(
         `UPDATE attendance_days
             SET worked_minutes = CASE WHEN first_in IS NOT NULL AND last_out IS NOT NULL AND last_out > first_in
                                       THEN ROUND(EXTRACT(EPOCH FROM (last_out - first_in)) / 60.0)::int
-                                      ELSE NULL END
+                                      ELSE NULL END,
+                status = CASE WHEN first_in IS NOT NULL AND last_out IS NOT NULL THEN 'complete'
+                              WHEN first_in IS NOT NULL AND last_out IS NULL     THEN 'no_out'
+                              ELSE 'incomplete' END,
+                flags = CASE WHEN first_in IS NOT NULL AND last_out IS NULL THEN '["missing_out"]'::jsonb
+                             WHEN first_in IS NULL                          THEN '["missing_in"]'::jsonb
+                             ELSE '[]'::jsonb END
           WHERE id = $1`,
         [day.id]
       );
