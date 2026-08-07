@@ -26,8 +26,11 @@ interface ItemRequest { id: string; requestNumber?: string | null; itemName: str
 
 const UNITS = ['pcs', 'bags', 'kg', 'liters', 'meters', 'boxes', 'sets', 'Lot', 'units'];
 // "For (Project)" is required; Personal use gets its own sentinel (mapped back to a null
-// projectId on submit) and '' means "nothing picked yet".
+// projectId on submit) and '' means "nothing picked yet". Trading is a second no-project sentinel
+// for the company's trading purchases (not tied to any project): it submits with projectId null but
+// carries a "Trading" projectLabel so the request reads "Trading" through review and the printout.
 const PERSONAL_USE = '__personal__';
+const TRADING = '__trading__';
 
 const peso = (n: number) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const sum = (items: { amount: number }[]) => items.reduce((t, i) => t + (Number(i.amount) || 0), 0);
@@ -274,7 +277,8 @@ export function CreatePurchaseRequestForm({ fetchApi, session, onSubmitted }: {
       await fetchApi('/purchase-requests', {
         method: 'POST',
         body: JSON.stringify({
-          projectId: projectId === PERSONAL_USE ? null : projectId,
+          projectId: (projectId === PERSONAL_USE || projectId === TRADING) ? null : projectId,
+          projectLabel: projectId === TRADING ? 'Trading' : null,
           neededBy,
           items: valid.map((li, i) => li.kind === 'labor'
             ? {
@@ -315,6 +319,7 @@ export function CreatePurchaseRequestForm({ fetchApi, session, onSubmitted }: {
                 className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                 <option value="" disabled>Select…</option>
                 <option value={PERSONAL_USE}>Personal use</option>
+                <option value={TRADING}>Trading</option>
                 {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </div>

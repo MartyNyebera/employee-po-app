@@ -733,6 +733,12 @@ async function runMigrations() {
       // like-for-like against `total`. Per-line finals live in the items JSONB alongside the
       // estimate (finalUnitCost / finalAmount), so nothing is overwritten.
       await query(`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS final_total NUMERIC(12,2)`);
+      // A free-text project LABEL for requests that aren't tied to a real projects row (e.g.
+      // "Trading" — the company is a trader, so those purchases have no project link). It stands in
+      // where project_id is null; the list/print derive project_name as COALESCE(projects.name,
+      // project_label), so a labelled request reads "Trading" while a truly blank one still falls
+      // back to "Personal use" in the UI. Kept separate from project_id so it never touches the FK.
+      await query(`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS project_label TEXT`);
       // One-time backfill for requests verified before the column existed. Idempotent via the
       // IS NULL guard; matches on name, which is the only link those rows have.
       const bf = await query(
@@ -6165,7 +6171,9 @@ function mapPurchaseRequest(r) {
   if (!r) return r;
   return {
     id: r.id, prNumber: r.pr_number, employeeId: r.employee_id, employeeName: r.employee_name,
-    projectId: r.project_id, projectName: r.project_name ?? null,
+    // project_name is the joined projects.name; on a create RETURNING (no join) it's absent, so fall
+    // back to project_label — keeps the Trading label consistent on the create response too.
+    projectId: r.project_id, projectName: r.project_name ?? r.project_label ?? null, projectLabel: r.project_label ?? null,
     neededBy: r.needed_by, supplier: r.supplier, notes: r.notes,
     items: Array.isArray(r.items) ? r.items : (r.items || []),
     total: r.total === null ? 0 : parseFloat(r.total),
@@ -6462,9 +6470,9 @@ app.post('/api/purchase-requests', requireAuth, async (req, res) => {
 
     const id = newId('PR');
     const r = await query(
-      `INSERT INTO purchase_requests (id, pr_number, employee_id, employee_name, project_id, needed_by, supplier, notes, items, total, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,'pending') RETURNING *`,
-      [id, prNumber, employeeId, employeeName, orNull(b.projectId), orNull(b.neededBy), orNull(b.supplier), orNull(b.notes), JSON.stringify(items), total]
+      `INSERT INTO purchase_requests (id, pr_number, employee_id, employee_name, project_id, project_label, needed_by, supplier, notes, items, total, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,'pending') RETURNING *`,
+      [id, prNumber, employeeId, employeeName, orNull(b.projectId), orNull(b.projectLabel), orNull(b.neededBy), orNull(b.supplier), orNull(b.notes), JSON.stringify(items), total]
     );
     res.status(201).json(mapPurchaseRequest(r.rows[0]));
   } catch (err) { sendDbError(res, err, 'purchase-request create'); }
@@ -6472,7 +6480,7 @@ app.post('/api/purchase-requests', requireAuth, async (req, res) => {
 app.get('/api/purchase-requests/mine', requireAuth, async (req, res) => {
   try {
     const r = await query(
-      `SELECT pr.*, p.name AS project_name FROM purchase_requests pr
+      `SELECT pr.*, COALESCE(p.name, pr.project_label) AS project_name FROM purchase_requests pr
        LEFT JOIN projects p ON p.id = pr.project_id
        WHERE pr.employee_id = $1 ORDER BY pr.created_at DESC, pr.pr_number DESC`,
       [req.user?.id ?? null]
@@ -6492,7 +6500,7 @@ app.get('/api/purchase-requests', requireRole(['admin', 'purchasing', 'accountin
     if (effectiveRole(req.user) === 'purchasing') where.push(`pr.status <> 'pending'`);
     const pg = pageClause(req, params.length + 1);
     const r = await query(
-      `SELECT pr.*, p.name AS project_name FROM purchase_requests pr
+      `SELECT pr.*, COALESCE(p.name, pr.project_label) AS project_name FROM purchase_requests pr
        LEFT JOIN projects p ON p.id = pr.project_id
        -- created_at is a real TIMESTAMPTZ so this is already newest-first; pr_number is a
        -- deterministic tiebreaker for the theoretical same-instant case, giving a total order.
@@ -6545,9 +6553,10 @@ app.patch('/api/purchase-requests/:id', requireRole(['admin']), async (req, res)
     const r = await query(
       `UPDATE purchase_requests
           SET items = $1::jsonb, total = $2, needed_by = $3, project_id = $4, notes = $5,
+              project_label = COALESCE($6, project_label),
               status = 'pending', updated_at = NOW()
-        WHERE id = $6 RETURNING *`,
-      [JSON.stringify(items), total, orNull(b.neededBy), orNull(b.projectId), orNull(b.notes), req.params.id]
+        WHERE id = $7 RETURNING *`,
+      [JSON.stringify(items), total, orNull(b.neededBy), orNull(b.projectId), orNull(b.notes), orNull(b.projectLabel), req.params.id]
     );
     res.json(mapPurchaseRequest(r.rows[0]));
   } catch (err) { console.error('purchase-request edit error:', err); res.status(500).json({ error: err.message }); }
