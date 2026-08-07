@@ -48,8 +48,8 @@ export function WithdrawalTab({ fetchFn }: { fetchFn: FetchFn }) {
   };
   useEffect(() => { load(); }, []);
 
-  const requestWithdrawal = async (inventoryId: string, quantity: number, reason: string | null) => {
-    await fetchFn(`/inventory/${inventoryId}/withdraw`, { method: 'POST', body: JSON.stringify({ quantity, reason }) });
+  const requestWithdrawal = async (inventoryId: string, quantity: number, reason: string | null, jobOrderNo: string | null) => {
+    await fetchFn(`/inventory/${inventoryId}/withdraw`, { method: 'POST', body: JSON.stringify({ quantity, reason, jobOrderNo }) });
     toast.success('Withdrawal requested — the warehouse releases it, then an admin approves');
     load();
   };
@@ -116,13 +116,14 @@ export function WithdrawalTab({ fetchFn }: { fetchFn: FetchFn }) {
 // The request form — item, quantity, notes. No destination (plain withdrawal).
 function RequestModal({ inventory, onSubmit, onClose, onDone }: {
   inventory: InventoryItem[];
-  onSubmit: (inventoryId: string, quantity: number, reason: string | null) => Promise<void>;
+  onSubmit: (inventoryId: string, quantity: number, reason: string | null, jobOrderNo: string | null) => Promise<void>;
   onClose: () => void;
   onDone: () => void;
 }) {
   const [inventoryId, setInventoryId] = useState('');
   const [quantity, setQuantity] = useState('');
   const [reason, setReason] = useState('');
+  const [jobOrderNo, setJobOrderNo] = useState('');
   const [saving, setSaving] = useState(false);
   const picked = useMemo(() => inventory.find(i => i.id === inventoryId), [inventory, inventoryId]);
 
@@ -132,7 +133,7 @@ function RequestModal({ inventory, onSubmit, onClose, onDone }: {
     if (!qty || qty <= 0) { toast.error('Enter a quantity'); return; }
     if (picked && qty > picked.quantity) { toast.error(`Only ${picked.quantity} ${picked.unit || ''} in stock`); return; }
     setSaving(true);
-    try { await onSubmit(inventoryId, qty, reason.trim() || null); onDone(); }
+    try { await onSubmit(inventoryId, qty, reason.trim() || null, jobOrderNo.trim() || null); onDone(); }
     catch (e: any) { toast.error('Failed: ' + e.message); } finally { setSaving(false); }
   };
 
@@ -155,6 +156,10 @@ function RequestModal({ inventory, onSubmit, onClose, onDone }: {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Quantity <span className="text-red-500">*</span></label>
             <input type="number" min="1" value={quantity} onChange={e => setQuantity(e.target.value)} className={input} placeholder={picked ? `up to ${picked.quantity}` : ''} />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Job Order # <span className="text-gray-400 font-normal">(optional)</span></label>
+            <input value={jobOrderNo} onChange={e => setJobOrderNo(e.target.value)} className={input} placeholder="JO-08-07-0000-2026" />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>

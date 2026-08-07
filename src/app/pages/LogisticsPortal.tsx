@@ -394,8 +394,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     if (!r.ok) toast.error(r.error || 'Could not open the print dialog');
   };
 
-  const requestWithdrawal = async (inventoryId: string, quantity: number, destination: string, reason: string | null) => {
-    await lFetch(`/inventory/${inventoryId}/withdraw`, { method: 'POST', body: JSON.stringify({ quantity, destination, reason }) });
+  const requestWithdrawal = async (inventoryId: string, quantity: number, destination: string, reason: string | null, jobOrderNo: string | null) => {
+    await lFetch(`/inventory/${inventoryId}/withdraw`, { method: 'POST', body: JSON.stringify({ quantity, destination, reason, jobOrderNo }) });
     toast.success('Withdrawal requested — the warehouse releases it, then an admin approves');
     loadAll();
   };
@@ -716,7 +716,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 // ============================================================================
 function WithdrawalRequestModal({ inventory, onSubmit, onClose, onDone }: {
   inventory: InventoryItem[];
-  onSubmit: (inventoryId: string, quantity: number, destination: string, reason: string | null) => Promise<void>;
+  onSubmit: (inventoryId: string, quantity: number, destination: string, reason: string | null, jobOrderNo: string | null) => Promise<void>;
   onClose: () => void;
   onDone: () => void;
 }) {
@@ -724,6 +724,7 @@ function WithdrawalRequestModal({ inventory, onSubmit, onClose, onDone }: {
   const [quantity, setQuantity] = useState('');
   const [destination, setDestination] = useState('');
   const [reason, setReason] = useState('');
+  const [jobOrderNo, setJobOrderNo] = useState('');
   const [saving, setSaving] = useState(false);
   const picked = inventory.find(i => i.id === inventoryId);
 
@@ -734,7 +735,7 @@ function WithdrawalRequestModal({ inventory, onSubmit, onClose, onDone }: {
     if (picked && qty > picked.quantity) { toast.error(`Only ${picked.quantity} ${picked.unit || ''} in stock`); return; }
     if (!destination.trim()) { toast.error('A destination is required'); return; }
     setSaving(true);
-    try { await onSubmit(inventoryId, qty, destination.trim(), reason.trim() || null); onDone(); }
+    try { await onSubmit(inventoryId, qty, destination.trim(), reason.trim() || null, jobOrderNo.trim() || null); onDone(); }
     catch (e: any) { toast.error('Failed: ' + e.message); } finally { setSaving(false); }
   };
 
@@ -761,6 +762,10 @@ function WithdrawalRequestModal({ inventory, onSubmit, onClose, onDone }: {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Destination <span className="text-red-500">*</span></label>
             <input value={destination} onChange={e => setDestination(e.target.value)} className={input} placeholder="Where it is being delivered" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Job Order # <span className="text-gray-400 font-normal">(optional)</span></label>
+            <input value={jobOrderNo} onChange={e => setJobOrderNo(e.target.value)} className={input} placeholder="JO-08-07-0000-2026" />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>

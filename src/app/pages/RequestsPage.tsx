@@ -391,6 +391,7 @@ function WithdrawModal({ target, inventory, onCancel, onDone }: {
 }) {
   const [quantity, setQuantity] = useState('');
   const [reason, setReason] = useState('');
+  const [jobOrderNo, setJobOrderNo] = useState('');
   const [busy, setBusy] = useState(false);
 
   const isItem = target.mode === 'item';
@@ -420,7 +421,7 @@ function WithdrawModal({ target, inventory, onCancel, onDone }: {
         if (!q || q <= 0) { toast.error('Enter a valid quantity'); setBusy(false); return; }
         if (q > item.quantity) { toast.error('Cannot withdraw more than available stock'); setBusy(false); return; }
         // Creates a PENDING withdrawal request — stock is only deducted once an admin approves.
-        await empFetch(`/inventory/${item.id}/withdraw`, { method: 'POST', body: JSON.stringify({ quantity: q, reason: reason.trim() }) });
+        await empFetch(`/inventory/${item.id}/withdraw`, { method: 'POST', body: JSON.stringify({ quantity: q, reason: reason.trim(), jobOrderNo: jobOrderNo.trim() || null }) });
         toast.success('Withdrawal requested — awaiting admin approval');
       } else if (request) {
         const missing = resolved.filter((r) => !r.inv);
@@ -489,6 +490,11 @@ function WithdrawModal({ target, inventory, onCancel, onDone }: {
                   </div>
                 </div>
               )}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Job Order # <span className="text-gray-400 font-normal">(optional)</span></label>
+                <input value={jobOrderNo} onChange={(e) => setJobOrderNo(e.target.value)} placeholder="JO-08-07-0000-2026"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+              </div>
             </>
           )}
           {request && (

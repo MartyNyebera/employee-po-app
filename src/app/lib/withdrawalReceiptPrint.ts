@@ -31,6 +31,8 @@ export interface PrintableWithdrawal {
   reviewedAt?: string | null;
   deductedAt?: string | null;
   prNumber?: string | null;
+  // Optional Job Order # the requester typed (format JO-MM-DD-seq-YYYY). Shown only when present.
+  jobOrderNo?: string | null;
   status: string;
 }
 
@@ -100,6 +102,8 @@ export async function printWithdrawalReceipt(
   const body = `
   <div class="meta">
     <div><span>WD No.:</span> ${esc(w0.withdrawalNumber || '—')}</div>
+    <!-- Optional Job Order #: shown only when the requester provided one; otherwise no line at all. -->
+    ${w0.jobOrderNo ? `<div><span>Job Order #:</span> ${esc(w0.jobOrderNo)}</div>` : ''}
     ${w0.prNumber ? `<div><span>For request:</span> ${esc(w0.prNumber)}</div>` : ''}
     <div><span>Requested:</span> ${esc(fmt(w0.createdAt))}</div>
     <!-- "Withdrawn", not "Released": this is when the stock actually left, i.e. the admin's

@@ -935,6 +935,9 @@ async function runMigrations() {
       // presence is what marks the withdrawal as one that should become a delivery on approval;
       // a production withdrawal (employee stock use) leaves it NULL and creates no delivery.
       await query(`ALTER TABLE inventory_withdrawal_requests ADD COLUMN IF NOT EXISTS destination TEXT`);
+      // Optional Job Order # the requester types manually (format JO-MM-DD-seq-YYYY). Free text,
+      // nullable — most withdrawals have none; when present it's cited on the printed request/receipt.
+      await query(`ALTER TABLE inventory_withdrawal_requests ADD COLUMN IF NOT EXISTS job_order_no TEXT`);
       // A withdrawal can be requested from ANY portal (production/sales/accounting/purchasing/
       // logistics/warehouse/admin), and each portal's accounts live in a DIFFERENT table whose
       // SERIAL ids collide with the others'. So requested_by_id alone can't say which table holds
@@ -6131,6 +6134,8 @@ function mapWithdrawalRequest(r) {
     unit: r.unit ?? null,
     // Section D — #5/#15: present on a logistics-origin withdrawal; drives the auto-created delivery.
     destination: r.destination ?? null,
+    // Optional Job Order # the requester typed; null when they left it blank.
+    jobOrderNo: r.job_order_no ?? null,
   };
 }
 function mapInquiry(r) {
@@ -6718,12 +6723,12 @@ app.post('/api/inventory/:id/withdraw', requireAuth, async (req, res) => {
       // that should become a delivery once an admin approves it. Production withdrawals omit it.
       await query(
         `INSERT INTO inventory_withdrawal_requests
-           (id, withdrawal_number, inventory_id, item_name, quantity, reason, requested_by_id, requested_by_name, requested_by_role, purchase_request_id, destination, status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending')`,
+           (id, withdrawal_number, inventory_id, item_name, quantity, reason, requested_by_id, requested_by_name, requested_by_role, purchase_request_id, destination, job_order_no, status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending')`,
         // requested_by_role is the discriminator that later tells the signatures endpoint which
         // account table holds this requester's e-signature (their portal's own table).
         [id, withdrawalNumber, req.params.id, item.rows[0].item_name, qty, orNull(req.body.reason),
-         req.user?.id ?? null, req.user?.name || 'Unknown', effectiveRole(req.user), orNull(req.body.purchaseRequestId), orNull(req.body.destination)]
+         req.user?.id ?? null, req.user?.name || 'Unknown', effectiveRole(req.user), orNull(req.body.purchaseRequestId), orNull(req.body.destination), orNull(req.body.jobOrderNo)]
       );
       // Re-read through the joined SELECT rather than using RETURNING *: a bare row has no
       // pr_number or unit, so the created object would differ in shape from the same row in
