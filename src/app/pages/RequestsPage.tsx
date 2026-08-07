@@ -492,7 +492,7 @@ function WithdrawModal({ target, inventory, onCancel, onDone }: {
               )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Job Order # <span className="text-gray-400 font-normal">(optional)</span></label>
-                <input value={jobOrderNo} onChange={(e) => setJobOrderNo(e.target.value)} placeholder="JO-08-07-0000-2026"
+                <input value={jobOrderNo} onChange={(e) => setJobOrderNo(e.target.value)} placeholder="JO-08-001-26"
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
               </div>
             </>

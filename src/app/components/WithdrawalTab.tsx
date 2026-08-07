@@ -159,7 +159,7 @@ function RequestModal({ inventory, onSubmit, onClose, onDone }: {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Job Order # <span className="text-gray-400 font-normal">(optional)</span></label>
-            <input value={jobOrderNo} onChange={e => setJobOrderNo(e.target.value)} className={input} placeholder="JO-08-07-0000-2026" />
+            <input value={jobOrderNo} onChange={e => setJobOrderNo(e.target.value)} className={input} placeholder="JO-08-001-26" />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
