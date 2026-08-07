@@ -107,8 +107,9 @@ export async function printWithdrawalReceipt(
   const body = `
   <div class="meta">
     <div class="meta-left">
-      <!-- Optional Ref JO#: shown only when the requester provided one; otherwise no line at all. -->
-      ${w0.jobOrderNo ? `<div><span>Ref JO#:</span> ${esc(w0.jobOrderNo)}</div>` : ''}
+      <!-- Ref JO# is always shown for a consistent layout: the entered value when present,
+           otherwise "Inhouse" as a display-only fallback (a blank job_order_no still stores NULL). -->
+      <div><span>Ref JO#:</span> ${w0.jobOrderNo ? esc(w0.jobOrderNo) : 'Inhouse'}</div>
       ${w0.prNumber ? `<div><span>For request:</span> ${esc(w0.prNumber)}</div>` : ''}
       <div><span>Date Requested:</span> ${esc(fmt(w0.createdAt))}</div>
     </div>
