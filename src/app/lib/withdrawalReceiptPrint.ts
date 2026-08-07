@@ -110,13 +110,13 @@ export async function printWithdrawalReceipt(
       <!-- Optional Ref JO#: shown only when the requester provided one; otherwise no line at all. -->
       ${w0.jobOrderNo ? `<div><span>Ref JO#:</span> ${esc(w0.jobOrderNo)}</div>` : ''}
       ${w0.prNumber ? `<div><span>For request:</span> ${esc(w0.prNumber)}</div>` : ''}
-      <div><span>Date:</span> ${esc(fmt(w0.createdAt))}</div>
-      <!-- "Withdrawn", not "Released": this is when the stock actually left, i.e. the admin's
-           approval. "Released By" below names the warehouse — an earlier, different step. Only the
-           receipt carries it; on the request form nothing has been withdrawn yet. -->
-      ${isReceipt ? `<div><span>Withdrawn:</span> ${esc(fmt(w0.deductedAt))}</div>` : ''}
+      <div><span>Date Requested:</span> ${esc(fmt(w0.createdAt))}</div>
     </div>
     <div class="meta-right">
+      <!-- "Date Withdrawn" is when the stock actually left, i.e. the admin's approval — only the
+           receipt carries it. On the pre-approval REQUEST form nothing is withdrawn yet, so the
+           label is omitted entirely and the right column is just WD No. (kept graceful). -->
+      ${isReceipt ? `<div><span>Date Withdrawn:</span> ${esc(fmt(w0.deductedAt))}</div>` : ''}
       <div><span>WD No.:</span> ${esc(w0.withdrawalNumber || '—')}</div>
     </div>
   </div>
