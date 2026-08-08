@@ -637,7 +637,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                 )}
             </div>
           )}
-          {view === 'new-pr' && <CreatePurchaseRequestForm fetchApi={sFetch} session={session} />}
+          {view === 'new-pr' && <CreatePurchaseRequestForm fetchApi={sFetch} session={session} allowTrading />}
         </main>
       </div>
 

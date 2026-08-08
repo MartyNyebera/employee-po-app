@@ -207,10 +207,13 @@ function RequestItemModal({ fetchApi, initialName, onCancel, onDone }: {
 // ---------------------------------------------------------------------------
 // The form itself.
 // ---------------------------------------------------------------------------
-export function CreatePurchaseRequestForm({ fetchApi, session, onSubmitted }: {
+export function CreatePurchaseRequestForm({ fetchApi, session, onSubmitted, allowTrading = false }: {
   fetchApi: FetchApi;
   session: { full_name: string };
   onSubmitted?: () => void;
+  // "Trading" is a non-project option for the company's trading purchases. It is scoped to the
+  // Sales PR form only, so it is opt-in per caller — other portals leave this false and never see it.
+  allowTrading?: boolean;
 }) {
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -319,7 +322,7 @@ export function CreatePurchaseRequestForm({ fetchApi, session, onSubmitted }: {
                 className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                 <option value="" disabled>Select…</option>
                 <option value={PERSONAL_USE}>Personal use</option>
-                <option value={TRADING}>Trading</option>
+                {allowTrading && <option value={TRADING}>Trading</option>}
                 {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </div>

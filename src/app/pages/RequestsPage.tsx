@@ -76,11 +76,8 @@ interface Session { id: number; full_name: string; email: string; department?: s
 
 const UNITS = ['pcs', 'bags', 'kg', 'liters', 'meters', 'boxes', 'sets', 'Lot', 'units'];
 // "For (Project)" is required, so an explicit choice is needed. Personal use gets its own
-// sentinel (mapped back to a null projectId on submit) and '' means "nothing picked yet". Trading
-// is a second no-project sentinel (the company trades, so those buys aren't tied to a project): it
-// submits projectId null but a "Trading" projectLabel so the request reads "Trading" downstream.
+// sentinel (mapped back to a null projectId on submit) and '' means "nothing picked yet".
 const PERSONAL_USE = '__personal__';
-const TRADING = '__trading__';
 const TOKEN_KEY = 'employee_token';
 const SESSION_KEY = 'employee_session';
 
@@ -776,8 +773,7 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
       await empFetch('/purchase-requests', {
         method: 'POST',
         body: JSON.stringify({
-          projectId: (projectId === PERSONAL_USE || projectId === TRADING) ? null : projectId,
-          projectLabel: projectId === TRADING ? 'Trading' : null,
+          projectId: projectId === PERSONAL_USE ? null : projectId,
           neededBy,
           // inventoryId travels with the line all the way to receipt: when the resulting
           // purchase order is delivered, that id is what puts the stock back on the right row.
@@ -910,7 +906,6 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
                         className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                         <option value="" disabled>Select…</option>
                         <option value={PERSONAL_USE}>Personal use</option>
-                        <option value={TRADING}>Trading</option>
                         {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                       </select>
                     </div>
