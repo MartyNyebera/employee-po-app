@@ -41,7 +41,7 @@ const minToTime = (m: number | null) => {
   return `${h12}:${String(mm).padStart(2, '0')} ${ap}`;
 };
 const KIND_LABEL: Record<string, string> = {
-  work: 'Worked', absent: 'Absent', sunday_worked: 'Sunday worked', sunday_off: 'Sunday (off)',
+  work: 'Worked', absent: 'Absent', absent_too_late: 'Absent (too late)', sunday_worked: 'Sunday worked', sunday_off: 'Sunday (off)',
   holiday_worked: 'Holiday worked', holiday_not_worked: 'Holiday (not worked)', no_out_half: 'No OUT (½ day)',
 };
 
@@ -312,7 +312,7 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
           </tr></thead>
           <tbody>
             {(b.days || []).map(d => {
-              const dim = d.kind === 'absent' || d.kind === 'sunday_off';
+              const dim = d.kind === 'absent' || d.kind === 'absent_too_late' || d.kind === 'sunday_off';
               return (
                 <tr key={d.date} style={{ color: dim ? '#9a9a9a' : '#262626' }}>
                   <td style={td}>{fmtDay(d.date)}</td>

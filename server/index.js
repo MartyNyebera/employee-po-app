@@ -1253,6 +1253,20 @@ async function runMigrations() {
           tardy_mid_deduct_minutes INTEGER NOT NULL DEFAULT 30,
           tardy_max_start_minutes INTEGER NOT NULL DEFAULT 30,
           tardy_max_deduct_minutes INTEGER NOT NULL DEFAULT 60,
+          -- Late rule v2 (REPLACES the tardy_* ladder above — those columns are retained only for
+          -- back-compat and are NO LONGER read by the payroll compute). The scan-in is rounded UP to a
+          -- boundary and the late deduction = (rounded IN − start) minutes: within late_grace → 0; up to
+          -- the +tier1 mark → tier1; up to the +cutoff mark → cutoff; past the cutoff, fixed
+          -- late_block-minute steps with NO cap. Landing exactly on a mark stays; ≥1 min past bumps to
+          -- the next block. Deduction = counted late minutes × per-minute rate.
+          late_grace_minutes INTEGER NOT NULL DEFAULT 10,
+          late_tier1_minutes INTEGER NOT NULL DEFAULT 30,
+          late_cutoff_minutes INTEGER NOT NULL DEFAULT 60,
+          late_block_minutes INTEGER NOT NULL DEFAULT 15,
+          -- Too-late-to-work cutoff: a clock-in later than (that day's shift end − this many minutes)
+          -- makes the WHOLE day ABSENT (₱0) — no half day, no pay. Default 60 → weekday latest-in 16:00,
+          -- Saturday 15:00 (derived per day from work_end / work_end_sat).
+          late_absent_buffer_minutes INTEGER NOT NULL DEFAULT 60,
           ot_multiplier NUMERIC(5,2) NOT NULL DEFAULT 1.25,
           -- LATE-OT buffer: an employee must stay at least this many hours past shift end before any
           -- late OT is earned (default 1h). Once past the buffer, ALL time past shift end counts.
@@ -1272,6 +1286,13 @@ async function runMigrations() {
       await query(`ALTER TABLE payroll_settings ADD COLUMN IF NOT EXISTS special_holiday_not_worked_paid BOOLEAN NOT NULL DEFAULT false`);
       await query(`ALTER TABLE payroll_settings ADD COLUMN IF NOT EXISTS work_end_sat TEXT NOT NULL DEFAULT '16:00'`);
       await query(`ALTER TABLE payroll_settings ADD COLUMN IF NOT EXISTS ot_grace_hours NUMERIC(5,2) NOT NULL DEFAULT 1`);
+      // Late rule v2 columns. ADD COLUMN ... NOT NULL DEFAULT backfills the existing singleton row with
+      // the new-policy defaults on boot, so the live compute uses the correct values without a data edit.
+      await query(`ALTER TABLE payroll_settings ADD COLUMN IF NOT EXISTS late_grace_minutes INTEGER NOT NULL DEFAULT 10`);
+      await query(`ALTER TABLE payroll_settings ADD COLUMN IF NOT EXISTS late_tier1_minutes INTEGER NOT NULL DEFAULT 30`);
+      await query(`ALTER TABLE payroll_settings ADD COLUMN IF NOT EXISTS late_cutoff_minutes INTEGER NOT NULL DEFAULT 60`);
+      await query(`ALTER TABLE payroll_settings ADD COLUMN IF NOT EXISTS late_block_minutes INTEGER NOT NULL DEFAULT 15`);
+      await query(`ALTER TABLE payroll_settings ADD COLUMN IF NOT EXISTS late_absent_buffer_minutes INTEGER NOT NULL DEFAULT 60`);
       // Seed the single policy row with the defaults above (no-op once it exists).
       await query(`INSERT INTO payroll_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
 
@@ -4672,6 +4693,7 @@ app.put('/api/payroll/settings', requireRole(['admin']), async (req, res) => {
   // Numeric policy fields — each validated as a non-negative number (blank/omitted keeps current).
   const numFields = ['paid_hours', 'lunch_hours', 'monthly_divisor', 'grace_minutes',
     'tardy_mid_deduct_minutes', 'tardy_max_start_minutes', 'tardy_max_deduct_minutes',
+    'late_grace_minutes', 'late_tier1_minutes', 'late_cutoff_minutes', 'late_block_minutes', 'late_absent_buffer_minutes',
     'ot_multiplier', 'ot_grace_hours', 'sunday_multiplier', 'regular_holiday_multiplier', 'special_holiday_multiplier'];
   const v = {};
   for (const f of numFields) {
@@ -4705,11 +4727,17 @@ app.put('/api/payroll/settings', requireRole(['admin']), async (req, res) => {
          special_holiday_not_worked_paid = COALESCE($14, special_holiday_not_worked_paid),
          work_end_sat = COALESCE($15, work_end_sat),
          ot_grace_hours = COALESCE($16, ot_grace_hours),
+         late_grace_minutes = COALESCE($17, late_grace_minutes),
+         late_tier1_minutes = COALESCE($18, late_tier1_minutes),
+         late_cutoff_minutes = COALESCE($19, late_cutoff_minutes),
+         late_block_minutes = COALESCE($20, late_block_minutes),
+         late_absent_buffer_minutes = COALESCE($21, late_absent_buffer_minutes),
          updated_at = NOW()
        WHERE id = 1 RETURNING *`,
       [ws, we, v.paid_hours, v.lunch_hours, v.monthly_divisor, v.grace_minutes,
        v.tardy_mid_deduct_minutes, v.tardy_max_start_minutes, v.tardy_max_deduct_minutes,
-       v.ot_multiplier, v.sunday_multiplier, v.regular_holiday_multiplier, v.special_holiday_multiplier, snwp, wesat, v.ot_grace_hours]
+       v.ot_multiplier, v.sunday_multiplier, v.regular_holiday_multiplier, v.special_holiday_multiplier, snwp, wesat, v.ot_grace_hours,
+       v.late_grace_minutes, v.late_tier1_minutes, v.late_cutoff_minutes, v.late_block_minutes, v.late_absent_buffer_minutes]
     );
     res.json(r.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -4787,6 +4815,18 @@ app.delete('/api/holidays/:id', requireRole(['admin']), async (req, res) => {
 //   • netHours = worked span − lunch_hours (floored at 0).
 // ============================================================================
 const hhmmToMin = (s) => { const [h, m] = String(s || '0:0').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+const minToHHMM = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(((m % 60) + 60) % 60).padStart(2, '0')}`;
+// Late rule v2: counted late minutes from the raw lateness (scan-in minus shift start), all in minutes.
+// Within `grace` → 0. Up to the first mark (+tier1) → tier1. Up to the cutoff mark (+cutoff) → cutoff.
+// Past the cutoff → round UP to the next fixed `block` step above the cutoff, with NO cap. Landing
+// exactly on a mark stays on it; ≥1 min past bumps to the next block. Deduction = this × per-minute rate.
+const countedLateMinutes = (rawLate, grace, tier1, cutoff, block) => {
+  if (rawLate <= grace) return 0;
+  if (rawLate <= tier1) return tier1;
+  if (rawLate <= cutoff) return cutoff;
+  const b = block > 0 ? block : 15;
+  return cutoff + Math.ceil((rawLate - cutoff) / b) * b;
+};
 const round2 = (x) => Math.round((Number(x) || 0) * 100) / 100;
 const round4 = (x) => Math.round((Number(x) || 0) * 10000) / 10000;
 const addDaysYMD = (ymd, n) => { const [y, m, d] = ymd.split('-').map(Number); const dt = new Date(Date.UTC(y, m - 1, d + n)); return dt.toISOString().slice(0, 10); };
@@ -4815,7 +4855,12 @@ async function computePayroll(periodId) {
   const s = (await query('SELECT * FROM payroll_settings WHERE id = 1')).rows[0];
   if (!s) return { error: 'no_settings' };
   const paidHours = Number(s.paid_hours), lunch = Number(s.lunch_hours), divisor = Number(s.monthly_divisor);
-  const grace = Number(s.grace_minutes), midDed = Number(s.tardy_mid_deduct_minutes), maxStart = Number(s.tardy_max_start_minutes), maxDed = Number(s.tardy_max_deduct_minutes);
+  // Late rule v2 (see payroll_settings + countedLateMinutes). The old tardy_* columns are NO LONGER
+  // read — deduction = counted late minutes (the rounded offset from start) × per-minute rate, no cap.
+  const lateGrace = Number(s.late_grace_minutes ?? 10), lateTier1 = Number(s.late_tier1_minutes ?? 30),
+    lateCutoff = Number(s.late_cutoff_minutes ?? 60), lateBlock = Number(s.late_block_minutes ?? 15) || 15;
+  // Clock-in later than (that day's shift end − this buffer) → the whole day is ABSENT (₱0), no half day.
+  const lateAbsentBuffer = Number(s.late_absent_buffer_minutes ?? 60);
   const otMult = Number(s.ot_multiplier), sunMult = Number(s.sunday_multiplier), regMult = Number(s.regular_holiday_multiplier), spcMult = Number(s.special_holiday_multiplier);
   // LATE OT buffer in minutes (default 1h). Late OT only starts once outMin ≥ shift end + this.
   // Early OT deliberately has NO buffer — it is the real time from actual IN to shift start.
@@ -4925,9 +4970,18 @@ async function computePayroll(periodId) {
         // are measured from the Saturday end; late is always from the 08:00 start. A present
         // Saturday is still a FULL day at the full daily rate — only the end time is shorter.
         const dayEndMin = dowYMD(d) === 6 ? satEndMin : endMin;
-        if (hasIN) {
+        // Latest valid clock-in for the day: shift end − buffer (weekday 16:00, Saturday 15:00 by
+        // default). A clock-in strictly LATER than this is too late to count as a working day.
+        const latestInMin = dayEndMin - lateAbsentBuffer;
+        if (hasIN && inMin > latestInMin) {
+          // Too late → the whole day is ABSENT (₱0): no half day, no late/undertime/OT. Counts as an
+          // absence (a monthly salary is docked a day like any absence; a daily earns nothing for it).
+          absentDays++;
+          Object.assign(day, { kind: 'absent_too_late', in_min: inMin, late_min: Math.max(0, inMin - startMin),
+            note: `clocked in after ${minToHHMM(latestInMin)} (${lateAbsentBuffer}m before ${minToHHMM(dayEndMin)}) — too late, absent (₱0)` });
+        } else if (hasIN) {
           const rawLate = Math.max(0, inMin - startMin);
-          const counted = rawLate <= grace ? 0 : (rawLate < maxStart ? midDed : maxDed);
+          const counted = countedLateMinutes(rawLate, lateGrace, lateTier1, lateCutoff, lateBlock);
           // Late applies to both full and half days — it flows into the late-deduction bucket.
           lateMin += rawLate; countedLate += counted;
           if (outMin === null) {
@@ -4996,7 +5050,7 @@ async function computePayroll(periodId) {
         paid_hours: paidHours, lunch_hours: lunch, monthly_divisor: divisor,
         multipliers: { ot: otMult, sunday: sunMult, regular_holiday: regMult, special_holiday: spcMult },
         ot_grace_hours: otGraceHours,
-        tardiness: { grace_minutes: grace, mid_deduct_minutes: midDed, max_start_minutes: maxStart, max_deduct_minutes: maxDed },
+        tardiness: { grace_minutes: lateGrace, tier1_minutes: lateTier1, cutoff_minutes: lateCutoff, block_minutes: lateBlock, absent_buffer_minutes: lateAbsentBuffer },
         work_start: s.work_start, work_end: s.work_end, work_end_sat: s.work_end_sat, special_holiday_not_worked_paid: specialNotWorkedPaid,
       },
       totals: {

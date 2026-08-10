@@ -14,8 +14,8 @@ import { S, TextInput, PrimaryBtn } from './crmKit';
 type Settings = Record<string, string>;
 
 const FIELD_ORDER = [
-  'work_start', 'work_end', 'work_end_sat', 'paid_hours', 'lunch_hours', 'monthly_divisor', 'grace_minutes',
-  'tardy_mid_deduct_minutes', 'tardy_max_start_minutes', 'tardy_max_deduct_minutes',
+  'work_start', 'work_end', 'work_end_sat', 'paid_hours', 'lunch_hours', 'monthly_divisor',
+  'late_grace_minutes', 'late_tier1_minutes', 'late_cutoff_minutes', 'late_block_minutes', 'late_absent_buffer_minutes',
   'ot_multiplier', 'ot_grace_hours', 'sunday_multiplier', 'regular_holiday_multiplier', 'special_holiday_multiplier',
 ];
 
@@ -74,12 +74,17 @@ export function PayrollSettings() {
 
   if (!f) return <div style={S.page}><p style={S.sub}>Loading…</p></div>;
 
-  // Live description of the tardiness ladder from the current values.
-  const grace = Number(f.grace_minutes) || 0;
-  const midDed = Number(f.tardy_mid_deduct_minutes) || 0;
-  const maxStart = Number(f.tardy_max_start_minutes) || 0;
-  const maxDed = Number(f.tardy_max_deduct_minutes) || 0;
-  const ladder = `1–${grace} min → 0 · ${grace + 1}–${Math.max(grace + 1, maxStart - 1)} min → ${midDed} min · ≥${maxStart} min → ${maxDed} min (cap)`;
+  // Live description of the late ladder (v2) from the current values. Deduction minutes = the
+  // scan-in rounded UP to a mark, measured from the start time; no cap.
+  const start = f.work_start || '08:00';
+  const grace = Number(f.late_grace_minutes) || 0;
+  const tier1 = Number(f.late_tier1_minutes) || 0;
+  const cutoff = Number(f.late_cutoff_minutes) || 0;
+  const block = Number(f.late_block_minutes) || 0;
+  const absentBuf = Number(f.late_absent_buffer_minutes) || 0;
+  const startMin = (() => { const [h, m] = start.split(':').map(Number); return (h || 0) * 60 + (m || 0); })();
+  const hhmm = (mins: number) => `${String(Math.floor(mins / 60) % 24).padStart(2, '0')}:${String(((mins % 60) + 60) % 60).padStart(2, '0')}`;
+  const ladder = `In by ${hhmm(startMin + grace)} → 0 · to ${hhmm(startMin + tier1)} → ${tier1} min · to ${hhmm(startMin + cutoff)} → ${cutoff} min · after that, +${block} min per ${block}-min block (no cap)`;
 
   return (
     <div style={{ ...S.page, maxWidth: '860px' }}>
@@ -121,13 +126,14 @@ export function PayrollSettings() {
 
       <Group title="Tardiness">
         <div style={grid(4)}>
-          <NumField label="Grace period (min)" hint="No deduction up to here." value={f.grace_minutes} onChange={v => set('grace_minutes', v)} />
-          <NumField label="Deduction past grace (min)" value={f.tardy_mid_deduct_minutes} onChange={v => set('tardy_mid_deduct_minutes', v)} />
-          <NumField label="Heavy-late threshold (min)" value={f.tardy_max_start_minutes} onChange={v => set('tardy_max_start_minutes', v)} />
-          <NumField label="Heavy-late deduction (min, cap)" value={f.tardy_max_deduct_minutes} onChange={v => set('tardy_max_deduct_minutes', v)} />
+          <NumField label="Grace period (min)" hint="No deduction up to here." value={f.late_grace_minutes} onChange={v => set('late_grace_minutes', v)} />
+          <NumField label="First mark (min)" hint="Past grace up to here → this many minutes." value={f.late_tier1_minutes} onChange={v => set('late_tier1_minutes', v)} />
+          <NumField label="Cutoff mark (min)" hint="Up to here → this many minutes." value={f.late_cutoff_minutes} onChange={v => set('late_cutoff_minutes', v)} />
+          <NumField label="Block after cutoff (min)" hint="Beyond the cutoff, round up in these steps. No cap." value={f.late_block_minutes} onChange={v => set('late_block_minutes', v)} />
+          <NumField label="Absent buffer before end (min)" hint="Clock-in later than (shift end − this) → the day is ABSENT (₱0). Default 60 = weekday 16:00, Saturday 15:00." value={f.late_absent_buffer_minutes} onChange={v => set('late_absent_buffer_minutes', v)} />
         </div>
         <div style={{ fontSize: '12px', color: '#5a5a5a', marginTop: '12px', padding: '10px 12px', background: '#f7f7f7', borderRadius: '8px' }}>
-          Ladder: {ladder}
+          Late deduction rounds the scan-in UP to a mark (measured from the start time): {ladder}. Each late minute is charged at the per-minute rate (daily ÷ paid hours ÷ 60). A clock-in more than {absentBuf} minutes before shift end makes the whole day absent.
         </div>
       </Group>
 
