@@ -5636,7 +5636,10 @@ app.get('/api/attendance/periods/:id/sheet', requireRole(attendanceReviewRoles),
       }
       flush();
     }
-    const rowsOut = rows.rows.map(r => ({ ...r, breaks: breaksByKey[`${r.person_id}|${r.work_date}`] || [] }));
+    // is_adjusted days are authoritative from their corrected first_in/last_out — the raw punches may
+    // include test/superseded taps, so we do NOT surface punch-derived breaks for them (an adjusted
+    // day is a single IN/OUT span with no mid-day break). Rebuilt (non-adjusted) days show breaks.
+    const rowsOut = rows.rows.map(r => ({ ...r, breaks: r.is_adjusted ? [] : (breaksByKey[`${r.person_id}|${r.work_date}`] || []) }));
     // Per-person BALE (cash advance) captured for this period — [{ person_id, amount }].
     const bale = await query('SELECT person_id, amount FROM payroll_bale WHERE pay_period_id = $1', [period.id]);
     res.json({ period, rows: rowsOut, bale: bale.rows });
@@ -5737,7 +5740,11 @@ app.post('/api/attendance/days/:id/adjust', requireRole(['admin']), async (req, 
                               ELSE 'incomplete' END,
                 flags = CASE WHEN first_in IS NOT NULL AND last_out IS NULL THEN '["missing_out"]'::jsonb
                              WHEN first_in IS NULL                          THEN '["missing_in"]'::jsonb
-                             ELSE '[]'::jsonb END
+                             ELSE '[]'::jsonb END,
+                -- A manual time correction makes the row a single IN/OUT span — there is no mid-day
+                -- break in that representation, so drop any punch-derived break (rebuild is off now via
+                -- is_adjusted, so this stays 0 and payroll won't dock a removed/test break).
+                break_minutes = 0
           WHERE id = $1`,
         [day.id]
       );
