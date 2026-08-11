@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Search, Pencil, QrCode, RefreshCw, Printer } from 'lucide-react';
+import { Plus, Search, Pencil, QrCode, RefreshCw, Printer, UserMinus, UserCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
@@ -64,6 +64,7 @@ export function RosterList() {
   const [statusFilter, setStatusFilter] = useState('');
   const [editing, setEditing] = useState<Person | null>(null);
   const [showModal, setShowModal] = useState(false);
+  const [resigning, setResigning] = useState<Person | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -82,14 +83,14 @@ export function RosterList() {
     return matchQ && matchS;
   });
 
-  // Quick active <-> resigned flip. Resigning stamps last_day = today; reactivating clears it.
-  const toggleStatus = async (p: Person) => {
-    const resigning = p.status === 'active';
-    if (resigning && !(await confirmDialog({ title: `Mark "${p.full_name}" as resigned?`, message: 'Their last day will be set to today. Attendance history is kept.', confirmLabel: 'Mark resigned', tone: 'danger' }))) return;
-    const next = { status: resigning ? 'resigned' : 'active', last_day: resigning ? todayInput() : null };
+  // Reactivate a resigned person (undo an off-board): back to active, last_day cleared so they can
+  // clock in and be paid again. Soft — no history is touched. Resigning is handled by ResignModal
+  // (which lets the admin pick the last working day instead of forcing today).
+  const reactivate = async (p: Person) => {
+    if (!(await confirmDialog({ title: `Reactivate "${p.full_name}"?`, message: 'They return to Active and their last day is cleared, so they can clock in and be paid again. Nothing in their history changes.', confirmLabel: 'Reactivate' }))) return;
     const prev = rows;
-    setRows(rows.map(x => x.id === p.id ? { ...x, ...next } as Person : x));
-    try { await fetchApi(`/persons/${p.id}`, { method: 'PATCH', body: JSON.stringify(next) }); toast.success(resigning ? 'Marked resigned' : 'Reactivated'); }
+    setRows(rows.map(x => x.id === p.id ? { ...x, status: 'active', last_day: null } as Person : x));
+    try { await fetchApi(`/persons/${p.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'active', last_day: null }) }); toast.success('Reactivated'); }
     catch { setRows(prev); toast.error('Update failed'); }
   };
 
@@ -145,34 +146,73 @@ export function RosterList() {
           <tbody>
             {loading ? <tr><td style={S.td} colSpan={7}>Loading…</td></tr>
               : filtered.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={7}>No people yet.</td></tr>
-              : filtered.map(p => (
-                <tr key={p.id}>
-                  <td style={{ ...S.td, color: '#000000' }}>
+              : filtered.map(p => {
+                const resigned = p.status === 'resigned';
+                return (
+                <tr key={p.id} style={resigned ? { background: '#fafafa' } : undefined}>
+                  <td style={{ ...S.td, color: '#000000', opacity: resigned ? 0.55 : 1 }}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <Avatar src={p.photo_url} name={p.full_name} size={30} />
                       <span style={{ fontWeight: 600 }}>{p.full_name}</span>
                     </span>
                   </td>
-                  <td style={S.td}>{[p.department, p.position].filter(Boolean).join(' · ') || '—'}</td>
-                  <td style={S.td}>{p.employment_type ? p.employment_type.charAt(0).toUpperCase() + p.employment_type.slice(1) : '—'}</td>
-                  <td style={S.td}>{p.pay_rate === null || p.pay_rate === undefined || p.pay_rate === '' ? '—' : <>{peso(Number(p.pay_rate))}<span style={{ color: '#8a8a8a', fontSize: '12px' }}>{paySuffixFor(p.employment_type)}</span></>}</td>
-                  <td style={S.td}>
-                    <button title={p.status === 'active' ? 'Mark resigned' : 'Reactivate'} onClick={() => toggleStatus(p)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>{statusBadge(p.status)}</button>
-                  </td>
-                  <td style={S.td}>{fmtDate(p.hired_on)}{p.status === 'resigned' && p.last_day ? <div style={{ fontSize: '12px', color: '#8a8a8a' }}>Last: {fmtDate(p.last_day)}</div> : null}</td>
+                  <td style={{ ...S.td, opacity: resigned ? 0.55 : 1 }}>{[p.department, p.position].filter(Boolean).join(' · ') || '—'}</td>
+                  <td style={{ ...S.td, opacity: resigned ? 0.55 : 1 }}>{p.employment_type ? p.employment_type.charAt(0).toUpperCase() + p.employment_type.slice(1) : '—'}</td>
+                  <td style={{ ...S.td, opacity: resigned ? 0.55 : 1 }}>{p.pay_rate === null || p.pay_rate === undefined || p.pay_rate === '' ? '—' : <>{peso(Number(p.pay_rate))}<span style={{ color: '#8a8a8a', fontSize: '12px' }}>{paySuffixFor(p.employment_type)}</span></>}</td>
+                  <td style={S.td}>{statusBadge(p.status)}</td>
+                  <td style={{ ...S.td, opacity: resigned ? 0.55 : 1 }}>{fmtDate(p.hired_on)}{resigned && p.last_day ? <div style={{ fontSize: '12px', color: '#b45309' }}>Last day: {fmtDate(p.last_day)}</div> : null}</td>
                   <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    {resigned
+                      ? <button title="Reactivate (undo resign)" style={{ ...S.rowBtn, color: '#166534' }} onClick={() => reactivate(p)}><UserCheck size={14} /></button>
+                      : <button title="Resign / Terminate" style={{ ...S.rowBtn, color: '#b91c1c' }} onClick={() => setResigning(p)}><UserMinus size={14} /></button>}
                     <button title="Print QR card" style={S.rowBtn} onClick={() => onPrint(p)}><QrCode size={14} /></button>
                     <button title="Reissue QR" style={S.rowBtn} onClick={() => onReissue(p)}><RefreshCw size={13} /></button>
                     <button title="Edit" style={S.rowBtn} onClick={() => { setEditing(p); setShowModal(true); }}><Pencil size={13} /></button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
           </tbody>
         </table>
       </div>
 
       {showModal && <PersonModal initial={editing} onClose={() => setShowModal(false)} onSaved={() => { setShowModal(false); load(); }} />}
+      {resigning && <ResignModal person={resigning} onClose={() => setResigning(null)} onDone={() => { setResigning(null); load(); }} />}
     </div>
+  );
+}
+
+// Off-board an active employee. Soft only: sets status='resigned' + a chosen last working day, and
+// preserves ALL history (attendance, past payslips). The date is editable — default today, but the
+// admin can set a future or past last day. After that day the person drops out of payroll (H1) and
+// can no longer clock in; their final period still computes. Reversible via Reactivate.
+function ResignModal({ person, onClose, onDone }: { person: Person; onClose: () => void; onDone: () => void }) {
+  const [lastDay, setLastDay] = useState(person.last_day ? String(person.last_day).slice(0, 10) : todayInput());
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (!lastDay) { toast.error('Pick a last working day'); return; }
+    setSaving(true);
+    try {
+      await fetchApi(`/persons/${person.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'resigned', last_day: lastDay }) });
+      toast.success('Marked resigned');
+      onDone();
+    } catch (e: any) { toast.error(e.message || 'Update failed'); } finally { setSaving(false); }
+  };
+
+  return (
+    <Modal title={`Resign / Terminate — ${person.full_name}`} onClose={onClose}
+      footer={<><GhostBtn onClick={onClose}>Cancel</GhostBtn><PrimaryBtn onClick={submit} disabled={saving}>{saving ? 'Saving…' : 'Mark resigned'}</PrimaryBtn></>}>
+      <p style={{ fontSize: '13px', color: '#5a5a5a', marginTop: 0 }}>
+        Soft off-board — <strong>all history is kept</strong> (attendance and past payslips are never deleted). From the last working day onward the person drops out of payroll and can no longer clock in, but their final period still computes normally. This can be undone with <strong>Reactivate</strong>.
+      </p>
+      <Field label="Last working day *">
+        <TextInput type="date" value={lastDay} onChange={e => setLastDay(e.target.value)} />
+      </Field>
+      <p style={{ fontSize: '12px', color: '#8a8a8a', marginTop: '4px' }}>
+        Defaults to today — set a future date if you already know it, or a past date for a back-dated exit. Days after this are neither paid nor counted as absent.
+      </p>
+    </Modal>
   );
 }
 
