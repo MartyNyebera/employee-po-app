@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { RefreshCw, Lock, Plus, Search, Pencil, History, ShieldCheck } from 'lucide-react';
+import { RefreshCw, Lock, Unlock, Plus, Search, Pencil, History, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { S, Modal, Field, TextInput, TextArea, PrimaryBtn, GhostBtn, pill, peso } from './crmKit';
@@ -21,6 +21,7 @@ type Api = <T = any>(path: string, init?: RequestInit) => Promise<T>;
 interface Period {
   id: number; start_date: string; end_date: string;
   status: 'open' | 'locked'; locked_by?: string | null; locked_at?: string | null;
+  payroll_finalized?: boolean;
 }
 interface Day {
   id: number; person_id: number; work_date: string;
@@ -171,6 +172,19 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
     } catch (e: any) { toast.error(e.message || 'Lock failed'); } finally { setBusy(false); }
   };
 
+  // Unlock re-opens a locked period (admin only; server enforces it). A finalized payroll must be
+  // un-finalized first — the button is hidden then, and the server also refuses (409).
+  const unlock = async () => {
+    if (!period) return;
+    if (!(await confirmDialog({ title: `Unlock ${periodLabel(period)}?`, message: 'This re-opens the period: its days become editable again and Rebuild-from-punches can run. Lock it again and recompute payroll when you are done.', confirmLabel: 'Unlock period', tone: 'danger' }))) return;
+    setBusy(true);
+    try {
+      await api(`/attendance/periods/${period.id}/unlock`, { method: 'POST' });
+      await Promise.all([loadPeriods(), loadSheet(period.id)]);
+      toast.success('Pay period unlocked — now open');
+    } catch (e: any) { toast.error(e.message || 'Unlock failed'); } finally { setBusy(false); }
+  };
+
   // Toggle a day's OT approval (admin-only; server also enforces admin + ot_eligible). Not a pay
   // computation — just an authorization flag. `kind` picks the bucket: 'late' (regular/after-shift,
   // ot_approved) or 'early' (pre-shift-start, early_ot_approved). They are independent and stack.
@@ -216,12 +230,13 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
           : pill('Open', 'good'))}
         {period && canRebuild && <button style={S.rowBtn} onClick={rebuild} disabled={busy}><RefreshCw size={13} style={{ verticalAlign: '-2px', marginRight: '5px' }} />Rebuild from punches</button>}
         {period && !locked && <button style={{ ...S.rowBtn, borderColor: '#e3ca63', color: '#7a6a0c' }} onClick={lock} disabled={busy}><Lock size={13} style={{ verticalAlign: '-2px', marginRight: '5px' }} />Lock period</button>}
+        {period && locked && role === 'admin' && !period.payroll_finalized && <button style={{ ...S.rowBtn, borderColor: '#e3ca63', color: '#7a6a0c' }} onClick={unlock} disabled={busy}><Unlock size={13} style={{ verticalAlign: '-2px', marginRight: '5px' }} />Unlock period</button>}
       </div>
 
       {locked && (
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', marginBottom: '16px', borderRadius: '8px', background: '#f4f4f4', border: '1px solid #d6d6d6', fontSize: '13px', color: '#5a5a5a' }}>
           <ShieldCheck size={15} />
-          Locked{period?.locked_at ? ` on ${new Date(period.locked_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}` : ''}{period?.locked_by ? ` by ${period.locked_by}` : ''}. {role === 'admin' ? 'You can still make corrections — each stays logged.' : 'This sheet is read-only.'}
+          Locked{period?.locked_at ? ` on ${new Date(period.locked_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}` : ''}{period?.locked_by ? ` by ${period.locked_by}` : ''}. {role === 'admin' ? (period?.payroll_finalized ? 'Payroll is finalized — un-finalize it in Payroll Review before you can unlock.' : 'You can still make corrections (logged), or Unlock to re-open the period.') : 'This sheet is read-only.'}
         </div>
       )}
 

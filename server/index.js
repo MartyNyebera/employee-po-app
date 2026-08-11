@@ -1219,6 +1219,9 @@ async function runMigrations() {
       await query(`ALTER TABLE pay_periods ADD COLUMN IF NOT EXISTS payroll_finalized BOOLEAN NOT NULL DEFAULT false`);
       await query(`ALTER TABLE pay_periods ADD COLUMN IF NOT EXISTS finalized_by TEXT`);
       await query(`ALTER TABLE pay_periods ADD COLUMN IF NOT EXISTS finalized_at TIMESTAMPTZ`);
+      // Unlock audit: who re-opened a locked (non-finalized) period, and when. Mirrors locked_by/at.
+      await query(`ALTER TABLE pay_periods ADD COLUMN IF NOT EXISTS unlocked_by TEXT`);
+      await query(`ALTER TABLE pay_periods ADD COLUMN IF NOT EXISTS unlocked_at TIMESTAMPTZ`);
       await query(`
         CREATE TABLE IF NOT EXISTS attendance_adjustments (
           id SERIAL PRIMARY KEY,
@@ -5515,7 +5518,7 @@ app.get('/api/attendance/periods', requireRole(attendanceReviewRoles), async (re
   try {
     const result = await query(
       `SELECT id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date,
-              status, locked_by, locked_at, created_at
+              status, locked_by, locked_at, payroll_finalized, created_at
          FROM pay_periods
         ORDER BY start_date DESC, id DESC`
     );
@@ -5572,7 +5575,7 @@ app.get('/api/attendance/periods/:id/sheet', requireRole(attendanceReviewRoles),
   try {
     const pr = await query(
       `SELECT id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date,
-              status, locked_by, locked_at
+              status, locked_by, locked_at, payroll_finalized
          FROM pay_periods WHERE id = $1`,
       [req.params.id]
     );
@@ -5815,8 +5818,51 @@ app.post('/api/attendance/periods/:id/lock', requireRole(attendanceReviewRoles),
       [period.id, period.start_date, period.end_date]
     );
     const upd = await client.query(
-      `UPDATE pay_periods SET status = 'locked', locked_by = $1, locked_at = NOW() WHERE id = $2
+      `UPDATE pay_periods SET status = 'locked', locked_by = $1, locked_at = NOW(), unlocked_by = NULL, unlocked_at = NULL WHERE id = $2
        RETURNING id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date, status, locked_by, locked_at`,
+      [req.user.id, period.id]
+    );
+    await client.query('COMMIT');
+    res.json(upd.rows[0]);
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Unlock (re-open) a LOCKED pay period. ADMIN ONLY (accounting can lock but not re-open). Reverses
+// the lock exactly: clears is_locked on the period's days so attendance can be edited and rebuild
+// can run again, and flips the period back to 'open'. A FINALIZED period must be un-finalized first
+// (deliberate, separately-audited step) — this endpoint refuses it rather than silently reversing an
+// approved payroll. Records who unlocked it (unlocked_by/at) for the audit trail. After this the
+// period behaves like any open period: rebuild, edit attendance, re-lock, recompute.
+app.post('/api/attendance/periods/:id/unlock', requireRole(['admin']), async (req, res) => {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const pr = await client.query(
+      `SELECT id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date, status, payroll_finalized
+         FROM pay_periods WHERE id = $1 FOR UPDATE`,
+      [req.params.id]
+    );
+    const period = pr.rows[0];
+    if (!period) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Pay period not found' }); }
+    if (period.status !== 'locked') { await client.query('ROLLBACK'); return res.status(400).json({ error: 'This period is not locked.' }); }
+    if (period.payroll_finalized) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'This payroll is finalized. Un-finalize it first (Payroll Review), then unlock.' });
+    }
+    // Re-open the days so rebuild/adjust treat them as an open period again. is_adjusted is left as-is
+    // (manual corrections survive). pay_period_id stays so re-lock/rebuild keep the same association.
+    await client.query(
+      `UPDATE attendance_days SET is_locked = false WHERE work_date BETWEEN $1 AND $2 AND pay_period_id = $3`,
+      [period.start_date, period.end_date, period.id]
+    );
+    const upd = await client.query(
+      `UPDATE pay_periods SET status = 'open', unlocked_by = $1, unlocked_at = NOW(), locked_by = NULL, locked_at = NULL WHERE id = $2
+       RETURNING id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date, status, payroll_finalized, unlocked_by, unlocked_at`,
       [req.user.id, period.id]
     );
     await client.query('COMMIT');
