@@ -4828,7 +4828,7 @@ app.delete('/api/holidays/:id', requireRole(['admin']), async (req, res) => {
 //     premium bucket, so those days are not also counted in base — no double counting).
 //   • Late ladder from settings: ≤grace→0, <max_start→mid_deduct, ≥max_start→max_deduct (counted
 //     minutes). Undertime is proportional (17:00 − OUT). OT = (OUT − 17:00) decimal hours, only if
-//     ot_eligible AND the day is ot_approved.
+//     that day's ot_approved toggle is on (the permanent person.ot_eligible flag is no longer read).
 //   • Sunday worked → netHours × hourly × sunday_mult. Holiday worked → netHours × hourly ×
 //     (regular/special mult). Holiday NOT worked but eligible (present the prior working day) →
 //     one day's pay (daily only; a monthly salary already covers it).
@@ -5062,13 +5062,17 @@ async function computePayroll(periodId) {
             const brk = row && row.break_minutes != null ? Math.max(0, Math.round(Number(row.break_minutes))) : 0;
             breakMin += brk;
             // LATE OT (after shift): only past the buffer — must stay ≥ shift end + ot_grace_hours,
-            // then ALL time past shift end counts (not just past the buffer). Gated by ot_approved.
-            const lateOt = (person.ot_eligible && row.ot_approved && outMin >= dayEndMin + otGraceMin)
+            // then ALL time past shift end counts (not just past the buffer). Gated SOLELY by that
+            // day's ot_approved toggle (the permanent person.ot_eligible flag is no longer read — OT
+            // is decided fresh per day, so a forgotten roster flag can't leak OT and can't zero out a
+            // legitimately approved day).
+            const lateOt = (row.ot_approved && outMin >= dayEndMin + otGraceMin)
               ? (outMin - dayEndMin) / 60 : 0;
             // EARLY OT (before shift): NO buffer — the real time from actual IN to shift start, but
             // ONLY when early_ot_approved un-clamps it. Un-approved early-in stays clamped (0 pay);
             // late is already Math.max(0, inMin−startMin), so an early IN never creates negative late.
-            const earlyOt = (person.ot_eligible && row.early_ot_approved && inMin < startMin)
+            // Also gated SOLELY by the per-day early_ot_approved toggle.
+            const earlyOt = (row.early_ot_approved && inMin < startMin)
               ? (startMin - inMin) / 60 : 0;
             const oth = earlyOt + lateOt; // both ×1.25 (same rate); tracked separately below
             earlyOtHours += earlyOt; lateOtHours += lateOt; otHours += oth;
@@ -5694,25 +5698,20 @@ app.post('/api/attendance/days/:id/adjust', requireRole(['admin']), async (req, 
 });
 
 // Phase 4a: toggle a day's OT approval. ADMIN ONLY (Finance is view-only). This is an
-// authorization flag, not a correction — it may be set on a locked day, and the OT person must be
-// ot_eligible on the roster. No OT pay is computed here; the change is logged like an adjustment.
+// authorization flag, not a correction — it may be set on a locked day. The per-day toggle is the
+// SOLE gate for OT pay (the permanent person.ot_eligible roster flag is no longer required), so it
+// can be set on any person's day. No OT pay is computed here; the change is logged like an adjustment.
 app.post('/api/attendance/days/:id/ot', requireRole(['admin']), async (req, res) => {
   const approved = !!(req.body && req.body.approved);
   const client = await getClient();
   try {
     await client.query('BEGIN');
     const dr = await client.query(
-      `SELECT ad.id, ad.ot_approved, p.ot_eligible
-         FROM attendance_days ad JOIN persons p ON p.id = ad.person_id
-        WHERE ad.id = $1 FOR UPDATE OF ad`,
+      `SELECT ad.id, ad.ot_approved FROM attendance_days ad WHERE ad.id = $1 FOR UPDATE`,
       [req.params.id]
     );
     const day = dr.rows[0];
     if (!day) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Day not found' }); }
-    if (approved && !day.ot_eligible) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'This person is not OT-eligible — enable it on the roster first.' });
-    }
     const oldVal = day.ot_approved ? 'true' : 'false';
     await client.query('UPDATE attendance_days SET ot_approved = $1 WHERE id = $2', [approved, day.id]);
     await client.query(
@@ -5731,25 +5730,20 @@ app.post('/api/attendance/days/:id/ot', requireRole(['admin']), async (req, res)
 });
 
 // Phase 4b: toggle a day's EARLY OT approval — the SEPARATE pre-shift-start authorization, distinct
-// from ot_approved (regular/late). ADMIN ONLY (Finance view-only); person must be ot_eligible. Only
-// this flag un-clamps early-in to paid early OT at compute; no pay is computed here. Logged.
+// from ot_approved (regular/late). ADMIN ONLY (Finance view-only). Like the regular toggle, this
+// per-day flag is the SOLE gate (person.ot_eligible no longer required) and un-clamps early-in to
+// paid early OT at compute; no pay is computed here. Logged.
 app.post('/api/attendance/days/:id/early-ot', requireRole(['admin']), async (req, res) => {
   const approved = !!(req.body && req.body.approved);
   const client = await getClient();
   try {
     await client.query('BEGIN');
     const dr = await client.query(
-      `SELECT ad.id, ad.early_ot_approved, p.ot_eligible
-         FROM attendance_days ad JOIN persons p ON p.id = ad.person_id
-        WHERE ad.id = $1 FOR UPDATE OF ad`,
+      `SELECT ad.id, ad.early_ot_approved FROM attendance_days ad WHERE ad.id = $1 FOR UPDATE`,
       [req.params.id]
     );
     const day = dr.rows[0];
     if (!day) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Day not found' }); }
-    if (approved && !day.ot_eligible) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'This person is not OT-eligible — enable it on the roster first.' });
-    }
     const oldVal = day.early_ot_approved ? 'true' : 'false';
     await client.query('UPDATE attendance_days SET early_ot_approved = $1 WHERE id = $2', [approved, day.id]);
     await client.query(

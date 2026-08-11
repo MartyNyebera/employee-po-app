@@ -185,7 +185,7 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
     } catch (e: any) { toast.error(e.message || 'Unlock failed'); } finally { setBusy(false); }
   };
 
-  // Toggle a day's OT approval (admin-only; server also enforces admin + ot_eligible). Not a pay
+  // Toggle a day's OT approval (admin-only; the per-day toggle is the sole OT gate). Not a pay
   // computation — just an authorization flag. `kind` picks the bucket: 'late' (regular/after-shift,
   // ot_approved) or 'early' (pre-shift-start, early_ot_approved). They are independent and stack.
   const toggleOt = async (day: Day, kind: 'late' | 'early', approved: boolean) => {
@@ -286,12 +286,10 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
   );
 }
 
-// OT cell: '—' for non-eligible people; a read-only Yes/No for Finance; a clickable toggle for
-// admin. Toggling is an authorization flag only — no pay is computed.
-// One OT-approval cell for a given bucket ('early' or 'late'). '—' for non-eligible people; a
-// read-only Yes/No for Finance; a clickable toggle for admin. The two buckets are independent.
+// One OT-approval cell for a given bucket ('early' or 'late'): a read-only Yes/No for Finance; a
+// clickable toggle for admin. The per-day toggle is the SOLE gate for OT pay, so it shows for
+// everyone (no permanent ot_eligible flag gates it anymore). The two buckets are independent.
 function otCell(d: Day, kind: 'early' | 'late', role: 'admin' | 'accounting', onToggleOt: (d: Day, kind: 'early' | 'late', approved: boolean) => void) {
-  if (!d.ot_eligible) return <span style={{ fontSize: '12px', color: '#b0b0b0' }} title="Not OT-eligible">—</span>;
   const on = kind === 'early' ? d.early_ot_approved : d.ot_approved;
   if (role !== 'admin') return on ? pill('Yes', 'good') : <span style={{ fontSize: '12px', color: '#8a8a8a' }}>No</span>;
   return (
