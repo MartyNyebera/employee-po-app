@@ -5450,7 +5450,14 @@ async function rebuildAttendanceDays(startDate, endDate) {
   const groups = new Map(); // "person_id|YYYY-MM-DD" -> [{ type, min }]
   for (const p of punches.rows) {
     const key = `${p.person_id}|${p.d}`;
-    (groups.get(key) || groups.set(key, []).get(key)).push({ type: p.punch_type, min: Math.round(Number(p.min)) });
+    const raw = Number(p.min);
+    // Break docking only. A break-OUT counts as the whole minute you're on — FLOOR it (drop seconds:
+    // 10:39:32 → 10:39) so the dock isn't a minute short. The return-IN keeps its nearest-minute value
+    // (it is then quarter-rounded UP by breakDockMinutes, so 11:01:15 → 11:15 is unchanged). This `min`
+    // is used ONLY to compute break_minutes here; first_in/last_out/worked_minutes come from the raw
+    // punched_at MIN/MAX in the first pass and are untouched, as are late/undertime (from those).
+    const min = p.punch_type === 'out' ? Math.floor(raw) : Math.round(raw);
+    (groups.get(key) || groups.set(key, []).get(key)).push({ type: p.punch_type, min });
   }
   const pids = [], dds = [], brks = [];
   for (const [key, taps] of groups) {
