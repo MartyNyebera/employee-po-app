@@ -77,38 +77,43 @@ const PAYSLIP_CSS = `
   body { font-family: Arial, Helvetica, sans-serif; color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   /* font-size:0 removes the whitespace gaps between inline-block tiles. */
   .batch { font-size: 0; }
+  /* The slip is a fixed-height flex COLUMN: content flows from the top and the signature block is
+     pushed to the bottom with margin-top:auto, so Prepared/Received By are always anchored at the
+     bottom edge and never clipped — however tall the content runs (e.g. a long name that wraps the
+     meta row). inline-flex keeps the tiles flowing 2-across in the batch, like inline-block did. */
   .slip {
-    display: inline-block; vertical-align: top;
+    display: inline-flex; flex-direction: column; vertical-align: top;
     width: ${SLIP_W}; height: ${SLIP_H};
     padding: 3mm 3.5mm; margin: 0 2mm 3mm 0;
     border: 0.2mm dashed #b0b0b0; overflow: hidden;
     break-inside: avoid; page-break-inside: avoid;
-    font-size: 7.5pt; line-height: 1.35;
+    font-size: 7.5pt; line-height: 1.32;
   }
-  .ph { text-align: center; margin-bottom: 1.5mm; }
-  .co { font-size: 12pt; font-weight: bold; line-height: 1.1; }
-  .ln { font-size: 6.5pt; line-height: 1.5; }
+  .ph { text-align: center; margin-bottom: 1.2mm; }
+  .co { font-size: 12pt; font-weight: bold; line-height: 1.08; }
+  .ln { font-size: 6.5pt; line-height: 1.35; }
   table { border-collapse: collapse; width: 100%; }
-  .meta td { font-size: 7pt; padding: 0.7mm 0.8mm; vertical-align: bottom; }
+  .meta td { font-size: 7pt; padding: 0.6mm 0.8mm; vertical-align: bottom; }
   .meta .k { font-weight: bold; white-space: nowrap; width: 1%; padding-right: 1.5mm; }
   .meta .v { border-bottom: 0.2mm solid #999; }
-  .cols { display: flex; gap: 3.5mm; margin-top: 3mm; align-items: flex-start; }
+  .cols { display: flex; gap: 3.5mm; margin-top: 2mm; align-items: flex-start; }
   .cols > div { flex: 1; min-width: 0; }
-  .sect { font-size: 7pt; font-weight: bold; letter-spacing: .2px; text-transform: uppercase; margin-bottom: 1.2mm; }
-  .grid th, .grid td { border: 0.2mm solid #000; padding: 1.3mm 0.8mm; font-size: 6.8pt; line-height: 1.35; }
+  .sect { font-size: 7pt; font-weight: bold; letter-spacing: .2px; text-transform: uppercase; margin-bottom: 1mm; }
+  .grid th, .grid td { border: 0.2mm solid #000; padding: 1mm 0.8mm; font-size: 6.8pt; line-height: 1.3; }
   .grid th { background: #ececec; font-weight: bold; text-align: center; }
   .grid .lbl { text-align: left; white-space: nowrap; }
   .grid .num { text-align: right; font-variant-numeric: tabular-nums; }
   .grid .tot td { font-weight: bold; background: #f6f6f6; }
-  .totband { margin-top: 3mm; border: 0.2mm solid #000; }
-  .totband .row { display: flex; justify-content: space-between; padding: 1.3mm 2mm; font-size: 8pt; }
+  .totband { margin-top: 2mm; border: 0.2mm solid #000; }
+  .totband .row { display: flex; justify-content: space-between; padding: 1mm 2mm; font-size: 8pt; }
   .totband .row + .row { border-top: 0.2mm solid #ccc; }
   .totband .k { font-weight: bold; letter-spacing: .2px; }
   .totband .v { font-variant-numeric: tabular-nums; }
   .totband .net { font-weight: bold; font-size: 10pt; background: #eee; }
-  .sign { display: flex; gap: 3mm; margin-top: 3mm; }
+  /* margin-top:auto anchors the two signature lines (Prepared By | Received By) to the bottom. */
+  .sign { display: flex; gap: 5mm; margin-top: auto; padding-top: 2mm; }
   .sign > div { flex: 1; text-align: center; font-size: 7pt; }
-  .sign .line { border-top: 0.2mm solid #000; margin-top: 12mm; padding-top: 1mm; }
+  .sign .line { border-top: 0.2mm solid #000; margin-top: 7mm; padding-top: 1mm; }
   .foot { text-align: center; font-size: 5.5pt; color: #444; margin-top: 1.5mm; font-style: italic; }
 `;
 
@@ -200,7 +205,7 @@ function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
     </div>
 
     <div class="sign">
-      <div class="spacer"></div>
+      <div><div class="line">Prepared By</div></div>
       <div><div class="line">Received By</div></div>
     </div>
     <div class="foot">Computer generated payslip — ${esc(payPeriodLabel(period.start_date, period.end_date))}</div>
