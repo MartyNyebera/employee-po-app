@@ -14,8 +14,8 @@ import { S, TextInput, PrimaryBtn } from './crmKit';
 type Settings = Record<string, string>;
 
 const FIELD_ORDER = [
-  'work_start', 'work_end', 'work_end_sat', 'paid_hours', 'lunch_hours', 'monthly_divisor',
-  'late_grace_minutes', 'late_tier1_minutes', 'late_cutoff_minutes', 'late_block_minutes', 'late_absent_buffer_minutes',
+  'work_start', 'work_end', 'work_end_sat', 'paid_hours', 'lunch_hours', 'lunch_start', 'lunch_end', 'monthly_divisor',
+  'late_grace_minutes', 'late_tier1_minutes', 'late_cutoff_minutes', 'late_absent_buffer_minutes',
   'ot_multiplier', 'ot_grace_hours', 'sunday_multiplier', 'regular_holiday_multiplier', 'special_holiday_multiplier',
 ];
 
@@ -80,11 +80,10 @@ export function PayrollSettings() {
   const grace = Number(f.late_grace_minutes) || 0;
   const tier1 = Number(f.late_tier1_minutes) || 0;
   const cutoff = Number(f.late_cutoff_minutes) || 0;
-  const block = Number(f.late_block_minutes) || 0;
   const absentBuf = Number(f.late_absent_buffer_minutes) || 0;
   const startMin = (() => { const [h, m] = start.split(':').map(Number); return (h || 0) * 60 + (m || 0); })();
   const hhmm = (mins: number) => `${String(Math.floor(mins / 60) % 24).padStart(2, '0')}:${String(((mins % 60) + 60) % 60).padStart(2, '0')}`;
-  const ladder = `In by ${hhmm(startMin + grace)} → 0 · to ${hhmm(startMin + tier1)} → ${tier1} min · to ${hhmm(startMin + cutoff)} → ${cutoff} min · after that, +${block} min per ${block}-min block (no cap)`;
+  const ladder = `In by ${hhmm(startMin + grace)} → 0 · to ${hhmm(startMin + tier1)} → ${tier1} min · to ${hhmm(startMin + cutoff)} → ${cutoff} min · after that the scan-in rounds UP to the next :15 / :30 / :00 mark (no :45; :31–:00 jumps to the next hour) and the deduction is (rounded-in − start), no cap`;
 
   return (
     <div style={{ ...S.page, maxWidth: '860px' }}>
@@ -112,9 +111,17 @@ export function PayrollSettings() {
           </div>
           <NumField label="Paid hours" value={f.paid_hours} onChange={v => set('paid_hours', v)} />
           <NumField label="Lunch hours" value={f.lunch_hours} onChange={v => set('lunch_hours', v)} />
+          <div>
+            <div style={labelStyle}>Lunch start</div>
+            <TextInput type="time" value={f.lunch_start} onChange={e => set('lunch_start', e.target.value)} />
+          </div>
+          <div>
+            <div style={labelStyle}>Lunch end</div>
+            <TextInput type="time" value={f.lunch_end} onChange={e => set('lunch_end', e.target.value)} />
+          </div>
         </div>
         <div style={{ fontSize: '12px', color: '#5a5a5a', marginTop: '10px', padding: '8px 12px', background: '#f7f7f7', borderRadius: '8px' }}>
-          Saturday is a full working day at the full daily rate — it just ends earlier. Late is always measured from the start time; undertime and OT on Saturdays use the Saturday end.
+          Saturday is a full working day at the full daily rate — it just ends earlier. Late is always measured from the start time; undertime and OT on Saturdays use the Saturday end. The lunch window is free time for mid-day personal-business breaks (see below).
         </div>
       </Group>
 
@@ -128,12 +135,17 @@ export function PayrollSettings() {
         <div style={grid(4)}>
           <NumField label="Grace period (min)" hint="No deduction up to here." value={f.late_grace_minutes} onChange={v => set('late_grace_minutes', v)} />
           <NumField label="First mark (min)" hint="Past grace up to here → this many minutes." value={f.late_tier1_minutes} onChange={v => set('late_tier1_minutes', v)} />
-          <NumField label="Cutoff mark (min)" hint="Up to here → this many minutes." value={f.late_cutoff_minutes} onChange={v => set('late_cutoff_minutes', v)} />
-          <NumField label="Block after cutoff (min)" hint="Beyond the cutoff, round up in these steps. No cap." value={f.late_block_minutes} onChange={v => set('late_block_minutes', v)} />
+          <NumField label="Cutoff mark (min)" hint="Up to here → this many minutes. Past this, the shared :15/:30/:00 round-up applies (no cap)." value={f.late_cutoff_minutes} onChange={v => set('late_cutoff_minutes', v)} />
           <NumField label="Absent buffer before end (min)" hint="Clock-in later than (shift end − this) → the day is ABSENT (₱0). Default 60 = weekday 16:00, Saturday 15:00." value={f.late_absent_buffer_minutes} onChange={v => set('late_absent_buffer_minutes', v)} />
         </div>
         <div style={{ fontSize: '12px', color: '#5a5a5a', marginTop: '12px', padding: '10px 12px', background: '#f7f7f7', borderRadius: '8px' }}>
-          Late deduction rounds the scan-in UP to a mark (measured from the start time): {ladder}. Each late minute is charged at the per-minute rate (daily ÷ paid hours ÷ 60). A clock-in more than {absentBuf} minutes before shift end makes the whole day absent.
+          {ladder}. Each late minute is charged at the per-minute rate (daily ÷ paid hours ÷ 60). A clock-in more than {absentBuf} minutes before shift end makes the whole day absent.
+        </div>
+      </Group>
+
+      <Group title="Mid-day personal-business break">
+        <div style={{ fontSize: '12px', color: '#5a5a5a', padding: '10px 12px', background: '#f7f7f7', borderRadius: '8px' }}>
+          Employees may tap OUT and back IN for a personal errand mid-day (multi-tap: first tap = IN, then alternating; the first IN opens the day and the last OUT closes it). Each middle OUT→IN gap is an unpaid break, docked from the break-out time to the return rounded UP with the same :15 / :30 / :00 rule (e.g. back 11:25 → 11:30 → 90 min if out at 10:00). The lunch window ({f.lunch_start || '12:00'}–{f.lunch_end || '13:00'}) is free: a break running into lunch docks only up to lunch start, and a late return after lunch is docked from lunch end using the same rounding. Docked minutes × per-minute rate, folded into the day's deduction. A normal two-tap day is unaffected.
         </div>
       </Group>
 

@@ -18,7 +18,7 @@ interface Warnings { no_pay_rate?: Array<{ person_id: number; full_name: string 
 interface DayDetail {
   date: string; dow: number; sunday: boolean; holiday: string | null; present: boolean;
   in_min: number | null; out_min: number | null; kind: string;
-  late_min?: number; counted_late_min?: number; undertime_min?: number; ot_hours?: number; early_ot_hours?: number; late_ot_hours?: number;
+  late_min?: number; counted_late_min?: number; undertime_min?: number; break_min?: number; ot_hours?: number; early_ot_hours?: number; late_ot_hours?: number;
   net_hours?: number; mult?: number; amount?: number; half_basis?: number; eligible?: boolean; prior_working_day?: string | null; note?: string;
 }
 interface Breakdown {
@@ -327,7 +327,7 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
                         : '0')
                     : '—'}</td>
                   <td style={{ ...td, fontVariantNumeric: 'tabular-nums' }}>{d.amount ? peso(d.amount) : (d.kind === 'holiday_not_worked' && !d.eligible ? '—' : (d.amount === 0 && d.kind !== 'work' && d.kind !== 'absent' ? peso(0) : '—'))}</td>
-                  <td style={{ ...td, color: '#8a8a8a', whiteSpace: 'normal' }}>{d.kind === 'holiday_not_worked' ? (d.eligible ? `eligible (prior ${d.prior_working_day})` : 'not eligible') : (d.note || '')}</td>
+                  <td style={{ ...td, color: '#8a8a8a', whiteSpace: 'normal' }}>{d.kind === 'holiday_not_worked' ? (d.eligible ? `eligible (prior ${d.prior_working_day})` : 'not eligible') : (d.break_min ? `break ${d.break_min}m docked` : (d.note || ''))}</td>
                 </tr>
               );
             })}
@@ -348,6 +348,7 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
         <div>
           <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#7a6a0c', marginBottom: '6px' }}>Deductions</div>
           <Row k="Late + undertime" v={peso(ded.late_undertime)} />
+          {ded.break ? <Row k={`Personal break (${b.totals?.break_minutes || 0}m)`} v={peso(ded.break)} /> : null}
           <Row k="SSS (EE)" v={peso(ded.sss_ee)} />
           <Row k="PhilHealth (EE)" v={peso(ded.philhealth_ee)} />
           <Row k="Pag-IBIG (EE)" v={peso(ded.pagibig_ee)} />

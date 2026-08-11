@@ -1186,6 +1186,11 @@ async function runMigrations() {
       // regular/late OT toggle). Un-clamps pre-shift-start time to paid early OT — but ONLY when set.
       // Also admin-only; also not punch-derived, so rebuild leaves it alone.
       await query(`ALTER TABLE attendance_days ADD COLUMN IF NOT EXISTS early_ot_approved BOOLEAN DEFAULT FALSE`);
+      // Unpaid personal-business break minutes for the day — docked time between a middle OUT and the
+      // next IN (shared :15/:30/:00 rounding on the return, free lunch carved out). Precomputed by
+      // rebuildAttendanceDays from the punches; a normal 2-tap day is 0. Payroll folds it into the
+      // deduction. Rebuild refreshes it only on non-frozen rows (like first_in/last_out).
+      await query(`ALTER TABLE attendance_days ADD COLUMN IF NOT EXISTS break_minutes INTEGER NOT NULL DEFAULT 0`);
       await query(`CREATE INDEX IF NOT EXISTS idx_attendance_days_date ON attendance_days(work_date)`);
       console.log('✅ attendance_days table ready');
     } catch (err) { console.log('ℹ️ attendance_days table skipped:', err.message); }
@@ -1246,6 +1251,10 @@ async function runMigrations() {
           work_end_sat TEXT NOT NULL DEFAULT '16:00',
           paid_hours NUMERIC(5,2) NOT NULL DEFAULT 8,
           lunch_hours NUMERIC(5,2) NOT NULL DEFAULT 1,
+          -- Free lunch window (start/end HH:MM). Used by the mid-day personal-business break dock:
+          -- break time is never docked or rounded across this window (work resumes at lunch_end).
+          lunch_start TEXT NOT NULL DEFAULT '12:00',
+          lunch_end TEXT NOT NULL DEFAULT '13:00',
           monthly_divisor NUMERIC(6,2) NOT NULL DEFAULT 26,
           grace_minutes INTEGER NOT NULL DEFAULT 5,
           -- Tardiness ladder: 1..grace -> 0; (grace, tardy_max_start) -> tardy_mid_deduct_minutes;
@@ -1293,6 +1302,9 @@ async function runMigrations() {
       await query(`ALTER TABLE payroll_settings ADD COLUMN IF NOT EXISTS late_cutoff_minutes INTEGER NOT NULL DEFAULT 60`);
       await query(`ALTER TABLE payroll_settings ADD COLUMN IF NOT EXISTS late_block_minutes INTEGER NOT NULL DEFAULT 15`);
       await query(`ALTER TABLE payroll_settings ADD COLUMN IF NOT EXISTS late_absent_buffer_minutes INTEGER NOT NULL DEFAULT 60`);
+      // Free lunch window for the mid-day personal-business break dock.
+      await query(`ALTER TABLE payroll_settings ADD COLUMN IF NOT EXISTS lunch_start TEXT NOT NULL DEFAULT '12:00'`);
+      await query(`ALTER TABLE payroll_settings ADD COLUMN IF NOT EXISTS lunch_end TEXT NOT NULL DEFAULT '13:00'`);
       // Seed the single policy row with the defaults above (no-op once it exists).
       await query(`INSERT INTO payroll_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
 
@@ -4703,9 +4715,12 @@ app.put('/api/payroll/settings', requireRole(['admin']), async (req, res) => {
   }
   const asTime = (x) => (x === undefined || x === null || x === '') ? null : (/^\d{1,2}:\d{2}$/.test(String(x)) ? String(x) : INVALID_PAY);
   const ws = asTime(b.work_start), we = asTime(b.work_end), wesat = asTime(b.work_end_sat);
+  const ls = asTime(b.lunch_start), le = asTime(b.lunch_end);
   if (ws === INVALID_PAY) return res.status(400).json({ error: 'work_start must be HH:MM' });
   if (we === INVALID_PAY) return res.status(400).json({ error: 'work_end must be HH:MM' });
   if (wesat === INVALID_PAY) return res.status(400).json({ error: 'work_end_sat must be HH:MM' });
+  if (ls === INVALID_PAY) return res.status(400).json({ error: 'lunch_start must be HH:MM' });
+  if (le === INVALID_PAY) return res.status(400).json({ error: 'lunch_end must be HH:MM' });
   // Boolean policy: undefined -> keep (COALESCE null), else coerce.
   const snwp = b.special_holiday_not_worked_paid === undefined ? null : (b.special_holiday_not_worked_paid === true || b.special_holiday_not_worked_paid === 'true');
   try {
@@ -4732,12 +4747,14 @@ app.put('/api/payroll/settings', requireRole(['admin']), async (req, res) => {
          late_cutoff_minutes = COALESCE($19, late_cutoff_minutes),
          late_block_minutes = COALESCE($20, late_block_minutes),
          late_absent_buffer_minutes = COALESCE($21, late_absent_buffer_minutes),
+         lunch_start = COALESCE($22, lunch_start),
+         lunch_end = COALESCE($23, lunch_end),
          updated_at = NOW()
        WHERE id = 1 RETURNING *`,
       [ws, we, v.paid_hours, v.lunch_hours, v.monthly_divisor, v.grace_minutes,
        v.tardy_mid_deduct_minutes, v.tardy_max_start_minutes, v.tardy_max_deduct_minutes,
        v.ot_multiplier, v.sunday_multiplier, v.regular_holiday_multiplier, v.special_holiday_multiplier, snwp, wesat, v.ot_grace_hours,
-       v.late_grace_minutes, v.late_tier1_minutes, v.late_cutoff_minutes, v.late_block_minutes, v.late_absent_buffer_minutes]
+       v.late_grace_minutes, v.late_tier1_minutes, v.late_cutoff_minutes, v.late_block_minutes, v.late_absent_buffer_minutes, ls, le]
     );
     res.json(r.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -4816,16 +4833,52 @@ app.delete('/api/holidays/:id', requireRole(['admin']), async (req, res) => {
 // ============================================================================
 const hhmmToMin = (s) => { const [h, m] = String(s || '0:0').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
 const minToHHMM = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(((m % 60) + 60) % 60).padStart(2, '0')}`;
-// Late rule v2: counted late minutes from the raw lateness (scan-in minus shift start), all in minutes.
-// Within `grace` → 0. Up to the first mark (+tier1) → tier1. Up to the cutoff mark (+cutoff) → cutoff.
-// Past the cutoff → round UP to the next fixed `block` step above the cutoff, with NO cap. Landing
-// exactly on a mark stays on it; ≥1 min past bumps to the next block. Deduction = this × per-minute rate.
-const countedLateMinutes = (rawLate, grace, tier1, cutoff, block) => {
+// THE shared round-UP rule (:15 / :30 / :00 each hour, NO :45 mark). min = minute-of-day.
+//   X:01–X:15 → X:15 · X:16–X:30 → X:30 · X:31–(next hour):00 → next hour :00 (so :45 is skipped —
+//   e.g. 9:40 → 10:00, 11:40 → 12:00). Landing EXACTLY on :15 / :30 / :00 stays.
+// Used by BOTH the late rule (rounds the clock-in) and the mid-day break dock (rounds the return).
+const roundUpToQuarterMark = (min) => {
+  const hh = Math.floor(min / 60), mm = min % 60;
+  if (mm === 0 || mm === 15 || mm === 30) return min; // exactly on a mark stays
+  if (mm < 15) return hh * 60 + 15;
+  if (mm < 30) return hh * 60 + 30;
+  return (hh + 1) * 60; // :31–:59 → next hour :00 (no :45 mark)
+};
+// Late rule v2: counted late minutes. inMin = clock-in minute-of-day; startMin = shift start.
+// Within `grace` → 0. Up to the first mark (start+tier1) → tier1. Up to the cutoff mark
+// (start+cutoff) → cutoff. PAST the cutoff → round the clock-in UP with the shared rule above and
+// late = roundedIn − start, NO cap. Deduction = this × per-minute rate.
+const countedLateMinutes = (inMin, startMin, grace, tier1, cutoff) => {
+  const rawLate = Math.max(0, inMin - startMin);
   if (rawLate <= grace) return 0;
   if (rawLate <= tier1) return tier1;
   if (rawLate <= cutoff) return cutoff;
-  const b = block > 0 ? block : 15;
-  return cutoff + Math.ceil((rawLate - cutoff) / b) * b;
+  return roundUpToQuarterMark(inMin) - startMin;
+};
+// Unpaid personal-business break: docked minutes for ONE break gap [outMin → returnMin], applying
+// the shared round-UP to the RETURN and carving out the free lunch window (lunch is never docked and
+// never rounded). All minute-of-day. A break that runs INTO lunch docks only up to lunchStart; a
+// return after lunch docks its afternoon portion from lunchEnd with the shared rounding.
+const breakDockMinutes = (outMin, returnMin, lunchStart, lunchEnd) => {
+  if (returnMin <= outMin) return 0;
+  if (returnMin <= lunchStart) return Math.max(0, roundUpToQuarterMark(returnMin) - outMin);
+  if (returnMin <= lunchEnd) return Math.max(0, lunchStart - outMin); // back during lunch → up to 12:00 only
+  const morning = outMin < lunchStart ? (lunchStart - outMin) : 0;
+  const afternoonStart = Math.max(outMin, lunchEnd);
+  const afternoon = Math.max(0, roundUpToQuarterMark(returnMin) - afternoonStart);
+  return morning + afternoon;
+};
+// Sum the docked break minutes for a day from its ordered punches. A break is any middle OUT→IN
+// pair (the first IN opens the day, the last OUT closes it — neither is a break). Multiple breaks
+// sum. punches: [{ type: 'in'|'out', min }] sorted ascending by time.
+const dayBreakMinutes = (punches, lunchStart, lunchEnd) => {
+  let total = 0;
+  for (let i = 0; i + 1 < punches.length; i++) {
+    if (punches[i].type === 'out' && punches[i + 1].type === 'in') {
+      total += breakDockMinutes(punches[i].min, punches[i + 1].min, lunchStart, lunchEnd);
+    }
+  }
+  return total;
 };
 const round2 = (x) => Math.round((Number(x) || 0) * 100) / 100;
 const round4 = (x) => Math.round((Number(x) || 0) * 10000) / 10000;
@@ -4856,11 +4909,16 @@ async function computePayroll(periodId) {
   if (!s) return { error: 'no_settings' };
   const paidHours = Number(s.paid_hours), lunch = Number(s.lunch_hours), divisor = Number(s.monthly_divisor);
   // Late rule v2 (see payroll_settings + countedLateMinutes). The old tardy_* columns are NO LONGER
-  // read — deduction = counted late minutes (the rounded offset from start) × per-minute rate, no cap.
+  // read. Deduction = counted late minutes × per-minute rate, no cap. Past the cutoff the clock-in is
+  // rounded UP with the shared :15/:30/:00 rule (late_block_minutes is legacy/unused — the rounding is
+  // fixed to the shared marks, no longer an even block).
   const lateGrace = Number(s.late_grace_minutes ?? 10), lateTier1 = Number(s.late_tier1_minutes ?? 30),
-    lateCutoff = Number(s.late_cutoff_minutes ?? 60), lateBlock = Number(s.late_block_minutes ?? 15) || 15;
+    lateCutoff = Number(s.late_cutoff_minutes ?? 60);
   // Clock-in later than (that day's shift end − this buffer) → the whole day is ABSENT (₱0), no half day.
   const lateAbsentBuffer = Number(s.late_absent_buffer_minutes ?? 60);
+  // Unpaid personal-business break minutes are PRECOMPUTED per day by rebuildAttendanceDays (shared
+  // :15/:30/:00 rounding + free lunch) and read from attendance_days.break_minutes below; here the
+  // compute only turns them into pesos at the person's per-minute rate and folds them into deductions.
   const otMult = Number(s.ot_multiplier), sunMult = Number(s.sunday_multiplier), regMult = Number(s.regular_holiday_multiplier), spcMult = Number(s.special_holiday_multiplier);
   // LATE OT buffer in minutes (default 1h). Late OT only starts once outMin ≥ shift end + this.
   // Early OT deliberately has NO buffer — it is the real time from actual IN to shift start.
@@ -4890,7 +4948,7 @@ async function computePayroll(periodId) {
   // eligibility) through the period end. Manila minute-of-day for IN/OUT precomputed in SQL.
   const attMap = {};
   (await query(
-    `SELECT person_id, to_char(work_date,'YYYY-MM-DD') AS d, worked_minutes, ot_approved, early_ot_approved,
+    `SELECT person_id, to_char(work_date,'YYYY-MM-DD') AS d, worked_minutes, ot_approved, early_ot_approved, break_minutes,
             CASE WHEN first_in IS NULL THEN NULL ELSE EXTRACT(EPOCH FROM ((first_in AT TIME ZONE 'Asia/Manila')::time)) / 60 END AS in_min,
             CASE WHEN last_out IS NULL THEN NULL ELSE EXTRACT(EPOCH FROM ((last_out AT TIME ZONE 'Asia/Manila')::time)) / 60 END AS out_min
        FROM attendance_days
@@ -4928,7 +4986,7 @@ async function computePayroll(periodId) {
 
     let daysPresent = 0, halfDays = 0, absentDays = 0, otHours = 0, sundayPay = 0, holidayPay = 0;
     let earlyOtHours = 0, lateOtHours = 0; // the two OT buckets that sum into otHours
-    let lateMin = 0, countedLate = 0, undertimeMin = 0;
+    let lateMin = 0, countedLate = 0, undertimeMin = 0, breakMin = 0;
     const perDay = [];
 
     for (const d of dates) {
@@ -4981,7 +5039,7 @@ async function computePayroll(periodId) {
             note: `clocked in after ${minToHHMM(latestInMin)} (${lateAbsentBuffer}m before ${minToHHMM(dayEndMin)}) — too late, absent (₱0)` });
         } else if (hasIN) {
           const rawLate = Math.max(0, inMin - startMin);
-          const counted = countedLateMinutes(rawLate, lateGrace, lateTier1, lateCutoff, lateBlock);
+          const counted = countedLateMinutes(inMin, startMin, lateGrace, lateTier1, lateCutoff);
           // Late applies to both full and half days — it flows into the late-deduction bucket.
           lateMin += rawLate; countedLate += counted;
           if (outMin === null) {
@@ -4996,6 +5054,10 @@ async function computePayroll(periodId) {
             daysPresent++;
             const ut = outMin < dayEndMin ? (dayEndMin - outMin) : 0;
             undertimeMin += ut;
+            // Unpaid personal-business break minutes for the day (precomputed at rebuild from the
+            // middle OUT→IN taps; a normal 2-tap day is 0). Docked via the deduction bucket below.
+            const brk = row && row.break_minutes != null ? Math.max(0, Math.round(Number(row.break_minutes))) : 0;
+            breakMin += brk;
             // LATE OT (after shift): only past the buffer — must stay ≥ shift end + ot_grace_hours,
             // then ALL time past shift end counts (not just past the buffer). Gated by ot_approved.
             const lateOt = (person.ot_eligible && row.ot_approved && outMin >= dayEndMin + otGraceMin)
@@ -5007,7 +5069,7 @@ async function computePayroll(periodId) {
               ? (startMin - inMin) / 60 : 0;
             const oth = earlyOt + lateOt; // both ×1.25 (same rate); tracked separately below
             earlyOtHours += earlyOt; lateOtHours += lateOt; otHours += oth;
-            Object.assign(day, { kind: 'work', late_min: rawLate, counted_late_min: counted, undertime_min: ut,
+            Object.assign(day, { kind: 'work', late_min: rawLate, counted_late_min: counted, undertime_min: ut, break_min: brk,
               ot_hours: round2(oth), early_ot_hours: round2(earlyOt), late_ot_hours: round2(lateOt) });
           }
         } else if (employed(d)) {
@@ -5032,10 +5094,12 @@ async function computePayroll(periodId) {
       ? rate * (daysPresent + 0.5 * halfDays)
       : (rate / 2) - (dailyBasis * absentDays) - (dailyBasis * 0.5 * halfDays));
     const lateUndertimeDed = (countedLate + undertimeMin) * perMin;
+    // Unpaid personal-business breaks (docked minutes summed across the period) × per-minute rate.
+    const breakDed = breakMin * perMin;
     const sss = Number(person.sss_ee) || 0, phic = Number(person.philhealth_ee) || 0, pgib = Number(person.pagibig_ee) || 0, wtax = Number(person.withholding) || 0;
     const bale = baleMap[person.id] || 0;
     const gross = basePay + otPay + sundayPay + holidayPay;
-    const deductions = lateUndertimeDed + sss + phic + pgib + wtax + bale;
+    const deductions = lateUndertimeDed + breakDed + sss + phic + pgib + wtax + bale;
     // L3: net can't go negative — if deductions (typically a large BALE) exceed gross, floor net at
     // 0 and record the shortfall so Admin knows the remainder wasn't collected and needs handling
     // (e.g. carry the unpaid BALE to the next period).
@@ -5050,16 +5114,16 @@ async function computePayroll(periodId) {
         paid_hours: paidHours, lunch_hours: lunch, monthly_divisor: divisor,
         multipliers: { ot: otMult, sunday: sunMult, regular_holiday: regMult, special_holiday: spcMult },
         ot_grace_hours: otGraceHours,
-        tardiness: { grace_minutes: lateGrace, tier1_minutes: lateTier1, cutoff_minutes: lateCutoff, block_minutes: lateBlock, absent_buffer_minutes: lateAbsentBuffer },
+        tardiness: { grace_minutes: lateGrace, tier1_minutes: lateTier1, cutoff_minutes: lateCutoff, absent_buffer_minutes: lateAbsentBuffer },
         work_start: s.work_start, work_end: s.work_end, work_end_sat: s.work_end_sat, special_holiday_not_worked_paid: specialNotWorkedPaid,
       },
       totals: {
         days_present: daysPresent, half_days: halfDays, absent_days: absentDays, late_minutes: lateMin, counted_late_minutes: countedLate,
         // ot_hours is the total (early + late) that drives ot_pay; the two buckets are tracked
         // separately for the Verify screen. Same ×1.25 rate for both.
-        undertime_minutes: undertimeMin, ot_hours: round2(otHours), early_ot_hours: round2(earlyOtHours), late_ot_hours: round2(lateOtHours),
+        undertime_minutes: undertimeMin, break_minutes: breakMin, ot_hours: round2(otHours), early_ot_hours: round2(earlyOtHours), late_ot_hours: round2(lateOtHours),
       },
-      deductions: { late_undertime: round2(lateUndertimeDed), sss_ee: round2(sss), philhealth_ee: round2(phic), pagibig_ee: round2(pgib), withholding: round2(wtax), bale: round2(bale), total: round2(deductions) },
+      deductions: { late_undertime: round2(lateUndertimeDed), break: round2(breakDed), sss_ee: round2(sss), philhealth_ee: round2(phic), pagibig_ee: round2(pgib), withholding: round2(wtax), bale: round2(bale), total: round2(deductions) },
       pay: { base: round2(basePay), ot: round2(otPay), sunday: round2(sundayPay), holiday: round2(holidayPay), gross: round2(gross), net: round2(net), net_raw: round2(rawNet), deduction_shortfall: deductionShortfall },
       days: perDay,
     };
@@ -5256,25 +5320,23 @@ app.post('/api/attendance/scan', requireRole(['station']), async (req, res) => {
     );
     const latest = last.rows[0];
 
-    // Already completed IN + OUT today — reject further scans (no new IN). Genuine re-entry is
-    // rare and is handled by an Admin correction later, not by the scanner.
-    if (latest && latest.punch_type === 'out') {
-      await client.query('ROLLBACK');
-      return res.json({ ignored: true, reason: 'already_out', person: { id: person.id, name: person.full_name, position: person.position, photo: person.photo_url },
-        message: 'Already clocked out today.' });
-    }
+    // Multi-tap is allowed so a mid-day personal-business break can be recorded: the first tap of the
+    // day is IN, then taps strictly ALTERNATE (IN → OUT → IN → OUT …). The first IN opens the day and
+    // the last OUT closes it; any middle OUT → IN pair is an unpaid break (docked at payroll). There
+    // is no longer a "3rd tap rejected" — a scan after an OUT starts the next segment with a new IN.
 
-    const hasOpenIn = latest && latest.punch_type === 'in';
-
-    // Cooldown: an OUT within ~60s of the IN is almost certainly an accidental double-scan —
-    // ignore it (no row written) rather than closing the day the instant they clocked in.
-    if (hasOpenIn && Number(latest.age_sec) < 60) {
+    // Cooldown: ANY second scan within ~60s of the previous punch is almost certainly an accidental
+    // double-scan — ignore it (no row written) regardless of direction, so a single wave of the card
+    // can't accidentally flip IN↔OUT twice.
+    if (latest && Number(latest.age_sec) < 60) {
       await client.query('ROLLBACK');
       return res.json({ ignored: true, reason: 'cooldown', person: { id: person.id, name: person.full_name, position: person.position, photo: person.photo_url },
-        message: 'Just clocked in — scan again in a moment to clock out.' });
+        message: 'Just scanned — wait a moment before scanning again.' });
     }
 
-    const punchType = hasOpenIn ? 'out' : 'in';
+    // Alternate from the last punch: after an IN the next tap is OUT; with no punch yet, or after an
+    // OUT, the next tap is IN (start of day / return from break).
+    const punchType = (latest && latest.punch_type === 'in') ? 'out' : 'in';
     const ins = await client.query(
       `INSERT INTO attendance_punches (person_id, punch_type, station_id, source)
        VALUES ($1, $2, $3, 'station_scan')
@@ -5361,6 +5423,42 @@ async function rebuildAttendanceDays(startDate, endDate) {
        AND attendance_days.is_adjusted = false`,
     [startDate, endDate]
   );
+
+  // Second pass: per-day unpaid personal-business break minutes from the middle OUT→IN taps (shared
+  // :15/:30/:00 rounding + free lunch). Computed here so a normal 2-tap day stays exactly as before
+  // (no middle pair → 0) and the payroll compute can just read attendance_days.break_minutes. Written
+  // only to non-frozen rows, matching how first_in/last_out are refreshed above.
+  const st = (await query(`SELECT lunch_start, lunch_end FROM payroll_settings WHERE id = 1`)).rows[0] || {};
+  const lunchStart = hhmmToMin(st.lunch_start || '12:00'), lunchEnd = hhmmToMin(st.lunch_end || '13:00');
+  const punches = await query(
+    `SELECT person_id,
+            to_char((punched_at AT TIME ZONE 'Asia/Manila')::date, 'YYYY-MM-DD') AS d,
+            punch_type,
+            EXTRACT(EPOCH FROM ((punched_at AT TIME ZONE 'Asia/Manila')::time)) / 60 AS min
+       FROM attendance_punches
+      WHERE (punched_at AT TIME ZONE 'Asia/Manila')::date BETWEEN $1 AND $2
+      ORDER BY person_id, punched_at ASC`,
+    [startDate, endDate]
+  );
+  const groups = new Map(); // "person_id|YYYY-MM-DD" -> [{ type, min }]
+  for (const p of punches.rows) {
+    const key = `${p.person_id}|${p.d}`;
+    (groups.get(key) || groups.set(key, []).get(key)).push({ type: p.punch_type, min: Math.round(Number(p.min)) });
+  }
+  const pids = [], dds = [], brks = [];
+  for (const [key, taps] of groups) {
+    const [pid, d] = key.split('|');
+    pids.push(Number(pid)); dds.push(d); brks.push(dayBreakMinutes(taps, lunchStart, lunchEnd));
+  }
+  if (pids.length) {
+    await query(
+      `UPDATE attendance_days ad SET break_minutes = v.brk
+         FROM (SELECT unnest($1::int[]) AS person_id, unnest($2::date[]) AS work_date, unnest($3::int[]) AS brk) v
+        WHERE ad.person_id = v.person_id AND ad.work_date = v.work_date
+          AND ad.is_locked = false AND ad.is_adjusted = false`,
+      [pids, dds, brks]
+    );
+  }
   return result.rowCount;
 }
 
