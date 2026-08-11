@@ -263,6 +263,42 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
   const ref = b.reference || {};
   const ded = b.deductions || {};
   const pay = b.pay || {};
+  const round2 = (n: any) => Math.round(((Number(n) || 0) + Number.EPSILON) * 100) / 100;
+  const perMin = Number(ref.per_minute) || 0;
+
+  // Per-day pay contribution (DISPLAY ONLY — recomputed here from the stored breakdown, never
+  // changes any pay). A worked day earns its daily rate less that day's own late/undertime, so the
+  // Amount column shows the day's NET day-pay. Half-days keep their ½-basis (also net of that day's
+  // late). Sunday/holiday worked show their premium amount. Off/absent contribute nothing → "—".
+  const dayGrossBasis = (d: DayDetail): number | null => {
+    if (d.kind === 'work') return Number(ref.daily_basis) || 0;
+    if (d.kind === 'no_out_half') return d.amount != null ? Number(d.amount) : (Number(ref.daily_basis) || 0) / 2;
+    return null;
+  };
+  const dayReduction = (d: DayDetail): number => {
+    if (d.kind === 'work') return round2((Number(d.counted_late_min || 0) + Number(d.undertime_min || 0)) * perMin);
+    if (d.kind === 'no_out_half') return round2(Number(d.counted_late_min || 0) * perMin);
+    return 0;
+  };
+  const dayAmount = (d: DayDetail): number | null => {
+    if (d.kind === 'work' || d.kind === 'no_out_half') return Math.max(0, round2((dayGrossBasis(d) || 0) - dayReduction(d)));
+    if (d.kind === 'sunday_worked' || d.kind === 'holiday_worked') return d.amount != null ? round2(d.amount) : null;
+    if (d.kind === 'holiday_not_worked') return Number(d.amount) ? round2(d.amount) : null; // 0 (not eligible / monthly) → "—"
+    return null; // absent, absent_too_late, sunday_off, not_employed
+  };
+
+  // Reconciliation ledger: the per-day amounts (net of each day's late/undertime) + overtime, less
+  // the standing deductions (break, statutory, BALE), tie back to Net exactly. A residual line
+  // absorbs per-minute rounding (daily) or the fixed-salary basis gap (monthly) so it always ties.
+  const days = b.days || [];
+  const sumDays = round2(days.reduce((a, d) => a + (dayAmount(d) || 0), 0));
+  const otPay = round2(pay.ot);
+  const dBreak = round2(ded.break), dSss = round2(ded.sss_ee), dPhic = round2(ded.philhealth_ee);
+  const dPgib = round2(ded.pagibig_ee), dWtax = round2(ded.withholding), dBale = round2(ded.bale);
+  const reconNet = round2(sumDays + otPay - dBreak - dSss - dPhic - dPgib - dWtax - dBale);
+  const residual = round2((Number(pay.net) || 0) - reconNet);
+  const isMonthly = ref.employment_type === 'monthly';
+
   const Row = ({ k, v, strong }: { k: string; v: any; strong?: boolean }) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontWeight: strong ? 700 : 400, color: strong ? '#000' : '#262626', fontSize: '13px' }}>
       <span style={{ color: strong ? '#000' : '#5a5a5a' }}>{k}</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{v}</span>
@@ -311,8 +347,10 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
             <th style={th}>Late</th><th style={th}>UT</th><th style={th}>OT</th><th style={th}>Amount</th><th style={th}>Note</th>
           </tr></thead>
           <tbody>
-            {(b.days || []).map(d => {
+            {days.map(d => {
               const dim = d.kind === 'absent' || d.kind === 'absent_too_late' || d.kind === 'sunday_off';
+              const amt = dayAmount(d);
+              const red = dayReduction(d);
               return (
                 <tr key={d.date} style={{ color: dim ? '#9a9a9a' : '#262626' }}>
                   <td style={td}>{fmtDay(d.date)}</td>
@@ -326,13 +364,41 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
                         ? `${d.ot_hours}h` + ((d.early_ot_hours || d.late_ot_hours) ? ` (${d.early_ot_hours || 0}e+${d.late_ot_hours || 0}l)` : '')
                         : '0')
                     : '—'}</td>
-                  <td style={{ ...td, fontVariantNumeric: 'tabular-nums' }}>{d.amount ? peso(d.amount) : (d.kind === 'holiday_not_worked' && !d.eligible ? '—' : (d.amount === 0 && d.kind !== 'work' && d.kind !== 'absent' ? peso(0) : '—'))}</td>
+                  <td style={{ ...td, fontVariantNumeric: 'tabular-nums', fontWeight: amt != null ? 600 : 400 }}>
+                    {amt != null ? peso(amt) : '—'}
+                    {red > 0 ? <div style={{ fontSize: '11px', color: '#b45309', fontWeight: 400 }}>− {peso(red)} late/UT</div> : null}
+                  </td>
                   <td style={{ ...td, color: '#8a8a8a', whiteSpace: 'normal' }}>{d.kind === 'holiday_not_worked' ? (d.eligible ? `eligible (prior ${d.prior_working_day})` : 'not eligible') : (d.break_min ? `break ${d.break_min}m docked` : (d.note || ''))}</td>
                 </tr>
               );
             })}
           </tbody>
+          <tfoot><tr>
+            <td style={{ ...td, fontWeight: 700, borderTop: '2px solid #e6e6e6' }} colSpan={7}>Σ Day amounts (net of late/UT)</td>
+            <td style={{ ...td, fontWeight: 700, borderTop: '2px solid #e6e6e6', fontVariantNumeric: 'tabular-nums' }}>{peso(sumDays)}</td>
+            <td style={{ ...td, borderTop: '2px solid #e6e6e6' }}></td>
+          </tr></tfoot>
         </table>
+      </div>
+
+      {/* Reconciliation: day amounts + OT, less standing deductions, tie back to Net exactly. */}
+      <div style={{ marginBottom: '18px', padding: '12px 16px', background: '#fafafa', border: '1px solid #ececec', borderRadius: '8px' }}>
+        <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#7a6a0c', marginBottom: '8px' }}>Reconciliation</div>
+        <Row k="Σ Day amounts (net of late/UT)" v={peso(sumDays)} />
+        <Row k="+ Overtime" v={peso(otPay)} />
+        {dBreak ? <Row k="− Personal break" v={`(${peso(dBreak)})`} /> : null}
+        {dSss ? <Row k="− SSS (EE)" v={`(${peso(dSss)})`} /> : null}
+        {dPhic ? <Row k="− PhilHealth (EE)" v={`(${peso(dPhic)})`} /> : null}
+        {dPgib ? <Row k="− Pag-IBIG (EE)" v={`(${peso(dPgib)})`} /> : null}
+        {dWtax ? <Row k="− Withholding" v={`(${peso(dWtax)})`} /> : null}
+        {dBale ? <Row k="− BALE" v={`(${peso(dBale)})`} /> : null}
+        {Math.abs(residual) >= 0.01 ? <Row k={isMonthly ? '± Monthly salary basis' : '± Rounding'} v={peso(residual)} /> : null}
+        <div style={{ borderTop: '1px solid #e0e0e0', marginTop: '4px', paddingTop: '2px' }}>
+          <Row k="= Net pay" v={peso(pay.net)} strong />
+        </div>
+        <p style={{ fontSize: '11px', color: '#8a8a8a', marginTop: '8px', marginBottom: 0 }}>
+          Each worked day shows its daily rate less that day's own late/undertime; half-days show their ½-basis; Sunday/holiday show their premium. Overtime stays in the OT column and is added once here. {isMonthly ? 'For monthly salaries the fixed semi-monthly base is reconciled via the salary-basis line.' : 'The rounding line, if shown, is sub-peso per-minute rounding.'}
+        </p>
       </div>
 
       {/* Pay + deductions math */}
