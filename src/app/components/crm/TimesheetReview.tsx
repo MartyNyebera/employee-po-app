@@ -367,10 +367,12 @@ function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, b
       </tr>
       {days.map(d => {
         const brk = breakOf(d);
-        // Only show the break where payroll actually docks it — a full worked day (a paid figure
-        // exists). No-OUT/half days don't dock the break, so they read "—" like a normal day.
+        // Show EVERY mid-day break (each middle OUT→IN pair) so an out-and-back is always visible —
+        // including one that docked 0 because it fell inside the free 12:00–1:00 lunch window, shown
+        // with a "free" label. Keyed off the breaks array (the pairs), NOT break_minutes, so 0-dock
+        // breaks still render. A straight 2-tap day has no middle pair → "—".
         const brks = d.breaks || [];
-        const hasBreak = brk > 0 && brks.length > 0 && lunchNetMinutes(d) !== null;
+        const hasBreak = brks.length > 0;
         const breakLabel = brks.length === 1 ? `${brks[0].out}–${brks[0].ret}` : `${brks.length} breaks`;
         return (
           <tr key={d.id}>
@@ -382,7 +384,9 @@ function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, b
             <td style={S.td}>{fmtTime(d.last_out)}</td>
             <td style={S.td}>
               {hasBreak
-                ? <span style={{ fontSize: '12.5px', color: '#7a6a0c', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>{breakLabel} · {fmtBreakMin(brk)}</span>
+                ? <span style={{ fontSize: '12.5px', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', color: brk > 0 ? '#7a6a0c' : '#6b7280' }}>
+                    {breakLabel} · {brk > 0 ? fmtBreakMin(brk) : <span style={{ fontStyle: 'italic' }}>free</span>}
+                  </span>
                 : <span style={{ color: '#c0c0c0' }}>—</span>}
             </td>
             <td style={S.td}>{fmtHours(paidMinutes(d))}</td>
