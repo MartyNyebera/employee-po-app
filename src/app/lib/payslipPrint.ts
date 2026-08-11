@@ -55,18 +55,21 @@ function payPeriodLabel(start: string, end: string): string {
   return `${MONTHS[sm - 1]} ${sd}, ${sy} – ${MONTHS[em - 1]} ${ed}, ${ey}`;
 }
 
-// Fixed real-world size: every slip is exactly 86mm × 60mm (the physical Kimoel payslip). All
-// font sizes, cell padding and gaps are scaled down in mm/pt so the full slip — letterhead, the
-// Employee/Position/Pay-Period/ID row, the earnings table, the deductions column, the
-// GROSS/Less/NET band and the Received By line — fits inside the box without overflowing.
+// Slip size is chosen to FILL the A4 width with two columns. A4 is 210mm; with a 5mm @page margin
+// the usable width is 200mm, so two 97mm slips + a 2mm inter-column gap (+2mm trailing) span 198mm —
+// the whole page, no wasted right strip. Height is 68mm so four rows (4×70mm = 280mm) still fit the
+// 287mm usable height: 2 across × 4 down = 8 per A4. Every font size, cell padding and gap is scaled
+// up proportionally (~1.3×) from the old cramped 86×60 slip so the wider box is genuinely more
+// readable — the letterhead, the Employee/Position/Pay-Period/ID row, the earnings table, the
+// deductions column, the GROSS/Less/NET band and the Received By line all grow together.
 //
 // Batch layout: slips are inline-block tiles inside a font-size:0 container (which kills the
-// inter-tile whitespace), so they flow left-to-right and wrap — ~2 across × 4 down (~8) on an A4
+// inter-tile whitespace), so they flow left-to-right and wrap — 2 across × 4 down (8) on an A4
 // page — then continue onto further A4 pages. break-inside:avoid keeps any one slip from being
 // split across a page boundary; the faint dashed border is a cut guide.
-const SLIP_W = '86mm', SLIP_H = '60mm';
+const SLIP_W = '97mm', SLIP_H = '68mm';
 const PAYSLIP_CSS = `
-  @page { size: A4; margin: 8mm; }
+  @page { size: A4; margin: 5mm; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body { font-family: Arial, Helvetica, sans-serif; color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -75,36 +78,36 @@ const PAYSLIP_CSS = `
   .slip {
     display: inline-block; vertical-align: top;
     width: ${SLIP_W}; height: ${SLIP_H};
-    padding: 1.6mm 2mm; margin: 0 3mm 3mm 0;
+    padding: 2mm 2.6mm; margin: 0 2mm 2mm 0;
     border: 0.2mm dashed #b0b0b0; overflow: hidden;
     break-inside: avoid; page-break-inside: avoid;
-    font-size: 4pt; line-height: 1.12;
+    font-size: 5.2pt; line-height: 1.18;
   }
-  .ph { text-align: center; margin-bottom: 0.6mm; }
-  .co { font-size: 6pt; font-weight: bold; line-height: 1.05; }
-  .ln { font-size: 3.6pt; line-height: 1.25; }
+  .ph { text-align: center; margin-bottom: 0.8mm; }
+  .co { font-size: 8pt; font-weight: bold; line-height: 1.08; }
+  .ln { font-size: 4.6pt; line-height: 1.28; }
   table { border-collapse: collapse; width: 100%; }
-  .meta td { font-size: 4pt; padding: 0.2mm 0.4mm; vertical-align: bottom; }
-  .meta .k { font-weight: bold; white-space: nowrap; width: 1%; padding-right: 1mm; }
+  .meta td { font-size: 5.2pt; padding: 0.3mm 0.5mm; vertical-align: bottom; }
+  .meta .k { font-weight: bold; white-space: nowrap; width: 1%; padding-right: 1.2mm; }
   .meta .v { border-bottom: 0.2mm solid #999; }
-  .cols { display: flex; gap: 2mm; margin-top: 1mm; align-items: flex-start; }
+  .cols { display: flex; gap: 2.6mm; margin-top: 1.4mm; align-items: flex-start; }
   .cols > div { flex: 1; min-width: 0; }
-  .sect { font-size: 3.6pt; font-weight: bold; letter-spacing: .2px; text-transform: uppercase; margin-bottom: 0.3mm; }
-  .grid th, .grid td { border: 0.2mm solid #000; padding: 0.25mm 0.6mm; font-size: 3.8pt; line-height: 1.1; }
+  .sect { font-size: 4.8pt; font-weight: bold; letter-spacing: .2px; text-transform: uppercase; margin-bottom: 0.5mm; }
+  .grid th, .grid td { border: 0.2mm solid #000; padding: 0.4mm 0.9mm; font-size: 5pt; line-height: 1.18; }
   .grid th { background: #ececec; font-weight: bold; text-align: center; }
   .grid .lbl { text-align: left; white-space: nowrap; }
   .grid .num { text-align: right; font-variant-numeric: tabular-nums; }
   .grid .tot td { font-weight: bold; background: #f6f6f6; }
-  .totband { margin-top: 1mm; border: 0.2mm solid #000; }
-  .totband .row { display: flex; justify-content: space-between; padding: 0.3mm 1mm; font-size: 4.2pt; }
+  .totband { margin-top: 1.4mm; border: 0.2mm solid #000; }
+  .totband .row { display: flex; justify-content: space-between; padding: 0.5mm 1.4mm; font-size: 5.4pt; }
   .totband .row + .row { border-top: 0.2mm solid #ccc; }
   .totband .k { font-weight: bold; letter-spacing: .2px; }
   .totband .v { font-variant-numeric: tabular-nums; }
-  .totband .net { font-weight: bold; font-size: 5pt; background: #eee; }
-  .sign { display: flex; gap: 3mm; margin-top: 1mm; }
-  .sign > div { flex: 1; text-align: center; font-size: 3.6pt; }
-  .sign .line { border-top: 0.2mm solid #000; margin-top: 3.5mm; padding-top: 0.4mm; }
-  .foot { text-align: center; font-size: 3pt; color: #444; margin-top: 0.6mm; font-style: italic; }
+  .totband .net { font-weight: bold; font-size: 6.6pt; background: #eee; }
+  .sign { display: flex; gap: 3mm; margin-top: 1.6mm; }
+  .sign > div { flex: 1; text-align: center; font-size: 4.8pt; }
+  .sign .line { border-top: 0.2mm solid #000; margin-top: 4.5mm; padding-top: 0.5mm; }
+  .foot { text-align: center; font-size: 3.8pt; color: #444; margin-top: 0.8mm; font-style: italic; }
 `;
 
 function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
