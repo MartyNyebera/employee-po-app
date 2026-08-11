@@ -68,8 +68,6 @@ interface Session { id: number; full_name: string; email: string; phone?: string
 const TOKEN_KEY = 'accounting_token';
 const SESSION_KEY = 'accounting_session';
 const PROJECT_STATUSES = ['Active', 'On Hold', 'Completed'];
-// Net Profit % choices for the Project Allocation form. Add values here to extend the dropdown.
-const NET_PROFIT_OPTIONS = [10, 20, 30, 40, 50];
 
 const peso = (n: number) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -443,19 +441,51 @@ function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; 
     startDate: (initial?.startDate || '').slice(0, 10), endDate: (initial?.endDate || '').slice(0, 10),
     contractPrice: initial?.contractPrice != null ? String(initial.contractPrice) : '',
     netProfitPercent: initial?.netProfitPercent != null ? String(initial.netProfitPercent) : '',
+    budgetAllocation: initial?.budgetAllocation != null ? String(initial.budgetAllocation) : '',
+    // Which of the linked pair the user typed last, so re-typing Contract Price re-derives
+    // the correct dependent field. Defaults to 'np' (Net Profit % drives Budget).
+    lastEdited: 'np',
   });
   const [saving, setSaving] = useState(false);
   const set = (k: string, v: string) => setF(p => ({ ...p, [k]: v }));
 
-  // Budget Allocation is auto-calculated and locked to this formula:
-  //   Budget = Contract Price × (1 − Net Profit% / 100)
-  // Recomputes live on every Contract Price / Net Profit % change. For legacy projects with no
-  // contract price yet, we fall back to the saved budget so editing an old record doesn't wipe it.
-  const cp = parseFloat(f.contractPrice);
-  const np = parseInt(f.netProfitPercent, 10);
-  const computedBudget = Number.isFinite(cp)
-    ? Math.round(cp * (1 - (Number.isFinite(np) ? np : 0) / 100) * 100) / 100
-    : (initial?.budgetAllocation ?? 0);
+  // Net Profit % and Budget Allocation are BOTH typeable and two-way linked. Whichever the user
+  // types last drives the other; both need a Contract Price first (guarded against divide-by-zero):
+  //   type Net Profit %  → Budget       = Contract × (1 − NetProfit% / 100)
+  //   type Budget        → Net Profit % = (1 − Budget / Contract) × 100
+  // Re-typing Contract Price re-derives whichever field was NOT typed last.
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+
+  const setContract = (v: string) => setF(p => {
+    const cp = parseFloat(v);
+    const next = { ...p, contractPrice: v };
+    if (Number.isFinite(cp) && cp > 0) {
+      if (p.lastEdited === 'budget') {
+        const bud = parseFloat(p.budgetAllocation);
+        if (Number.isFinite(bud)) next.netProfitPercent = String(round2((1 - bud / cp) * 100));
+      } else {
+        const np = parseFloat(p.netProfitPercent);
+        if (Number.isFinite(np)) next.budgetAllocation = String(round2(cp * (1 - np / 100)));
+      }
+    }
+    return next;
+  });
+
+  const setNetProfit = (v: string) => setF(p => {
+    const next = { ...p, netProfitPercent: v, lastEdited: 'np' };
+    const cp = parseFloat(p.contractPrice);
+    const np = parseFloat(v);
+    if (Number.isFinite(cp) && cp > 0 && Number.isFinite(np)) next.budgetAllocation = String(round2(cp * (1 - np / 100)));
+    return next;
+  });
+
+  const setBudget = (v: string) => setF(p => {
+    const next = { ...p, budgetAllocation: v, lastEdited: 'budget' };
+    const cp = parseFloat(p.contractPrice);
+    const bud = parseFloat(v);
+    if (Number.isFinite(cp) && cp > 0 && Number.isFinite(bud)) next.netProfitPercent = String(round2((1 - bud / cp) * 100));
+    return next;
+  });
 
   const save = async () => {
     if (!f.name.trim()) { toast.error('Client name is required'); return; }
@@ -465,9 +495,9 @@ function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; 
         name: f.name.trim(), description: f.description.trim() || null, status: f.status,
         location: f.location.trim() || null,
         startDate: f.startDate || null, endDate: f.endDate || null,
-        budgetAllocation: computedBudget,
+        budgetAllocation: f.budgetAllocation === '' ? null : Number(f.budgetAllocation),
         contractPrice: f.contractPrice === '' ? null : Number(f.contractPrice),
-        netProfitPercent: f.netProfitPercent === '' ? null : parseInt(f.netProfitPercent, 10),
+        netProfitPercent: f.netProfitPercent === '' ? null : Number(f.netProfitPercent),
       };
       if (initial) await aFetch(`/projects/${initial.id}`, { method: 'PATCH', body: JSON.stringify(body) });
       else await aFetch('/projects', { method: 'POST', body: JSON.stringify(body) });
@@ -504,19 +534,16 @@ function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; 
           <div className="grid grid-cols-2 gap-3 items-start">
             <div>
               <label className={flabel}>Contract Price (₱)</label>
-              <input type="number" min="0" step="0.01" value={f.contractPrice} onChange={e => set('contractPrice', e.target.value)} placeholder="0.00" className={input} />
+              <input type="number" min="0" step="0.01" value={f.contractPrice} onChange={e => setContract(e.target.value)} placeholder="0.00" className={input} />
             </div>
             <div>
               <label className={flabel}>Net Profit %</label>
-              <select value={f.netProfitPercent} onChange={e => set('netProfitPercent', e.target.value)} className={`${input} bg-white`}>
-                <option value="">Select %</option>
-                {NET_PROFIT_OPTIONS.map(p => <option key={p} value={p}>{p}%</option>)}
-              </select>
+              <input type="number" min="0" max="100" step="0.01" value={f.netProfitPercent} onChange={e => setNetProfit(e.target.value)} placeholder="e.g. 30" className={input} />
             </div>
             <div className="col-span-2">
-              <label className={flabel}>Budget Allocation (₱) <span className="text-xs font-normal text-gray-400">· auto-calculated</span></label>
-              <input type="text" readOnly value={peso(computedBudget)} tabIndex={-1} className={`${input} bg-gray-100 text-gray-700 cursor-not-allowed`} />
-              <p className="mt-1 text-xs text-gray-400">Contract Price × (1 − Net Profit% ÷ 100)</p>
+              <label className={flabel}>Budget Allocation (₱)</label>
+              <input type="number" min="0" step="0.01" value={f.budgetAllocation} onChange={e => setBudget(e.target.value)} placeholder="0.00" className={input} />
+              <p className="mt-1 text-xs text-gray-400">Linked to Net Profit %: enter one and the other fills. Budget = Contract × (1 − Net Profit% ÷ 100).</p>
             </div>
             <div>
               <label className={flabel}>Status</label>

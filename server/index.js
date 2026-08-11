@@ -677,6 +677,19 @@ async function runMigrations() {
       // Kept nullable so existing rows (which only have budget_allocation) are untouched.
       await query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS contract_price NUMERIC(14,2)`);
       await query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS net_profit_percent INT`);
+      // Net Profit % is now typeable with decimals (two-way linked with budget_allocation),
+      // so widen the legacy INT column to NUMERIC. Value-preserving; guarded so it only runs once.
+      await query(`
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'projects' AND column_name = 'net_profit_percent' AND data_type = 'integer'
+          ) THEN
+            ALTER TABLE projects ALTER COLUMN net_profit_percent TYPE NUMERIC(6,2);
+          END IF;
+        END $$;
+      `);
       console.log('✅ projects table ready');
     } catch (err) { console.log('ℹ️ projects table skipped:', err.message); }
 
@@ -6429,7 +6442,7 @@ function mapProject(r) {
     client: r.client, location: r.location, startDate: r.start_date, endDate: r.end_date,
     budgetAllocation: r.budget_allocation === null ? 0 : parseFloat(r.budget_allocation),
     contractPrice: r.contract_price === null || r.contract_price === undefined ? null : parseFloat(r.contract_price),
-    netProfitPercent: r.net_profit_percent === null || r.net_profit_percent === undefined ? null : parseInt(r.net_profit_percent, 10),
+    netProfitPercent: r.net_profit_percent === null || r.net_profit_percent === undefined ? null : parseFloat(r.net_profit_percent),
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
@@ -6671,7 +6684,7 @@ app.post('/api/projects', requireRole(['owner','admin','accounting']), async (re
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
       [id, b.name, orNull(b.description), orNull(b.status) || 'Active', orNull(b.client), orNull(b.location), orNull(b.startDate), orNull(b.endDate), Number(b.budgetAllocation) || 0,
        b.contractPrice === undefined || b.contractPrice === null || b.contractPrice === '' ? null : Number(b.contractPrice),
-       b.netProfitPercent === undefined || b.netProfitPercent === null || b.netProfitPercent === '' ? null : parseInt(b.netProfitPercent, 10)]
+       b.netProfitPercent === undefined || b.netProfitPercent === null || b.netProfitPercent === '' ? null : Number(b.netProfitPercent)]
     );
     res.status(201).json(mapProject(r.rows[0]));
   } catch (err) { console.error('project create error:', err); res.status(500).json({ error: err.message }); }
@@ -6686,7 +6699,7 @@ app.patch('/api/projects/:id', requireRole(['owner','admin','accounting']), asyn
       sets.push(`${k} = $${i++}`);
       if (k === 'budget_allocation') params.push(Number(v) || 0);
       else if (k === 'contract_price') params.push(v === null || v === '' ? null : Number(v));
-      else if (k === 'net_profit_percent') params.push(v === null || v === '' ? null : parseInt(v, 10));
+      else if (k === 'net_profit_percent') params.push(v === null || v === '' ? null : Number(v));
       else params.push(orNull(v));
     }
     if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
