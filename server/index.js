@@ -5598,9 +5598,41 @@ app.get('/api/attendance/periods/:id/sheet', requireRole(attendanceReviewRoles),
         ORDER BY p.full_name ASC, ad.work_date ASC`,
       [period.start_date, period.end_date]
     );
+    // Mid-day break intervals per day (each middle OUT→IN pair), so the sheet's Break column can show
+    // the break-out–return times inline without a per-row punch fetch. Times are Manila HH:MM; the
+    // authoritative docked total stays attendance_days.break_minutes (the frontend shows that figure).
+    const punchRows = await query(
+      `SELECT person_id,
+              to_char((punched_at AT TIME ZONE 'Asia/Manila')::date, 'YYYY-MM-DD') AS d,
+              punch_type,
+              to_char(punched_at AT TIME ZONE 'Asia/Manila', 'HH24:MI') AS t
+         FROM attendance_punches
+        WHERE (punched_at AT TIME ZONE 'Asia/Manila')::date BETWEEN $1 AND $2
+        ORDER BY person_id, punched_at ASC`,
+      [period.start_date, period.end_date]
+    );
+    const breaksByKey = {};
+    { // group each person-day's ordered taps; a break is any OUT immediately followed by an IN.
+      let curKey = null, seq = [];
+      const flush = () => {
+        if (curKey === null) return;
+        const arr = [];
+        for (let i = 0; i + 1 < seq.length; i++) {
+          if (seq[i].punch_type === 'out' && seq[i + 1].punch_type === 'in') arr.push({ out: seq[i].t, ret: seq[i + 1].t });
+        }
+        if (arr.length) breaksByKey[curKey] = arr;
+      };
+      for (const p of punchRows.rows) {
+        const key = `${p.person_id}|${p.d}`;
+        if (key !== curKey) { flush(); curKey = key; seq = []; }
+        seq.push(p);
+      }
+      flush();
+    }
+    const rowsOut = rows.rows.map(r => ({ ...r, breaks: breaksByKey[`${r.person_id}|${r.work_date}`] || [] }));
     // Per-person BALE (cash advance) captured for this period — [{ person_id, amount }].
     const bale = await query('SELECT person_id, amount FROM payroll_bale WHERE pay_period_id = $1', [period.id]);
-    res.json({ period, rows: rows.rows, bale: bale.rows });
+    res.json({ period, rows: rowsOut, bale: bale.rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

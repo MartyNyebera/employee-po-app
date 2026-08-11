@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
-import { RefreshCw, Lock, Unlock, Plus, Search, Pencil, History, ShieldCheck, ChevronRight, ChevronDown } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { RefreshCw, Lock, Unlock, Plus, Search, Pencil, History, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { S, Modal, Field, TextInput, TextArea, PrimaryBtn, GhostBtn, pill, peso } from './crmKit';
@@ -23,14 +23,15 @@ interface Period {
   status: 'open' | 'locked'; locked_by?: string | null; locked_at?: string | null;
   payroll_finalized?: boolean;
 }
+interface BreakInterval { out: string; ret: string; } // Manila HH:MM of a middle OUT→IN break pair
 interface Day {
   id: number; person_id: number; work_date: string;
   first_in: string | null; last_out: string | null; worked_minutes: number | null; break_minutes?: number | null;
+  breaks?: BreakInterval[];
   status: string | null; flags: string[]; pay_period_id: number | null;
   is_locked: boolean; is_adjusted: boolean; ot_approved: boolean; early_ot_approved: boolean;
   full_name: string; department?: string | null; position?: string | null; ot_eligible?: boolean;
 }
-interface Punch { id: number; punch_type: 'in' | 'out'; punched_at: string; local_time: string; source: string | null; }
 interface Adjustment {
   id: number; field: string; old_value: string | null; new_value: string | null;
   reason: string | null; adjusted_by: string | null; adjusted_at: string;
@@ -41,6 +42,8 @@ interface Sheet { period: Period; rows: Day[]; bale?: Bale[]; }
 const fmtDay = (ymd: string) => new Date(ymd + 'T00:00:00').toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric' });
 const fmtTime = (iso: string | null) => iso ? new Date(iso).toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit', hour12: true }) : '—';
 const fmtHours = (m: number | null) => (m === null || m === undefined) ? '—' : `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
+// Compact docked-break label: under an hour shows just "35m"; an hour or more shows "1h 15m".
+const fmtBreakMin = (m: number) => m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`;
 const periodLabel = (p: Period) => `${fmtDay(p.start_date)} – ${fmtDay(p.end_date)}, ${p.start_date.slice(0, 4)}`;
 
 // DISPLAY ONLY. The stored worked_minutes is the raw in-to-out span; the sheet should show PAID
@@ -102,19 +105,6 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<Day | null>(null);
   const [historyOf, setHistoryOf] = useState<Day | null>(null);
-  // Break-day tap detail (Layer 2), lazy-loaded per day. expanded = which day rows show their taps;
-  // punchesByDay caches the fetched sequence so re-toggling is instant.
-  const [expanded, setExpanded] = useState<Set<number>>(new Set());
-  const [punchesByDay, setPunchesByDay] = useState<Record<number, Punch[]>>({});
-  const toggleExpand = async (dayId: number) => {
-    setExpanded(prev => { const n = new Set(prev); n.has(dayId) ? n.delete(dayId) : n.add(dayId); return n; });
-    if (!punchesByDay[dayId]) {
-      try {
-        const r = await api<{ punches: Punch[] }>(`/attendance/days/${dayId}/punches`);
-        setPunchesByDay(m => ({ ...m, [dayId]: r.punches || [] }));
-      } catch (e: any) { toast.error(e.message || 'Could not load the day’s taps'); }
-    }
-  };
   // person_id -> BALE amount (string, for the input). Populated from the sheet on load.
   const [baleMap, setBaleMap] = useState<Record<number, string>>({});
 
@@ -285,20 +275,20 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
         <table style={S.table}>
           <thead><tr>
             <th style={S.th}>Date</th><th style={S.th}>In</th><th style={S.th}>Out</th>
+            <th style={S.th} title="Mid-day personal-business break (docked)">Break</th>
             <th style={S.th}>Hours</th><th style={S.th}>Status</th>
             <th style={S.th} title="Pre-shift-start OT (no buffer)">Early OT</th>
             <th style={S.th} title="After-shift OT (needs the 1h buffer)">Late OT</th>
             <th style={{ ...S.th, textAlign: 'right' }}>Actions</th>
           </tr></thead>
           <tbody>
-            {loading ? <tr><td style={S.td} colSpan={8}>Loading…</td></tr>
-              : !period ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={8}>Create or select a pay period to begin.</td></tr>
-              : groups.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={8}>No punched days in this period yet. Click <strong>Rebuild from punches</strong>.</td></tr>
+            {loading ? <tr><td style={S.td} colSpan={9}>Loading…</td></tr>
+              : !period ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={9}>Create or select a pay period to begin.</td></tr>
+              : groups.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={9}>No punched days in this period yet. Click <strong>Rebuild from punches</strong>.</td></tr>
               : groups.map(g => (
                 <PersonGroup key={g.person.person_id} group={g} role={role} canEditRow={canEditRow}
                   onEdit={setEditing} onHistory={setHistoryOf} onToggleOt={toggleOt}
-                  bale={baleMap[g.person.person_id] ?? ''} onSaveBale={saveBale} periodLocked={locked}
-                  expanded={expanded} onToggleExpand={toggleExpand} punchesByDay={punchesByDay} />
+                  bale={baleMap[g.person.person_id] ?? ''} onSaveBale={saveBale} periodLocked={locked} />
               ))}
           </tbody>
         </table>
@@ -343,21 +333,20 @@ function BaleInput({ personId, value, onSave, editable }: { personId: number; va
   );
 }
 
-function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, bale, onSaveBale, expanded, onToggleExpand, punchesByDay }: {
+function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, bale, onSaveBale }: {
   group: { person: Day; days: Day[]; totalMin: number; breakMin: number };
   role: 'admin' | 'accounting';
   canEditRow: (d: Day) => boolean; onEdit: (d: Day) => void; onHistory: (d: Day) => void;
   onToggleOt: (d: Day, kind: 'early' | 'late', approved: boolean) => void;
   bale: string; onSaveBale: (personId: number, amount: string) => void;
   periodLocked: boolean;
-  expanded: Set<number>; onToggleExpand: (dayId: number) => void; punchesByDay: Record<number, Punch[]>;
 }) {
   const { person, days, totalMin, breakMin } = group;
   const meta = [person.department, person.position].filter(Boolean).join(' · ');
   return (
     <>
       <tr>
-        <td colSpan={8} style={{ padding: '12px 16px', background: '#f7f7f7', borderBottom: '1px solid #e6e6e6', borderTop: '1px solid #e6e6e6' }}>
+        <td colSpan={9} style={{ padding: '12px 16px', background: '#f7f7f7', borderBottom: '1px solid #e6e6e6', borderTop: '1px solid #e6e6e6' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
             <div>
               <span style={{ fontWeight: 700, color: '#000' }}>{person.full_name}</span>
@@ -378,79 +367,40 @@ function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, b
       </tr>
       {days.map(d => {
         const brk = breakOf(d);
-        const hasBreak = brk > 0 && lunchNetMinutes(d) !== null;
-        const isOpen = expanded.has(d.id);
+        // Only show the break where payroll actually docks it — a full worked day (a paid figure
+        // exists). No-OUT/half days don't dock the break, so they read "—" like a normal day.
+        const brks = d.breaks || [];
+        const hasBreak = brk > 0 && brks.length > 0 && lunchNetMinutes(d) !== null;
+        const breakLabel = brks.length === 1 ? `${brks[0].out}–${brks[0].ret}` : `${brks.length} breaks`;
         return (
-          <Fragment key={d.id}>
-            <tr>
-              <td style={S.td}>
-                {hasBreak ? (
-                  <button onClick={() => onToggleExpand(d.id)} title={isOpen ? 'Hide the day’s taps' : 'Show the day’s taps (mid-day break)'}
-                    style={{ background: 'none', border: 'none', padding: 0, marginRight: '4px', cursor: 'pointer', color: '#7a6a0c', verticalAlign: '-2px' }}>
-                    {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                  </button>
-                ) : null}
-                {fmtDay(d.work_date)}
-                {d.is_locked ? <Lock size={11} style={{ marginLeft: '6px', verticalAlign: '-1px', color: '#8a8a8a' }} /> : null}
-              </td>
-              <td style={S.td}>{fmtTime(d.first_in)}</td>
-              <td style={S.td}>{fmtTime(d.last_out)}</td>
-              <td style={S.td}>
-                {fmtHours(paidMinutes(d))}
-                {hasBreak ? <div style={{ fontSize: '11px', color: '#7a6a0c', marginTop: '2px' }}>− {fmtHours(brk)} break</div> : null}
-              </td>
-              <td style={S.td}>
-                {statusPill(d.status)}
-                {(d.flags || []).map(f => <span key={f} style={{ marginLeft: '6px', fontSize: '12px', color: '#b91c1c' }}>{FLAG_LABEL[f] || f}</span>)}
-                {d.is_adjusted ? <span style={{ marginLeft: '6px', fontSize: '11px', color: '#7a6a0c', fontWeight: 600 }}>· edited</span> : null}
-              </td>
-              <td style={S.td}>{otCell(d, 'early', role, onToggleOt)}</td>
-              <td style={S.td}>{otCell(d, 'late', role, onToggleOt)}</td>
-              <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                {d.is_adjusted ? <button title="Correction history" style={S.rowBtn} onClick={() => onHistory(d)}><History size={13} /></button> : null}
-                {canEditRow(d) ? <button title="Correct this day" style={S.rowBtn} onClick={() => onEdit(d)}><Pencil size={13} /></button> : null}
-              </td>
-            </tr>
-            {hasBreak && isOpen ? (
-              <tr>
-                <td colSpan={8} style={{ ...S.td, background: '#fbfaf5', padding: '10px 16px 10px 34px' }}>
-                  <TapSequence punches={punchesByDay[d.id]} brkMinutes={brk} />
-                </td>
-              </tr>
-            ) : null}
-          </Fragment>
+          <tr key={d.id}>
+            <td style={S.td}>
+              {fmtDay(d.work_date)}
+              {d.is_locked ? <Lock size={11} style={{ marginLeft: '6px', verticalAlign: '-1px', color: '#8a8a8a' }} /> : null}
+            </td>
+            <td style={S.td}>{fmtTime(d.first_in)}</td>
+            <td style={S.td}>{fmtTime(d.last_out)}</td>
+            <td style={S.td}>
+              {hasBreak
+                ? <span style={{ fontSize: '12.5px', color: '#7a6a0c', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>{breakLabel} · {fmtBreakMin(brk)}</span>
+                : <span style={{ color: '#c0c0c0' }}>—</span>}
+            </td>
+            <td style={S.td}>{fmtHours(paidMinutes(d))}</td>
+            <td style={S.td}>
+              {statusPill(d.status)}
+              {(d.flags || []).map(f => <span key={f} style={{ marginLeft: '6px', fontSize: '12px', color: '#b91c1c' }}>{FLAG_LABEL[f] || f}</span>)}
+              {d.is_adjusted ? <span style={{ marginLeft: '6px', fontSize: '11px', color: '#7a6a0c', fontWeight: 600 }}>· edited</span> : null}
+            </td>
+            <td style={S.td}>{otCell(d, 'early', role, onToggleOt)}</td>
+            <td style={S.td}>{otCell(d, 'late', role, onToggleOt)}</td>
+            <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+              {d.is_adjusted ? <button title="Correction history" style={S.rowBtn} onClick={() => onHistory(d)}><History size={13} /></button> : null}
+              {canEditRow(d) ? <button title="Correct this day" style={S.rowBtn} onClick={() => onEdit(d)}><Pencil size={13} /></button> : null}
+            </td>
+          </tr>
         );
       })}
     </>
-  );
-}
-
-// The ordered raw punches for one day, with each middle OUT→IN gap (a mid-day break) highlighted.
-// Read-only — punches are immutable. brkMinutes is the day's authoritative docked figure from payroll.
-function TapSequence({ punches, brkMinutes }: { punches: Punch[] | undefined; brkMinutes: number }) {
-  if (!punches) return <span style={{ fontSize: '12px', color: '#8a8a8a' }}>Loading taps…</span>;
-  if (!punches.length) return <span style={{ fontSize: '12px', color: '#8a8a8a' }}>No raw punches on this day.</span>;
-  const isBreakBoundary = (i: number) => punches[i].punch_type === 'out' && punches[i + 1]?.punch_type === 'in';
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-        {punches.map((p, i) => (
-          <span key={p.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ fontSize: '12px', fontWeight: 600, color: p.punch_type === 'in' ? '#166534' : '#9a3412',
-              background: p.punch_type === 'in' ? '#eafbef' : '#fdf0e8', border: '1px solid', borderColor: p.punch_type === 'in' ? '#bfe6cb' : '#f3d3bf',
-              borderRadius: '999px', padding: '2px 10px' }}>
-              {p.local_time} {p.punch_type.toUpperCase()}
-            </span>
-            {i < punches.length - 1 ? (
-              isBreakBoundary(i)
-                ? <span style={{ fontSize: '11px', fontWeight: 700, color: '#7a6a0c', background: '#f6eecb', border: '1px solid #e3ca63', borderRadius: '999px', padding: '2px 8px' }}>↔ break</span>
-                : <span style={{ color: '#c0c0c0' }}>·</span>
-            ) : null}
-          </span>
-        ))}
-      </div>
-      <div style={{ fontSize: '11px', color: '#7a6a0c' }}>Unpaid personal-business break docked at payroll: {fmtHours(brkMinutes)} (rounded, free lunch excluded).</div>
-    </div>
   );
 }
 
