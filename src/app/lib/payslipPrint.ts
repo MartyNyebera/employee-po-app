@@ -115,9 +115,20 @@ const PAYSLIP_CSS = `
 function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
   const ref = (l.breakdown && l.breakdown.reference) || {};
   const hourly = Number(ref.hourly) || 0;
-  const otMult = Number(ref.multipliers && ref.multipliers.ot) || 1.25;
+  const mults = (ref.multipliers) || {};
+  const otMult = Number(mults.ot) || 1.25;
   const otRate = hourly * otMult;
   const dailyRate = Number(ref.daily_basis) || Number(ref.rate) || 0;
+  // Premium hourly rates for the Sunday/holiday earnings rows — shown even when nobody worked one
+  // that period (Qty/Amount 0), just like Reg. day always shows its rate. Same per-hour basis as
+  // Reg. OT (hourly × multiplier), read from the stored settings so it matches the computed amounts.
+  // DISPLAY ONLY — no pay math changes; the Amount columns are the already-computed values.
+  const sunMult = Number(mults.sunday) || 1.30;
+  const regHolMult = Number(mults.regular_holiday) || 2.0;
+  const spcHolMult = Number(mults.special_holiday) || 1.30;
+  const sundayRate = hourly * sunMult;
+  const regHolRate = hourly * regHolMult;
+  const specHolRate = hourly * spcHolMult;
 
   // Reg. day quantity includes half days (missing-OUT days count as 0.5), so Qty × Rate = base_pay.
   const halfDays = Number(l.breakdown && l.breakdown.totals && l.breakdown.totals.half_days) || 0;
@@ -161,9 +172,9 @@ function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
           <tr><th class="lbl" style="text-align:left">Earnings</th><th>Qty</th><th>Rate</th><th>Amount</th></tr>
           <tr><td class="lbl">Reg. day</td><td class="num">${esc(regQtyStr)}</td><td class="num">${money(dailyRate)}</td><td class="num">${money(l.base_pay)}</td></tr>
           <tr><td class="lbl">Reg. OT</td><td class="num">${esc(l.ot_hours)}</td><td class="num">${money(otRate)}</td><td class="num">${money(l.ot_pay)}</td></tr>
-          <tr><td class="lbl">Sunday</td><td class="num"></td><td class="num"></td><td class="num">${money(l.sunday_pay)}</td></tr>
-          <tr><td class="lbl">Reg. Hol.</td><td class="num"></td><td class="num"></td><td class="num">${money(regHol)}</td></tr>
-          <tr><td class="lbl">Special Hol.</td><td class="num"></td><td class="num"></td><td class="num">${money(specHol)}</td></tr>
+          <tr><td class="lbl">Sunday</td><td class="num"></td><td class="num">${money(sundayRate)}</td><td class="num">${money(l.sunday_pay)}</td></tr>
+          <tr><td class="lbl">Reg. Hol.</td><td class="num"></td><td class="num">${money(regHolRate)}</td><td class="num">${money(regHol)}</td></tr>
+          <tr><td class="lbl">Special Hol.</td><td class="num"></td><td class="num">${money(specHolRate)}</td><td class="num">${money(specHol)}</td></tr>
           <tr class="tot"><td class="lbl">Total Earnings</td><td class="num"></td><td class="num"></td><td class="num">${money(l.gross)}</td></tr>
         </tbody></table>
       </div>
