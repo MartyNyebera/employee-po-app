@@ -5589,7 +5589,7 @@ app.get('/api/attendance/periods/:id/sheet', requireRole(attendanceReviewRoles),
       // ot_eligible + ot_approved back the per-day OT toggle. Sensitive pay fields (pay_rate,
       // withholding, sss/philhealth/pagibig) are deliberately NOT selected — Finance never sees them.
       `SELECT ad.id, ad.person_id, to_char(ad.work_date,'YYYY-MM-DD') AS work_date,
-              ad.first_in, ad.last_out, ad.worked_minutes, ad.status, ad.flags,
+              ad.first_in, ad.last_out, ad.worked_minutes, ad.break_minutes, ad.status, ad.flags,
               ad.pay_period_id, ad.is_locked, ad.is_adjusted, ad.ot_approved, ad.early_ot_approved,
               p.full_name, p.department, p.position, p.ot_eligible
          FROM attendance_days ad
@@ -5601,6 +5601,34 @@ app.get('/api/attendance/periods/:id/sheet', requireRole(attendanceReviewRoles),
     // Per-person BALE (cash advance) captured for this period — [{ person_id, amount }].
     const bale = await query('SELECT person_id, amount FROM payroll_bale WHERE pay_period_id = $1', [period.id]);
     res.json({ period, rows: rows.rows, bale: bale.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// The ordered raw punch sequence for one attendance day — so admin can SEE a mid-day break
+// (IN → OUT → IN → OUT …) that the first_in/last_out summary hides. ADMIN ONLY. Read-only: punches
+// are immutable; this only reveals them. Times are pre-formatted to Manila HH:MM for the sheet.
+app.get('/api/attendance/days/:id/punches', requireRole(['admin']), async (req, res) => {
+  try {
+    const dr = await query(
+      `SELECT person_id, to_char(work_date,'YYYY-MM-DD') AS work_date, break_minutes FROM attendance_days WHERE id = $1`,
+      [req.params.id]
+    );
+    const day = dr.rows[0];
+    if (!day) return res.status(404).json({ error: 'Day not found' });
+    // All of that person's punches on the day's LOCAL (Manila) calendar date, in scan order.
+    const punches = await query(
+      `SELECT id, punch_type, punched_at,
+              to_char(punched_at AT TIME ZONE 'Asia/Manila', 'HH24:MI') AS local_time, source
+         FROM attendance_punches
+        WHERE person_id = $1
+          AND (punched_at AT TIME ZONE 'Asia/Manila')::date = $2
+        ORDER BY punched_at ASC`,
+      [day.person_id, day.work_date]
+    );
+    res.json({ day_id: Number(req.params.id), person_id: day.person_id, work_date: day.work_date,
+      break_minutes: day.break_minutes, punches: punches.rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
