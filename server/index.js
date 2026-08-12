@@ -1204,6 +1204,15 @@ async function runMigrations() {
       // rebuildAttendanceDays from the punches; a normal 2-tap day is 0. Payroll folds it into the
       // deduction. Rebuild refreshes it only on non-frozen rows (like first_in/last_out).
       await query(`ALTER TABLE attendance_days ADD COLUMN IF NOT EXISTS break_minutes INTEGER NOT NULL DEFAULT 0`);
+      // FIELD-LEVEL PINNING: which time fields an admin manually SET (a subset of
+      // {'first_in','last_out','status'}). This replaces the all-or-nothing is_adjusted freeze so a
+      // manual edit and live scans can coexist on one day: rebuild keeps the PINNED field's admin
+      // value but still folds the punch-derived value into the UN-pinned fields. Rule (maintained by
+      // the adjust endpoint): setting a field to a non-null value PINS it; CLEARING a field RELEASES
+      // it (so a later real scan can refill it). is_adjusted is kept as a derived compat flag
+      // (true ⇔ adjusted_fields is non-empty) so existing consumers keep working. Existing manually
+      // corrected rows are backfilled (see runtime backfill below) so nothing reverts on first rebuild.
+      await query(`ALTER TABLE attendance_days ADD COLUMN IF NOT EXISTS adjusted_fields TEXT[] NOT NULL DEFAULT '{}'`);
       await query(`CREATE INDEX IF NOT EXISTS idx_attendance_days_date ON attendance_days(work_date)`);
       console.log('✅ attendance_days table ready');
     } catch (err) { console.log('ℹ️ attendance_days table skipped:', err.message); }
@@ -1250,6 +1259,56 @@ async function runMigrations() {
       await query(`CREATE INDEX IF NOT EXISTS idx_attendance_adjustments_day ON attendance_adjustments(day_id)`);
       console.log('✅ pay_periods + attendance_adjustments tables ready');
     } catch (err) { console.log('ℹ️ pay_periods/attendance_adjustments tables skipped:', err.message); }
+
+    // ONE-TIME BACKFILL of attendance_days.adjusted_fields for rows that were manually corrected
+    // BEFORE field-level pinning existed (they carry is_adjusted = true but no per-field pins yet).
+    // Runs only for such rows (guard: is_adjusted = true AND adjusted_fields = '{}'), so it is a no-op
+    // on every boot after the first and never touches punch-derived rows.
+    //
+    // A field is PINNED (protected from rebuild) when EITHER: (a) the audit log shows the admin last
+    // set it to a non-null value, OR (b) its stored value DIFFERS from what the raw punches would
+    // rebuild to. This union can only OVER-protect — a released field provably equals its punch-derived
+    // value, so the very first rebuild reproduces it byte-for-byte and nothing reverts. Then is_adjusted
+    // is reconciled to its derived meaning (true ⇔ any field pinned).
+    try {
+      const bf = await query(`
+        WITH punch_agg AS (
+          SELECT person_id, (punched_at AT TIME ZONE 'Asia/Manila')::date AS work_date,
+                 MIN(punched_at) FILTER (WHERE punch_type = 'in')  AS p_in,
+                 MAX(punched_at) FILTER (WHERE punch_type = 'out') AS p_out
+            FROM attendance_punches
+           GROUP BY person_id, (punched_at AT TIME ZONE 'Asia/Manila')::date
+        ),
+        last_edit AS (
+          SELECT DISTINCT ON (day_id, field) day_id, field, new_value
+            FROM attendance_adjustments
+           WHERE field IN ('first_in', 'last_out', 'status')
+           ORDER BY day_id, field, adjusted_at DESC, id DESC
+        )
+        UPDATE attendance_days ad
+           SET adjusted_fields = (
+             SELECT COALESCE(array_agg(f ORDER BY f), '{}')
+               FROM (
+                 SELECT 'first_in' AS f
+                  WHERE EXISTS (SELECT 1 FROM last_edit le WHERE le.day_id = ad.id AND le.field = 'first_in' AND le.new_value IS NOT NULL)
+                     OR ad.first_in IS DISTINCT FROM pa.p_in
+                 UNION
+                 SELECT 'last_out'
+                  WHERE EXISTS (SELECT 1 FROM last_edit le WHERE le.day_id = ad.id AND le.field = 'last_out' AND le.new_value IS NOT NULL)
+                     OR ad.last_out IS DISTINCT FROM pa.p_out
+                 UNION
+                 SELECT 'status'
+                  WHERE EXISTS (SELECT 1 FROM last_edit le WHERE le.day_id = ad.id AND le.field = 'status' AND le.new_value IS NOT NULL)
+               ) picked
+           )
+          FROM (SELECT id, person_id, work_date FROM attendance_days WHERE is_adjusted = true AND adjusted_fields = '{}') target
+          LEFT JOIN punch_agg pa ON pa.person_id = target.person_id AND pa.work_date = target.work_date
+         WHERE ad.id = target.id`);
+      // Reconcile is_adjusted to its derived meaning wherever it disagrees (one-time; no-op afterwards).
+      await query(`UPDATE attendance_days SET is_adjusted = (cardinality(adjusted_fields) > 0)
+                    WHERE is_adjusted <> (cardinality(adjusted_fields) > 0)`);
+      if (bf.rowCount) console.log(`✅ attendance_days.adjusted_fields backfilled (${bf.rowCount} rows)`);
+    } catch (err) { console.log('ℹ️ adjusted_fields backfill skipped:', err.message); }
 
     // ===== Payroll — Phase 4a (config + holidays + BALE). Additive, new tables only. =====
     // NO pay is computed anywhere in 4a — these just STORE company-policy values and inputs for
@@ -5405,10 +5464,23 @@ app.get('/api/attendance/today', requireRole(['station']), async (req, res) => {
 //           'no_out'     → has an IN but no OUT   (flag: missing_out)
 //           'incomplete' → has an OUT but no IN   (flag: missing_in — a data anomaly)
 //
+// FIELD-LEVEL PINNING: an existing row's PINNED fields (attendance_days.adjusted_fields, a subset of
+// {'first_in','last_out','status'}) keep their admin-set value; UN-pinned fields take the punch-derived
+// value. So a manual fix (e.g. a missing morning IN) and a later real scan (the evening OUT) coexist on
+// one day — the pinned IN holds while the OUT attaches from the punch, and worked_minutes/status/flags
+// are re-derived from the MERGED times. A row with no pins behaves exactly as before (full punch
+// rebuild). Locked rows are still never touched. Break minutes for a pinned (hand-touched) day stay 0 —
+// the break second pass below only runs on rows with no pins (is_adjusted = false).
+//
 // Returns the number of day-rows built/updated. startDate/endDate are 'YYYY-MM-DD' strings.
 async function rebuildAttendanceDays(startDate, endDate) {
+  // Merged time = pinned field keeps the stored admin value, else takes the punch-derived (EXCLUDED)
+  // value. worked/status/flags are re-derived from these merged values (repeated inline because a
+  // Postgres UPDATE SET clause cannot reference a sibling SET target). Status is itself pinnable.
+  const MERGED_IN  = `CASE WHEN attendance_days.adjusted_fields @> ARRAY['first_in']::text[] THEN attendance_days.first_in ELSE EXCLUDED.first_in END`;
+  const MERGED_OUT = `CASE WHEN attendance_days.adjusted_fields @> ARRAY['last_out']::text[] THEN attendance_days.last_out ELSE EXCLUDED.last_out END`;
   const result = await query(
-    `INSERT INTO attendance_days (person_id, work_date, first_in, last_out, worked_minutes, status, flags)
+    `INSERT INTO attendance_days (person_id, work_date, first_in, last_out, worked_minutes, status, flags, adjusted_fields)
      SELECT
        agg.person_id,
        agg.work_date,
@@ -5422,7 +5494,8 @@ async function rebuildAttendanceDays(startDate, endDate) {
             ELSE 'incomplete' END,
        CASE WHEN agg.first_in IS NOT NULL AND agg.last_out IS NULL THEN '["missing_out"]'::jsonb
             WHEN agg.first_in IS NULL                              THEN '["missing_in"]'::jsonb
-            ELSE '[]'::jsonb END
+            ELSE '[]'::jsonb END,
+       '{}'::text[]
      FROM (
        SELECT
          person_id,
@@ -5434,20 +5507,28 @@ async function rebuildAttendanceDays(startDate, endDate) {
        GROUP BY person_id, (punched_at AT TIME ZONE 'Asia/Manila')::date
      ) agg
      ON CONFLICT (person_id, work_date) DO UPDATE SET
-       first_in       = EXCLUDED.first_in,
-       last_out       = EXCLUDED.last_out,
-       worked_minutes = EXCLUDED.worked_minutes,
-       status         = EXCLUDED.status,
-       flags          = EXCLUDED.flags
-     WHERE attendance_days.is_locked = false
-       AND attendance_days.is_adjusted = false`,
+       first_in       = ${MERGED_IN},
+       last_out       = ${MERGED_OUT},
+       worked_minutes = CASE WHEN ${MERGED_IN} IS NOT NULL AND ${MERGED_OUT} IS NOT NULL AND ${MERGED_OUT} > ${MERGED_IN}
+                             THEN ROUND(EXTRACT(EPOCH FROM (${MERGED_OUT} - ${MERGED_IN})) / 60.0)::int
+                             ELSE NULL END,
+       status         = CASE WHEN attendance_days.adjusted_fields @> ARRAY['status']::text[] THEN attendance_days.status
+                             WHEN ${MERGED_IN} IS NOT NULL AND ${MERGED_OUT} IS NOT NULL THEN 'complete'
+                             WHEN ${MERGED_IN} IS NOT NULL AND ${MERGED_OUT} IS NULL     THEN 'no_out'
+                             ELSE 'incomplete' END,
+       flags          = CASE WHEN ${MERGED_IN} IS NOT NULL AND ${MERGED_OUT} IS NULL THEN '["missing_out"]'::jsonb
+                             WHEN ${MERGED_IN} IS NULL                                THEN '["missing_in"]'::jsonb
+                             ELSE '[]'::jsonb END
+     WHERE attendance_days.is_locked = false`,
     [startDate, endDate]
   );
 
   // Second pass: per-day unpaid personal-business break minutes from the middle OUT→IN taps (shared
   // :15/:30/:00 rounding + free lunch). Computed here so a normal 2-tap day stays exactly as before
   // (no middle pair → 0) and the payroll compute can just read attendance_days.break_minutes. Written
-  // only to non-frozen rows, matching how first_in/last_out are refreshed above.
+  // only to rows with NO pins (is_adjusted = false, now a derived flag ⇔ adjusted_fields is empty):
+  // a hand-touched day is a single admin IN/OUT span, so its break stays 0 (the adjust endpoint zeroes
+  // it) — matching the BREAK RULE that any pinned time field means break_minutes = 0 / breaks = [].
   const st = (await query(`SELECT lunch_start, lunch_end FROM payroll_settings WHERE id = 1`)).rows[0] || {};
   const lunchStart = hhmmToMin(st.lunch_start || '12:00'), lunchEnd = hhmmToMin(st.lunch_end || '13:00');
   const punches = await query(
@@ -5499,6 +5580,75 @@ app.post('/api/attendance/rebuild-days', requireRole(['admin']), async (req, res
   try {
     const count = await rebuildAttendanceDays(start, end);
     res.json({ ok: true, rebuilt: count, start, end });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: RE-SYNC FROM PUNCHES — the field-level-pinning safety valve. Clears ALL manual pins
+// (adjusted_fields → '{}', is_adjusted → false) on the target day(s) and re-runs the rebuild, so the
+// day is rebuilt purely from its raw punches — a one-click recovery for a day whose manual edits are no
+// longer wanted or got tangled. Skips locked days (a locked period stays frozen). Every cleared day is
+// logged to attendance_adjustments (field='resync') so the audit trail is preserved. Raw punches are
+// never touched. Body: a single day by :id, or a range { start, end } on the /resync path.
+async function resyncDays(rowsToClear, actorId) {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    for (const r of rowsToClear) {
+      await client.query(
+        `INSERT INTO attendance_adjustments (day_id, field, old_value, new_value, reason, adjusted_by)
+         VALUES ($1, 'resync', $2, NULL, 'Re-sync from punches (cleared manual pins)', $3)`,
+        [r.id, Array.isArray(r.adjusted_fields) ? r.adjusted_fields.join(',') : String(r.adjusted_fields || ''), actorId || null]
+      );
+      await client.query(
+        `UPDATE attendance_days SET adjusted_fields = '{}', is_adjusted = false WHERE id = $1`, [r.id]
+      );
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+app.post('/api/attendance/days/:id/resync', requireRole(['admin']), async (req, res) => {
+  try {
+    const dr = await query(
+      `SELECT id, to_char(work_date,'YYYY-MM-DD') AS d, is_locked, adjusted_fields FROM attendance_days WHERE id = $1`,
+      [req.params.id]
+    );
+    const day = dr.rows[0];
+    if (!day) return res.status(404).json({ error: 'Day not found' });
+    if (day.is_locked) return res.status(403).json({ error: 'This day is in a locked period — unlock it first.' });
+    await resyncDays([day], req.user.id);
+    await rebuildAttendanceDays(day.d, day.d);
+    const after = await query(
+      `SELECT id, to_char(work_date,'YYYY-MM-DD') AS work_date, first_in, last_out, worked_minutes, status, break_minutes, is_adjusted, adjusted_fields FROM attendance_days WHERE id = $1`,
+      [req.params.id]
+    );
+    res.json({ ok: true, day: after.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/attendance/resync', requireRole(['admin']), async (req, res) => {
+  const { start, end } = req.body || {};
+  const isDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  if (!isDate(start) || !isDate(end)) return res.status(400).json({ error: 'start and end must be YYYY-MM-DD dates' });
+  if (start > end) return res.status(400).json({ error: 'start must be on or before end' });
+  try {
+    const rows = await query(
+      `SELECT id, adjusted_fields FROM attendance_days
+        WHERE work_date BETWEEN $1 AND $2 AND is_locked = false AND cardinality(adjusted_fields) > 0`,
+      [start, end]
+    );
+    await resyncDays(rows.rows, req.user.id);
+    const count = await rebuildAttendanceDays(start, end);
+    res.json({ ok: true, cleared: rows.rows.length, rebuilt: count, start, end });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -5723,17 +5873,31 @@ app.post('/api/attendance/days/:id/adjust', requireRole(['admin']), async (req, 
     if (field === 'status') {
       oldValue = day.status;
       newValue = value;
-      await client.query('UPDATE attendance_days SET status = $1, is_adjusted = true WHERE id = $2', [value, day.id]);
+      // Pin 'status' so a later rebuild keeps this manual status instead of re-deriving it from times.
+      await client.query(
+        `UPDATE attendance_days
+            SET status = $1,
+                adjusted_fields = CASE WHEN adjusted_fields @> ARRAY['status']::text[] THEN adjusted_fields
+                                       ELSE array_append(adjusted_fields, 'status') END,
+                is_adjusted = true
+          WHERE id = $2`,
+        [value, day.id]
+      );
     } else {
       // field is 'first_in' or 'last_out' (whitelisted above) — safe to interpolate.
       oldValue = day[field] ? new Date(day[field]).toISOString() : null;
       newValue = clearing ? null : value;
       // The client sends Manila wall-clock (from a datetime-local input); interpret it in Manila.
+      // FIELD-LEVEL PIN: setting a non-null value PINS this field (rebuild will keep it); CLEARING it
+      // RELEASES the pin (removes it from adjusted_fields) so a later real scan can refill the field.
       await client.query(
         `UPDATE attendance_days
             SET ${field} = CASE WHEN $1::text IS NULL THEN NULL
                                 ELSE ($1::timestamp AT TIME ZONE 'Asia/Manila') END,
-                is_adjusted = true
+                adjusted_fields = CASE
+                  WHEN $1::text IS NULL                             THEN array_remove(adjusted_fields, '${field}')
+                  WHEN adjusted_fields @> ARRAY['${field}']::text[] THEN adjusted_fields
+                  ELSE array_append(adjusted_fields, '${field}') END
           WHERE id = $2`,
         [clearing ? null : value, day.id]
       );
@@ -5748,16 +5912,19 @@ app.post('/api/attendance/days/:id/adjust', requireRole(['admin']), async (req, 
             SET worked_minutes = CASE WHEN first_in IS NOT NULL AND last_out IS NOT NULL AND last_out > first_in
                                       THEN ROUND(EXTRACT(EPOCH FROM (last_out - first_in)) / 60.0)::int
                                       ELSE NULL END,
-                status = CASE WHEN first_in IS NOT NULL AND last_out IS NOT NULL THEN 'complete'
+                status = CASE WHEN adjusted_fields @> ARRAY['status']::text[] THEN status
+                              WHEN first_in IS NOT NULL AND last_out IS NOT NULL THEN 'complete'
                               WHEN first_in IS NOT NULL AND last_out IS NULL     THEN 'no_out'
                               ELSE 'incomplete' END,
                 flags = CASE WHEN first_in IS NOT NULL AND last_out IS NULL THEN '["missing_out"]'::jsonb
                              WHEN first_in IS NULL                          THEN '["missing_in"]'::jsonb
                              ELSE '[]'::jsonb END,
                 -- A manual time correction makes the row a single IN/OUT span — there is no mid-day
-                -- break in that representation, so drop any punch-derived break (rebuild is off now via
-                -- is_adjusted, so this stays 0 and payroll won't dock a removed/test break).
-                break_minutes = 0
+                -- break in that representation, so drop any punch-derived break (a pinned day is skipped
+                -- by the rebuild break pass, so this stays 0 and payroll won't dock a removed/test break).
+                break_minutes = 0,
+                -- Keep is_adjusted as the derived compat flag: true ⇔ at least one field is pinned.
+                is_adjusted = (cardinality(adjusted_fields) > 0)
           WHERE id = $1`,
         [day.id]
       );
