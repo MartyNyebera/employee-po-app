@@ -693,6 +693,25 @@ async function runMigrations() {
       console.log('✅ projects table ready');
     } catch (err) { console.log('ℹ️ projects table skipped:', err.message); }
 
+    // Facilities (admin/accounting-created; INTERNAL company equipment/items, not client projects).
+    // Mirrors `projects` but simpler — a facility just has a budget target and its spend is tracked
+    // from the purchase requests charged to it. No contract price / net-profit link.
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS facilities (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          description TEXT,
+          status TEXT CHECK (status IN ('Active','On Hold','Completed')) DEFAULT 'Active',
+          location TEXT,
+          budget_allocation NUMERIC(14,2) DEFAULT 0,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      console.log('✅ facilities table ready');
+    } catch (err) { console.log('ℹ️ facilities table skipped:', err.message); }
+
     // Purchase requests (employee-filed via /production portal; line items stored as JSONB)
     try {
       await query(`
@@ -752,6 +771,13 @@ async function runMigrations() {
       // project_label), so a labelled request reads "Trading" while a truly blank one still falls
       // back to "Personal use" in the UI. Kept separate from project_id so it never touches the FK.
       await query(`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS project_label TEXT`);
+      // A PR can instead be charged to an internal FACILITY (mirrors project_id but points at the
+      // facilities table). Exactly one of project_id / facility_id is set for a real charge; both NULL
+      // means Trading (project_label='Trading') or Personal use (project_label NULL). The list/print
+      // derive the display name as COALESCE(projects.name, facilities.name, project_label). Kept as a
+      // separate nullable FK so existing project/Trading/Personal PRs are completely untouched.
+      await query(`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS facility_id TEXT REFERENCES facilities(id) ON DELETE SET NULL`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_pr_facility_id ON purchase_requests(facility_id)`);
       // One-time backfill for requests verified before the column existed. Idempotent via the
       // IS NULL guard; matches on name, which is the only link those rows have.
       const bf = await query(
@@ -6613,13 +6639,23 @@ function mapProject(r) {
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
+function mapFacility(r) {
+  return r && {
+    id: r.id, name: r.name, description: r.description, status: r.status,
+    location: r.location,
+    budgetAllocation: r.budget_allocation === null ? 0 : parseFloat(r.budget_allocation),
+    createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
 function mapPurchaseRequest(r) {
   if (!r) return r;
   return {
     id: r.id, prNumber: r.pr_number, employeeId: r.employee_id, employeeName: r.employee_name,
-    // project_name is the joined projects.name; on a create RETURNING (no join) it's absent, so fall
-    // back to project_label — keeps the Trading label consistent on the create response too.
+    // project_name is the joined projects.name (or facilities.name); on a create RETURNING (no join)
+    // it's absent, so fall back to project_label — keeps the Trading label consistent on create too.
     projectId: r.project_id, projectName: r.project_name ?? r.project_label ?? null, projectLabel: r.project_label ?? null,
+    // Internal-facility charge (mutually exclusive with projectId). facilityName comes from the join.
+    facilityId: r.facility_id ?? null, facilityName: r.facility_name ?? null,
     neededBy: r.needed_by, supplier: r.supplier, notes: r.notes,
     items: Array.isArray(r.items) ? r.items : (r.items || []),
     total: r.total === null ? 0 : parseFloat(r.total),
@@ -6884,6 +6920,67 @@ app.delete('/api/projects/:id', requireRole(['owner','admin','accounting']), asy
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ====================== FACILITIES ======================
+// Internal company facilities (equipment/items used internally, not client projects). Mirrors
+// PROJECTS: reads open to any authenticated user (the PR "For" picker needs them); writes are
+// owner/admin/accounting. A facility just carries a budget target; spend is derived client-side
+// from the purchase requests charged to it (same as Project Budgets).
+app.get('/api/facilities', async (req, res) => {
+  try {
+    const { search, status } = req.query;
+    const where = ['1=1']; const params = []; let i = 1;
+    if (search) { where.push(`LOWER(name) LIKE $${i++}`); params.push(`%${String(search).toLowerCase()}%`); }
+    if (status) { where.push(`status = $${i++}`); params.push(status); }
+    const r = await query(`SELECT * FROM facilities WHERE ${where.join(' AND ')} ORDER BY name ASC`, params);
+    res.json(r.rows.map(mapFacility));
+  } catch (err) { console.error('facilities list error:', err); res.status(500).json({ error: err.message }); }
+});
+app.get('/api/facilities/:id', async (req, res) => {
+  try {
+    const r = await query('SELECT * FROM facilities WHERE id = $1', [req.params.id]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Facility not found' });
+    res.json(mapFacility(r.rows[0]));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.post('/api/facilities', requireRole(['owner','admin','accounting']), async (req, res) => {
+  try {
+    const b = req.body;
+    if (!b.name || !String(b.name).trim()) return res.status(400).json({ error: 'Facility name is required' });
+    const id = newId('FAC');
+    const r = await query(
+      `INSERT INTO facilities (id,name,description,status,location,budget_allocation)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [id, b.name, orNull(b.description), orNull(b.status) || 'Active', orNull(b.location), Number(b.budgetAllocation) || 0]
+    );
+    res.status(201).json(mapFacility(r.rows[0]));
+  } catch (err) { console.error('facility create error:', err); res.status(500).json({ error: err.message }); }
+});
+app.patch('/api/facilities/:id', requireRole(['owner','admin','accounting']), async (req, res) => {
+  try {
+    const b = req.body;
+    const cols = { name:b.name, description:b.description, status:b.status, location:b.location, budget_allocation:b.budgetAllocation };
+    const sets = []; const params = []; let i = 1;
+    for (const [k, v] of Object.entries(cols)) {
+      if (v === undefined) continue;
+      sets.push(`${k} = $${i++}`);
+      if (k === 'budget_allocation') params.push(Number(v) || 0);
+      else params.push(orNull(v));
+    }
+    if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
+    sets.push('updated_at = NOW()'); params.push(req.params.id);
+    const r = await query(`UPDATE facilities SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`, params);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Facility not found' });
+    res.json(mapFacility(r.rows[0]));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.delete('/api/facilities/:id', requireRole(['owner','admin','accounting']), async (req, res) => {
+  try {
+    const r = await query('DELETE FROM facilities WHERE id = $1', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Facility not found' });
+    res.json({ message: 'Facility deleted', id: req.params.id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ====================== PURCHASE REQUESTS ======================
 // Employees file/read their own; admins list all + review. Inventory withdrawal below.
 app.post('/api/purchase-requests', requireAuth, async (req, res) => {
@@ -6916,9 +7013,9 @@ app.post('/api/purchase-requests', requireAuth, async (req, res) => {
 
     const id = newId('PR');
     const r = await query(
-      `INSERT INTO purchase_requests (id, pr_number, employee_id, employee_name, project_id, project_label, needed_by, supplier, notes, items, total, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,'pending') RETURNING *`,
-      [id, prNumber, employeeId, employeeName, orNull(b.projectId), orNull(b.projectLabel), orNull(b.neededBy), orNull(b.supplier), orNull(b.notes), JSON.stringify(items), total]
+      `INSERT INTO purchase_requests (id, pr_number, employee_id, employee_name, project_id, facility_id, project_label, needed_by, supplier, notes, items, total, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,'pending') RETURNING *`,
+      [id, prNumber, employeeId, employeeName, orNull(b.projectId), orNull(b.facilityId), orNull(b.projectLabel), orNull(b.neededBy), orNull(b.supplier), orNull(b.notes), JSON.stringify(items), total]
     );
     res.status(201).json(mapPurchaseRequest(r.rows[0]));
   } catch (err) { sendDbError(res, err, 'purchase-request create'); }
@@ -6926,8 +7023,9 @@ app.post('/api/purchase-requests', requireAuth, async (req, res) => {
 app.get('/api/purchase-requests/mine', requireAuth, async (req, res) => {
   try {
     const r = await query(
-      `SELECT pr.*, COALESCE(p.name, pr.project_label) AS project_name FROM purchase_requests pr
+      `SELECT pr.*, COALESCE(p.name, f.name, pr.project_label) AS project_name, f.name AS facility_name FROM purchase_requests pr
        LEFT JOIN projects p ON p.id = pr.project_id
+       LEFT JOIN facilities f ON f.id = pr.facility_id
        WHERE pr.employee_id = $1 ORDER BY pr.created_at DESC, pr.pr_number DESC`,
       [req.user?.id ?? null]
     );
@@ -6946,8 +7044,9 @@ app.get('/api/purchase-requests', requireRole(['admin', 'purchasing', 'accountin
     if (effectiveRole(req.user) === 'purchasing') where.push(`pr.status <> 'pending'`);
     const pg = pageClause(req, params.length + 1);
     const r = await query(
-      `SELECT pr.*, COALESCE(p.name, pr.project_label) AS project_name FROM purchase_requests pr
+      `SELECT pr.*, COALESCE(p.name, f.name, pr.project_label) AS project_name, f.name AS facility_name FROM purchase_requests pr
        LEFT JOIN projects p ON p.id = pr.project_id
+       LEFT JOIN facilities f ON f.id = pr.facility_id
        -- created_at is a real TIMESTAMPTZ so this is already newest-first; pr_number is a
        -- deterministic tiebreaker for the theoretical same-instant case, giving a total order.
        WHERE ${where.join(' AND ')} ORDER BY pr.created_at DESC, pr.pr_number DESC${pg.sql}`,
@@ -6999,10 +7098,10 @@ app.patch('/api/purchase-requests/:id', requireRole(['admin']), async (req, res)
     const r = await query(
       `UPDATE purchase_requests
           SET items = $1::jsonb, total = $2, needed_by = $3, project_id = $4, notes = $5,
-              project_label = COALESCE($6, project_label),
+              project_label = COALESCE($6, project_label), facility_id = $7,
               status = 'pending', updated_at = NOW()
-        WHERE id = $7 RETURNING *`,
-      [JSON.stringify(items), total, orNull(b.neededBy), orNull(b.projectId), orNull(b.notes), orNull(b.projectLabel), req.params.id]
+        WHERE id = $8 RETURNING *`,
+      [JSON.stringify(items), total, orNull(b.neededBy), orNull(b.projectId), orNull(b.notes), orNull(b.projectLabel), orNull(b.facilityId), req.params.id]
     );
     res.json(mapPurchaseRequest(r.rows[0]));
   } catch (err) { console.error('purchase-request edit error:', err); res.status(500).json({ error: err.message }); }

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ClipboardList, PenTool, Menu, X, Search, Clock, Calendar, CheckCircle2,
   XCircle, Printer, LogOut, Upload, Eraser, Eye, Briefcase, Plus, Trash2, Pencil,
-  PanelLeftClose, PanelLeftOpen, FileText, PackageMinus, CalendarCheck, Calculator,
+  PanelLeftClose, PanelLeftOpen, FileText, PackageMinus, CalendarCheck, Calculator, Building2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -33,7 +33,7 @@ import { PayrollReview } from '../components/crm/PayrollReview';
 // ============================================================================
 
 type PRStatus = 'pending' | 'reviewed' | 'verified' | 'ordered' | 'approved' | 'disapproved';
-type PortalView = 'new-pr' | 'requests' | 'orders' | 'projects' | 'withdrawals' | 'timesheet' | 'payroll' | 'signature';
+type PortalView = 'new-pr' | 'requests' | 'orders' | 'projects' | 'facilities' | 'withdrawals' | 'timesheet' | 'payroll' | 'signature';
 
 // Section C — #12: Accounting is also the FIRST gate of the purchase-ORDER flow. Purchasing
 // raises an order ('pending'); Accounting reviews it here (→ 'accounting-approved', passing it
@@ -51,6 +51,7 @@ interface PurchaseOrder {
 interface PRItem { no?: number; description: string; quantity: number; unit: string; unitCost: number; amount: number; }
 interface PurchaseRequest {
   id: string; prNumber: string; employeeName?: string; projectName?: string | null;
+  projectId?: string | null; facilityId?: string | null; facilityName?: string | null; finalTotal?: number | null;
   neededBy?: string; supplier?: string; notes?: string; items: PRItem[]; total: number;
   status: PRStatus; checkedBy?: string | null; checkedAt?: string | null; checkedSignature?: string | null;
   // The admin's approval of the request — the printed "Approved By" block. Distinct from
@@ -63,6 +64,15 @@ interface Project {
   location?: string; startDate?: string; endDate?: string; budgetAllocation?: number;
   contractPrice?: number | null; netProfitPercent?: number | null;
 }
+// Internal company facility (equipment/items used internally, not a client project). Simpler than a
+// Project — just a budget target; spend is tracked from the purchase requests charged to it.
+interface Facility {
+  id: string; name: string; description?: string; status?: string;
+  location?: string; budgetAllocation?: number;
+}
+const FACILITY_STATUSES = ['Active', 'On Hold', 'Completed'];
+// Which PR statuses count as committed spend (mirrors ProjectBudgetChart).
+const SPEND_STATUSES = new Set<PRStatus>(['approved', 'ordered']);
 interface Session { id: number; full_name: string; email: string; phone?: string; }
 
 const TOKEN_KEY = 'accounting_token';
@@ -575,6 +585,79 @@ function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; 
 }
 
 // ============================================================================
+// Facility modal — internal company facility (mirrors ProjectModal, minus the
+// contract-price / net-profit link; a facility just has a budget target).
+// ============================================================================
+function FacilityModal({ initial, onClose, onSaved }: { initial: Facility | null; onClose: () => void; onSaved: () => void }) {
+  const [f, setF] = useState({
+    name: initial?.name || '', description: initial?.description || '', status: initial?.status || 'Active',
+    location: initial?.location || '',
+    budgetAllocation: initial?.budgetAllocation != null ? String(initial.budgetAllocation) : '',
+  });
+  const [saving, setSaving] = useState(false);
+  const set = (k: string, v: string) => setF(p => ({ ...p, [k]: v }));
+
+  const save = async () => {
+    if (!f.name.trim()) { toast.error('Facility name is required'); return; }
+    setSaving(true);
+    try {
+      const body = {
+        name: f.name.trim(), description: f.description.trim() || null, status: f.status,
+        location: f.location.trim() || null,
+        budgetAllocation: f.budgetAllocation === '' ? 0 : Number(f.budgetAllocation),
+      };
+      if (initial) await aFetch(`/facilities/${initial.id}`, { method: 'PATCH', body: JSON.stringify(body) });
+      else await aFetch('/facilities', { method: 'POST', body: JSON.stringify(body) });
+      toast.success(initial ? 'Facility updated' : 'Facility created');
+      onSaved();
+    } catch (e: any) { toast.error((initial ? 'Update' : 'Create') + ' failed: ' + e.message); } finally { setSaving(false); }
+  };
+
+  const input = 'w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500';
+  const flabel = 'block text-sm font-medium text-gray-700 mb-1';
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+          <h3 className="font-bold text-gray-900">{initial ? 'Edit Facility' : 'New Facility'}</h3>
+          <button onClick={onClose} className="p-1 rounded-md text-gray-400 hover:bg-gray-100"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 overflow-y-auto space-y-4">
+          <div>
+            <label className={flabel}>Facility Name <span className="text-red-500">*</span></label>
+            <input value={f.name} onChange={e => set('name', e.target.value)} className={input} />
+          </div>
+          <div>
+            <label className={flabel}>Description</label>
+            <textarea value={f.description} onChange={e => set('description', e.target.value)} rows={2} className={`${input} resize-none`} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={flabel}>Budget Allocation (₱)</label>
+              <input type="number" min="0" step="0.01" value={f.budgetAllocation} onChange={e => set('budgetAllocation', e.target.value)} placeholder="0.00" className={input} />
+            </div>
+            <div>
+              <label className={flabel}>Status</label>
+              <select value={f.status} onChange={e => set('status', e.target.value)} className={`${input} bg-white`}>
+                {FACILITY_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className={flabel}>Location</label>
+              <input value={f.location} onChange={e => set('location', e.target.value)} className={input} />
+            </div>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 px-5 py-4 border-t border-gray-200">
+          <button onClick={onClose} className="px-4 py-2 text-sm font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">Cancel</button>
+          <button onClick={save} disabled={saving} className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">{saving ? 'Saving…' : (initial ? 'Save' : 'Create')}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
 // Portal shell
 // ============================================================================
 function Portal({ session, onSignOut }: { session: Session; onSignOut: () => void }) {
@@ -584,6 +667,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const [requests, setRequests] = useState<PurchaseRequest[]>([]);
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [facilities, setFacilities] = useState<Facility[]>([]);
   const [signature, setSignature] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<'all' | PRStatus>('all');
@@ -592,15 +676,18 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const [viewing, setViewing] = useState<PurchaseRequest | null>(null);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [showProjectModal, setShowProjectModal] = useState(false);
+  const [editingFacility, setEditingFacility] = useState<Facility | null>(null);
+  const [showFacilityModal, setShowFacilityModal] = useState(false);
 
   // silent: background poll — no spinner, no toast on a blip (see useLiveRefresh).
   const loadAll = async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!silent) setLoading(true);
     try {
-      const [prs, pos, prj, sig] = await Promise.all([
+      const [prs, pos, prj, fac, sig] = await Promise.all([
         aFetch<PurchaseRequest[]>('/purchase-requests'),
         aFetch<PurchaseOrder[]>('/purchase-orders').catch(() => [] as PurchaseOrder[]),
         aFetch<Project[]>('/projects'),
+        aFetch<Facility[]>('/facilities').catch(() => [] as Facility[]),
         aFetch<{ signature: string | null }>('/accounting/signature').catch(() => ({ signature: null })),
       ]);
       setRequests(prs || []);
@@ -608,14 +695,15 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
       // order_type — accounting reviews purchases, not sales).
       setOrders((pos || []).filter(o => (o as any).orderType !== 'sales'));
       setProjects(prj || []);
+      setFacilities(fac || []);
       setSignature(sig?.signature || null);
     } catch (e: any) {
       if (!silent) toast.error(e.message || 'Failed to load data');
     } finally { if (!silent) setLoading(false); }
   };
   useEffect(() => { loadAll(); }, []);
-  // Paused while a review is in flight or a project modal is open.
-  useLiveRefresh(() => loadAll({ silent: true }), { enabled: !busyId && !showProjectModal && !editingProject });
+  // Paused while a review is in flight or a project/facility modal is open.
+  useLiveRefresh(() => loadAll({ silent: true }), { enabled: !busyId && !showProjectModal && !editingProject && !showFacilityModal && !editingFacility });
 
   const review = async (pr: PurchaseRequest) => {
     if (!(await confirmDialog({ title: `Confirm you have reviewed ${pr.prNumber}?`, message: 'Your e-signature is attached and it moves to Purchasing to raise a purchase order.', confirmLabel: 'Confirm review' }))) return;
@@ -665,6 +753,25 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     catch (e: any) { setProjects(prev); toast.error('Delete failed: ' + e.message); }
   };
 
+  const deleteFacility = async (f: Facility) => {
+    if (!(await confirmDialog({ title: `Delete facility "${f.name}"?`, message: 'Purchase requests that referenced it will show as "Personal use".', confirmLabel: 'Delete', tone: 'danger' }))) return;
+    const prev = facilities; setFacilities(facilities.filter(x => x.id !== f.id));
+    try { await aFetch(`/facilities/${f.id}`, { method: 'DELETE' }); toast.success('Facility deleted'); }
+    catch (e: any) { setFacilities(prev); toast.error('Delete failed: ' + e.message); }
+  };
+
+  // Committed spend per facility = Σ of approved/ordered PRs charged to it (finalTotal when priced,
+  // else the estimate) — the same rule ProjectBudgetChart uses for project spend.
+  const spentByFacility = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const pr of requests) {
+      if (!pr.facilityId || !SPEND_STATUSES.has(pr.status)) continue;
+      const cost = (pr.finalTotal != null ? pr.finalTotal : pr.total) || 0;
+      m.set(pr.facilityId, (m.get(pr.facilityId) || 0) + Number(cost));
+    }
+    return m;
+  }, [requests]);
+
   const filtered = useMemo(() => requests.filter(r => {
     if (statusFilter !== 'all' && r.status !== statusFilter) return false;
     const q = search.toLowerCase();
@@ -679,6 +786,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     { id: 'requests', label: 'Purchase Requests', icon: ClipboardList },
     { id: 'orders', label: 'Purchase Orders', icon: FileText },
     { id: 'projects', label: 'Project Allocation', icon: Briefcase },
+    { id: 'facilities', label: 'Facilities', icon: Building2 },
     { id: 'withdrawals', label: 'Withdrawals Request', icon: PackageMinus },
     { id: 'timesheet', label: 'Attendance Sheet', icon: CalendarCheck },
     { id: 'payroll', label: 'Payroll', icon: Calculator },
@@ -797,6 +905,62 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                               </td>
                             </tr>
                           ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+            </div>
+          )}
+
+          {view === 'facilities' && (
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-semibold text-gray-900">Facilities</h2>
+                  <p className="text-sm text-gray-500">Internal company facilities (equipment/items used internally, not client projects). Budget vs spend from purchase requests charged to each — they appear in the "For (Project)" picker under Facilities.</p>
+                </div>
+                <button onClick={() => { setEditingFacility(null); setShowFacilityModal(true); }} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Plus className="w-4 h-4" /> New Facility</button>
+              </div>
+              {loading ? <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading…</div>
+                : facilities.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-48 text-gray-400"><Building2 className="w-10 h-10 mb-3 text-gray-300" /><p className="font-medium text-gray-500">No facilities yet</p></div>
+                ) : (
+                  <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-700 uppercase tracking-wide">
+                            <th className="px-4 py-3">Facility</th>
+                            <th className="px-4 py-3">Status</th>
+                            <th className="px-4 py-3 text-right">Budget</th>
+                            <th className="px-4 py-3 text-right">Spent</th>
+                            <th className="px-4 py-3 text-right">Remaining</th>
+                            <th className="px-4 py-3 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {facilities.map(f => {
+                            const budget = Number(f.budgetAllocation) || 0;
+                            const spent = spentByFacility.get(f.id) || 0;
+                            const remaining = budget - spent;
+                            return (
+                              <tr key={f.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                                <td className="px-4 py-3">
+                                  <div className="font-medium text-gray-900">{f.name}</div>
+                                  {f.location && <div className="text-xs text-gray-400">{f.location}</div>}
+                                </td>
+                                <td className="px-4 py-3"><span className="text-xs font-medium px-2.5 py-1 rounded-full border bg-gray-50 text-gray-700 border-gray-200">{f.status || 'Active'}</span></td>
+                                <td className="px-4 py-3 text-right font-semibold text-gray-900">{peso(budget)}</td>
+                                <td className="px-4 py-3 text-right text-gray-700">{peso(spent)}</td>
+                                <td className={`px-4 py-3 text-right font-semibold ${remaining < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{peso(remaining)}</td>
+                                <td className="px-4 py-3 text-right whitespace-nowrap">
+                                  <button onClick={() => { setEditingFacility(f); setShowFacilityModal(true); }} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Pencil className="w-3.5 h-3.5" /> Edit</button>
+                                  <button onClick={() => deleteFacility(f)} className="ml-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Trash2 className="w-3.5 h-3.5" /> Delete</button>
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -941,6 +1105,9 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
       )}
       {showProjectModal && (
         <ProjectModal initial={editingProject} onClose={() => setShowProjectModal(false)} onSaved={() => { setShowProjectModal(false); loadAll(); }} />
+      )}
+      {showFacilityModal && (
+        <FacilityModal initial={editingFacility} onClose={() => setShowFacilityModal(false)} onSaved={() => { setShowFacilityModal(false); loadAll(); }} />
       )}
     </div>
   );

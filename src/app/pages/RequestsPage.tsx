@@ -72,6 +72,7 @@ interface WithdrawalRequest {
 }
 interface InventoryItem { id: string; itemCode: string; itemName: string; quantity: number; unit: string; location?: string; }
 interface Project { id: string; name: string; status?: string; }
+interface Facility { id: string; name: string; status?: string; }
 interface Session { id: number; full_name: string; email: string; department?: string; position?: string; }
 
 const UNITS = ['pcs', 'bags', 'kg', 'liters', 'meters', 'boxes', 'sets', 'Lot', 'units'];
@@ -670,6 +671,7 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
   const [requests, setRequests] = useState<PurchaseRequest[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [facilities, setFacilities] = useState<Facility[]>([]);
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
   const [itemRequests, setItemRequests] = useState<ItemRequest[]>([]);
   const [signature, setSignature] = useState<string | null>(null);
@@ -698,9 +700,10 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
   const loadAll = async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!silent) setLoading(true);
     try {
-      const [inv, prj, mine, wds, irs, sig] = await Promise.all([
+      const [inv, prj, fac, mine, wds, irs, sig] = await Promise.all([
         empFetch<InventoryItem[]>('/inventory'),
         empFetch<Project[]>('/projects'),
+        empFetch<Facility[]>('/facilities').catch(() => [] as Facility[]),
         empFetch<PurchaseRequest[]>('/purchase-requests/mine'),
         empFetch<WithdrawalRequest[]>('/inventory-withdrawals/mine').catch(() => []),
         empFetch<ItemRequest[]>('/item-requests/mine').catch(() => []),
@@ -708,6 +711,7 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
       ]);
       setInventory(inv || []);
       setProjects(prj || []);
+      setFacilities(fac || []);
       setRequests(mine || []);
       setWithdrawals(wds || []);
       setItemRequests(irs || []);
@@ -770,10 +774,12 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
     if (unknown) { toast.error(`"${unknown.description}" is not in inventory — pick an item from the list`); return; }
     setSubmitting(true);
     try {
+      const pickedFacility = facilities.some((f) => f.id === projectId);
       await empFetch('/purchase-requests', {
         method: 'POST',
         body: JSON.stringify({
-          projectId: projectId === PERSONAL_USE ? null : projectId,
+          projectId: (projectId === PERSONAL_USE || pickedFacility) ? null : projectId,
+          facilityId: pickedFacility ? projectId : null,
           neededBy,
           // inventoryId travels with the line all the way to receipt: when the resulting
           // purchase order is delivered, that id is what puts the stock back on the right row.
@@ -905,8 +911,19 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
                       <select value={projectId} onChange={(e) => setProjectId(e.target.value)}
                         className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                         <option value="" disabled>Select…</option>
-                        <option value={PERSONAL_USE}>Personal use</option>
-                        {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        {projects.length > 0 && (
+                          <optgroup label="Projects">
+                            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                          </optgroup>
+                        )}
+                        {facilities.length > 0 && (
+                          <optgroup label="Facilities">
+                            {facilities.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                          </optgroup>
+                        )}
+                        <optgroup label="Other">
+                          <option value={PERSONAL_USE}>Personal use</option>
+                        </optgroup>
                       </select>
                     </div>
                     <div>

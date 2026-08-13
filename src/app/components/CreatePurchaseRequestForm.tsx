@@ -22,6 +22,7 @@ type FetchApi = <T = any>(path: string, options?: RequestInit) => Promise<T>;
 interface FormLine { id: string; no: number; kind?: 'labor'; description: string; laborNote?: string; inventoryId: string | null; quantity: string; unit: string; unitCost: string; amount: number; }
 interface InventoryItem { id: string; itemCode: string; itemName: string; quantity: number; unit: string; location?: string; }
 interface Project { id: string; name: string; status?: string; }
+interface Facility { id: string; name: string; status?: string; }
 interface ItemRequest { id: string; requestNumber?: string | null; itemName: string; status: string; }
 
 const UNITS = ['pcs', 'bags', 'kg', 'liters', 'meters', 'boxes', 'sets', 'Lot', 'units'];
@@ -217,6 +218,9 @@ export function CreatePurchaseRequestForm({ fetchApi, session, onSubmitted, allo
 }) {
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [facilities, setFacilities] = useState<Facility[]>([]);
+  // Holds the picked "For" value: a project id, a facility id, or the PERSONAL_USE / TRADING
+  // sentinel. On submit it is routed to projectId vs facilityId by membership (ids are distinct).
   const [projectId, setProjectId] = useState<string>('');
   const [neededBy, setNeededBy] = useState('');
   const [lineItems, setLineItems] = useState<FormLine[]>([emptyLine(1)]);
@@ -225,12 +229,14 @@ export function CreatePurchaseRequestForm({ fetchApi, session, onSubmitted, allo
 
   const loadRefs = async () => {
     try {
-      const [inv, prj] = await Promise.all([
+      const [inv, prj, fac] = await Promise.all([
         fetchApi<InventoryItem[]>('/inventory'),
         fetchApi<Project[]>('/projects').catch(() => [] as Project[]),
+        fetchApi<Facility[]>('/facilities').catch(() => [] as Facility[]),
       ]);
       setInventory(inv || []);
       setProjects(prj || []);
+      setFacilities(fac || []);
     } catch (e: any) {
       toast.error(e.message || 'Failed to load items and projects');
     }
@@ -277,10 +283,13 @@ export function CreatePurchaseRequestForm({ fetchApi, session, onSubmitted, allo
     if (unknown) { toast.error(`"${unknown.description}" is not in inventory — pick an item from the list`); return; }
     setSubmitting(true);
     try {
+      const pickedFacility = facilities.some((f) => f.id === projectId);
       await fetchApi('/purchase-requests', {
         method: 'POST',
         body: JSON.stringify({
-          projectId: (projectId === PERSONAL_USE || projectId === TRADING) ? null : projectId,
+          // A real project id → projectId; a facility id → facilityId; sentinels → neither.
+          projectId: (projectId === PERSONAL_USE || projectId === TRADING || pickedFacility) ? null : projectId,
+          facilityId: pickedFacility ? projectId : null,
           projectLabel: projectId === TRADING ? 'Trading' : null,
           neededBy,
           items: valid.map((li, i) => li.kind === 'labor'
@@ -321,9 +330,20 @@ export function CreatePurchaseRequestForm({ fetchApi, session, onSubmitted, allo
               <select value={projectId} onChange={(e) => setProjectId(e.target.value)}
                 className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                 <option value="" disabled>Select…</option>
-                <option value={PERSONAL_USE}>Personal use</option>
-                {allowTrading && <option value={TRADING}>Trading</option>}
-                {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                {projects.length > 0 && (
+                  <optgroup label="Projects">
+                    {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </optgroup>
+                )}
+                {facilities.length > 0 && (
+                  <optgroup label="Facilities">
+                    {facilities.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                  </optgroup>
+                )}
+                <optgroup label="Other">
+                  {allowTrading && <option value={TRADING}>Trading</option>}
+                  <option value={PERSONAL_USE}>Personal use</option>
+                </optgroup>
               </select>
             </div>
             <div>
