@@ -70,7 +70,6 @@ interface Facility {
   id: string; name: string; description?: string; status?: string;
   location?: string; budgetAllocation?: number;
 }
-const FACILITY_STATUSES = ['Active', 'On Hold', 'Completed'];
 // Which PR statuses count as committed spend (mirrors ProjectBudgetChart).
 const SPEND_STATUSES = new Set<PRStatus>(['approved', 'ordered']);
 interface Session { id: number; full_name: string; email: string; phone?: string; }
@@ -585,14 +584,13 @@ function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; 
 }
 
 // ============================================================================
-// Facility modal — internal company facility (mirrors ProjectModal, minus the
-// contract-price / net-profit link; a facility just has a budget target).
+// Facility modal — a facility is just a named category (optional description) that PRs can be
+// tagged to. Budget/status/location columns still exist in the DB (so existing rows load) but are
+// no longer shown or required here.
 // ============================================================================
 function FacilityModal({ initial, onClose, onSaved }: { initial: Facility | null; onClose: () => void; onSaved: () => void }) {
   const [f, setF] = useState({
-    name: initial?.name || '', description: initial?.description || '', status: initial?.status || 'Active',
-    location: initial?.location || '',
-    budgetAllocation: initial?.budgetAllocation != null ? String(initial.budgetAllocation) : '',
+    name: initial?.name || '', description: initial?.description || '',
   });
   const [saving, setSaving] = useState(false);
   const set = (k: string, v: string) => setF(p => ({ ...p, [k]: v }));
@@ -601,11 +599,9 @@ function FacilityModal({ initial, onClose, onSaved }: { initial: Facility | null
     if (!f.name.trim()) { toast.error('Facility name is required'); return; }
     setSaving(true);
     try {
-      const body = {
-        name: f.name.trim(), description: f.description.trim() || null, status: f.status,
-        location: f.location.trim() || null,
-        budgetAllocation: f.budgetAllocation === '' ? 0 : Number(f.budgetAllocation),
-      };
+      // Only name + description are sent. On create the server applies its column defaults
+      // (status 'Active', budget 0); on edit, omitted fields are left untouched.
+      const body = { name: f.name.trim(), description: f.description.trim() || null };
       if (initial) await aFetch(`/facilities/${initial.id}`, { method: 'PATCH', body: JSON.stringify(body) });
       else await aFetch('/facilities', { method: 'POST', body: JSON.stringify(body) });
       toast.success(initial ? 'Facility updated' : 'Facility created');
@@ -629,23 +625,7 @@ function FacilityModal({ initial, onClose, onSaved }: { initial: Facility | null
           </div>
           <div>
             <label className={flabel}>Description</label>
-            <textarea value={f.description} onChange={e => set('description', e.target.value)} rows={2} className={`${input} resize-none`} />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className={flabel}>Budget Allocation (₱)</label>
-              <input type="number" min="0" step="0.01" value={f.budgetAllocation} onChange={e => set('budgetAllocation', e.target.value)} placeholder="0.00" className={input} />
-            </div>
-            <div>
-              <label className={flabel}>Status</label>
-              <select value={f.status} onChange={e => set('status', e.target.value)} className={`${input} bg-white`}>
-                {FACILITY_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
-            <div className="col-span-2">
-              <label className={flabel}>Location</label>
-              <input value={f.location} onChange={e => set('location', e.target.value)} className={input} />
-            </div>
+            <textarea value={f.description} onChange={e => set('description', e.target.value)} rows={3} className={`${input} resize-none`} placeholder="Optional — what this facility category is for" />
           </div>
         </div>
         <div className="flex justify-end gap-2 px-5 py-4 border-t border-gray-200">
@@ -918,7 +898,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h2 className="font-semibold text-gray-900">Facilities</h2>
-                  <p className="text-sm text-gray-500">Internal company facilities (equipment/items used internally, not client projects). Budget vs spend from purchase requests charged to each — they appear in the "For (Project)" picker under Facilities.</p>
+                  <p className="text-sm text-gray-500">Internal company facilities (equipment/items used internally, not client projects). A facility is a named category that purchase requests can be tagged to — they appear in the "For (Project)" picker under Facilities. Spent is the total of purchase requests charged to each.</p>
                 </div>
                 <button onClick={() => { setEditingFacility(null); setShowFacilityModal(true); }} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Plus className="w-4 h-4" /> New Facility</button>
               </div>
@@ -932,28 +912,21 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                         <thead>
                           <tr className="border-b border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-700 uppercase tracking-wide">
                             <th className="px-4 py-3">Facility</th>
-                            <th className="px-4 py-3">Status</th>
-                            <th className="px-4 py-3 text-right">Budget</th>
+                            <th className="px-4 py-3">Description</th>
                             <th className="px-4 py-3 text-right">Spent</th>
-                            <th className="px-4 py-3 text-right">Remaining</th>
                             <th className="px-4 py-3 text-right">Actions</th>
                           </tr>
                         </thead>
                         <tbody>
                           {facilities.map(f => {
-                            const budget = Number(f.budgetAllocation) || 0;
                             const spent = spentByFacility.get(f.id) || 0;
-                            const remaining = budget - spent;
                             return (
                               <tr key={f.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
                                 <td className="px-4 py-3">
                                   <div className="font-medium text-gray-900">{f.name}</div>
-                                  {f.location && <div className="text-xs text-gray-400">{f.location}</div>}
                                 </td>
-                                <td className="px-4 py-3"><span className="text-xs font-medium px-2.5 py-1 rounded-full border bg-gray-50 text-gray-700 border-gray-200">{f.status || 'Active'}</span></td>
-                                <td className="px-4 py-3 text-right font-semibold text-gray-900">{peso(budget)}</td>
-                                <td className="px-4 py-3 text-right text-gray-700">{peso(spent)}</td>
-                                <td className={`px-4 py-3 text-right font-semibold ${remaining < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{peso(remaining)}</td>
+                                <td className="px-4 py-3 text-gray-500 max-w-md">{f.description || '—'}</td>
+                                <td className="px-4 py-3 text-right font-semibold text-gray-900">{peso(spent)}</td>
                                 <td className="px-4 py-3 text-right whitespace-nowrap">
                                   <button onClick={() => { setEditingFacility(f); setShowFacilityModal(true); }} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Pencil className="w-3.5 h-3.5" /> Edit</button>
                                   <button onClick={() => deleteFacility(f)} className="ml-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Trash2 className="w-3.5 h-3.5" /> Delete</button>
