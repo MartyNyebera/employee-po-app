@@ -11,14 +11,23 @@ import { SummaryStats } from '../SummaryStats';
 // Production requests stock from the /production portal — either ad-hoc from inventory, or as
 // the lines of an approved purchase request. Stock is deducted ONLY here, on approval: the
 // backend does it in a transaction that locks the row and re-checks against fresh stock.
+interface WithdrawalLine { inventoryId?: string | null; itemName?: string | null; quantity: number; unit?: string | null }
 interface WithdrawalRequest {
   id: string; withdrawalNumber?: string | null; inventoryId?: string; itemName?: string;
-  quantity: number; unit?: string | null; reason?: string;
+  quantity: number; unit?: string | null; items?: WithdrawalLine[] | null; reason?: string;
   requestedByName?: string; status: 'pending' | 'warehouse-approved' | 'approved' | 'rejected';
   purchaseRequestId?: string | null; prNumber?: string | null;
   warehouseBy?: string | null; warehouseAt?: string | null;
   reviewedBy?: string; reviewedAt?: string; deductedAt?: string; createdAt?: string;
 }
+
+// Human summary of a withdrawal's items for confirm/toast messages: "3 items" for a batch,
+// "5 kg of Cement" for a single line (legacy rows fall back to the single columns).
+const wSummary = (w: WithdrawalRequest): string => {
+  const items = (w.items && w.items.length) ? w.items : [{ itemName: w.itemName, quantity: w.quantity, unit: w.unit }];
+  if (items.length === 1) { const i = items[0]; return `${i.quantity} ${i.unit || ''} of ${i.itemName}`.replace(/\s+/g, ' ').trim(); }
+  return `${items.length} items`;
+};
 
 // Brand-gold text, no pill — the house status style (see crm/PurchaseRequestsReview).
 // 'warehouse-approved' would render as "Warehouse-approved"; say what it means instead.
@@ -64,14 +73,14 @@ export function WithdrawalRequestsReview({ isAdmin }: { isAdmin: boolean }) {
 
   const review = async (w: WithdrawalRequest, status: 'approved' | 'rejected') => {
     const ok = status === 'rejected'
-      ? await confirmDialog({ title: `Reject this withdrawal?`, message: `${w.quantity} ${w.unit || ''} of ${w.itemName}. No stock will move.`, confirmLabel: 'Reject', tone: 'danger' })
-      : await confirmDialog({ title: `Approve this withdrawal?`, message: `${w.quantity} ${w.unit || ''} of ${w.itemName} will be deducted from inventory immediately.`, confirmLabel: 'Approve' });
+      ? await confirmDialog({ title: `Reject this withdrawal?`, message: `${wSummary(w)}. No stock will move.`, confirmLabel: 'Reject', tone: 'danger' })
+      : await confirmDialog({ title: `Approve this withdrawal?`, message: `${wSummary(w)} will be deducted from inventory immediately.`, confirmLabel: 'Approve' });
     if (!ok) return;
     setProcessing(w.id);
     try {
       const updated = await fetchApi<WithdrawalRequest>(`/inventory-withdrawals/${w.id}/review`, { method: 'PUT', body: JSON.stringify({ status }) });
       setRows(prev => prev.map(r => r.id === w.id ? { ...r, ...updated } : r));
-      toast.success(status === 'approved' ? `Approved — ${w.quantity} ${w.unit || ''} of ${w.itemName} deducted` : 'Request rejected');
+      toast.success(status === 'approved' ? `Approved — ${wSummary(w)} deducted` : 'Request rejected');
     } catch (e: any) { toast.error('Failed: ' + e.message); } finally { setProcessing(''); }
   };
 
@@ -83,7 +92,7 @@ export function WithdrawalRequestsReview({ isAdmin }: { isAdmin: boolean }) {
 
   // #3 — admin hard delete. The server refuses if a delivery was created from this withdrawal.
   const removeWithdrawal = async (w: WithdrawalRequest) => {
-    const ok = await confirmDialog({ title: 'Delete this withdrawal request?', message: `${w.withdrawalNumber || ''} — ${w.quantity} ${w.unit || ''} of ${w.itemName}. This permanently removes it.`, confirmLabel: 'Delete', tone: 'danger' });
+    const ok = await confirmDialog({ title: 'Delete this withdrawal request?', message: `${w.withdrawalNumber || ''} — ${wSummary(w)}. This permanently removes it.`, confirmLabel: 'Delete', tone: 'danger' });
     if (!ok) return;
     setProcessing(w.id);
     try {
@@ -143,9 +152,18 @@ export function WithdrawalRequestsReview({ isAdmin }: { isAdmin: boolean }) {
                         request unlocks only once every one of its lines is approved. */}
                     {w.prNumber && <div style={{ fontWeight: 400, fontSize: '11px', color: '#8a8a8a' }}>for {w.prNumber}</div>}
                   </td>
-                  <td style={S.td}>{w.itemName || '—'}</td>
+                  {/* Multi-item batch: list each line; single-item falls back to the single columns. */}
+                  <td style={S.td}>
+                    {(w.items && w.items.length > 1)
+                      ? <ul style={{ margin: 0, paddingLeft: '16px' }}>{w.items.map((it, i) => <li key={i}>{it.itemName}</li>)}</ul>
+                      : (w.itemName || '—')}
+                  </td>
                   <td style={S.td}>{w.requestedByName || '—'}</td>
-                  <td style={{ ...S.td, textAlign: 'right' }}>{w.quantity} {w.unit || ''}</td>
+                  <td style={{ ...S.td, textAlign: 'right' }}>
+                    {(w.items && w.items.length > 1)
+                      ? w.items.map((it, i) => <div key={i}>{it.quantity} {it.unit || ''}</div>)
+                      : <>{w.quantity} {w.unit || ''}</>}
+                  </td>
                   <td style={{ ...S.td, maxWidth: '240px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={w.reason || ''}>{w.reason || '—'}</td>
                   <td style={S.td}>{w.createdAt ? new Date(w.createdAt).toLocaleDateString() : '—'}</td>
                   <td style={S.td}>{statusText(w.status)}</td>

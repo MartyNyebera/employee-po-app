@@ -15,8 +15,17 @@
 
 import { renderPrintDocument } from './printChrome';
 
+export interface WithdrawalLine {
+  itemName?: string | null;
+  quantity: number;
+  unit?: string | null;
+}
+
 export interface PrintableWithdrawal {
   withdrawalNumber?: string | null;
+  // Multi-item batch: the full list of items on this withdrawal. Falls back to the single
+  // itemName/quantity/unit below for legacy single-item rows that have no items array.
+  items?: WithdrawalLine[] | null;
   itemName?: string | null;
   quantity: number;
   unit?: string | null;
@@ -80,6 +89,12 @@ export async function printWithdrawalReceipt(
     { title: 'Approved By', name: approved ? (w0.reviewedBy || '') : '', sig: approved ? sigs.approvedSignature : null, date: approved ? w0.reviewedAt : null },
   ];
 
+  // One receipt lists ALL items in the batch. Legacy single-item rows (no items array) fall back
+  // to the single itemName/quantity/unit so old withdrawals still print exactly as before.
+  const itemLines: WithdrawalLine[] = (Array.isArray(w0.items) && w0.items.length)
+    ? w0.items
+    : [{ itemName: w0.itemName, quantity: w0.quantity, unit: w0.unit }];
+
   const css = `
   /* Header row: reference fields (Ref JO# / Date …) on the left, the WD number in the right
      corner. space-between pins WD No. to the far right; the left items stack one per line. */
@@ -125,13 +140,15 @@ export async function printWithdrawalReceipt(
   </div>
 
   <table class="items">
-    <thead><tr><th>Item</th><th style="width:90px">Quantity</th><th style="width:90px">Unit</th></tr></thead>
+    <thead><tr><th style="width:36px">No</th><th>Item</th><th style="width:90px">Quantity</th><th style="width:90px">Unit</th></tr></thead>
     <tbody>
+      ${itemLines.map((it, i) => `
       <tr>
-        <td>${esc(w0.itemName || '—')}</td>
-        <td style="text-align:center">${esc(w0.quantity)}</td>
-        <td style="text-align:center">${esc(w0.unit || '')}</td>
-      </tr>
+        <td style="text-align:center">${i + 1}</td>
+        <td>${esc(it.itemName || '—')}</td>
+        <td style="text-align:center">${esc(it.quantity)}</td>
+        <td style="text-align:center">${esc(it.unit || '')}</td>
+      </tr>`).join('')}
     </tbody>
   </table>
 

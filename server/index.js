@@ -983,6 +983,13 @@ async function runMigrations() {
       // Optional Job Order # the requester types manually (format JO-MM-DD-seq-YYYY). Free text,
       // nullable — most withdrawals have none; when present it's cited on the printed request/receipt.
       await query(`ALTER TABLE inventory_withdrawal_requests ADD COLUMN IF NOT EXISTS job_order_no TEXT`);
+      // BATCH withdrawals: a request can now cover MANY inventory items in one header + receipt.
+      // `items` is a JSONB array of { inventoryId, itemName, quantity, unit } — mirrors
+      // purchase_requests.items. The legacy single-item columns (inventory_id/item_name/quantity)
+      // are kept and populated from items[0] for back-compat; existing single-item rows have
+      // items='[]' and are read as a synthesized one-line array (see mapWithdrawalRequest). The
+      // approval deduction loops over items when present, else falls back to the single columns.
+      await query(`ALTER TABLE inventory_withdrawal_requests ADD COLUMN IF NOT EXISTS items JSONB NOT NULL DEFAULT '[]'`);
       // A withdrawal can be requested from ANY portal (production/sales/accounting/purchasing/
       // logistics/warehouse/admin), and each portal's accounts live in a DIFFERENT table whose
       // SERIAL ids collide with the others'. So requested_by_id alone can't say which table holds
@@ -6675,6 +6682,14 @@ function mapWithdrawalRequest(r) {
   return {
     id: r.id, withdrawalNumber: r.withdrawal_number ?? null,
     inventoryId: r.inventory_id, itemName: r.item_name,
+    // Multi-item batch: the JSONB `items` array is authoritative. Legacy single-item rows have
+    // items='[]', so synthesize a one-line array from the single columns — every consumer (receipt,
+    // review, list) can then just map `items` regardless of whether the row is old or new.
+    items: (Array.isArray(r.items) && r.items.length)
+      ? r.items
+      : ((r.inventory_id || r.item_name)
+          ? [{ inventoryId: r.inventory_id, itemName: r.item_name, quantity: r.quantity === null ? 0 : parseFloat(r.quantity), unit: r.unit ?? null }]
+          : []),
     quantity: r.quantity === null ? 0 : parseFloat(r.quantity), reason: r.reason,
     requestedById: r.requested_by_id, requestedByName: r.requested_by_name,
     // Set when this withdrawal is one line of a purchase-request fulfilment; null for ad-hoc.
@@ -7360,6 +7375,59 @@ app.post('/api/inventory/:id/withdraw', requireAuth, async (req, res) => {
   } catch (err) { sendDbError(res, err, 'inventory withdraw'); }
 });
 
+// BATCH (multi-item) withdrawal: one request + one receipt covering several inventory items.
+// Body: { items: [{ inventoryId, quantity }], reason?, jobOrderNo? }. Mirrors the single-item
+// endpoint above but stores an `items` JSONB array; the legacy single columns are populated from
+// items[0] for back-compat. Plain withdrawals only (no destination / PR-fulfilment — those keep
+// the single-item :id route). Stock is advisory-checked per line here and authoritatively
+// re-checked (locked) per line at approval.
+app.post('/api/inventory-withdrawals', requireAuth, async (req, res) => {
+  try {
+    const rawItems = Array.isArray(req.body.items) ? req.body.items : [];
+    const lines = [];
+    for (const it of rawItems) {
+      const qty = Number(it && it.quantity);
+      if (!it || !it.inventoryId || !qty || qty <= 0) continue;
+      lines.push({ inventoryId: String(it.inventoryId), quantity: qty });
+    }
+    if (!lines.length) return res.status(400).json({ error: 'At least one item with a positive quantity is required' });
+
+    // Resolve each line to its inventory row (name + unit) and advisory-check stock.
+    const items = [];
+    for (const ln of lines) {
+      const inv = await query('SELECT id, item_name, quantity, unit FROM inventory WHERE id = $1', [ln.inventoryId]);
+      if (!inv.rows[0]) return res.status(404).json({ error: `Inventory item not found: ${ln.inventoryId}` });
+      if (ln.quantity > parseFloat(inv.rows[0].quantity)) {
+        return res.status(400).json({ error: `Cannot withdraw more than available stock for ${inv.rows[0].item_name} (have ${parseFloat(inv.rows[0].quantity)})` });
+      }
+      items.push({ inventoryId: inv.rows[0].id, itemName: inv.rows[0].item_name, quantity: ln.quantity, unit: inv.rows[0].unit || null });
+    }
+
+    const year = new Date().getFullYear();
+    const last = await query(`SELECT withdrawal_number FROM inventory_withdrawal_requests WHERE withdrawal_number LIKE $1 ORDER BY withdrawal_number DESC LIMIT 1`, [`WD-${year}-%`]);
+    let counter = 1;
+    if (last.rows[0]) { const n = parseInt(last.rows[0].withdrawal_number.split('-')[2], 10); if (!isNaN(n)) counter = n + 1; }
+    const withdrawalNumber = `WD-${year}-${String(counter).padStart(4, '0')}`;
+
+    const id = newId('WDR');
+    const first = items[0];
+    try {
+      await query(
+        `INSERT INTO inventory_withdrawal_requests
+           (id, withdrawal_number, inventory_id, item_name, quantity, items, reason, requested_by_id, requested_by_name, requested_by_role, job_order_no, status)
+         VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,'pending')`,
+        [id, withdrawalNumber, first.inventoryId, first.itemName, first.quantity, JSON.stringify(items),
+         orNull(req.body.reason), req.user?.id ?? null, req.user?.name || 'Unknown', effectiveRole(req.user), orNull(req.body.jobOrderNo)]
+      );
+      const r = await query(`${WITHDRAWAL_SELECT} WHERE w.id = $1`, [id]);
+      res.status(201).json(mapWithdrawalRequest(r.rows[0]));
+    } catch (e) {
+      if (e.code === '23505') return res.status(409).json({ error: 'That withdrawal number was just taken — try again' });
+      throw e;
+    }
+  } catch (err) { sendDbError(res, err, 'inventory batch withdraw'); }
+});
+
 // [removed] POST /api/inventory/:id/deduct-fulfill — it deducted stock immediately when an
 // employee "fulfilled" an approved purchase request, on the reasoning that the request had
 // already been approved. But it was requireAuth-only, took no purchase-request id, and had no
@@ -7531,11 +7599,23 @@ app.put('/api/inventory-withdrawals/:id/review', requireRole(['admin', 'warehous
     }
 
     if (status === 'approved') {
-      const qty = parseFloat(wr.rows[0].quantity);
-      const item = await client.query('SELECT quantity, unit FROM inventory WHERE id = $1 FOR UPDATE', [wr.rows[0].inventory_id]);
-      if (!item.rows[0]) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Inventory item no longer exists' }); }
-      if (qty > parseFloat(item.rows[0].quantity)) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Cannot approve — exceeds available stock' }); }
-      await client.query('UPDATE inventory SET quantity = quantity - $1, updated_at = NOW() WHERE id = $2', [qty, wr.rows[0].inventory_id]);
+      // Deduct EACH line. New multi-item rows carry an `items` JSONB array; legacy single-item rows
+      // have items='[]', so fall back to the single inventory_id/quantity. Each line locks its
+      // inventory row and re-checks stock — any short line rolls back the WHOLE approval (the
+      // transaction is all-or-nothing), so a batch never half-releases.
+      const rawItems = Array.isArray(wr.rows[0].items) ? wr.rows[0].items : [];
+      const lines = rawItems.length
+        ? rawItems.map(it => ({ inventoryId: it.inventoryId, quantity: parseFloat(it.quantity) || 0, itemName: it.itemName, unit: it.unit || null }))
+        : [{ inventoryId: wr.rows[0].inventory_id, quantity: parseFloat(wr.rows[0].quantity) || 0, itemName: wr.rows[0].item_name, unit: null }];
+      const deducted = [];
+      for (const ln of lines) {
+        if (!ln.inventoryId || !(ln.quantity > 0)) continue;
+        const item = await client.query('SELECT item_name, quantity, unit FROM inventory WHERE id = $1 FOR UPDATE', [ln.inventoryId]);
+        if (!item.rows[0]) { await client.query('ROLLBACK'); return res.status(400).json({ error: `Inventory item no longer exists: ${ln.itemName || ln.inventoryId}` }); }
+        if (ln.quantity > parseFloat(item.rows[0].quantity)) { await client.query('ROLLBACK'); return res.status(400).json({ error: `Cannot approve — ${item.rows[0].item_name} exceeds available stock` }); }
+        await client.query('UPDATE inventory SET quantity = quantity - $1, updated_at = NOW() WHERE id = $2', [ln.quantity, ln.inventoryId]);
+        deducted.push({ itemName: ln.itemName || item.rows[0].item_name, quantity: ln.quantity, unit: ln.unit || item.rows[0].unit || null });
+      }
       await client.query(
         `UPDATE inventory_withdrawal_requests SET status='approved', reviewed_by=$1, reviewed_by_id=$2, reviewed_at=NOW(), deducted_at=NOW(), updated_at=NOW() WHERE id=$3`,
         [req.user?.name || 'Admin', req.user?.id ?? null, req.params.id]
@@ -7570,7 +7650,9 @@ app.put('/api/inventory-withdrawals/:id/review', requireRole(['admin', 'warehous
         let counter = 1;
         if (last.rows[0]) { const n = parseInt(last.rows[0].delivery_number.split('-')[2], 10); if (!isNaN(n)) counter = n + 1; }
         const deliveryNumber = `DR-${year}-${String(counter).padStart(4, '0')}`;
-        const items = JSON.stringify([{ itemName: wr.rows[0].item_name, quantity: qty, unit: item.rows[0].unit || null }]);
+        // The delivery carries every line that was just deducted (one for a single-item logistics
+        // withdrawal, or all of them for a batch).
+        const items = JSON.stringify(deducted);
         await client.query(
           `INSERT INTO deliveries (id, delivery_number, sales_order_id, withdrawal_id, destination, items, status, notes)
            VALUES ($1,$2,NULL,$3,$4,$5::jsonb,'pending',$6)`,
