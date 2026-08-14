@@ -18,7 +18,7 @@ interface Warnings { no_pay_rate?: Array<{ person_id: number; full_name: string 
 interface DayDetail {
   date: string; dow: number; sunday: boolean; holiday: string | null; present: boolean;
   in_min: number | null; out_min: number | null; kind: string;
-  late_min?: number; counted_late_min?: number; undertime_min?: number; break_min?: number; ot_hours?: number; early_ot_hours?: number; late_ot_hours?: number;
+  late_min?: number; counted_late_min?: number; late_excused?: boolean; excused_late_min?: number; undertime_min?: number; break_min?: number; ot_hours?: number; early_ot_hours?: number; late_ot_hours?: number;
   net_hours?: number; mult?: number; amount?: number; half_basis?: number; eligible?: boolean; prior_working_day?: string | null; note?: string;
 }
 interface Breakdown {
@@ -357,7 +357,11 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
                   <td style={td}>{KIND_LABEL[d.kind] || d.kind}{d.holiday ? ` (${d.holiday})` : ''}</td>
                   <td style={td}>{minToTime(d.in_min)}</td>
                   <td style={td}>{minToTime(d.out_min)}</td>
-                  <td style={td}>{(d.kind === 'work' || d.kind === 'no_out_half') ? (d.late_min ? `${d.late_min}→${d.counted_late_min}m` : '0') : '—'}</td>
+                  <td style={td}>{(d.kind === 'work' || d.kind === 'no_out_half')
+                    ? (d.late_excused
+                        ? <span style={{ color: '#0c7a3a' }}>{d.excused_late_min || d.late_min || 0}m <span style={{ fontSize: '10.5px', fontWeight: 600 }}>excused</span></span>
+                        : (d.late_min ? `${d.late_min}→${d.counted_late_min}m` : '0'))
+                    : '—'}</td>
                   <td style={td}>{d.kind === 'work' ? (d.undertime_min ? `${d.undertime_min}m` : '0') : '—'}</td>
                   <td style={td}>{d.kind === 'work'
                     ? (d.ot_hours

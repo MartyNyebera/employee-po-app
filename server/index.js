@@ -1232,6 +1232,12 @@ async function runMigrations() {
       // regular/late OT toggle). Un-clamps pre-shift-start time to paid early OT — but ONLY when set.
       // Also admin-only; also not punch-derived, so rebuild leaves it alone.
       await query(`ALTER TABLE attendance_days ADD COLUMN IF NOT EXISTS early_ot_approved BOOLEAN DEFAULT FALSE`);
+      // Per-day "Excuse Late" authorization: an AUTHORIZED late start (e.g. a client meeting that
+      // legitimately begins at 11:00). When set, the payroll compute waives that day's LATE penalty
+      // entirely (deduction 0) while keeping the real IN/OUT on the record and paying the full daily
+      // rate — it is a forgiveness, not a pro-rate. Admin-only, default off, not punch-derived, so
+      // rebuild leaves it alone (survives rebuild exactly like ot_approved / early_ot_approved).
+      await query(`ALTER TABLE attendance_days ADD COLUMN IF NOT EXISTS late_excused BOOLEAN DEFAULT FALSE`);
       // Unpaid personal-business break minutes for the day — docked time between a middle OUT and the
       // next IN (shared :15/:30/:00 rounding on the return, free lunch carved out). Precomputed by
       // rebuildAttendanceDays from the punches; a normal 2-tap day is 0. Payroll folds it into the
@@ -5056,7 +5062,7 @@ async function computePayroll(periodId) {
   // eligibility) through the period end. Manila minute-of-day for IN/OUT precomputed in SQL.
   const attMap = {};
   (await query(
-    `SELECT person_id, to_char(work_date,'YYYY-MM-DD') AS d, worked_minutes, ot_approved, early_ot_approved, break_minutes,
+    `SELECT person_id, to_char(work_date,'YYYY-MM-DD') AS d, worked_minutes, ot_approved, early_ot_approved, late_excused, break_minutes,
             CASE WHEN first_in IS NULL THEN NULL ELSE EXTRACT(EPOCH FROM ((first_in AT TIME ZONE 'Asia/Manila')::time)) / 60 END AS in_min,
             CASE WHEN last_out IS NULL THEN NULL ELSE EXTRACT(EPOCH FROM ((last_out AT TIME ZONE 'Asia/Manila')::time)) / 60 END AS out_min
        FROM attendance_days
@@ -5148,8 +5154,14 @@ async function computePayroll(periodId) {
         } else if (hasIN) {
           const rawLate = Math.max(0, inMin - startMin);
           const counted = countedLateMinutes(inMin, startMin, lateGrace, lateTier1, lateCutoff);
-          // Late applies to both full and half days — it flows into the late-deduction bucket.
-          lateMin += rawLate; countedLate += counted;
+          // An AUTHORIZED late start (admin "Excuse Late" toggle) waives the late PENALTY for the day:
+          // the raw late stays on the record (real IN kept) but the counted late that drives the
+          // deduction becomes 0, so the day still pays the full daily rate. This is a forgiveness, not
+          // a pro-rate — undertime, OT and break are all untouched; ONLY the late penalty is waived.
+          const excused = !!(row && row.late_excused);
+          const countedForDed = excused ? 0 : counted;
+          // Late applies to both full and half days — flows into the late-deduction bucket (0 if excused).
+          lateMin += rawLate; countedLate += countedForDed;
           if (outMin === null) {
             // Missing OUT (no_out): HALF day. Contributes half the daily basis to base (via the
             // half-day count below), and the day's late is already in countedLate — so the net for
@@ -5157,7 +5169,7 @@ async function computePayroll(periodId) {
             // Not counted as a full present day, so there is no double-pay. Day stays flagged on the
             // sheet; if admin sets the real OUT time it recomputes as a normal full day.
             halfDays++;
-            Object.assign(day, { kind: 'no_out_half', late_min: rawLate, counted_late_min: counted, undertime_min: 0, ot_hours: 0, half_basis: round2(dailyBasis / 2), amount: round2(dailyBasis / 2), note: 'no OUT — paid half day' });
+            Object.assign(day, { kind: 'no_out_half', late_min: rawLate, counted_late_min: countedForDed, late_excused: excused, excused_late_min: excused ? counted : 0, undertime_min: 0, ot_hours: 0, half_basis: round2(dailyBasis / 2), amount: round2(dailyBasis / 2), note: excused ? 'no OUT — paid half day (late excused)' : 'no OUT — paid half day' });
           } else {
             daysPresent++;
             const ut = outMin < dayEndMin ? (dayEndMin - outMin) : 0;
@@ -5181,7 +5193,7 @@ async function computePayroll(periodId) {
               ? (startMin - inMin) / 60 : 0;
             const oth = earlyOt + lateOt; // both ×1.25 (same rate); tracked separately below
             earlyOtHours += earlyOt; lateOtHours += lateOt; otHours += oth;
-            Object.assign(day, { kind: 'work', late_min: rawLate, counted_late_min: counted, undertime_min: ut, break_min: brk,
+            Object.assign(day, { kind: 'work', late_min: rawLate, counted_late_min: countedForDed, late_excused: excused, excused_late_min: excused ? counted : 0, undertime_min: ut, break_min: brk,
               ot_hours: round2(oth), early_ot_hours: round2(earlyOt), late_ot_hours: round2(lateOt) });
           }
         } else if (employed(d)) {
@@ -5793,7 +5805,7 @@ app.get('/api/attendance/periods/:id/sheet', requireRole(attendanceReviewRoles),
       // withholding, sss/philhealth/pagibig) are deliberately NOT selected — Finance never sees them.
       `SELECT ad.id, ad.person_id, to_char(ad.work_date,'YYYY-MM-DD') AS work_date,
               ad.first_in, ad.last_out, ad.worked_minutes, ad.break_minutes, ad.status, ad.flags,
-              ad.pay_period_id, ad.is_locked, ad.is_adjusted, ad.ot_approved, ad.early_ot_approved,
+              ad.pay_period_id, ad.is_locked, ad.is_adjusted, ad.ot_approved, ad.early_ot_approved, ad.late_excused,
               p.full_name, p.department, p.position, p.ot_eligible
          FROM attendance_days ad
          JOIN persons p ON p.id = ad.person_id
@@ -6040,6 +6052,38 @@ app.post('/api/attendance/days/:id/early-ot', requireRole(['admin']), async (req
     );
     await client.query('COMMIT');
     res.json({ id: day.id, early_ot_approved: approved });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Toggle a day's "Excuse Late" flag — an AUTHORIZED late start. ADMIN ONLY (Finance view-only).
+// Like the OT toggles this is an authorization flag, not a correction: it may be set on any day
+// (including a locked one), moves no pay here, and is logged like an adjustment. At compute time a
+// late-excused day pays the full daily rate with NO late penalty (the real IN/OUT stay on record).
+app.post('/api/attendance/days/:id/excuse-late', requireRole(['admin']), async (req, res) => {
+  const excused = !!(req.body && req.body.excused);
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const dr = await client.query(
+      `SELECT ad.id, ad.late_excused FROM attendance_days ad WHERE ad.id = $1 FOR UPDATE`,
+      [req.params.id]
+    );
+    const day = dr.rows[0];
+    if (!day) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Day not found' }); }
+    const oldVal = day.late_excused ? 'true' : 'false';
+    await client.query('UPDATE attendance_days SET late_excused = $1 WHERE id = $2', [excused, day.id]);
+    await client.query(
+      `INSERT INTO attendance_adjustments (day_id, field, old_value, new_value, reason, adjusted_by)
+       VALUES ($1, 'late_excused', $2, $3, 'Excuse Late toggle', $4)`,
+      [day.id, oldVal, excused ? 'true' : 'false', req.user.id]
+    );
+    await client.query('COMMIT');
+    res.json({ id: day.id, late_excused: excused });
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
     res.status(500).json({ error: err.message });

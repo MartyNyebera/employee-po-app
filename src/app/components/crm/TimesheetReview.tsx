@@ -29,7 +29,7 @@ interface Day {
   first_in: string | null; last_out: string | null; worked_minutes: number | null; break_minutes?: number | null;
   breaks?: BreakInterval[];
   status: string | null; flags: string[]; pay_period_id: number | null;
-  is_locked: boolean; is_adjusted: boolean; ot_approved: boolean; early_ot_approved: boolean;
+  is_locked: boolean; is_adjusted: boolean; ot_approved: boolean; early_ot_approved: boolean; late_excused: boolean;
   full_name: string; department?: string | null; position?: string | null; ot_eligible?: boolean;
 }
 interface Adjustment {
@@ -214,6 +214,15 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
     } catch (e: any) { toast.error(e.message || 'Could not update OT approval'); }
   };
 
+  // Toggle a day's "Excuse Late" flag (admin-only). Authorizes a late start so the payroll compute
+  // waives that day's late penalty — the real IN/OUT stay on record and the day pays the full rate.
+  const toggleExcuseLate = async (day: Day, excused: boolean) => {
+    try {
+      await api(`/attendance/days/${day.id}/excuse-late`, { method: 'POST', body: JSON.stringify({ excused }) });
+      setSheet(s => s ? { ...s, rows: s.rows.map(r => r.id === day.id ? { ...r, late_excused: excused } : r) } : s);
+    } catch (e: any) { toast.error(e.message || 'Could not update Excuse Late'); }
+  };
+
   // Save a person's BALE for the selected period (admin-only). Blank clears it.
   const saveBale = async (personId: number, amount: string) => {
     if (selectedId === null) return;
@@ -279,15 +288,16 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
             <th style={S.th}>Hours</th><th style={S.th}>Status</th>
             <th style={S.th} title="Pre-shift-start OT (no buffer)">Early OT</th>
             <th style={S.th} title="After-shift OT (needs the 1h buffer)">Late OT</th>
+            <th style={S.th} title="Authorized late start — waives this day's late penalty (full rate still paid)">Excuse Late</th>
             <th style={{ ...S.th, textAlign: 'right' }}>Actions</th>
           </tr></thead>
           <tbody>
-            {loading ? <tr><td style={S.td} colSpan={9}>Loading…</td></tr>
-              : !period ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={9}>Create or select a pay period to begin.</td></tr>
-              : groups.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={9}>No punched days in this period yet. Click <strong>Rebuild from punches</strong>.</td></tr>
+            {loading ? <tr><td style={S.td} colSpan={10}>Loading…</td></tr>
+              : !period ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={10}>Create or select a pay period to begin.</td></tr>
+              : groups.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={10}>No punched days in this period yet. Click <strong>Rebuild from punches</strong>.</td></tr>
               : groups.map(g => (
                 <PersonGroup key={g.person.person_id} group={g} role={role} canEditRow={canEditRow}
-                  onEdit={setEditing} onHistory={setHistoryOf} onToggleOt={toggleOt}
+                  onEdit={setEditing} onHistory={setHistoryOf} onToggleOt={toggleOt} onToggleExcuseLate={toggleExcuseLate}
                   bale={baleMap[g.person.person_id] ?? ''} onSaveBale={saveBale} periodLocked={locked} />
               ))}
           </tbody>
@@ -319,6 +329,20 @@ function otCell(d: Day, kind: 'early' | 'late', role: 'admin' | 'accounting', on
   );
 }
 
+// "Excuse Late" cell: read-only Yes/No for Finance; a clickable toggle for admin. Shows on any day.
+// When on, the payroll compute waives that day's late penalty (full rate still paid; real IN kept).
+function excuseLateCell(d: Day, role: 'admin' | 'accounting', onToggle: (d: Day, excused: boolean) => void) {
+  const on = !!d.late_excused;
+  if (role !== 'admin') return on ? pill('Yes', 'good') : <span style={{ fontSize: '12px', color: '#8a8a8a' }}>No</span>;
+  return (
+    <button onClick={() => onToggle(d, !on)} title="Toggle Excuse Late — an authorized late start (waives this day's late penalty)"
+      style={{ padding: '3px 14px', borderRadius: '999px', cursor: 'pointer', fontSize: '12px', fontWeight: 600, fontFamily: 'inherit',
+        border: '1px solid', ...(on ? { background: '#ececec', borderColor: '#e3ca63', color: '#7a6a0c' } : { background: '#fff', borderColor: '#d6d6d6', color: '#8a8a8a' }) }}>
+      {on ? 'Yes' : 'No'}
+    </button>
+  );
+}
+
 // BALE input — editable for admin (saves on blur/Enter), read-only peso text for Finance.
 function BaleInput({ personId, value, onSave, editable }: { personId: number; value: string; onSave: (id: number, v: string) => void; editable: boolean }) {
   const [v, setV] = useState(value);
@@ -333,11 +357,12 @@ function BaleInput({ personId, value, onSave, editable }: { personId: number; va
   );
 }
 
-function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, bale, onSaveBale }: {
+function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, onToggleExcuseLate, bale, onSaveBale }: {
   group: { person: Day; days: Day[]; totalMin: number; breakMin: number };
   role: 'admin' | 'accounting';
   canEditRow: (d: Day) => boolean; onEdit: (d: Day) => void; onHistory: (d: Day) => void;
   onToggleOt: (d: Day, kind: 'early' | 'late', approved: boolean) => void;
+  onToggleExcuseLate: (d: Day, excused: boolean) => void;
   bale: string; onSaveBale: (personId: number, amount: string) => void;
   periodLocked: boolean;
 }) {
@@ -346,7 +371,7 @@ function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, b
   return (
     <>
       <tr>
-        <td colSpan={9} style={{ padding: '12px 16px', background: '#f7f7f7', borderBottom: '1px solid #e6e6e6', borderTop: '1px solid #e6e6e6' }}>
+        <td colSpan={10} style={{ padding: '12px 16px', background: '#f7f7f7', borderBottom: '1px solid #e6e6e6', borderTop: '1px solid #e6e6e6' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
             <div>
               <span style={{ fontWeight: 700, color: '#000' }}>{person.full_name}</span>
@@ -397,6 +422,7 @@ function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, b
             </td>
             <td style={S.td}>{otCell(d, 'early', role, onToggleOt)}</td>
             <td style={S.td}>{otCell(d, 'late', role, onToggleOt)}</td>
+            <td style={S.td}>{excuseLateCell(d, role, onToggleExcuseLate)}</td>
             <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
               {d.is_adjusted ? <button title="Correction history" style={S.rowBtn} onClick={() => onHistory(d)}><History size={13} /></button> : null}
               {canEditRow(d) ? <button title="Correct this day" style={S.rowBtn} onClick={() => onEdit(d)}><Pencil size={13} /></button> : null}
