@@ -5,6 +5,7 @@ import {
   FileText, Truck, Ban, Printer, Calendar, Clock, PackageCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { onBackdropDown, backdropClose } from '../lib/backdrop';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { PageErrorFallback } from '../components/PageErrorFallback';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
@@ -228,7 +229,7 @@ function AddItemModal({ onClose, onSaved, title, subtitle, initial, save: saveOv
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onMouseDown={onBackdropDown} onClick={backdropClose(onClose)}>
       <div className="w-full max-w-md bg-white rounded-2xl shadow-xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
           <div>
@@ -303,7 +304,7 @@ function UpdateItemModal({ item, onClose, onSaved }: { item: InventoryItem; onCl
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onMouseDown={onBackdropDown} onClick={backdropClose(onClose)}>
       <div className="w-full max-w-md bg-white rounded-2xl shadow-xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
           <div>

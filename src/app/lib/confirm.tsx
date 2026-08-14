@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { onBackdropDown, backdropClose } from './backdrop';
 
 // A promise-based confirmation dialog to replace the browser's confirm() everywhere.
 //
@@ -73,7 +74,8 @@ export function ConfirmHost() {
 
   return (
     <div
-      onClick={() => settle(false)}
+      onMouseDown={onBackdropDown}
+      onClick={backdropClose(() => settle(false))}
       style={{
         position: 'fixed', inset: 0, zIndex: 9999,
         background: 'rgba(0,0,0,0.45)',

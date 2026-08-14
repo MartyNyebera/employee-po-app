@@ -5,6 +5,7 @@ import {
   PanelLeftClose, PanelLeftOpen, FileText, PackageMinus, CalendarCheck, Calculator, Building2,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { onBackdropDown, backdropClose } from '../lib/backdrop';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { PageErrorFallback } from '../components/PageErrorFallback';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
@@ -376,7 +377,7 @@ function DetailModal({ pr, busy, onReview, onReject, onPrint, onClose }: {
   onPrint: (pr: PurchaseRequest) => void; onClose: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onMouseDown={onBackdropDown} onClick={backdropClose(onClose)}>
       <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
           <div>
@@ -522,7 +523,7 @@ function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; 
   // label wrapping or helper text below a field.
   const flabel = 'block text-sm font-medium text-gray-700 mb-1 leading-5 min-h-[2.5rem]';
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onMouseDown={onBackdropDown} onClick={backdropClose(onClose)}>
       <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
           <h3 className="font-bold text-gray-900">{initial ? 'Edit Project' : 'New Project'}</h3>
@@ -612,7 +613,7 @@ function FacilityModal({ initial, onClose, onSaved }: { initial: Facility | null
   const input = 'w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500';
   const flabel = 'block text-sm font-medium text-gray-700 mb-1';
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onMouseDown={onBackdropDown} onClick={backdropClose(onClose)}>
       <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
           <h3 className="font-bold text-gray-900">{initial ? 'Edit Facility' : 'New Facility'}</h3>

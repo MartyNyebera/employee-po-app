@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { PackageCheck, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { onBackdropDown, backdropClose } from '../lib/backdrop';
 
 // ============================================================================
 // Shared "Mark Delivered / Received" modal (Section D — #10).
@@ -76,7 +77,7 @@ export function ReceivingModal({
   const input = 'w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500';
   const cell = 'w-16 px-2 py-1 text-sm text-center border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-blue-500';
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onMouseDown={onBackdropDown} onClick={backdropClose(onClose)}>
       <div className={`bg-white rounded-xl shadow-2xl w-full ${lines && lines.length ? 'max-w-2xl' : 'max-w-md'} flex flex-col overflow-hidden max-h-[90vh]`} onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-5 border-b border-gray-200">
           <div>

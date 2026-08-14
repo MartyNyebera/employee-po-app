@@ -3,6 +3,7 @@
 // inline-style look of the existing "*-Professional" pages.
 import { ReactNode } from 'react';
 import { X } from 'lucide-react';
+import { onBackdropDown, backdropClose } from '../../lib/backdrop';
 
 export const peso = (n: number | null | undefined) =>
   n === null || n === undefined || isNaN(Number(n))
@@ -94,7 +95,7 @@ export function tonePill(status: string, label?: string) {
 
 export function Modal({ title, onClose, children, footer, wide }: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }} onClick={onClose}>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }} onMouseDown={onBackdropDown} onClick={backdropClose(onClose)}>
       <div style={{ background: '#fff', borderRadius: '16px', width: '100%', maxWidth: wide ? '760px' : '560px', maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid #d6d6d6' }}>
           <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#000000', margin: 0 }}>{title}</h2>

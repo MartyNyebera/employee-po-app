@@ -5,6 +5,7 @@ import {
   PanelLeftClose, PanelLeftOpen, Plus, Pencil, Trash2, Paperclip, RefreshCw, PackageMinus,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { onBackdropDown, backdropClose } from '../lib/backdrop';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { PageErrorFallback } from '../components/PageErrorFallback';
 import { WithdrawalTab } from '../components/WithdrawalTab';
@@ -510,7 +511,7 @@ function SupplierModal({ initial, onClose, onSaved }: {
 
   const input = 'w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500';
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onMouseDown={onBackdropDown} onClick={backdropClose(onClose)}>
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-5 border-b border-gray-200">
           <h2 className="text-lg font-semibold text-gray-900">{initial ? 'Edit Supplier' : 'Add Supplier'}</h2>
@@ -686,7 +687,7 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
   const noSuppliers = !loadingSuppliers && suppliers.length === 0;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onMouseDown={onBackdropDown} onClick={backdropClose(onClose)}>
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-5 border-b border-gray-200">
           <div>
