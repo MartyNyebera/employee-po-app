@@ -7376,11 +7376,12 @@ app.post('/api/inventory/:id/withdraw', requireAuth, async (req, res) => {
 });
 
 // BATCH (multi-item) withdrawal: one request + one receipt covering several inventory items.
-// Body: { items: [{ inventoryId, quantity }], reason?, jobOrderNo? }. Mirrors the single-item
-// endpoint above but stores an `items` JSONB array; the legacy single columns are populated from
-// items[0] for back-compat. Plain withdrawals only (no destination / PR-fulfilment — those keep
-// the single-item :id route). Stock is advisory-checked per line here and authoritatively
-// re-checked (locked) per line at approval.
+// Body: { items: [{ inventoryId, quantity }], reason?, jobOrderNo?, destination? }. Mirrors the
+// single-item endpoint above but stores an `items` JSONB array; the legacy single columns are
+// populated from items[0] for back-compat. An optional `destination` marks a logistics-origin
+// batch that spawns ONE delivery (all lines) on approval. NOT for PR-fulfilment — that keeps the
+// single-item :id route (its completion check + dupe guard need one row per line). Stock is
+// advisory-checked per line here and authoritatively re-checked (locked) per line at approval.
 app.post('/api/inventory-withdrawals', requireAuth, async (req, res) => {
   try {
     const rawItems = Array.isArray(req.body.items) ? req.body.items : [];
@@ -7414,10 +7415,12 @@ app.post('/api/inventory-withdrawals', requireAuth, async (req, res) => {
     try {
       await query(
         `INSERT INTO inventory_withdrawal_requests
-           (id, withdrawal_number, inventory_id, item_name, quantity, items, reason, requested_by_id, requested_by_name, requested_by_role, job_order_no, status)
-         VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,'pending')`,
+           (id, withdrawal_number, inventory_id, item_name, quantity, items, reason, requested_by_id, requested_by_name, requested_by_role, destination, job_order_no, status)
+         VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,'pending')`,
+        // An optional destination marks this as a logistics-origin batch: on approval it spawns ONE
+        // delivery listing every line (the approval path builds the delivery from the deducted[] array).
         [id, withdrawalNumber, first.inventoryId, first.itemName, first.quantity, JSON.stringify(items),
-         orNull(req.body.reason), req.user?.id ?? null, req.user?.name || 'Unknown', effectiveRole(req.user), orNull(req.body.jobOrderNo)]
+         orNull(req.body.reason), req.user?.id ?? null, req.user?.name || 'Unknown', effectiveRole(req.user), orNull(req.body.destination), orNull(req.body.jobOrderNo)]
       );
       const r = await query(`${WITHDRAWAL_SELECT} WHERE w.id = $1`, [id]);
       res.status(201).json(mapWithdrawalRequest(r.rows[0]));

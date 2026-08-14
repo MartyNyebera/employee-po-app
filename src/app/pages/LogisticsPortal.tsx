@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Truck, PenTool, Menu, X, Search, Clock, Calendar, Printer, LogOut,
-  Upload, Eraser, PackageCheck, PackageMinus, Plus, PanelLeftClose, PanelLeftOpen, FileText,
+  Upload, Eraser, PackageCheck, PackageMinus, Plus, Trash2, PanelLeftClose, PanelLeftOpen, FileText,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -394,8 +394,9 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     if (!r.ok) toast.error(r.error || 'Could not open the print dialog');
   };
 
-  const requestWithdrawal = async (inventoryId: string, quantity: number, destination: string, reason: string | null, jobOrderNo: string | null) => {
-    await lFetch(`/inventory/${inventoryId}/withdraw`, { method: 'POST', body: JSON.stringify({ quantity, destination, reason, jobOrderNo }) });
+  const requestWithdrawal = async (items: { inventoryId: string; quantity: number }[], destination: string, reason: string | null, jobOrderNo: string | null) => {
+    // One batch request carrying a destination → on approval it spawns ONE delivery listing all lines.
+    await lFetch('/inventory-withdrawals', { method: 'POST', body: JSON.stringify({ items, destination, reason, jobOrderNo }) });
     toast.success('Withdrawal requested — the warehouse releases it, then an admin approves');
     loadAll();
   };
@@ -714,50 +715,77 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 // Request a stock withdrawal (Section D — #5). Logistics picks an inventory item, a quantity,
 // and a destination (required — that is what turns the approved withdrawal into a delivery).
 // ============================================================================
+// Multi-item Logistics withdrawal: an add-items table (item + qty per row) + a required destination.
+// On approval the batch spawns ONE delivery listing every line. A single row == the old flow.
+let LWD_ROW_SEQ = 0;
+const emptyLwdRow = (): { id: string; inventoryId: string; quantity: string } => ({ id: `lwr-${++LWD_ROW_SEQ}`, inventoryId: '', quantity: '' });
+
 function WithdrawalRequestModal({ inventory, onSubmit, onClose, onDone }: {
   inventory: InventoryItem[];
-  onSubmit: (inventoryId: string, quantity: number, destination: string, reason: string | null, jobOrderNo: string | null) => Promise<void>;
+  onSubmit: (items: { inventoryId: string; quantity: number }[], destination: string, reason: string | null, jobOrderNo: string | null) => Promise<void>;
   onClose: () => void;
   onDone: () => void;
 }) {
-  const [inventoryId, setInventoryId] = useState('');
-  const [quantity, setQuantity] = useState('');
+  const [rows, setRows] = useState([emptyLwdRow()]);
   const [destination, setDestination] = useState('');
   const [reason, setReason] = useState('');
   const [jobOrderNo, setJobOrderNo] = useState('');
   const [saving, setSaving] = useState(false);
-  const picked = inventory.find(i => i.id === inventoryId);
+  const invById = useMemo(() => new Map(inventory.map(i => [i.id, i])), [inventory]);
+  const setRow = (id: string, field: 'inventoryId' | 'quantity', value: string) =>
+    setRows(prev => prev.map(r => r.id === id ? { ...r, [field]: value } : r));
+  const addRow = () => setRows(prev => [...prev, emptyLwdRow()]);
+  const removeRow = (id: string) => setRows(prev => prev.filter(r => r.id !== id));
 
   const submit = async () => {
-    const qty = Number(quantity);
-    if (!inventoryId) { toast.error('Pick an item'); return; }
-    if (!qty || qty <= 0) { toast.error('Enter a quantity'); return; }
-    if (picked && qty > picked.quantity) { toast.error(`Only ${picked.quantity} ${picked.unit || ''} in stock`); return; }
+    const items: { inventoryId: string; quantity: number }[] = [];
+    for (const r of rows) {
+      if (!r.inventoryId && !r.quantity) continue;
+      const qty = Number(r.quantity);
+      if (!r.inventoryId) { toast.error('Pick an item for every row'); return; }
+      if (!qty || qty <= 0) { toast.error('Enter a quantity for every item'); return; }
+      const inv = invById.get(r.inventoryId);
+      if (inv && qty > inv.quantity) { toast.error(`Only ${inv.quantity} ${inv.unit || ''} of ${inv.itemName} in stock`); return; }
+      items.push({ inventoryId: r.inventoryId, quantity: qty });
+    }
+    if (!items.length) { toast.error('Add at least one item'); return; }
     if (!destination.trim()) { toast.error('A destination is required'); return; }
     setSaving(true);
-    try { await onSubmit(inventoryId, qty, destination.trim(), reason.trim() || null, jobOrderNo.trim() || null); onDone(); }
+    try { await onSubmit(items, destination.trim(), reason.trim() || null, jobOrderNo.trim() || null); onDone(); }
     catch (e: any) { toast.error('Failed: ' + e.message); } finally { setSaving(false); }
   };
 
   const input = 'w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500';
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg flex flex-col overflow-hidden max-h-[90vh]" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-5 border-b border-gray-200">
           <h2 className="text-lg font-semibold text-gray-900">Request withdrawal</h2>
           <button onClick={onClose} className="p-1.5 rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-600"><X className="w-5 h-5" /></button>
         </div>
-        <div className="p-5 space-y-4">
+        <div className="p-5 space-y-4 overflow-y-auto">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Item <span className="text-red-500">*</span></label>
-            <select value={inventoryId} onChange={e => setInventoryId(e.target.value)} className={input}>
-              <option value="">Select an item…</option>
-              {inventory.map(i => <option key={i.id} value={i.id}>{i.itemName} ({i.quantity} {i.unit || ''} in stock)</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Quantity <span className="text-red-500">*</span></label>
-            <input type="number" min="1" value={quantity} onChange={e => setQuantity(e.target.value)} className={input} placeholder={picked ? `up to ${picked.quantity}` : ''} />
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-sm font-medium text-gray-700">Items <span className="text-red-500">*</span></label>
+              <button onClick={addRow} className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:opacity-80"><Plus className="w-3.5 h-3.5" /> Add item</button>
+            </div>
+            <div className="space-y-2">
+              {rows.map(r => {
+                const inv = invById.get(r.inventoryId);
+                return (
+                  <div key={r.id} className="flex items-start gap-2">
+                    <select value={r.inventoryId} onChange={e => setRow(r.id, 'inventoryId', e.target.value)} className={`${input} flex-1`}>
+                      <option value="">Select an item…</option>
+                      {inventory.map(i => <option key={i.id} value={i.id}>{i.itemName} ({i.quantity} {i.unit || ''} in stock)</option>)}
+                    </select>
+                    <input type="number" min="1" value={r.quantity} onChange={e => setRow(r.id, 'quantity', e.target.value)}
+                      className={`${input} w-24`} placeholder={inv ? `≤ ${inv.quantity}` : 'Qty'} />
+                    <button onClick={() => removeRow(r.id)} disabled={rows.length === 1} title="Remove"
+                      className="p-2 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed"><Trash2 className="w-4 h-4" /></button>
+                  </div>
+                );
+              })}
+            </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Destination <span className="text-red-500">*</span></label>

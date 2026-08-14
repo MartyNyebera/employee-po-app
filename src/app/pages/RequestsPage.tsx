@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   FileText, ClipboardList, Package, Menu, X, Plus, Trash2, Search,
-  Clock, Calendar, AlertTriangle, PackageMinus, PackagePlus, LogOut, User, Printer, PenTool, Upload, Eraser, Wrench,
+  Clock, Calendar, PackageMinus, PackagePlus, LogOut, User, Printer, PenTool, Upload, Eraser, Wrench,
   PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -384,20 +384,31 @@ type WithdrawTarget =
   | { mode: 'item'; item: InventoryItem }
   | { mode: 'request'; request: PurchaseRequest };
 
+let WD_ROW_SEQ = 0;
+const emptyWdRow = (inventoryId = ''): { id: string; inventoryId: string; quantity: string } => ({ id: `wr-${++WD_ROW_SEQ}`, inventoryId, quantity: '' });
+
 function WithdrawModal({ target, inventory, onCancel, onDone }: {
   target: WithdrawTarget;
   inventory: InventoryItem[];
   onCancel: () => void;
   onDone: () => void;
 }) {
-  const [quantity, setQuantity] = useState('');
-  const [reason, setReason] = useState('');
-  const [jobOrderNo, setJobOrderNo] = useState('');
-  const [busy, setBusy] = useState(false);
-
   const isItem = target.mode === 'item';
   const item = isItem ? target.item : null;
   const request = !isItem ? target.request : null;
+
+  // Ad-hoc mode is now MULTI-ITEM: a rows table (item + qty), seeded with the item the user picked.
+  // "+ Add item" adds more; one JO# + reason cover the batch; submits via the batch endpoint →
+  // one request + one receipt. (The `request`/PR-fulfilment mode below is left exactly as-is.)
+  const [rows, setRows] = useState(() => [emptyWdRow(item?.id || '')]);
+  const [reason, setReason] = useState('');
+  const [jobOrderNo, setJobOrderNo] = useState('');
+  const [busy, setBusy] = useState(false);
+  const invById = useMemo(() => new Map(inventory.map((i) => [i.id, i])), [inventory]);
+  const setRow = (id: string, field: 'inventoryId' | 'quantity', value: string) =>
+    setRows((prev) => prev.map((r) => r.id === id ? { ...r, [field]: value } : r));
+  const addRow = () => setRows((prev) => [...prev, emptyWdRow()]);
+  const removeRow = (id: string) => setRows((prev) => prev.filter((r) => r.id !== id));
 
   // Resolve by the carried inventoryId first — a name match breaks the moment anyone renames
   // an item, and older requests are the only ones without an id.
@@ -410,19 +421,27 @@ function WithdrawModal({ target, inventory, onCancel, onDone }: {
     });
   }, [request, inventory]);
 
-  const remaining = isItem && item && quantity ? item.quantity - parseInt(quantity, 10) : null;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!reason.trim()) { toast.error('Please provide a reason for withdrawal'); return; }
     setBusy(true);
     try {
-      if (isItem && item) {
-        const q = parseInt(quantity, 10);
-        if (!q || q <= 0) { toast.error('Enter a valid quantity'); setBusy(false); return; }
-        if (q > item.quantity) { toast.error('Cannot withdraw more than available stock'); setBusy(false); return; }
-        // Creates a PENDING withdrawal request — stock is only deducted once an admin approves.
-        await empFetch(`/inventory/${item.id}/withdraw`, { method: 'POST', body: JSON.stringify({ quantity: q, reason: reason.trim(), jobOrderNo: jobOrderNo.trim() || null }) });
+      if (isItem) {
+        // Build the batch from the rows table; ignore fully-blank rows.
+        const items: { inventoryId: string; quantity: number }[] = [];
+        for (const r of rows) {
+          if (!r.inventoryId && !r.quantity) continue;
+          const q = parseInt(r.quantity, 10);
+          if (!r.inventoryId) { toast.error('Pick an item for every row'); setBusy(false); return; }
+          if (!q || q <= 0) { toast.error('Enter a quantity for every item'); setBusy(false); return; }
+          const inv = invById.get(r.inventoryId);
+          if (inv && q > inv.quantity) { toast.error(`Only ${inv.quantity} ${inv.unit || ''} of ${inv.itemName} in stock`); setBusy(false); return; }
+          items.push({ inventoryId: r.inventoryId, quantity: q });
+        }
+        if (!items.length) { toast.error('Add at least one item'); setBusy(false); return; }
+        // Creates ONE pending batch request — stock is only deducted once an admin approves.
+        await empFetch('/inventory-withdrawals', { method: 'POST', body: JSON.stringify({ items, reason: reason.trim(), jobOrderNo: jobOrderNo.trim() || null }) });
         toast.success('Withdrawal requested — awaiting admin approval');
       } else if (request) {
         const missing = resolved.filter((r) => !r.inv);
@@ -463,34 +482,32 @@ function WithdrawModal({ target, inventory, onCancel, onDone }: {
           <button onClick={onCancel} className="p-1.5 rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"><X className="w-5 h-5" /></button>
         </div>
         <form onSubmit={submit} className="p-6 space-y-4">
-          {isItem && item && (
+          {isItem && (
             <>
-              <div className="bg-gray-50 rounded-lg p-4 flex items-center justify-between">
-                <div>
-                  <p className="font-medium text-gray-900">{item.itemName}</p>
-                  <p className="text-sm text-gray-500">Code: {item.itemCode}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-2xl font-bold text-gray-900">{item.quantity}</p>
-                  <p className="text-sm text-gray-500">{item.unit} available</p>
-                </div>
-              </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Withdraw Quantity *</label>
-                <div className="relative">
-                  <input type="number" min="1" max={item.quantity} value={quantity} onChange={(e) => setQuantity(e.target.value)} placeholder="Enter quantity" required
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
-                  <span className="absolute right-4 top-2.5 text-gray-500 text-sm">{item.unit}</span>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium text-gray-700">Items *</label>
+                  <button type="button" onClick={addRow} className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:opacity-80"><Plus className="w-3.5 h-3.5" /> Add item</button>
+                </div>
+                <div className="space-y-2">
+                  {rows.map((r) => {
+                    const inv = invById.get(r.inventoryId);
+                    return (
+                      <div key={r.id} className="flex items-start gap-2">
+                        <select value={r.inventoryId} onChange={(e) => setRow(r.id, 'inventoryId', e.target.value)}
+                          className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                          <option value="">Select an item…</option>
+                          {inventory.map((i) => <option key={i.id} value={i.id}>{i.itemName} ({i.quantity} {i.unit || ''} in stock)</option>)}
+                        </select>
+                        <input type="number" min="1" value={r.quantity} onChange={(e) => setRow(r.id, 'quantity', e.target.value)}
+                          placeholder={inv ? `≤ ${inv.quantity}` : 'Qty'} className="w-24 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+                        <button type="button" onClick={() => removeRow(r.id)} disabled={rows.length === 1} title="Remove"
+                          className="p-2 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed"><Trash2 className="w-4 h-4" /></button>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
-              {remaining !== null && parseInt(quantity, 10) > 0 && (
-                <div className={`rounded-lg p-3 border ${remaining <= 10 ? 'bg-yellow-50 border-yellow-200' : 'bg-blue-50 border-blue-200'}`}>
-                  <div className="flex items-center gap-2">
-                    {remaining <= 10 ? <AlertTriangle className="w-4 h-4 text-yellow-600" /> : <Package className="w-4 h-4 text-blue-600" />}
-                    <span className={`text-sm ${remaining <= 10 ? 'text-yellow-800' : 'text-blue-800'}`}>If approved, remaining stock: {remaining} {item.unit}{remaining <= 10 ? ' — low stock' : ''}</span>
-                  </div>
-                </div>
-              )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Job Order # <span className="text-gray-400 font-normal">(optional)</span></label>
                 <input value={jobOrderNo} onChange={(e) => setJobOrderNo(e.target.value)} placeholder="JO-08-001-26"
