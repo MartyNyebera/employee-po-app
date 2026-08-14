@@ -265,11 +265,14 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
   const pay = b.pay || {};
   const round2 = (n: any) => Math.round(((Number(n) || 0) + Number.EPSILON) * 100) / 100;
   const perMin = Number(ref.per_minute) || 0;
+  // OT peso per hour = hourly × the OT multiplier (default 1.25). Used to fold each day's OT into
+  // that day's Amount so the table shows the FULL take-home for the day at a glance.
+  const otRate = (Number(ref.hourly) || 0) * (Number((ref.multipliers || {}).ot) || 1.25);
 
   // Per-day pay contribution (DISPLAY ONLY — recomputed here from the stored breakdown, never
-  // changes any pay). A worked day earns its daily rate less that day's own late/undertime, so the
-  // Amount column shows the day's NET day-pay. Half-days keep their ½-basis (also net of that day's
-  // late). Sunday/holiday worked show their premium amount. Off/absent contribute nothing → "—".
+  // changes any pay). A worked day earns its daily rate LESS that day's own late/undertime PLUS that
+  // day's OT, so the Amount column shows the day's full NET pay. Half-days keep their ½-basis (net of
+  // that day's late). Sunday/holiday worked show their premium amount. Off/absent → "—".
   const dayGrossBasis = (d: DayDetail): number | null => {
     if (d.kind === 'work') return Number(ref.daily_basis) || 0;
     if (d.kind === 'no_out_half') return d.amount != null ? Number(d.amount) : (Number(ref.daily_basis) || 0) / 2;
@@ -280,8 +283,11 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
     if (d.kind === 'no_out_half') return round2(Number(d.counted_late_min || 0) * perMin);
     return 0;
   };
+  // That day's OT in pesos (OT only ever lands on a worked day). Shown as a sub-line and folded in.
+  const dayOtPay = (d: DayDetail): number => d.kind === 'work' ? round2((Number(d.ot_hours) || 0) * otRate) : 0;
   const dayAmount = (d: DayDetail): number | null => {
-    if (d.kind === 'work' || d.kind === 'no_out_half') return Math.max(0, round2((dayGrossBasis(d) || 0) - dayReduction(d)));
+    if (d.kind === 'work') return round2(Math.max(0, round2((dayGrossBasis(d) || 0) - dayReduction(d))) + dayOtPay(d));
+    if (d.kind === 'no_out_half') return Math.max(0, round2((dayGrossBasis(d) || 0) - dayReduction(d)));
     if (d.kind === 'sunday_worked' || d.kind === 'holiday_worked') return d.amount != null ? round2(d.amount) : null;
     if (d.kind === 'holiday_not_worked') return Number(d.amount) ? round2(d.amount) : null; // 0 (not eligible / monthly) → "—"
     return null; // absent, absent_too_late, sunday_off, not_employed
@@ -291,11 +297,10 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
   // the standing deductions (break, statutory, BALE), tie back to Net exactly. A residual line
   // absorbs per-minute rounding (daily) or the fixed-salary basis gap (monthly) so it always ties.
   const days = b.days || [];
-  const sumDays = round2(days.reduce((a, d) => a + (dayAmount(d) || 0), 0));
-  const otPay = round2(pay.ot);
+  const sumDays = round2(days.reduce((a, d) => a + (dayAmount(d) || 0), 0)); // each day's amount now includes its OT
   const dBreak = round2(ded.break), dSss = round2(ded.sss_ee), dPhic = round2(ded.philhealth_ee);
   const dPgib = round2(ded.pagibig_ee), dWtax = round2(ded.withholding), dBale = round2(ded.bale);
-  const reconNet = round2(sumDays + otPay - dBreak - dSss - dPhic - dPgib - dWtax - dBale);
+  const reconNet = round2(sumDays - dBreak - dSss - dPhic - dPgib - dWtax - dBale);
   const residual = round2((Number(pay.net) || 0) - reconNet);
   const isMonthly = ref.employment_type === 'monthly';
 
@@ -371,6 +376,7 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
                   <td style={{ ...td, fontVariantNumeric: 'tabular-nums', fontWeight: amt != null ? 600 : 400 }}>
                     {amt != null ? peso(amt) : '—'}
                     {red > 0 ? <div style={{ fontSize: '11px', color: '#b45309', fontWeight: 400 }}>− {peso(red)} late/UT</div> : null}
+                    {dayOtPay(d) > 0 ? <div style={{ fontSize: '11px', color: '#0c7a3a', fontWeight: 400 }}>+ {peso(dayOtPay(d))} OT</div> : null}
                   </td>
                   <td style={{ ...td, color: '#8a8a8a', whiteSpace: 'normal' }}>{d.kind === 'holiday_not_worked' ? (d.eligible ? `eligible (prior ${d.prior_working_day})` : 'not eligible') : (d.break_min ? `break ${d.break_min}m docked` : (d.note || ''))}</td>
                 </tr>
@@ -378,7 +384,7 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
             })}
           </tbody>
           <tfoot><tr>
-            <td style={{ ...td, fontWeight: 700, borderTop: '2px solid #e6e6e6' }} colSpan={7}>Σ Day amounts (net of late/UT)</td>
+            <td style={{ ...td, fontWeight: 700, borderTop: '2px solid #e6e6e6' }} colSpan={7}>Σ Day amounts (incl. OT, net of late/UT)</td>
             <td style={{ ...td, fontWeight: 700, borderTop: '2px solid #e6e6e6', fontVariantNumeric: 'tabular-nums' }}>{peso(sumDays)}</td>
             <td style={{ ...td, borderTop: '2px solid #e6e6e6' }}></td>
           </tr></tfoot>
@@ -388,8 +394,7 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
       {/* Reconciliation: day amounts + OT, less standing deductions, tie back to Net exactly. */}
       <div style={{ marginBottom: '18px', padding: '12px 16px', background: '#fafafa', border: '1px solid #ececec', borderRadius: '8px' }}>
         <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#7a6a0c', marginBottom: '8px' }}>Reconciliation</div>
-        <Row k="Σ Day amounts (net of late/UT)" v={peso(sumDays)} />
-        <Row k="+ Overtime" v={peso(otPay)} />
+        <Row k="Σ Day amounts (incl. OT, net of late/UT)" v={peso(sumDays)} />
         {dBreak ? <Row k="− Personal break" v={`(${peso(dBreak)})`} /> : null}
         {dSss ? <Row k="− SSS (EE)" v={`(${peso(dSss)})`} /> : null}
         {dPhic ? <Row k="− PhilHealth (EE)" v={`(${peso(dPhic)})`} /> : null}
@@ -401,7 +406,7 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
           <Row k="= Net pay" v={peso(pay.net)} strong />
         </div>
         <p style={{ fontSize: '11px', color: '#8a8a8a', marginTop: '8px', marginBottom: 0 }}>
-          Each worked day shows its daily rate less that day's own late/undertime; half-days show their ½-basis; Sunday/holiday show their premium. Overtime stays in the OT column and is added once here. {isMonthly ? 'For monthly salaries the fixed semi-monthly base is reconciled via the salary-basis line.' : 'The rounding line, if shown, is sub-peso per-minute rounding.'}
+          Each worked day's Amount is its daily rate less that day's own late/undertime PLUS that day's OT (shown as a “+ OT” sub-line); half-days show their ½-basis; Sunday/holiday show their premium. {isMonthly ? 'For monthly salaries the fixed semi-monthly base is reconciled via the salary-basis line.' : 'The rounding line, if shown, is sub-peso per-minute rounding.'}
         </p>
       </div>
 
