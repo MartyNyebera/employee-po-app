@@ -75,7 +75,7 @@ interface Project { id: string; name: string; status?: string; }
 interface Facility { id: string; name: string; status?: string; }
 interface Session { id: number; full_name: string; email: string; department?: string; position?: string; }
 
-const UNITS = ['pcs', 'bags', 'kg', 'liters', 'meters', 'boxes', 'sets', 'Lot', 'units'];
+const UNITS = ['pcs', 'bags', 'kg', 'liters', 'gallons', 'meters', 'boxes', 'sets', 'Lot', 'units'];
 // "For (Project)" is required, so an explicit choice is needed. Personal use gets its own
 // sentinel (mapped back to a null projectId on submit) and '' means "nothing picked yet".
 const PERSONAL_USE = '__personal__';

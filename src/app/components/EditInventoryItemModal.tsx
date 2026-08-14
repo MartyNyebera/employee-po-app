@@ -150,6 +150,7 @@ export function EditInventoryItemModal({ item, onClose, onUpdated }: EditInvento
                     <SelectItem value="box">Box</SelectItem>
                     <SelectItem value="kg">Kilograms</SelectItem>
                     <SelectItem value="liters">Liters</SelectItem>
+                    <SelectItem value="gallons">Gallons</SelectItem>
                     <SelectItem value="meters">Meters</SelectItem>
                     <SelectItem value="sets">Sets</SelectItem>
                     <SelectItem value="units">Units</SelectItem>

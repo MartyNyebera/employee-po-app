@@ -25,7 +25,7 @@ interface Project { id: string; name: string; status?: string; }
 interface Facility { id: string; name: string; status?: string; }
 interface ItemRequest { id: string; requestNumber?: string | null; itemName: string; status: string; }
 
-const UNITS = ['pcs', 'bags', 'kg', 'liters', 'meters', 'boxes', 'sets', 'Lot', 'units'];
+const UNITS = ['pcs', 'bags', 'kg', 'liters', 'gallons', 'meters', 'boxes', 'sets', 'Lot', 'units'];
 // "For (Project)" is required; Personal use gets its own sentinel (mapped back to a null
 // projectId on submit) and '' means "nothing picked yet". Trading is a second no-project sentinel
 // for the company's trading purchases (not tied to any project): it submits with projectId null but

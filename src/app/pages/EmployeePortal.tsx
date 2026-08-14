@@ -485,6 +485,7 @@ export function EmployeePortal() {
                         <option value="pcs">Pieces</option>
                         <option value="kg">Kilograms</option>
                         <option value="liters">Liters</option>
+                        <option value="gallons">Gallons</option>
                         <option value="meters">Meters</option>
                         <option value="boxes">Boxes</option>
                         <option value="sets">Sets</option>

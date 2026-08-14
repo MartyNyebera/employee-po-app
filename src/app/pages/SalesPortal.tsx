@@ -48,7 +48,7 @@ const SESSION_KEY = 'sales_session';
 // Domain vocabulary, mirroring the admin sales list.
 const SO_LINES = ['Sheet metal (panels)', 'Sheet metal (branded)', 'Trading (electrical)', 'Trading (mechanical)', 'Fabrication (subcon)'];
 const SO_SOURCES = ['Referral', 'Facebook', 'Marketplace', 'Ad', 'Walk-in', 'Website', 'Existing contact'];
-const UNITS = ['pcs', 'sets', 'units', 'Lot', 'kg', 'meters', 'boxes'];
+const UNITS = ['pcs', 'sets', 'units', 'Lot', 'kg', 'gallons', 'meters', 'boxes'];
 
 const peso = (n: number) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 

@@ -93,7 +93,7 @@ const WD_STATUS_LABEL: Record<string, string> = {
 const TOKEN_KEY = 'warehouse_token';
 const SESSION_KEY = 'warehouse_session';
 
-const UNITS = ['pcs', 'pieces', 'bags', 'kg', 'liters', 'meters', 'boxes', 'sets', 'Lot', 'units'];
+const UNITS = ['pcs', 'pieces', 'bags', 'kg', 'liters', 'gallons', 'meters', 'boxes', 'sets', 'Lot', 'units'];
 
 // Plain brand-gold text, no pill — the same treatment purchase-request statuses get in every
 // other portal. The words carry the meaning; the quantity beside them carries the detail.
