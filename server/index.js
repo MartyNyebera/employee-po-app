@@ -1162,6 +1162,11 @@ async function runMigrations() {
       // treated exactly like pay_rate/sss_ee and never exposed on any attendance/timesheet endpoint.
       await query(`ALTER TABLE persons ADD COLUMN IF NOT EXISTS ot_eligible BOOLEAN DEFAULT false`);
       await query(`ALTER TABLE persons ADD COLUMN IF NOT EXISTS withholding NUMERIC(12,2)`);
+      // SSS enrollment: the auto-SSS (gross × 4.5%) is deducted ONLY for enrolled people. Defaults
+      // TRUE so every existing person keeps the current auto-SSS unchanged; flip to FALSE for someone
+      // with no SSS (then their SSS is ₱0 every period). PhilHealth/Pag-IBIG are unaffected by this
+      // flag — those are controlled by their own roster values (blank = ₱0).
+      await query(`ALTER TABLE persons ADD COLUMN IF NOT EXISTS sss_enrolled BOOLEAN NOT NULL DEFAULT true`);
       console.log('✅ persons table ready');
     } catch (err) { console.log('ℹ️ persons table skipped:', err.message); }
 
@@ -4678,7 +4683,7 @@ app.get('/api/persons', requireRole(['admin']), async (req, res) => {
     const result = await query(
       `SELECT id, full_name, department, position, employment_type, status,
               hired_on, last_day, qr_token, pay_rate, photo_url,
-              sss_ee, philhealth_ee, pagibig_ee, ot_eligible, withholding, created_at
+              sss_ee, philhealth_ee, pagibig_ee, ot_eligible, withholding, sss_enrolled, created_at
          FROM persons
         ORDER BY (status = 'active') DESC, full_name ASC`
     );
@@ -4692,7 +4697,7 @@ app.get('/api/persons', requireRole(['admin']), async (req, res) => {
 app.post('/api/persons', requireRole(['admin']), async (req, res) => {
   try {
     const { full_name, department, position, employment_type, status, hired_on, last_day, pay_rate, photo_url,
-            sss_ee, philhealth_ee, pagibig_ee, ot_eligible, withholding } = req.body;
+            sss_ee, philhealth_ee, pagibig_ee, ot_eligible, withholding, sss_enrolled } = req.body;
     if (!full_name || !String(full_name).trim()) {
       return res.status(400).json({ error: 'full_name is required' });
     }
@@ -4710,12 +4715,14 @@ app.post('/api/persons', requireRole(['admin']), async (req, res) => {
     const wtax = normalizePayRate(withholding);
     if (wtax === INVALID_PAY) return res.status(400).json({ error: 'withholding must be a non-negative number or blank' });
     const otEl = !!ot_eligible;
+    // Default TRUE when the client doesn't send it, so a new person is enrolled unless explicitly off.
+    const sssEnr = (sss_enrolled === undefined || sss_enrolled === null) ? true : !!sss_enrolled;
     const result = await query(
-      `INSERT INTO persons (full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url, sss_ee, philhealth_ee, pagibig_ee, ot_eligible, withholding)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-       RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url, sss_ee, philhealth_ee, pagibig_ee, ot_eligible, withholding, created_at`,
+      `INSERT INTO persons (full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url, sss_ee, philhealth_ee, pagibig_ee, ot_eligible, withholding, sss_enrolled)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+       RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url, sss_ee, philhealth_ee, pagibig_ee, ot_eligible, withholding, sss_enrolled, created_at`,
       [String(full_name).trim(), department || null, position || null, et, st,
-       hired_on || null, last_day || null, randomUUID(), pr, ph, sss, phic, pgib, otEl, wtax]
+       hired_on || null, last_day || null, randomUUID(), pr, ph, sss, phic, pgib, otEl, wtax, sssEnr]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -4767,6 +4774,7 @@ app.patch('/api/persons/:id', requireRole(['admin']), async (req, res) => {
       push('photo_url', ph);
     }
     if (has('ot_eligible')) push('ot_eligible', !!b.ot_eligible);
+    if (has('sss_enrolled')) push('sss_enrolled', !!b.sss_enrolled);
 
     if (sets.length === 0) return res.status(400).json({ error: 'no fields to update' });
 
@@ -4774,7 +4782,7 @@ app.patch('/api/persons/:id', requireRole(['admin']), async (req, res) => {
     const result = await query(
       `UPDATE persons SET ${sets.join(', ')}
         WHERE id = $${vals.length}
-        RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url, sss_ee, philhealth_ee, pagibig_ee, ot_eligible, withholding, created_at`,
+        RETURNING id, full_name, department, position, employment_type, status, hired_on, last_day, qr_token, pay_rate, photo_url, sss_ee, philhealth_ee, pagibig_ee, ot_eligible, withholding, sss_enrolled, created_at`,
       vals
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Person not found' });
@@ -5055,7 +5063,7 @@ async function computePayroll(periodId) {
   // the last_day clause and silently omit their final pay). Someone whose last_day is before the
   // period start, or whose hire is after the period end, is excluded by the date window.
   const persons = (await query(
-    `SELECT id, full_name, employment_type, pay_rate, sss_ee, philhealth_ee, pagibig_ee, withholding, ot_eligible,
+    `SELECT id, full_name, employment_type, pay_rate, sss_ee, philhealth_ee, pagibig_ee, withholding, ot_eligible, sss_enrolled,
             to_char(hired_on,'YYYY-MM-DD') AS hired_on, to_char(last_day,'YYYY-MM-DD') AS last_day
        FROM persons
       WHERE (last_day IS NULL OR last_day >= $1) AND (hired_on IS NULL OR hired_on <= $2)
@@ -5224,9 +5232,11 @@ async function computePayroll(periodId) {
     // Unpaid personal-business breaks (docked minutes summed across the period) × per-minute rate.
     const breakDed = breakMin * perMin;
     const gross = basePay + otPay + sundayPay + holidayPay;
-    // SSS-EE is AUTO-COMPUTED per period as gross × 4.5% (employee share), deducted in BOTH cutoffs.
-    // The fixed roster sss_ee is no longer the deduction source (the column is kept but unused here).
-    const sss = round2(gross * 0.045);
+    // SSS-EE is AUTO-COMPUTED per period as gross × 4.5% (employee share), deducted in BOTH cutoffs —
+    // but ONLY for people enrolled in SSS. A non-enrolled person (sss_enrolled = false) gets ₱0 SSS
+    // every period. The fixed roster sss_ee is no longer the deduction source (column kept, unused).
+    const sssEnrolled = person.sss_enrolled !== false; // default-true safety: treat null/undefined as enrolled
+    const sss = sssEnrolled ? round2(gross * 0.045) : 0;
     // PhilHealth & Pag-IBIG stay fixed roster values, but are deducted in the FIRST cutoff (1–15)
     // ONLY; the second cutoff (16–end) zeroes them (they still print ₱0.00 on the payslip).
     const phic = firstCutoff ? (Number(person.philhealth_ee) || 0) : 0;

@@ -31,6 +31,8 @@ interface Person {
   // Phase 4a. ot_eligible: allowed OT at all. withholding: sensitive tax amount (like pay_rate).
   ot_eligible?: boolean;
   withholding?: number | string | null;
+  // Auto-SSS (gross × 4.5%) applies only when enrolled; false → ₱0 SSS every period. Default true.
+  sss_enrolled?: boolean;
   created_at?: string;
 }
 
@@ -232,6 +234,8 @@ function PersonModal({ initial, onClose, onSaved }: { initial: Person | null; on
     pagibig_ee: initial?.pagibig_ee === null || initial?.pagibig_ee === undefined ? '' : String(initial.pagibig_ee),
     ot_eligible: !!initial?.ot_eligible,
     withholding: initial?.withholding === null || initial?.withholding === undefined ? '' : String(initial.withholding),
+    // Default enrolled (true) unless the saved value is explicitly false.
+    sss_enrolled: initial?.sss_enrolled !== false,
   });
   const [saving, setSaving] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
@@ -265,6 +269,7 @@ function PersonModal({ initial, onClose, onSaved }: { initial: Person | null; on
         pagibig_ee: f.pagibig_ee.trim() === '' ? null : Number(f.pagibig_ee),
         ot_eligible: !!f.ot_eligible,
         withholding: f.withholding.trim() === '' ? null : Number(f.withholding),
+        sss_enrolled: !!f.sss_enrolled,
       };
       if (initial) await fetchApi(`/persons/${initial.id}`, { method: 'PATCH', body: JSON.stringify(body) });
       else await fetchApi('/persons', { method: 'POST', body: JSON.stringify(body) });
@@ -316,12 +321,16 @@ function PersonModal({ initial, onClose, onSaved }: { initial: Person | null; on
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
           <div>
             <div style={{ fontSize: '11px', color: '#8a8a8a', marginBottom: '4px' }}>SSS (EE)</div>
-            {/* SSS-EE is auto-computed at payroll time as gross × 4.5% every cutoff — no longer a typed
-                roster value. Shown read-only so it's clear it isn't set here. (The DB column is kept.) */}
-            <div style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #ececec', background: '#f7f7f7', fontSize: '13px', color: '#5a5a5a' }}>
-              Auto: gross × 4.5%
+            {/* SSS-EE is auto-computed at payroll time as gross × 4.5% every cutoff — but ONLY for
+                enrolled people. The checkbox is the switch; unchecked → ₱0 SSS every period. (No typed
+                amount here; the sss_ee DB column is kept but unused.) */}
+            <label style={{ display: 'flex', alignItems: 'center', gap: '7px', cursor: 'pointer', padding: '7px 10px', borderRadius: '8px', border: '1px solid #ececec', background: '#f7f7f7' }}>
+              <input type="checkbox" checked={!!f.sss_enrolled} onChange={e => set('sss_enrolled', e.target.checked)} style={{ width: '15px', height: '15px', cursor: 'pointer' }} />
+              <span style={{ fontSize: '12.5px', color: '#3d3d3d', fontWeight: 600 }}>SSS-enrolled</span>
+            </label>
+            <div style={{ fontSize: '10.5px', color: f.sss_enrolled ? '#8a8a8a' : '#b45309', marginTop: '3px' }}>
+              {f.sss_enrolled ? 'Auto: gross × 4.5% each cutoff.' : '₱0.00 — not enrolled, no SSS deducted.'}
             </div>
-            <div style={{ fontSize: '10.5px', color: '#8a8a8a', marginTop: '3px' }}>Computed each cutoff — not typed here.</div>
           </div>
           <div>
             <div style={{ fontSize: '11px', color: '#8a8a8a', marginBottom: '4px' }}>PhilHealth (EE)</div>
