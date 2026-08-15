@@ -310,11 +310,18 @@ function PersonModal({ initial, onClose, onSaved }: { initial: Person | null; on
       </div>
       <div style={{ marginBottom: '14px' }}>
         <label style={S.label}>Government deductions (employee share)</label>
+        <div style={{ fontSize: '10.5px', color: '#8a8a8a', marginTop: '-4px', marginBottom: '8px' }}>
+          SSS is auto-computed (gross × 4.5%) every cutoff. PhilHealth &amp; Pag-IBIG apply on the 1st cutoff (1–15) only; the 2nd cutoff (16–end) deducts ₱0.
+        </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
           <div>
             <div style={{ fontSize: '11px', color: '#8a8a8a', marginBottom: '4px' }}>SSS (EE)</div>
-            <TextInput type="number" min="0" step="0.01" inputMode="decimal" value={f.sss_ee}
-              onChange={e => set('sss_ee', e.target.value)} placeholder="—" />
+            {/* SSS-EE is auto-computed at payroll time as gross × 4.5% every cutoff — no longer a typed
+                roster value. Shown read-only so it's clear it isn't set here. (The DB column is kept.) */}
+            <div style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #ececec', background: '#f7f7f7', fontSize: '13px', color: '#5a5a5a' }}>
+              Auto: gross × 4.5%
+            </div>
+            <div style={{ fontSize: '10.5px', color: '#8a8a8a', marginTop: '3px' }}>Computed each cutoff — not typed here.</div>
           </div>
           <div>
             <div style={{ fontSize: '11px', color: '#8a8a8a', marginBottom: '4px' }}>PhilHealth (EE)</div>

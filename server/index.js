@@ -5011,6 +5011,9 @@ async function computePayroll(periodId) {
   // un-finalize first (an explicit, logged decision) before recomputing.
   if (period.payroll_finalized === true) return { error: 'finalized' };
   const start = period.start_date, end = period.end_date;
+  // Semi-monthly cutoff half, from the period's START day. PhilHealth & Pag-IBIG are deducted in the
+  // FIRST cutoff (1–15) only; the second cutoff (16–end) zeroes them. SSS is deducted in BOTH cutoffs.
+  const firstCutoff = Number(start.slice(8, 10)) <= 15;
 
   // Missing-punch handling (was the H2 "refuse to compute" block): compute now always proceeds.
   //   • Missing OUT (IN but no OUT, status no_out): paid as a HALF day (see the scheduled-day
@@ -5220,9 +5223,16 @@ async function computePayroll(periodId) {
     const lateUndertimeDed = (countedLate + undertimeMin) * perMin;
     // Unpaid personal-business breaks (docked minutes summed across the period) × per-minute rate.
     const breakDed = breakMin * perMin;
-    const sss = Number(person.sss_ee) || 0, phic = Number(person.philhealth_ee) || 0, pgib = Number(person.pagibig_ee) || 0, wtax = Number(person.withholding) || 0;
-    const bale = baleMap[person.id] || 0;
     const gross = basePay + otPay + sundayPay + holidayPay;
+    // SSS-EE is AUTO-COMPUTED per period as gross × 4.5% (employee share), deducted in BOTH cutoffs.
+    // The fixed roster sss_ee is no longer the deduction source (the column is kept but unused here).
+    const sss = round2(gross * 0.045);
+    // PhilHealth & Pag-IBIG stay fixed roster values, but are deducted in the FIRST cutoff (1–15)
+    // ONLY; the second cutoff (16–end) zeroes them (they still print ₱0.00 on the payslip).
+    const phic = firstCutoff ? (Number(person.philhealth_ee) || 0) : 0;
+    const pgib = firstCutoff ? (Number(person.pagibig_ee) || 0) : 0;
+    const wtax = Number(person.withholding) || 0;
+    const bale = baleMap[person.id] || 0;
     const deductions = lateUndertimeDed + breakDed + sss + phic + pgib + wtax + bale;
     // L3: net can't go negative — if deductions (typically a large BALE) exceed gross, floor net at
     // 0 and record the shortfall so Admin knows the remainder wasn't collected and needs handling
@@ -5240,6 +5250,9 @@ async function computePayroll(periodId) {
         ot_grace_hours: otGraceHours,
         tardiness: { grace_minutes: lateGrace, tier1_minutes: lateTier1, cutoff_minutes: lateCutoff, absent_buffer_minutes: lateAbsentBuffer },
         work_start: s.work_start, work_end: s.work_end, work_end_sat: s.work_end_sat, special_holiday_not_worked_paid: specialNotWorkedPaid,
+        // Statutory: SSS-EE is auto = gross × sss_rate every cutoff; PhilHealth/Pag-IBIG apply in the
+        // first cutoff only (cutoff_half === 'first').
+        sss_rate: 0.045, cutoff_half: firstCutoff ? 'first' : 'second',
       },
       totals: {
         days_present: daysPresent, half_days: halfDays, absent_days: absentDays, late_minutes: lateMin, counted_late_minutes: countedLate,
