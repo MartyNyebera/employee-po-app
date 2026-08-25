@@ -45,6 +45,7 @@ const fmtHours = (m: number | null) => (m === null || m === undefined) ? '—' :
 // Compact docked-break label: under an hour shows just "35m"; an hour or more shows "1h 15m".
 const fmtBreakMin = (m: number) => m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`;
 const periodLabel = (p: Period) => `${fmtDay(p.start_date)} – ${fmtDay(p.end_date)}, ${p.start_date.slice(0, 4)}`;
+const fmtMon = (ym: string) => new Date(ym + '-01T00:00:00').toLocaleDateString('en-PH', { month: 'short' }); // '2026-09' → 'Sep'
 
 // DISPLAY ONLY. The stored worked_minutes is the raw in-to-out span; the sheet should show PAID
 // hours net of the 12:00–1:00 PM lunch so the column matches what payroll actually pays (a normal
@@ -511,13 +512,41 @@ function HistoryModal({ api, day, onClose }: { api: Api; day: Day; onClose: () =
   );
 }
 
-// Create a semi-monthly pay period (1–15 or 16–end). The month + half buttons fill the dates,
-// which stay editable for an off-cycle window.
+// A suggested next period computed by the server from the calendar + Holidays tab (see the
+// /attendance/periods/suggest endpoint). Payday is the buffer target; end = the workday before it.
+interface Suggestion { start: string; end: string; payday: string; cutoff_half: 'first' | 'second'; cutoff_month: string | null; }
+
+// Create a semi-monthly pay period. On open we ASK the server for a suggested start/cutoff-end/payday
+// (derived from Kimoel's cutoff scheme + the holidays table + the last period's end) and pre-fill it,
+// but nothing is forced: the month + half buttons and the date inputs stay fully editable, so a
+// reviewer can accept the suggestion or override any date for an off-cycle window.
 function NewPeriodModal({ api, onClose, onSaved }: { api: Api; onClose: () => void; onSaved: (p: Period) => void }) {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
   const [saving, setSaving] = useState(false);
+  const [sug, setSug] = useState<Suggestion | null>(null);
+  const [loadingSug, setLoadingSug] = useState(true);
+
+  // Fetch the suggestion once on open and pre-fill the dates. A failure is non-fatal — the form still
+  // works as a plain manual editor, so we only clear the loading state and leave the fields blank.
+  useEffect(() => {
+    let live = true;
+    api<{ suggestions: Suggestion[] }>('/attendance/periods/suggest')
+      .then(r => {
+        if (!live) return;
+        const s = r.suggestions?.[0];
+        if (s) { setSug(s); setStart(s.start); setEnd(s.end); setMonth(s.start.slice(0, 7)); }
+      })
+      .catch(() => {})
+      .finally(() => { if (live) setLoadingSug(false); });
+    return () => { live = false; };
+  }, [api]);
+
+  const applySuggestion = () => {
+    if (!sug) return;
+    setStart(sug.start); setEnd(sug.end); setMonth(sug.start.slice(0, 7));
+  };
 
   const applyHalf = (half: 'first' | 'second') => {
     if (!/^\d{4}-\d{2}$/.test(month)) { toast.error('Pick a month first'); return; }
@@ -537,9 +566,24 @@ function NewPeriodModal({ api, onClose, onSaved }: { api: Api; onClose: () => vo
     } catch (e: any) { toast.error(e.message || 'Could not create the period'); } finally { setSaving(false); }
   };
 
+  // True once the user has moved off the suggested dates — lets us relabel the banner button.
+  const overridden = !!sug && (start !== sug.start || end !== sug.end);
+
   return (
     <Modal title="New Pay Period" onClose={onClose}
       footer={<><GhostBtn onClick={onClose}>Cancel</GhostBtn><PrimaryBtn onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Create'}</PrimaryBtn></>}>
+      {loadingSug ? (
+        <div style={{ ...S.sub, marginBottom: '14px' }}>Calculating a suggested cutoff…</div>
+      ) : sug ? (
+        <div style={{ background: '#f4f7ff', border: '1px solid #dbe4ff', borderRadius: '8px', padding: '10px 12px', marginBottom: '14px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            {pill(sug.cutoff_half === 'first' ? `1st cutoff${sug.cutoff_month ? ` · ${fmtMon(sug.cutoff_month)}` : ''}` : '2nd cutoff', sug.cutoff_half === 'first' ? 'good' : 'pending')}
+            <span style={{ fontWeight: 600 }}>Suggested: {fmtDay(sug.start)} – {fmtDay(sug.end)}</span>
+          </div>
+          <div style={{ ...S.sub, marginTop: '4px' }}>Payday {fmtDay(sug.payday)} · cutoff ends one workday before payday (rest days &amp; holidays skipped).</div>
+          {overridden && <button style={{ ...S.rowBtn, marginTop: '8px' }} onClick={applySuggestion}>Reset to suggestion</button>}
+        </div>
+      ) : null}
       <Field label="Month"><TextInput type="month" value={month} onChange={e => setMonth(e.target.value)} /></Field>
       <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
         <button style={S.rowBtn} onClick={() => applyHalf('first')}>1st half (1–15)</button>

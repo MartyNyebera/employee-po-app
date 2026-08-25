@@ -5008,6 +5008,41 @@ const addDaysYMD = (ymd, n) => { const [y, m, d] = ymd.split('-').map(Number); c
 const dowYMD = (ymd) => { const [y, m, d] = ymd.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)).getUTCDay(); }; // 0=Sun
 const dateListYMD = (start, end) => { const out = []; let c = start; while (c <= end) { out.push(c); c = addDaysYMD(c, 1); } return out; };
 
+// ---- Calendar helpers for the cutoff/payday DATE SUGGESTER (create-period UI only) ----
+// A "workday" = NOT Sunday (rest day) AND NOT a holiday (from the holidays table). holidaySet is a
+// Set of 'YYYY-MM-DD'. These mirror the isScheduled/priorWorkingDate logic used inside computePayroll,
+// hoisted to module scope so both the compute and the suggester share one definition.
+const lastDayOfMonthYMD = (y, m) => new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); // m is 1-based
+const isWorkdayYMD = (ymd, holidaySet) => dowYMD(ymd) !== 0 && !holidaySet.has(ymd);
+const backToWorkdayYMD = (ymd, holidaySet) => { let c = ymd; for (let i = 0; i < 31; i++) { if (isWorkdayYMD(c, holidaySet)) return c; c = addDaysYMD(c, -1); } return ymd; }; // shift earlier, inclusive
+const priorWorkdayYMD = (ymd, holidaySet) => { let c = ymd; for (let i = 0; i < 31; i++) { c = addDaysYMD(c, -1); if (isWorkdayYMD(c, holidaySet)) return c; } return ymd; }; // the workday strictly before
+
+// Suggest the next semi-monthly period starting the day AFTER `lastEnd`, using Kimoel's scheme:
+//  • 1st cutoff → target payday = the 15th; 2nd cutoff → target payday = the month's LAST day.
+//  • If the target payday is not a workday (Sunday/holiday) it shifts BACK to the nearest workday.
+//  • The cutoff END is the workday immediately before the (shifted) payday — the treasurer buffer.
+//  • Start = the day after the previous period's end (no gaps).
+// The half is read from the start's day-of-month, which is robust to a few days of weekend/holiday
+// drift at the boundary: mid-month (11–24) → 2nd cutoff of that month; early (≤10) → 1st cutoff of
+// that month; late (≥25) → 1st cutoff of the NEXT month. SUGGESTION ONLY — this creates nothing.
+function suggestPeriodAfter(lastEnd, holidaySet) {
+  const start = addDaysYMD(lastEnd, 1);
+  const [sy, sm, sd] = start.split('-').map(Number);
+  let target, firstCutoff, month;
+  if (sd >= 11 && sd <= 24) {                        // mid-month → 2nd cutoff (payday = end of THIS month)
+    target = lastDayOfMonthYMD(sy, sm); firstCutoff = false; month = start.slice(0, 7);
+  } else if (sd <= 10) {                             // early → 1st cutoff (payday = the 15th of THIS month)
+    target = `${start.slice(0, 7)}-15`; firstCutoff = true; month = start.slice(0, 7);
+  } else {                                           // late (≥25) → 1st cutoff of the NEXT month
+    const ny = sm === 12 ? sy + 1 : sy, nm = sm === 12 ? 1 : sm + 1;
+    const ym = `${String(ny).padStart(4, '0')}-${String(nm).padStart(2, '0')}`;
+    target = `${ym}-15`; firstCutoff = true; month = ym;
+  }
+  const payday = backToWorkdayYMD(target, holidaySet);
+  const end = priorWorkdayYMD(payday, holidaySet);
+  return { start, end, payday, payday_target: target, cutoff_half: firstCutoff ? 'first' : 'second', cutoff_month: month };
+}
+
 // ---- Semi-monthly cutoff classification (PhilHealth + Pag-IBIG deduct on the month's FIRST cutoff) ----
 // Which calendar months' first half (days 1–14) a period's date range covers. A semi-monthly period
 // spans at most two calendar months, so checking the start month and the end month is sufficient.
@@ -5804,6 +5839,30 @@ app.get('/api/attendance/periods', requireRole(attendanceReviewRoles), async (re
       return { ...r, cutoff_half: c.firstCutoff ? 'first' : 'second', cutoff_month: c.month };
     });
     res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Suggest dates for a NEW pay period (start / cutoff-end / payday) from the calendar + the Holidays
+// tab, following Kimoel's cutoff scheme. SUGGESTION ONLY — this never creates a period; the client
+// pre-fills these and they stay fully editable, and the user confirms or overrides. Query params:
+//   ?after=YYYY-MM-DD  base the first suggestion on the day after this end (default: latest period's end)
+//   ?count=N           return N periods chained back-to-back (1–12; default 1) — used for previews
+app.get('/api/attendance/periods/suggest', requireRole(attendanceReviewRoles), async (req, res) => {
+  try {
+    const holidaySet = new Set((await query(`SELECT to_char(holiday_date,'YYYY-MM-DD') AS d FROM holidays`)).rows.map(r => r.d));
+    let after = req.query.after;
+    if (!isYMD(after)) {
+      const last = (await query(`SELECT to_char(end_date,'YYYY-MM-DD') AS end_date FROM pay_periods ORDER BY end_date DESC, id DESC LIMIT 1`)).rows[0];
+      after = last ? last.end_date : null;
+    }
+    if (!after) return res.json({ basedOnEnd: null, suggestions: [], note: 'No existing pay period to base a suggestion on — enter the dates manually.' });
+    const count = Math.max(1, Math.min(12, Number(req.query.count) || 1));
+    const suggestions = [];
+    let cursor = after;
+    for (let i = 0; i < count; i++) { const s = suggestPeriodAfter(cursor, holidaySet); suggestions.push(s); cursor = s.end; }
+    res.json({ basedOnEnd: after, suggestions });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
