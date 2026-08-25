@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Menu, X, Search, LogOut, Package, Plus, Pencil, Boxes, ClipboardList, Check, PackageMinus,
   PanelLeftClose, PanelLeftOpen, PenTool, Eraser, Upload,
-  FileText, Truck, Ban, Printer, Calendar, Clock, PackageCheck,
+  FileText, Truck, Ban, Printer, Calendar, Clock, PackageCheck, Eye,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { onBackdropDown, backdropClose } from '../lib/backdrop';
@@ -29,7 +29,7 @@ import { AttentionCard } from '../components/AttentionCard';
 // Items entered here feed inventory management and purchase-request selection.
 // ============================================================================
 
-type PortalView = 'new-pr' | 'inventory' | 'itemRequests' | 'orders' | 'withdrawals' | 'myWithdrawals' | 'signature';
+type PortalView = 'new-pr' | 'myPRs' | 'inventory' | 'itemRequests' | 'orders' | 'withdrawals' | 'myWithdrawals' | 'signature';
 
 // Section D — #10: inbound receiving moved here from Logistics. An approved purchase order
 // arrives from a supplier; the warehouse marks it received, which adds the goods to stock.
@@ -57,6 +57,26 @@ const poState = (s: string): { label: string; hint: string | null } => {
 };
 
 const peso = (n: number) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+// A purchase request the WAREHOUSE itself filed (via the shared New Purchase Request form). This
+// "My Purchase Requests" history lets warehouse staff track a restock request through the pipeline;
+// it is scoped server-side to PRs this warehouse account submitted (GET /purchase-requests/mine).
+type RequestStatus = 'pending' | 'reviewed' | 'verified' | 'ordered' | 'approved' | 'disapproved';
+interface PRItem { description?: string; quantity?: number; unit?: string | null; unitCost?: number; amount?: number; }
+interface PurchaseRequest {
+  id: string; prNumber: string; employeeName?: string;
+  projectName?: string | null; facilityName?: string | null;
+  items: PRItem[]; total: number; status: RequestStatus;
+  checkedBy?: string | null; reviewedBy?: string | null;
+  neededBy?: string | null; notes?: string | null; createdAt?: string;
+}
+// Ambient sub-status text tracking the flow: accounting review → admin verify → purchase order → approval.
+const PR_SUBSTATUS: Record<string, string> = {
+  pending: 'Awaiting accounting review',
+  reviewed: 'Awaiting admin verification',
+  verified: 'Awaiting purchase order',
+  ordered: 'Awaiting admin approval',
+};
 
 interface InventoryItem {
   id: string; itemCode: string; itemName: string; description?: string;
@@ -435,6 +455,68 @@ function SignaturePad({ initial, onSaved }: { initial: string | null; onSaved: (
   );
 }
 
+// Read-only detail for one of the warehouse's own purchase requests: the full line-item table
+// plus the pipeline status. All data comes from the /mine payload — no extra fetch, and no
+// signature/pricing endpoints (those stay with the reviewer portals).
+function PRDetailModal({ pr, onClose }: { pr: PurchaseRequest; onClose: () => void }) {
+  const lineAmount = (it: PRItem) => it.amount ?? (Number(it.quantity) || 0) * (Number(it.unitCost) || 0);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onMouseDown={onBackdropDown} onClick={backdropClose(onClose)}>
+      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+          <div>
+            <h3 className="font-bold text-gray-900">{pr.prNumber}</h3>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {pr.projectName || pr.facilityName || 'Personal use'} · {pr.status.charAt(0).toUpperCase() + pr.status.slice(1)}
+              {PR_SUBSTATUS[pr.status] ? ` — ${PR_SUBSTATUS[pr.status]}` : ''}
+            </p>
+          </div>
+          <button onClick={onClose} className="p-1 rounded-md text-gray-400 hover:bg-gray-100"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="overflow-x-auto rounded-lg border border-gray-200">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                  <th className="px-3 py-2">Item</th>
+                  <th className="px-3 py-2 text-right">Qty</th>
+                  <th className="px-3 py-2">Unit</th>
+                  <th className="px-3 py-2 text-right">Unit cost</th>
+                  <th className="px-3 py-2 text-right">Amount</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {pr.items.map((it, idx) => (
+                  <tr key={idx}>
+                    <td className="px-3 py-2 text-gray-900">{it.description || '—'}</td>
+                    <td className="px-3 py-2 text-right text-gray-700">{it.quantity ?? '—'}</td>
+                    <td className="px-3 py-2 text-gray-700">{it.unit || '—'}</td>
+                    <td className="px-3 py-2 text-right text-gray-700">{it.unitCost === undefined ? '—' : peso(it.unitCost)}</td>
+                    <td className="px-3 py-2 text-right font-medium text-gray-900">{peso(lineAmount(it))}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-gray-200 bg-gray-50">
+                  <td className="px-3 py-2 font-semibold text-gray-700" colSpan={4}>Total</td>
+                  <td className="px-3 py-2 text-right font-bold text-gray-900">{peso(pr.total)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-500">
+            <div>Prepared by <span className="text-gray-800 font-medium">{pr.employeeName || '—'}</span></div>
+            {pr.checkedBy && <div>Reviewed by <span className="text-gray-800 font-medium">{pr.checkedBy}</span></div>}
+            {pr.createdAt && <div>Filed <span className="text-gray-800 font-medium">{new Date(pr.createdAt).toLocaleDateString()}</span></div>}
+            {pr.neededBy && <div>Needed by <span className="text-gray-800 font-medium">{new Date(pr.neededBy).toLocaleDateString()}</span></div>}
+          </div>
+          {pr.notes && <div className="text-sm text-gray-600"><span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</span><p className="mt-1">{pr.notes}</p></div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ============================================================================
 // Portal shell (collapsible sidebar + inventory management)
 // ============================================================================
@@ -446,6 +528,9 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const [itemRequests, setItemRequests] = useState<ItemRequest[]>([]);
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  const [myPRs, setMyPRs] = useState<PurchaseRequest[]>([]);
+  const [prStatusFilter, setPrStatusFilter] = useState<'all' | RequestStatus>('all');
+  const [viewingPR, setViewingPR] = useState<PurchaseRequest | null>(null);
   const [receivingPO, setReceivingPO] = useState<PurchaseOrder | null>(null);
   const [signature, setSignature] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -459,19 +544,22 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const load = async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!silent) setLoading(true);
     try {
-      const [inv, irs, wds, pos, sig] = await Promise.all([
+      const [inv, irs, wds, pos, prs, sig] = await Promise.all([
         wFetch<InventoryItem[]>('/inventory'),
         wFetch<ItemRequest[]>('/item-requests').catch(() => []),
         wFetch<WithdrawalRequest[]>('/inventory-withdrawals').catch(() => []),
         // Section D — #10: the server scopes /purchase-orders to approved-and-beyond for the
         // warehouse role, so pending/in-review orders never reach this browser.
         wFetch<PurchaseOrder[]>('/purchase-orders').catch(() => []),
+        // Only PRs this warehouse account submitted — /mine scopes to the filer server-side.
+        wFetch<PurchaseRequest[]>('/purchase-requests/mine').catch(() => []),
         wFetch<{ signature: string | null }>('/warehouse/signature'),
       ]);
       setItems(inv || []);
       setItemRequests(irs || []);
       setWithdrawals(wds || []);
       setPurchaseOrders(pos || []);
+      setMyPRs(prs || []);
       setSignature(sig?.signature || null);
     }
     catch (e: any) { if (!silent) toast.error(e.message || 'Failed to load inventory'); }
@@ -563,8 +651,11 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     return !q || it.itemName.toLowerCase().includes(q) || (it.itemCode || '').toLowerCase().includes(q);
   }), [items, search]);
 
+  const filteredPRs = useMemo(() => myPRs.filter(pr => prStatusFilter === 'all' || pr.status === prStatusFilter), [myPRs, prStatusFilter]);
+
   const NAV: { id: PortalView; label: string; icon: any }[] = [
     { id: 'new-pr',       label: 'New Purchase Request', icon: FileText },
+    { id: 'myPRs',        label: 'My Purchase Requests', icon: ClipboardList },
     { id: 'inventory',    label: 'Inventory', icon: Boxes },
     { id: 'itemRequests', label: 'Item Requests', icon: ClipboardList },
     { id: 'orders',       label: 'Purchase Orders', icon: FileText },
@@ -917,8 +1008,75 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
             )}
           </>}
           {view === 'new-pr' && <CreatePurchaseRequestForm fetchApi={wFetch} session={session} />}
+
+          {/* MY PURCHASE REQUESTS — read-only history of PRs this warehouse account submitted,
+              so staff can track a restock request through review → approval. Scoped server-side. */}
+          {view === 'myPRs' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <h2 className="font-semibold text-gray-900">My Purchase Requests <span className="text-gray-400 font-normal">({filteredPRs.length})</span></h2>
+                <select value={prStatusFilter} onChange={e => setPrStatusFilter(e.target.value as any)} className="px-3 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="all">All statuses</option>
+                  <option value="pending">Pending</option>
+                  <option value="reviewed">Reviewed</option>
+                  <option value="verified">Verified</option>
+                  <option value="ordered">Ordered</option>
+                  <option value="approved">Approved</option>
+                  <option value="disapproved">Disapproved</option>
+                </select>
+              </div>
+
+              {loading ? <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading…</div>
+                : filteredPRs.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-48 text-gray-400 bg-white rounded-xl border border-gray-200">
+                    <ClipboardList className="w-10 h-10 mb-3 text-gray-300" />
+                    <p className="font-medium text-gray-500">{myPRs.length === 0 ? 'No purchase requests yet' : 'No requests match this status'}</p>
+                    {myPRs.length === 0 && <button onClick={() => setView('new-pr')} className="mt-3 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700">New Purchase Request</button>}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {filteredPRs.map(pr => (
+                      <div key={pr.id} className="bg-white rounded-xl border border-gray-200 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h3 className="font-semibold text-gray-900 text-sm">{pr.prNumber}</h3>
+                              <span className="text-xs text-gray-400">{pr.items.length} item{pr.items.length !== 1 ? 's' : ''}</span>
+                              <span className="text-xs text-gray-400">· {pr.projectName || pr.facilityName || 'Personal use'}</span>
+                            </div>
+                            <p className="text-xs text-gray-400 mt-0.5 truncate">{pr.items.map(i => i.description).filter(Boolean).join(', ')}</p>
+                            <p className="text-xs text-gray-400 mt-1">
+                              Prepared by <span className="text-gray-600 font-medium">{pr.employeeName || session.full_name}</span>
+                              {pr.checkedBy && <> · Reviewed by <span className="text-gray-600 font-medium">{pr.checkedBy}</span></>}
+                              {pr.status === 'approved' && pr.reviewedBy && <> · Approved by <span className="text-gray-600 font-medium">{pr.reviewedBy}</span></>}
+                            </p>
+                          </div>
+                          <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+                            <span className="text-xs font-semibold text-brand-gold">{pr.status.charAt(0).toUpperCase() + pr.status.slice(1)}</span>
+                            {PR_SUBSTATUS[pr.status] && <span className="text-[11px] text-gray-400">{PR_SUBSTATUS[pr.status]}</span>}
+                          </div>
+                        </div>
+                        {pr.notes && <p className="text-sm text-gray-600 mt-2 line-clamp-2">{pr.notes}</p>}
+                        <div className="flex items-center justify-between mt-3 flex-wrap gap-2">
+                          <div className="flex items-center gap-3 text-xs text-gray-400">
+                            {pr.createdAt && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{new Date(pr.createdAt).toLocaleDateString()}</span>}
+                            {pr.neededBy && <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />needed {new Date(pr.neededBy).toLocaleDateString()}</span>}
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="text-sm font-bold text-gray-900">{peso(pr.total)}</span>
+                            <button onClick={() => setViewingPR(pr)} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Eye className="w-3.5 h-3.5" /> View</button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+            </div>
+          )}
         </main>
       </div>
+
+      {viewingPR && <PRDetailModal pr={viewingPR} onClose={() => setViewingPR(null)} />}
 
       {adding && <AddItemModal onClose={() => setAdding(false)} onSaved={() => { setAdding(false); load(); }} />}
       {editing && <UpdateItemModal item={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}

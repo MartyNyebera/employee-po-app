@@ -7200,14 +7200,25 @@ app.post('/api/purchase-requests', requireAuth, async (req, res) => {
     res.status(201).json(mapPurchaseRequest(r.rows[0]));
   } catch (err) { sendDbError(res, err, 'purchase-request create'); }
 });
+// A caller's OWN purchase requests. Two identity models share this route:
+//  • Production employees (role 'employee') file with their employee_accounts id stamped onto
+//    purchase_requests.employee_id, so they scope by that id — unchanged behaviour.
+//  • Every OTHER portal (warehouse, logistics, sales, accounting…) files through the shared PR
+//    form, which stores employee_id = NULL and records only employee_name (their token id comes
+//    from a DIFFERENT table — warehouse_accounts etc. — whose SERIAL could COLLIDE with an
+//    employee_accounts id). Matching those callers on id would leak a same-id employee's PRs, so
+//    we deliberately match only the un-owned (employee_id IS NULL) rows, by the filer's name.
+// This is what lets the Warehouse portal show "My Purchase Requests" it submitted.
 app.get('/api/purchase-requests/mine', requireAuth, async (req, res) => {
   try {
+    const byId = effectiveRole(req.user) === 'employee';
     const r = await query(
       `SELECT pr.*, COALESCE(p.name, f.name, pr.project_label) AS project_name, f.name AS facility_name FROM purchase_requests pr
        LEFT JOIN projects p ON p.id = pr.project_id
        LEFT JOIN facilities f ON f.id = pr.facility_id
-       WHERE pr.employee_id = $1 ORDER BY pr.created_at DESC, pr.pr_number DESC`,
-      [req.user?.id ?? null]
+       WHERE ${byId ? 'pr.employee_id = $1' : '(pr.employee_id IS NULL AND pr.employee_name = $1)'}
+       ORDER BY pr.created_at DESC, pr.pr_number DESC`,
+      [byId ? (req.user?.id ?? null) : (req.user?.name ?? null)]
     );
     res.json(r.rows.map(mapPurchaseRequest));
   } catch (err) { res.status(500).json({ error: err.message }); }
