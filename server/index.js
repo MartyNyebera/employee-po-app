@@ -5008,6 +5008,32 @@ const addDaysYMD = (ymd, n) => { const [y, m, d] = ymd.split('-').map(Number); c
 const dowYMD = (ymd) => { const [y, m, d] = ymd.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)).getUTCDay(); }; // 0=Sun
 const dateListYMD = (start, end) => { const out = []; let c = start; while (c <= end) { out.push(c); c = addDaysYMD(c, 1); } return out; };
 
+// ---- Semi-monthly cutoff classification (PhilHealth + Pag-IBIG deduct on the month's FIRST cutoff) ----
+// Which calendar months' first half (days 1–14) a period's date range covers. A semi-monthly period
+// spans at most two calendar months, so checking the start month and the end month is sufficient.
+// Returns e.g. ['2026-09'] for Aug 29 → Sep 14 (it includes Sep 1–14, but only Aug 29–31 of August).
+function monthsFirstHalfCovered(start, end) {
+  const out = [];
+  for (const ym of new Set([start.slice(0, 7), end.slice(0, 7)])) {
+    // period [start,end] intersects [ym-01 .. ym-14] ?
+    if (start <= `${ym}-14` && end >= `${ym}-01`) out.push(ym);
+  }
+  return out;
+}
+// A period is the FIRST cutoff for a month M when it covers M's days 1–14 AND it is the EARLIEST such
+// period (by start_date, then id) — so PhilHealth + Pag-IBIG come out exactly once per calendar month,
+// automatically, with no manual toggle. Every other period is a second cutoff (SSS only). `allPeriods`
+// is [{id, start_date, end_date}] for all pay periods. Returns { firstCutoff: bool, month: 'YYYY-MM'|null }.
+function classifyFirstCutoff(period, allPeriods) {
+  for (const M of monthsFirstHalfCovered(period.start_date, period.end_date)) {
+    const claimants = allPeriods
+      .filter(p => monthsFirstHalfCovered(p.start_date, p.end_date).includes(M))
+      .sort((a, b) => (a.start_date < b.start_date ? -1 : a.start_date > b.start_date ? 1 : Number(a.id) - Number(b.id)));
+    if (claimants.length && String(claimants[0].id) === String(period.id)) return { firstCutoff: true, month: M };
+  }
+  return { firstCutoff: false, month: null };
+}
+
 async function computePayroll(periodId) {
   const pr = await query(
     `SELECT id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date, status, payroll_finalized
@@ -5019,9 +5045,14 @@ async function computePayroll(periodId) {
   // un-finalize first (an explicit, logged decision) before recomputing.
   if (period.payroll_finalized === true) return { error: 'finalized' };
   const start = period.start_date, end = period.end_date;
-  // Semi-monthly cutoff half, from the period's START day. PhilHealth & Pag-IBIG are deducted in the
-  // FIRST cutoff (1–15) only; the second cutoff (16–end) zeroes them. SSS is deducted in BOTH cutoffs.
-  const firstCutoff = Number(start.slice(8, 10)) <= 15;
+  // Cutoff half — AUTOMATIC, no manual input. This period is the FIRST cutoff of its calendar month if
+  // it is the earliest period covering that month's days 1–14 (see classifyFirstCutoff). PhilHealth &
+  // Pag-IBIG deduct on the first cutoff only (once per month); the second cutoff zeroes them. SSS
+  // deducts in both. Handles the new scheme where the first cutoff starts late in the prior month
+  // (e.g. Aug 29 → Sep 14 = SEPTEMBER's first cutoff), while old 1–15 periods still classify as first.
+  const allPeriods = (await query(`SELECT id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date FROM pay_periods`)).rows;
+  const cutoff = classifyFirstCutoff({ id: period.id, start_date: start, end_date: end }, allPeriods);
+  const firstCutoff = cutoff.firstCutoff;
 
   // Missing-punch handling (was the H2 "refuse to compute" block): compute now always proceeds.
   //   • Missing OUT (IN but no OUT, status no_out): paid as a HALF day (see the scheduled-day
@@ -5262,7 +5293,7 @@ async function computePayroll(periodId) {
         work_start: s.work_start, work_end: s.work_end, work_end_sat: s.work_end_sat, special_holiday_not_worked_paid: specialNotWorkedPaid,
         // Statutory: SSS-EE is auto = gross × sss_rate every cutoff; PhilHealth/Pag-IBIG apply in the
         // first cutoff only (cutoff_half === 'first').
-        sss_rate: 0.045, cutoff_half: firstCutoff ? 'first' : 'second',
+        sss_rate: 0.045, cutoff_half: firstCutoff ? 'first' : 'second', cutoff_month: cutoff.month,
       },
       totals: {
         days_present: daysPresent, half_days: halfDays, absent_days: absentDays, late_minutes: lateMin, counted_late_minutes: countedLate,
@@ -5764,7 +5795,15 @@ app.get('/api/attendance/periods', requireRole(attendanceReviewRoles), async (re
          FROM pay_periods
         ORDER BY start_date DESC, id DESC`
     );
-    res.json(result.rows);
+    // Read-only, auto-derived cutoff classification for display (no input): each period is either its
+    // month's 1st cutoff (deducts PhilHealth/Pag-IBIG) or a 2nd cutoff (SSS only). Uses the same
+    // classifyFirstCutoff rule the compute uses, so the badge matches what actually gets deducted.
+    const allPeriods = result.rows.map(r => ({ id: r.id, start_date: r.start_date, end_date: r.end_date }));
+    const rows = result.rows.map(r => {
+      const c = classifyFirstCutoff({ id: r.id, start_date: r.start_date, end_date: r.end_date }, allPeriods);
+      return { ...r, cutoff_half: c.firstCutoff ? 'first' : 'second', cutoff_month: c.month };
+    });
+    res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

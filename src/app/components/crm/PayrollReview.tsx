@@ -13,7 +13,18 @@ import { printPayslip, printPayslips } from '../../lib/payslipPrint';
 
 type Api = <T = any>(path: string, init?: RequestInit) => Promise<T>;
 
-interface Period { id: number; start_date: string; end_date: string; status: 'open' | 'locked'; payroll_finalized?: boolean; finalized_by?: string | null; finalized_at?: string | null; }
+interface Period { id: number; start_date: string; end_date: string; status: 'open' | 'locked'; payroll_finalized?: boolean; finalized_by?: string | null; finalized_at?: string | null;
+  // Auto-derived (read-only) cutoff classification: 'first' cutoff of its month deducts PhilHealth/Pag-IBIG.
+  cutoff_half?: 'first' | 'second'; cutoff_month?: string | null; }
+// Short label for the cutoff badge, e.g. "1st cutoff · Sep" / "2nd cutoff".
+const cutoffLabel = (p?: Period | null) => {
+  if (!p || !p.cutoff_half) return '';
+  if (p.cutoff_half === 'first') {
+    const mon = p.cutoff_month ? new Date(p.cutoff_month + '-01T00:00:00').toLocaleString('en-US', { month: 'short' }) : '';
+    return `1st cutoff${mon ? ' · ' + mon : ''}`;
+  }
+  return '2nd cutoff';
+};
 interface Warnings { no_pay_rate?: Array<{ person_id: number; full_name: string }>; deduction_exceeds_pay?: Array<{ person_id: number; full_name: string; shortfall: number }>; }
 interface DayDetail {
   date: string; dow: number; sunday: boolean; holiday: string | null; present: boolean;
@@ -169,10 +180,12 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
         <div style={{ minWidth: '260px' }}>
           <select value={selectedId ?? ''} onChange={e => setSelectedId(e.target.value ? Number(e.target.value) : null)} style={{ ...S.input, appearance: 'none', cursor: 'pointer' }}>
             {periods.length === 0 && <option value="">No pay periods yet</option>}
-            {periods.map(p => <option key={p.id} value={p.id}>{periodLabel(p)}{p.status === 'locked' ? '  🔒' : '  (open)'}</option>)}
+            {periods.map(p => <option key={p.id} value={p.id}>{periodLabel(p)} · {cutoffLabel(p)}{p.status === 'locked' ? '  🔒' : '  (open)'}</option>)}
           </select>
         </div>
         {period && (locked ? pill('Locked', 'good') : pill('Open — lock it first', 'bad'))}
+        {/* Auto-derived cutoff badge (read-only): which cutoff of its month this period is. */}
+        {(() => { const sel = periods.find(p => p.id === selectedId); return sel ? pill(cutoffLabel(sel), sel.cutoff_half === 'first' ? 'good' : 'pending') : null; })()}
         {finalized && pill('Finalized', 'good')}
         <div style={{ position: 'relative', flex: 1, minWidth: '220px' }}>
           <Search size={15} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#8a8a8a' }} />
