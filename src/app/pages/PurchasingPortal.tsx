@@ -18,6 +18,15 @@ import { NavBadge } from '../components/NavBadge';
 import { CreatePurchaseRequestForm } from '../components/CreatePurchaseRequestForm';
 import { AttentionCard } from '../components/AttentionCard';
 
+// Common payment arrangements offered as one-click presets on the PO form; "Custom…" reveals a
+// free-text box. The stored value is always the plain free-text string, whichever way entered.
+const PAYMENT_TERM_PRESETS = [
+  '30 days from receipt/acceptance',
+  '50% downpayment, 50% balance upon completion',
+  'Cash on delivery',
+  'Full payment upon delivery',
+];
+
 // ============================================================================
 // Purchasing Management portal (/purchasing). Fully independent of the admin
 // dashboard: purchasing staff sign in here with a dedicated Purchasing Account
@@ -583,9 +592,12 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
   // #4 — the buyer picks whether this order is domestic or foreign, and types the payment-terms
   // days. Both are new inputs on this form (the admin-side modal already had the type selector).
   const [poType, setPoType] = useState<'domestic' | 'foreign'>('domestic');
-  // Mode of Payment gates the terms: Cash hides Payment terms, Credit shows them.
+  // Mode of Payment is a standalone label; payment terms are entered independently (a Cash order
+  // can still be "COD", a deferred one "50% down"). Terms are a free-text string chosen from
+  // common presets or typed as Custom.
   const [paymentMode, setPaymentMode] = useState<'Cash' | 'Credit'>('Cash');
-  const [termsDays, setTermsDays] = useState('30');
+  const [paymentTerms, setPaymentTerms] = useState('30 days from receipt/acceptance');
+  const [customTerms, setCustomTerms] = useState(false);
   const [saving, setSaving] = useState(false);
   const set = (k: string, v: string) => setF(p => ({ ...p, [k]: v }));
 
@@ -621,16 +633,18 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
   const supplierContact = supplier
     ? [supplier.contactPerson, supplier.phone].filter(Boolean).join(' · ')
     : '';
-  // The days field composes the stored payment-terms text. Picking a supplier seeds it from the
-  // leading number in that supplier's terms (if any), but the buyer can override.
+  // Picking a supplier seeds the payment terms from that supplier's stored terms text (if any);
+  // the buyer can override or pick a different preset. A supplier term that isn't one of the
+  // presets drops the field into Custom mode showing the exact text.
   useEffect(() => {
-    const d = supplier?.paymentTerms?.match(/\d+/)?.[0];
-    if (d) setTermsDays(d);
+    const st = supplier?.paymentTerms?.trim();
+    if (st) {
+      setPaymentTerms(st);
+      setCustomTerms(!PAYMENT_TERM_PRESETS.includes(st));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supplierId]);
-  const terms = termsDays.trim()
-    ? `${termsDays.trim()} days from receipt/acceptance`
-    : (supplier?.paymentTerms?.trim() || '30 days from receipt/acceptance');
+  const terms = paymentTerms.trim();
 
   const save = async () => {
     if (!supplier) { toast.error('Pick a supplier'); return; }
@@ -668,8 +682,8 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
           createdDate: f.poDate,
           deliveryDate: f.deliveryDate,
           paymentMode,
-          // Credit carries the days-based terms; Cash carries none.
-          paymentTerms: paymentMode === 'Credit' ? terms : null,
+          // Terms are independent of the mode — sent for Cash or Credit alike (blank → server NULL).
+          paymentTerms: terms || null,
           poType,
           preparedBy: session.full_name,
         }),
@@ -728,8 +742,8 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
             </div>
           )}
 
-          {/* #4 — PO type (domestic/foreign) and Mode of Payment. Payment terms (days) only
-              appears for Credit; a Cash order carries no terms. */}
+          {/* #4 — PO type (domestic/foreign), Mode of Payment, and Payment terms. Terms are a
+              free-text preset (or Custom…) and are independent of Cash/Credit. */}
           <div className="grid grid-cols-2 gap-3 items-start">
             <div>
               <label className={flabel}>PO type</label>
@@ -745,14 +759,27 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
                 <option value="Credit">Credit</option>
               </select>
             </div>
-            {paymentMode === 'Credit' && (
-              <div>
-                <label className={flabel}>Payment terms (days)</label>
-                <input type="number" min="0" step="1" value={termsDays}
-                  onChange={e => setTermsDays(e.target.value)} placeholder="30" className={input} />
-                <p className="text-xs text-gray-400 mt-1">Stored as “{terms}”.</p>
-              </div>
-            )}
+            <div className="col-span-2">
+              <label className={flabel}>Payment terms</label>
+              <select
+                value={customTerms ? '__custom__' : paymentTerms}
+                onChange={e => {
+                  const v = e.target.value;
+                  if (v === '__custom__') { setCustomTerms(true); setPaymentTerms(''); }
+                  else { setCustomTerms(false); setPaymentTerms(v); }
+                }}
+                className={`${input} bg-white`}
+              >
+                {PAYMENT_TERM_PRESETS.map(t => <option key={t} value={t}>{t}</option>)}
+                <option value="__custom__">Custom…</option>
+              </select>
+              {customTerms && (
+                <input type="text" value={paymentTerms}
+                  onChange={e => setPaymentTerms(e.target.value)}
+                  placeholder="e.g., 50% downpayment, 50% balance upon completion"
+                  className={`${input} mt-2`} autoFocus />
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3 items-start">

@@ -2910,11 +2910,12 @@ app.post('/api/purchase-orders', requireRole(['admin','purchasing','office_admin
     // Use provided createdDate or current date if not provided
     const finalCreatedDate = createdDate || new Date().toISOString().split('T')[0];
     
-    // Mode of Payment gates the payment terms: Credit carries days-based terms; Cash carries
-    // none (stored NULL). Server-side so a Cash order can never keep stray terms even if the
-    // client sends them.
+    // Payment terms are independent of the Cash/Credit mode: a Cash order can be "COD" and a
+    // deferred one "50% down", so the entered terms are stored for either mode. Mode stays a
+    // separate one-word label. Blank terms are kept NULL rather than backfilled with a fixed
+    // "30 days" default, so nothing is silently asserted that the preparer didn't choose.
     const normMode = paymentMode === 'Credit' ? 'Credit' : 'Cash';
-    const storedTerms = normMode === 'Credit' ? (paymentTerms || '30 days from receipt/acceptance') : null;
+    const storedTerms = (paymentTerms && String(paymentTerms).trim()) ? String(paymentTerms).trim() : null;
     const normVat = vatType === 'non-vatable' ? 'non-vatable' : 'vatable';
 
     // Create extended description with all the new data
@@ -2926,7 +2927,7 @@ Prepared By: ${preparedBy || '[Prepared By]'}
 Reviewed By: ${reviewedBy || '[Reviewed By]'}
 PO Type: ${poType || 'domestic'}
 Mode of Payment: ${normMode}
-Payment Terms: ${storedTerms || 'N/A (Cash)'}
+Payment Terms: ${storedTerms || 'N/A'}
 VAT Type: ${normVat}
 Line Items: ${JSON.stringify(lineItems || [])}
 Sub Total: ${subTotal || amount}

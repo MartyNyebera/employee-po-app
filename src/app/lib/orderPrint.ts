@@ -111,7 +111,7 @@ const DEFAULT_TERMS = [
   'Prices quoted are firm and valid for 30 days from PO date.',
   'Delivery shall be made to the specified address within the agreed timeframe.',
   'Materials shall conform to specifications and quality standards.',
-  'Payment shall be made within 30 days from receipt and acceptance of materials.',
+  'Payment shall be made in accordance with the agreed payment terms stated above.',
   'This PO is governed by the laws of the Republic of the Philippines.',
 ];
 
@@ -261,7 +261,12 @@ export async function printPurchaseOrder(
   // silently discarded the good column values too.
   const address = po.supplierAddress || blobLine(description, 'Address:') || '';
   const contact = po.supplierContact || blobLine(description, 'Contact:') || '';
-  const paymentTerms = po.paymentTerms || blobLine(description, 'Payment Terms:') || DEFAULT_PAYMENT_TERMS;
+  // Payment terms are independent of Cash/Credit and print whenever the order actually carries
+  // them. No "30 days" default is injected — an order with no stored terms simply omits the line,
+  // rather than asserting a term the preparer never chose. Legacy Cash orders wrote "N/A (Cash)"
+  // into the blob and NULL into the column; treat any "N/A…" as no terms.
+  const rawPaymentTerms = (po.paymentTerms || blobLine(description, 'Payment Terms:') || '').trim();
+  const paymentTerms = /^n\/a\b/i.test(rawPaymentTerms) ? '' : rawPaymentTerms;
   // #7 — domestic vs foreign. Real column first; legacy orders read it from the description blob.
   const poTypeRaw = (po.poType || blobLine(description, 'PO Type:') || 'domestic').trim().toLowerCase();
   const poType = poTypeRaw === 'foreign' ? 'Foreign' : 'Domestic';
@@ -351,7 +356,7 @@ export async function printPurchaseOrder(
         <strong>Type:</strong> ${esc(poType)}<br>
         <strong>Delivery Date:</strong> ${esc(fmtDate(po.deliveryDate))}<br>
         <strong>Mode of Payment:</strong> ${esc(paymentMode)}<br>
-        ${paymentMode === 'Credit' ? `<strong>Payment Terms:</strong> ${esc(paymentTerms)}<br>` : ''}
+        ${paymentTerms ? `<strong>Payment Terms:</strong> ${esc(paymentTerms)}<br>` : ''}
         <strong>Page:</strong> 1 of 1
       </div>
     </div>

@@ -19,6 +19,15 @@ interface CreatePurchaseOrderModalProps {
   onCreated: () => void;
 }
 
+// Common payment arrangements offered as one-click presets; "Custom…" reveals a free-text box.
+// The stored value is always the plain free-text string, whichever way it was entered.
+const PAYMENT_TERM_PRESETS = [
+  '30 days from receipt/acceptance',
+  '50% downpayment, 50% balance upon completion',
+  'Cash on delivery',
+  'Full payment upon delivery',
+];
+
 export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseOrderModalProps) {
 
   // Company info constants (same as SO form)
@@ -38,7 +47,7 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
     poType: 'domestic' as 'domestic' | 'foreign',
     paymentMode: 'Cash' as 'Cash' | 'Credit',
     paymentTerms: '30 days from receipt/acceptance',
-    termsAndConditions: `1. Prices quoted are firm and valid for 30 days from PO date.\n2. Delivery shall be made to the specified address within the agreed timeframe.\n3. Materials shall conform to specifications and quality standards.\n4. Payment shall be made within 30 days from receipt and acceptance of materials.\n5. This PO is governed by the laws of the Republic of the Philippines.`,
+    termsAndConditions: `1. Prices quoted are firm and valid for 30 days from PO date.\n2. Delivery shall be made to the specified address within the agreed timeframe.\n3. Materials shall conform to specifications and quality standards.\n4. Payment shall be made in accordance with the agreed payment terms stated above.\n5. This PO is governed by the laws of the Republic of the Philippines.`,
     preparedBy: 'Kim Karen D. Tagle',
     reviewedBy: '',
     vendorName: '',
@@ -52,6 +61,9 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
   ]);
 
   const [loading, setLoading] = useState(false);
+  // Whether the Payment Terms select is on "Custom…" (free-text). Seeded from the default: it's a
+  // known preset, so start on the dropdown, not the custom box.
+  const [customTerms, setCustomTerms] = useState(false);
 
   // Auto-generate PO number on mount
   useEffect(() => {
@@ -164,8 +176,9 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
         deliveryDate: form.deliveryDate,
         poType: form.poType,
         paymentMode: form.paymentMode,
-        // Cash carries no terms (the server enforces this too); Credit sends the entered terms.
-        paymentTerms: form.paymentMode === 'Credit' ? form.paymentTerms : '',
+        // Payment terms are independent of Cash/Credit — a Cash order can still be "COD" and a
+        // deferred order can be "50% down". Always send whatever was entered; mode is a separate label.
+        paymentTerms: form.paymentTerms,
         termsAndConditions: form.termsAndConditions,
         preparedBy: form.preparedBy,
         reviewedBy: form.reviewedBy,
@@ -357,21 +370,41 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
                   <option value="Credit">Credit</option>
                 </select>
               </div>
-              {form.paymentMode === 'Credit' && (
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Payment Terms <span className="text-red-500">*</span>
-                  </label>
+              <div className="col-span-2">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Payment Terms
+                </label>
+                <select
+                  value={customTerms ? '__custom__' : form.paymentTerms}
+                  onChange={e => {
+                    const v = e.target.value;
+                    if (v === '__custom__') {
+                      // Switch to free text; clear so the box starts empty for typing.
+                      setCustomTerms(true);
+                      setForm(f => ({ ...f, paymentTerms: '' }));
+                    } else {
+                      setCustomTerms(false);
+                      setForm(f => ({ ...f, paymentTerms: v }));
+                    }
+                  }}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {PAYMENT_TERM_PRESETS.map(t => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                  <option value="__custom__">Custom…</option>
+                </select>
+                {customTerms && (
                   <input
                     type="text"
                     value={form.paymentTerms}
                     onChange={e => setForm(f => ({ ...f, paymentTerms: e.target.value }))}
-                    placeholder="e.g., 30 days from receipt/acceptance"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    required
+                    placeholder="e.g., 50% downpayment, 50% balance upon completion"
+                    className="mt-2 w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    autoFocus
                   />
-                </div>
-              )}
+                )}
+              </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
                   VAT Type <span className="text-red-500">*</span>
