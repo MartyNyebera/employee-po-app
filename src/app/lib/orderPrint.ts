@@ -281,7 +281,19 @@ export async function printPurchaseOrder(
   const preparedBy = po.processedBy || po.preparedBy?.trim() || blobLine(description, 'Prepared By:') || sigs.preparedByName || '';
   // Approved By is stamped only once the order is actually approved. The linked request's
   // verifier is no longer a signatory here (#7 — the Supervised block is gone).
-  const isApprovedOrder = po.status === 'approved';
+  //
+  // Ask whether approval HAPPENED, not what the order's status is right now. An approved order
+  // keeps moving — in-progress, partially-received, RECEIVED, PAID, completed — and gating on
+  // `status === 'approved'` blanked the admin's signature, name and date on every one of those
+  // reprints. It bit hardest in the warehouse portal, which only ever sees an order after it has
+  // left 'approved'. approved_by/approved_at (and the approved_by_id join behind sigs.approved*)
+  // are written only by the admin-approval branch and never cleared — rejection deliberately
+  // stamps no approver — so their presence is the exact signal, and a still-pending or rejected
+  // order has none of them.
+  const isApprovedOrder = !!(
+    po.approvedAt || po.approvedBy ||
+    sigs.approvedAt || sigs.approvedByName || sigs.approvedSignature
+  );
   // Name/date fall back to the values resolved from the signature id-joins (sigs.*), so legacy
   // rows that only carry the *_id column still print the signatory's name and — where a timestamp
   // was recorded — the date, instead of a blank line under the signature.
