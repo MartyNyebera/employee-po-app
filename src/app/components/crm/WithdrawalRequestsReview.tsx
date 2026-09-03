@@ -134,40 +134,43 @@ export function WithdrawalRequestsReview({ isAdmin }: { isAdmin: boolean }) {
         { label: 'Rejected', value: wrCount('rejected') },
       ]} />
 
-      <div style={S.card}>
-        <table style={S.table}>
+      {/* Eight columns don't fit a narrow viewport: scroll the card rather than let the
+          browser crush the Item column to one word per line (S.card clips, it doesn't scroll). */}
+      <div style={{ ...S.card, overflowX: 'auto' }}>
+        <table style={{ ...S.table, minWidth: '1120px' }}>
           <thead><tr>
-            <th style={S.th}>WD #</th><th style={S.th}>Item</th><th style={S.th}>Requested by</th>
-            <th style={{ ...S.th, textAlign: 'right' }}>Qty</th><th style={S.th}>Reason</th>
-            <th style={S.th}>Requested</th><th style={S.th}>Status</th><th style={{ ...S.th, textAlign: 'right' }}>Actions</th>
+            <th style={{ ...S.th, whiteSpace: 'nowrap' }}>WD #</th><th style={{ ...S.th, minWidth: '220px' }}>Item</th><th style={{ ...S.th, whiteSpace: 'nowrap' }}>Requested by</th>
+            <th style={{ ...S.th, textAlign: 'right', whiteSpace: 'nowrap' }}>Qty</th><th style={S.th}>Reason</th>
+            <th style={{ ...S.th, whiteSpace: 'nowrap' }}>Requested</th><th style={{ ...S.th, whiteSpace: 'nowrap' }}>Status</th><th style={{ ...S.th, textAlign: 'right', whiteSpace: 'nowrap' }}>Actions</th>
           </tr></thead>
           <tbody>
             {loading ? <tr><td style={S.td} colSpan={8}>Loading…</td></tr>
               : rows.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={8}>No withdrawal requests.</td></tr>
               : rows.map(w => (
                 <tr key={w.id}>
-                  <td style={{ ...S.td, fontWeight: 600, color: '#000000' }}>
+                  <td style={{ ...S.td, fontWeight: 600, color: '#000000', whiteSpace: 'nowrap' }}>
                     {w.withdrawalNumber || '—'}
                     {/* Present when this is one line of a purchase-request fulfilment: the
                         request unlocks only once every one of its lines is approved. */}
                     {w.prNumber && <div style={{ fontWeight: 400, fontSize: '11px', color: '#8a8a8a' }}>for {w.prNumber}</div>}
                   </td>
                   {/* Multi-item batch: list each line; single-item falls back to the single columns. */}
-                  <td style={S.td}>
+                  <td style={{ ...S.td, minWidth: '220px' }}>
                     {(w.items && w.items.length > 1)
                       ? <ul style={{ margin: 0, paddingLeft: '16px' }}>{w.items.map((it, i) => <li key={i}>{it.itemName}</li>)}</ul>
                       : (w.itemName || '—')}
                   </td>
-                  <td style={S.td}>{w.requestedByName || '—'}</td>
-                  <td style={{ ...S.td, textAlign: 'right' }}>
+                  <td style={{ ...S.td, whiteSpace: 'nowrap' }}>{w.requestedByName || '—'}</td>
+                  {/* One line per item, matching the Item column's list row-for-row. */}
+                  <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                     {(w.items && w.items.length > 1)
                       ? w.items.map((it, i) => <div key={i}>{it.quantity} {it.unit || ''}</div>)
                       : <>{w.quantity} {w.unit || ''}</>}
                   </td>
                   <td style={{ ...S.td, maxWidth: '240px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={w.reason || ''}>{w.reason || '—'}</td>
-                  <td style={S.td}>{w.createdAt ? new Date(w.createdAt).toLocaleDateString() : '—'}</td>
-                  <td style={S.td}>{statusText(w.status)}</td>
-                  <td style={S.td}>
+                  <td style={{ ...S.td, whiteSpace: 'nowrap' }}>{w.createdAt ? new Date(w.createdAt).toLocaleDateString() : '—'}</td>
+                  <td style={{ ...S.td, whiteSpace: 'nowrap' }}>{statusText(w.status)}</td>
+                  <td style={{ ...S.td, whiteSpace: 'nowrap' }}>
                     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px' }}>
                       {/* Only once the warehouse has released it. Approving here is what
                           actually deducts the stock, so it must not be reachable before
