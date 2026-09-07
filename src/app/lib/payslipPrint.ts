@@ -31,7 +31,7 @@ export interface PayslipLine {
   bale: number | string;
   gross: number | string;
   net: number | string;
-  breakdown?: { reference?: any; totals?: any; days?: Array<{ holiday?: string | null; amount?: number }> } | null;
+  breakdown?: { reference?: any; totals?: any; deductions?: any; pay?: any; days?: Array<{ holiday?: string | null; amount?: number }> } | null;
 }
 export interface PayslipPeriod { id: number; start_date: string; end_date: string; }
 
@@ -148,8 +148,21 @@ function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
   }
 
   const undertime = Number(l.late_undertime_deduction) || 0;
-  const totalDed = (Number(l.sss_ee) || 0) + (Number(l.philhealth_ee) || 0) + (Number(l.pagibig_ee) || 0)
-    + (Number(l.withholding) || 0) + undertime + (Number(l.bale) || 0);
+  // The unpaid personal-break dock (attendance_days.break_minutes × per-minute) is a REAL deduction
+  // the engine subtracts from net, but it has no payroll_lines column — it exists only inside the
+  // stored breakdown. Summing the columns therefore UNDER-states deductions, and the slip stopped
+  // tying: GROSS − Less Deductions came out ABOVE the printed NET PAY for anyone who took a mid-day
+  // personal break. So itemise it, and take the total from the engine's own figure — the exact
+  // number NET was derived from — rather than re-adding the columns and hoping they agree.
+  const ded = (l.breakdown && l.breakdown.deductions) || {};
+  const breakDed = Number(ded.break) || 0;
+  const totalDed = ded.total != null
+    ? Number(ded.total)
+    : (Number(l.sss_ee) || 0) + (Number(l.philhealth_ee) || 0) + (Number(l.pagibig_ee) || 0)
+      + (Number(l.withholding) || 0) + undertime + breakDed + (Number(l.bale) || 0);
+  // When deductions exceed gross the engine floors NET at 0 and records the uncollected remainder.
+  // Without disclosing it, GROSS − Less would not equal the printed NET on such a slip either.
+  const shortfall = Number(l.breakdown && l.breakdown.pay && l.breakdown.pay.deduction_shortfall) || 0;
 
   return `
   <div class="slip">
@@ -192,6 +205,7 @@ function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
           <tr><td class="lbl">Pagibig - EE</td><td class="num">${money(l.pagibig_ee)}</td></tr>
           <tr><td class="lbl">Withholding</td><td class="num">${money(l.withholding)}</td></tr>
           <tr><td class="lbl">Undertime</td><td class="num">${money(undertime)}</td></tr>
+          <tr><td class="lbl">Personal break</td><td class="num">${money(breakDed)}</td></tr>
           <tr><td class="lbl">BALE</td><td class="num">${money(l.bale)}</td></tr>
           <tr class="tot"><td class="lbl">Total Deduction</td><td class="num">${money(totalDed)}</td></tr>
         </tbody></table>
@@ -201,6 +215,7 @@ function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
     <div class="totband">
       <div class="row"><span class="k">GROSS</span><span class="v">${peso(l.gross)}</span></div>
       <div class="row"><span class="k">Less Deductions</span><span class="v">${peso(totalDed)}</span></div>
+      ${shortfall > 0 ? `<div class="row"><span class="k">Uncollected (carried forward)</span><span class="v">${peso(shortfall)}</span></div>` : ''}
       <div class="row net"><span class="k">NET PAY</span><span class="v">${peso(l.net)}</span></div>
     </div>
 

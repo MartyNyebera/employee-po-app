@@ -230,7 +230,13 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
               : !period ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={11}>Select a pay period.</td></tr>
               : filtered.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={11}>{locked ? 'No payroll computed yet — click Compute payroll.' : 'Lock this period, then compute.'}</td></tr>
               : filtered.map(l => {
-                const totalDed = Number(l.late_undertime_deduction) + Number(l.sss_ee) + Number(l.philhealth_ee) + Number(l.pagibig_ee) + Number(l.withholding) + Number(l.bale);
+                // Same trap the payslip fell into: the personal-break dock is a real deduction with
+                // no payroll_lines column (it lives only in the breakdown), so re-adding the columns
+                // under-states it and this row would read Gross − Deductions ≠ Net. The engine's own
+                // total is what Net was derived from; the column sum is only a pre-breakdown fallback.
+                const totalDed = l.breakdown?.deductions?.total != null
+                  ? Number(l.breakdown.deductions.total)
+                  : Number(l.late_undertime_deduction) + Number(l.sss_ee) + Number(l.philhealth_ee) + Number(l.pagibig_ee) + Number(l.withholding) + Number(l.bale);
                 return (
                   <tr key={l.person_id}>
                     <td style={{ ...S.td, fontWeight: 600, color: '#000' }}>{l.full_name}
