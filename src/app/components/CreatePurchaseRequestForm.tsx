@@ -24,6 +24,11 @@ interface FormLine { id: string; no: number; kind?: 'labor'; description: string
 interface InventoryItem { id: string; itemCode: string; itemName: string; quantity: number; unit: string; location?: string; }
 interface Project { id: string; name: string; status?: string; }
 interface Facility { id: string; name: string; status?: string; }
+// A completed (soft-archived) project must not be offered on a NEW request. The server already
+// applies this via ?active=1; repeating it here is deliberate belt-and-braces, so a browser still
+// running a cached bundle against the new server -- or the reverse -- behaves the same either way.
+// 'On Hold' is still live work and stays in the list; only 'Completed' is filtered out.
+const isPickable = (x: { status?: string }) => x.status !== 'Completed';
 interface ItemRequest { id: string; requestNumber?: string | null; itemName: string; status: string; }
 
 const UNITS = ['pcs', 'bags', 'kg', 'liters', 'gallons', 'meters', 'boxes', 'sets', 'Lot', 'units'];
@@ -232,11 +237,11 @@ export function CreatePurchaseRequestForm({ fetchApi, session, onSubmitted, allo
     try {
       const [inv, prj, fac] = await Promise.all([
         fetchApi<InventoryItem[]>('/inventory'),
-        fetchApi<Project[]>('/projects').catch(() => [] as Project[]),
+        fetchApi<Project[]>('/projects?active=1').catch(() => [] as Project[]),
         fetchApi<Facility[]>('/facilities').catch(() => [] as Facility[]),
       ]);
       setInventory(inv || []);
-      setProjects(prj || []);
+      setProjects((prj || []).filter(isPickable));
       setFacilities(fac || []);
     } catch (e: any) {
       toast.error(e.message || 'Failed to load items and projects');

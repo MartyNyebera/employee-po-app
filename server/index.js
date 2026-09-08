@@ -690,6 +690,13 @@ async function runMigrations() {
           END IF;
         END $$;
       `);
+      // SOFT ARCHIVE. Completing a project is just status = 'Completed' -- deliberately reusing the
+      // column that already exists rather than adding a second, overlapping "archived" flag that
+      // could disagree with it. These two are pure audit trail for the admin-only complete action:
+      // who pressed the button and when. Nullable with no default, so every existing row is
+      // untouched and a project completed before this shipped simply has no stamp.
+      await query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`);
+      await query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS completed_by TEXT`);
       console.log('✅ projects table ready');
     } catch (err) { console.log('ℹ️ projects table skipped:', err.message); }
 
@@ -6809,6 +6816,7 @@ function mapProject(r) {
     budgetAllocation: r.budget_allocation === null ? 0 : parseFloat(r.budget_allocation),
     contractPrice: r.contract_price === null || r.contract_price === undefined ? null : parseFloat(r.contract_price),
     netProfitPercent: r.net_profit_percent === null || r.net_profit_percent === undefined ? null : parseFloat(r.net_profit_percent),
+    completedAt: r.completed_at ?? null, completedBy: r.completed_by ?? null,
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
@@ -7043,10 +7051,15 @@ app.delete('/api/customers/:id', requireRole(['owner','admin']), async (req, res
 // Writes: owner/admin.
 app.get('/api/projects', async (req, res) => {
   try {
-    const { search, status } = req.query;
+    const { search, status, active } = req.query;
     const where = ['1=1']; const params = []; let i = 1;
     if (search) { where.push(`(LOWER(name) LIKE $${i} OR LOWER(COALESCE(client,'')) LIKE $${i})`); params.push(`%${String(search).toLowerCase()}%`); i++; }
     if (status) { where.push(`status = $${i++}`); params.push(status); }
+    // ?active=1 -- what the NEW-ENTRY project pickers ask for: everything that isn't finished.
+    // 'On Hold' is still live work, so it stays; only 'Completed' drops out. Opt-in, so the
+    // management screens and the budget chart keep getting the full list unchanged.
+    // IS DISTINCT FROM (not <>) so a legacy row with a NULL status is treated as not-completed.
+    if (active === '1' || active === 'true') where.push(`status IS DISTINCT FROM 'Completed'`);
     const r = await query(`SELECT * FROM projects WHERE ${where.join(' AND ')} ORDER BY name ASC`, params);
     res.json(r.rows.map(mapProject));
   } catch (err) { console.error('projects list error:', err); res.status(500).json({ error: err.message }); }
@@ -7092,6 +7105,38 @@ app.patch('/api/projects/:id', requireRole(['owner','admin','accounting']), asyn
     if (!r.rows[0]) return res.status(404).json({ error: 'Project not found' });
     res.json(mapProject(r.rows[0]));
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+// SOFT ARCHIVE — mark a finished project complete. It drops out of the purchase-request project
+// picker (which asks for ?active=1) but nothing is deleted: the row stays, purchase_requests.project_id
+// still points at it, and the COALESCE(p.name, ...) join every list/print uses still resolves the
+// name. Existing requests and orders are completely unaffected.
+// ADMIN ONLY, unlike the generic PATCH above which also admits accounting. This is the only route to
+// 'Completed' -- the value was removed from the Status dropdown in both edit modals -- so completed_by
+// is always populated and the admin-only rule actually holds.
+app.post('/api/projects/:id/complete', requireRole(['owner','admin']), async (req, res) => {
+  try {
+    const r = await query(
+      `UPDATE projects SET status = 'Completed', completed_at = NOW(), completed_by = $1, updated_at = NOW()
+        WHERE id = $2 RETURNING *`,
+      [req.user?.name || 'Admin', req.params.id]
+    );
+    if (!r.rows[0]) return res.status(404).json({ error: 'Project not found' });
+    res.json(mapProject(r.rows[0]));
+  } catch (err) { console.error('project complete error:', err); res.status(500).json({ error: err.message }); }
+});
+// Undo the above — a mis-click, or a project that reopened. Back to 'Active' with the stamp cleared,
+// so it returns to the picker. 'On Hold' is not restored: we don't record what the status was before,
+// and inventing one would be worse than the honest default.
+app.post('/api/projects/:id/reactivate', requireRole(['owner','admin']), async (req, res) => {
+  try {
+    const r = await query(
+      `UPDATE projects SET status = 'Active', completed_at = NULL, completed_by = NULL, updated_at = NOW()
+        WHERE id = $1 RETURNING *`,
+      [req.params.id]
+    );
+    if (!r.rows[0]) return res.status(404).json({ error: 'Project not found' });
+    res.json(mapProject(r.rows[0]));
+  } catch (err) { console.error('project reactivate error:', err); res.status(500).json({ error: err.message }); }
 });
 app.delete('/api/projects/:id', requireRole(['owner','admin','accounting']), async (req, res) => {
   try {

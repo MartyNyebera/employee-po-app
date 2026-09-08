@@ -77,7 +77,15 @@ interface Session { id: number; full_name: string; email: string; phone?: string
 
 const TOKEN_KEY = 'accounting_token';
 const SESSION_KEY = 'accounting_session';
-const PROJECT_STATUSES = ['Active', 'On Hold', 'Completed'];
+// 'Completed' is deliberately NOT offered here. It is the soft-archive flag that pulls a project
+// out of the purchase-request picker, and marking one complete is an ADMIN-only action (the button
+// in the admin portal's Projects screen) so that completed_by/completed_at are always stamped.
+// Accounting can still edit everything else about a project, completed or not.
+const PROJECT_STATUSES = ['Active', 'On Hold'];
+// If a project is already Completed, keep its own value in the list so opening this form to edit,
+// say, the budget doesn't silently reset an archived project back to Active.
+const statusOptionsFor = (current?: string) =>
+  current && !PROJECT_STATUSES.includes(current) ? [...PROJECT_STATUSES, current] : PROJECT_STATUSES;
 
 const peso = (n: number) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -558,7 +566,7 @@ function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; 
             <div>
               <label className={flabel}>Status</label>
               <select value={f.status} onChange={e => set('status', e.target.value)} className={`${input} bg-white`}>
-                {PROJECT_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                {statusOptionsFor(f.status).map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
             <div>

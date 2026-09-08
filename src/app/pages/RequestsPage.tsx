@@ -74,6 +74,11 @@ interface WithdrawalRequest {
 interface InventoryItem { id: string; itemCode: string; itemName: string; quantity: number; unit: string; location?: string; }
 interface Project { id: string; name: string; status?: string; }
 interface Facility { id: string; name: string; status?: string; }
+// A completed (soft-archived) project must not be offered on a NEW request. The server already
+// applies this via ?active=1; repeating it here is deliberate belt-and-braces, so a browser still
+// running a cached bundle against the new server -- or the reverse -- behaves the same either way.
+// 'On Hold' is still live work and stays in the list; only 'Completed' is filtered out.
+const isPickable = (x: { status?: string }) => x.status !== 'Completed';
 interface Session { id: number; full_name: string; email: string; department?: string; position?: string; }
 
 const UNITS = ['pcs', 'bags', 'kg', 'liters', 'gallons', 'meters', 'boxes', 'sets', 'Lot', 'units'];
@@ -720,7 +725,7 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
     try {
       const [inv, prj, fac, mine, wds, irs, sig] = await Promise.all([
         empFetch<InventoryItem[]>('/inventory'),
-        empFetch<Project[]>('/projects'),
+        empFetch<Project[]>('/projects?active=1'),
         empFetch<Facility[]>('/facilities').catch(() => [] as Facility[]),
         empFetch<PurchaseRequest[]>('/purchase-requests/mine'),
         empFetch<WithdrawalRequest[]>('/inventory-withdrawals/mine').catch(() => []),
@@ -728,7 +733,7 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
         empFetch<{ signature: string | null }>('/employee/signature').catch(() => ({ signature: null })),
       ]);
       setInventory(inv || []);
-      setProjects(prj || []);
+      setProjects((prj || []).filter(isPickable));
       setFacilities(fac || []);
       setRequests(mine || []);
       setWithdrawals(wds || []);
