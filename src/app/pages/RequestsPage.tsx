@@ -438,7 +438,10 @@ function WithdrawModal({ target, inventory, onCancel, onDone }: {
         const items: { inventoryId: string; quantity: number }[] = [];
         for (const r of rows) {
           if (!r.inventoryId && !r.quantity) continue;
-          const q = parseInt(r.quantity, 10);
+          // Number, not parseInt: inventory.quantity and the withdrawal's own quantity are both
+          // numeric(_,2), so parseInt silently truncated 2.5 to 2 and under-requested. Matches the
+          // Number() the warehouse-side modal already used.
+          const q = Number(r.quantity);
           if (!r.inventoryId) { toast.error('Pick an item for every row'); setBusy(false); return; }
           if (!q || q <= 0) { toast.error('Enter a quantity for every item'); setBusy(false); return; }
           const inv = invById.get(r.inventoryId);
@@ -500,15 +503,29 @@ function WithdrawModal({ target, inventory, onCancel, onDone }: {
                     const inv = invById.get(r.inventoryId);
                     return (
                       <div key={r.id} className="flex items-start gap-2">
+                        {/* min-w-0: a flex item defaults to min-width:auto, and a <select>'s min-content
+                            width comes from its LONGEST option. Inventory names run to ~90 characters,
+                            far wider than this modal, so without this the row overflows and shoves the
+                            qty box and bin button out. shrink-0 stops those two absorbing the squeeze. */}
                         <select value={r.inventoryId} onChange={(e) => setRow(r.id, 'inventoryId', e.target.value)}
-                          className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                          className="flex-1 min-w-0 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                           <option value="">Select an item…</option>
                           {inventory.map((i) => <option key={i.id} value={i.id}>{i.itemName} ({i.quantity} {i.unit || ''} in stock)</option>)}
                         </select>
-                        <input type="number" min="1" value={r.quantity} onChange={(e) => setRow(r.id, 'quantity', e.target.value)}
-                          placeholder={inv ? `≤ ${inv.quantity}` : 'Qty'} className="w-24 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+                        <div className="relative shrink-0">
+                          {/* max caps over-withdrawal at the field instead of only on submit. step .01
+                              matches inventory.quantity numeric(_,2) -- the old step of 1 rejected any
+                              decimal outright, so the parsed value could never carry one. */}
+                          <input type="number" min="0.01" step="0.01" max={inv?.quantity} value={r.quantity}
+                            onChange={(e) => setRow(r.id, 'quantity', e.target.value)}
+                            placeholder={inv ? `≤ ${inv.quantity}` : 'Qty'}
+                            className={`w-28 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${inv?.unit ? 'pr-12' : ''}`} />
+                          {inv?.unit && (
+                            <span className="absolute inset-y-0 right-2.5 flex items-center text-xs text-gray-400 pointer-events-none">{inv.unit}</span>
+                          )}
+                        </div>
                         <button type="button" onClick={() => removeRow(r.id)} disabled={rows.length === 1} title="Remove"
-                          className="p-2 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed"><Trash2 className="w-4 h-4" /></button>
+                          className="p-2 shrink-0 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed"><Trash2 className="w-4 h-4" /></button>
                       </div>
                     );
                   })}

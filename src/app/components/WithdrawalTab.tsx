@@ -173,7 +173,13 @@ function RequestModal({ inventory, onSubmit, onClose, onDone }: {
     catch (e: any) { toast.error('Failed: ' + e.message); } finally { setSaving(false); }
   };
 
-  const input = 'w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500';
+  // `w-full` is split out of the base so the quantity box can set its own width. It used to be
+  // baked in here, which meant the qty field carried BOTH `w-full` and `w-24`; those are equal-
+  // specificity `width` rules, so the class-attribute order counted for nothing and the stylesheet
+  // order decided -- `.w-full` is emitted after `.w-24`, so the intended 96px box silently became
+  // width:100% and swallowed the row, squeezing the item dropdown to nothing.
+  const inputBase = 'px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500';
+  const input = `w-full ${inputBase}`;
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onMouseDown={onBackdropDown} onClick={backdropClose(onClose)}>
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg flex flex-col overflow-hidden max-h-[90vh]" onClick={e => e.stopPropagation()}>
@@ -192,14 +198,27 @@ function RequestModal({ inventory, onSubmit, onClose, onDone }: {
                 const inv = invById.get(r.inventoryId);
                 return (
                   <div key={r.id} className="flex items-start gap-2">
-                    <select value={r.inventoryId} onChange={e => setRow(r.id, 'inventoryId', e.target.value)} className={`${input} flex-1`}>
+                    {/* min-w-0: a flex item defaults to min-width:auto, and a <select>'s min-content
+                        width comes from its LONGEST option. Inventory names run to ~90 characters,
+                        far wider than this modal, so without this the row overflows and shoves the
+                        qty box and bin button out. shrink-0 stops those two absorbing the squeeze. */}
+                    <select value={r.inventoryId} onChange={e => setRow(r.id, 'inventoryId', e.target.value)} className={`${inputBase} flex-1 min-w-0`}>
                       <option value="">Select an item…</option>
                       {inventory.map(i => <option key={i.id} value={i.id}>{i.itemName} ({i.quantity} {i.unit || ''} in stock)</option>)}
                     </select>
-                    <input type="number" min="1" value={r.quantity} onChange={e => setRow(r.id, 'quantity', e.target.value)}
-                      className={`${input} w-24`} placeholder={inv ? `≤ ${inv.quantity}` : 'Qty'} />
+                    <div className="relative shrink-0">
+                      {/* max caps over-withdrawal at the field instead of only on submit. step .01
+                          matches inventory.quantity numeric(_,2) -- the old step of 1 rejected any
+                          decimal outright, so `Number()` could never see one. */}
+                      <input type="number" min="0.01" step="0.01" max={inv?.quantity} value={r.quantity}
+                        onChange={e => setRow(r.id, 'quantity', e.target.value)}
+                        className={`${inputBase} w-28 ${inv?.unit ? 'pr-12' : ''}`} placeholder={inv ? `≤ ${inv.quantity}` : 'Qty'} />
+                      {inv?.unit && (
+                        <span className="absolute inset-y-0 right-2.5 flex items-center text-xs text-gray-400 pointer-events-none">{inv.unit}</span>
+                      )}
+                    </div>
                     <button onClick={() => removeRow(r.id)} disabled={rows.length === 1} title="Remove"
-                      className="p-2 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed"><Trash2 className="w-4 h-4" /></button>
+                      className="p-2 shrink-0 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed"><Trash2 className="w-4 h-4" /></button>
                   </div>
                 );
               })}
