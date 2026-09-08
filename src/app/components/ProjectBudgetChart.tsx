@@ -65,7 +65,19 @@ export function ProjectBudgetChart() {
   const TRACK = 170; // px height of the bar track
 
   return (
-    <div style={{ display: 'flex', gap: '16px', overflowX: 'auto', paddingBottom: '10px' }}>
+    // A wrapping GRID, not a horizontal scroll rail: 3 cards per row on desktop (lg, >=1024px), 2 on
+    // medium (sm, >=640px), 1 on mobile, stacking downward so every project is reachable by scrolling
+    // the page instead of sideways. Tailwind is used here (as in the loading/empty states above)
+    // because the breakpoints need real media queries, which an inline style object cannot express.
+    //
+    // NO `grid-cols-1` base class on purpose. This chart renders inside the dashboard's
+    // `.admin-portal` wrapper, and professional-design-complete.css has
+    // `.admin-portal .grid-cols-1 { grid-template-columns: repeat(1,...) !important }` -- that
+    // !important beats the unprefixed sm:/lg: utilities and would silently pin the grid to a single
+    // column at every width. A grid with no explicit template is already one column, so omitting the
+    // class gives the same mobile result and sidesteps the override. (gap-4 is safe: the same
+    // stylesheet maps it to 16px, exactly the gap the old flex rail used.)
+    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
       {rows.map((r, i) => {
         const scale = Math.max(r.budget, r.spent, 1);
         // The Spent bar is red once it is the larger of the two (spent > remaining), i.e. more than
@@ -76,7 +88,9 @@ export function ProjectBudgetChart() {
           { label: 'Spent', value: r.spent, color: spentColor },
         ];
         return (
-          <div key={i} style={{ minWidth: '210px', flexShrink: 0, background: '#ffffff', border: '1px solid #d6d6d6', borderRadius: '12px', padding: '16px 18px' }}>
+          // Card itself is unchanged. minWidth 0 replaces the old flex sizing so a grid track can
+          // shrink and the long-name ellipsis still works; flexShrink is meaningless in a grid.
+          <div key={i} style={{ minWidth: 0, background: '#ffffff', border: '1px solid #d6d6d6', borderRadius: '12px', padding: '16px 18px' }}>
             <div style={{ fontWeight: 700, color: '#000000', fontSize: '14px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.name}>{r.name}</div>
             <div style={{ fontSize: '11px', color: '#8a8a8a', marginBottom: '14px' }} title={peso(r.budget)}>Budget {fmt(r.budget)}</div>
 
