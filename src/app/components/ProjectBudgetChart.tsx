@@ -6,10 +6,16 @@ import { fetchApi } from '../api/client';
 // only COMMITTED spend counts — PRs that reached 'approved' or 'ordered' — using the priced final
 // total where available, else the employee estimate.
 //
+// Only ACTIVE projects appear here. A finished project's "remaining budget" says nothing useful on
+// the main dashboard, so a completed (soft-archived) one drops out the same way it drops out of the
+// purchase-request picker — server-side via ?active=1, repeated client-side so a stale cached bundle
+// behaves the same. This is scoped to THIS dashboard chart: Accounting's Project Allocation and the
+// admin Project History still list completed projects in full, deliberately.
+//
 // Presentation: one CARD per project (scroll horizontally through them), each with two bars —
 // Remaining budget and Spent. The Spent bar turns RED once it exceeds the Remaining (i.e. more
 // than half the budget is consumed), and an over-budget note appears when spend passes the budget.
-interface Project { id: string; name: string; budgetAllocation?: number }
+interface Project { id: string; name: string; budgetAllocation?: number; status?: string }
 interface PR { projectId?: string | null; total?: number; finalTotal?: number | null; status?: string }
 interface Row { name: string; budget: number; spent: number; remaining: number; over: number }
 
@@ -29,7 +35,7 @@ export function ProjectBudgetChart() {
     (async () => {
       try {
         const [projects, prs] = await Promise.all([
-          fetchApi<Project[]>('/projects'),
+          fetchApi<Project[]>('/projects?active=1'),
           fetchApi<PR[]>('/purchase-requests'),
         ]);
         const spentByProject = new Map<string, number>();
@@ -38,7 +44,7 @@ export function ProjectBudgetChart() {
           const cost = (pr.finalTotal != null ? pr.finalTotal : pr.total) || 0;
           spentByProject.set(pr.projectId, (spentByProject.get(pr.projectId) || 0) + Number(cost));
         }
-        const data = (projects || []).map(p => {
+        const data = (projects || []).filter(p => p.status !== 'Completed').map(p => {
           const budget = Number(p.budgetAllocation) || 0;
           const spent = spentByProject.get(p.id) || 0;
           return { name: p.name, budget, spent, remaining: Math.max(0, budget - spent), over: Math.max(0, spent - budget) };
