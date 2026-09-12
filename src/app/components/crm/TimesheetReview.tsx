@@ -397,9 +397,17 @@ function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, o
         // including one that docked 0 because it fell inside the free 12:00–1:00 lunch window, shown
         // with a "free" label. Keyed off the breaks array (the pairs), NOT break_minutes, so 0-dock
         // breaks still render. A straight 2-tap day has no middle pair → "—".
+        //
+        // ...but the pairs are punch-derived, and a HAND-ENTERED day has none: it has no punches to
+        // pair up, and the sheet endpoint blanks `breaks` for is_adjusted rows regardless. Such a day
+        // was therefore docked in both the Hours column and payroll while its Break cell read "—",
+        // leaving the row short with nothing on screen to explain it. So fall back to break_minutes:
+        // if there is a dock but no pair to name it, still show the dock, labelled "manual".
         const brks = d.breaks || [];
-        const hasBreak = brks.length > 0;
-        const breakLabel = brks.length === 1 ? `${brks[0].out}–${brks[0].ret}` : `${brks.length} breaks`;
+        const hasBreak = brks.length > 0 || brk > 0;
+        const breakLabel = brks.length === 1 ? `${brks[0].out}–${brks[0].ret}`
+          : brks.length > 1 ? `${brks.length} breaks`
+          : 'manual';
         return (
           <tr key={d.id}>
             <td style={S.td}>
