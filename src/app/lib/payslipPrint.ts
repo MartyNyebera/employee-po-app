@@ -102,9 +102,19 @@ const PAYSLIP_CSS = `
   .cols { display: flex; gap: 3.5mm; margin-top: 2mm; align-items: flex-start; }
   .cols > div { flex: 1; min-width: 0; }
   .sect { font-size: 7pt; font-weight: bold; letter-spacing: .2px; text-transform: uppercase; margin-bottom: 1mm; }
-  .grid th, .grid td { border: 0.2mm solid #000; padding: 1mm 0.8mm; font-size: 6.8pt; line-height: 1.3; }
+  /* table-layout:fixed pins the columns to the <colgroup> percentages, so a row label can never
+     widen the table past its half of .cols. Auto layout sized to the WIDEST label, and a long one
+     ("Holiday (not worked)") pushed the earnings table straight over the deductions column — the
+     Amount figures printed on top of the SSS/BALE rows. Fixed layout also keeps the two tables'
+     columns aligned with each other. */
+  .grid { table-layout: fixed; }
+  /* Tight side padding buys the ~2mm the label column needs to keep "Total Earnings" on one line
+     while still leaving the Amount column room for a 5-figure peso value. */
+  .grid th, .grid td { border: 0.2mm solid #000; padding: 1mm 0.5mm; font-size: 6.8pt; line-height: 1.3; }
   .grid th { background: #ececec; font-weight: bold; text-align: center; }
-  .grid .lbl { text-align: left; white-space: nowrap; }
+  /* Wrap rather than nowrap: with fixed columns an over-long label now costs a second line inside
+     its own cell instead of breaking the whole slip. */
+  .grid .lbl { text-align: left; overflow-wrap: break-word; }
   .grid .num { text-align: right; font-variant-numeric: tabular-nums; }
   .grid .tot td { font-weight: bold; background: #f6f6f6; }
   .totband { margin-top: 2mm; border: 0.2mm solid #000; }
@@ -205,20 +215,24 @@ function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
     <div class="cols">
       <div>
         <div class="sect">Earnings</div>
-        <table class="grid"><tbody>
+        <table class="grid">
+          <colgroup><col style="width:41%"><col style="width:14%"><col style="width:20%"><col style="width:25%"></colgroup>
+          <tbody>
           <tr><th class="lbl" style="text-align:left">Earnings</th><th>Qty</th><th>Rate</th><th>Amount</th></tr>
           <tr><td class="lbl">Reg. day</td><td class="num">${esc(regQtyStr)}</td><td class="num">${money(dailyRate)}</td><td class="num">${money(l.base_pay)}</td></tr>
           <tr><td class="lbl">Reg. OT</td><td class="num">${esc(l.ot_hours)}</td><td class="num">${money(otRate)}</td><td class="num">${money(l.ot_pay)}</td></tr>
           <tr><td class="lbl">Sunday</td><td class="num">${esc(qtyStr(sundayHours))}</td><td class="num">${money(sundayRate)}</td><td class="num">${money(l.sunday_pay)}</td></tr>
           <tr><td class="lbl">Reg. Hol.</td><td class="num">${esc(qtyStr(regHolHours))}</td><td class="num">${money(regHolRate)}</td><td class="num">${money(regHol)}</td></tr>
           <tr><td class="lbl">Special Hol.</td><td class="num">${esc(qtyStr(specHolHours))}</td><td class="num">${money(specHolRate)}</td><td class="num">${money(specHol)}</td></tr>
-          ${holOffPay > 0 ? `<tr><td class="lbl">Holiday (not worked)</td><td class="num">${esc(qtyStr(holOffDays))}</td><td class="num">${money(dailyRate)}</td><td class="num">${money(holOffPay)}</td></tr>` : ''}
-          <tr class="tot"><td class="lbl">Total Earnings</td><td class="num"></td><td class="num"></td><td class="num">${money(l.gross)}</td></tr>
+          ${holOffPay > 0 ? `<tr><td class="lbl">Holiday pay</td><td class="num">${esc(qtyStr(holOffDays))}</td><td class="num">${money(dailyRate)}</td><td class="num">${money(holOffPay)}</td></tr>` : ''}
+          <tr class="tot"><td class="lbl" colspan="3">Total Earnings</td><td class="num">${money(l.gross)}</td></tr>
         </tbody></table>
       </div>
       <div>
         <div class="sect">Deductions</div>
-        <table class="grid"><tbody>
+        <table class="grid">
+          <colgroup><col style="width:60%"><col style="width:40%"></colgroup>
+          <tbody>
           <tr><th class="lbl" style="text-align:left">Deductions</th><th>Amount</th></tr>
           <tr><td class="lbl">SSS - EE</td><td class="num">${money(l.sss_ee)}</td></tr>
           <tr><td class="lbl">Philhealth - EE</td><td class="num">${money(l.philhealth_ee)}</td></tr>
