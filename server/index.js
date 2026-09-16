@@ -6165,6 +6165,32 @@ app.post('/api/attendance/days/:id/adjust', requireRole(['admin']), async (req, 
         [value, day.id]
       );
     } else {
+      // A clock-IN at or after the clock-OUT is impossible, and it fails SILENTLY: worked_minutes
+      // goes NULL (guarded below) while status still reads 'complete', so the sheet shows an ordinary
+      // day — but payroll sees an IN past the late cutoff and counts the day as an ABSENCE. One AM/PM
+      // slip in the datetime-local picker (8:00 PM entered for 8:00 AM) cost a real present day and a
+      // day's pay. Compare in Manila exactly the way the UPDATE below stores it, and refuse the pair.
+      if (!clearing) {
+        const other = field === 'first_in' ? day.last_out : day.first_in;
+        if (other) {
+          const { rows: [t] } = await client.query(
+            `SELECT ($1::timestamp AT TIME ZONE 'Asia/Manila') AS ts,
+                    to_char($1::timestamp, 'HH24:MI') AS new_hhmm,
+                    to_char($2::timestamptz AT TIME ZONE 'Asia/Manila', 'HH24:MI') AS other_hhmm`,
+            [value, other]
+          );
+          const inTs = field === 'first_in' ? t.ts : other;
+          const outTs = field === 'first_in' ? other : t.ts;
+          if (new Date(outTs) <= new Date(inTs)) {
+            const inHHMM = field === 'first_in' ? t.new_hhmm : t.other_hhmm;
+            const outHHMM = field === 'first_in' ? t.other_hhmm : t.new_hhmm;
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+              error: `Clock-IN (${inHHMM}) must be earlier than clock-OUT (${outHHMM}) — check AM/PM.`,
+            });
+          }
+        }
+      }
       // field is 'first_in' or 'last_out' (whitelisted above) — safe to interpolate.
       oldValue = day[field] ? new Date(day[field]).toISOString() : null;
       newValue = clearing ? null : value;
