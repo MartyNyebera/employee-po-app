@@ -31,7 +31,7 @@ export interface PayslipLine {
   bale: number | string;
   gross: number | string;
   net: number | string;
-  breakdown?: { reference?: any; totals?: any; deductions?: any; pay?: any; days?: Array<{ holiday?: string | null; amount?: number }> } | null;
+  breakdown?: { reference?: any; totals?: any; deductions?: any; pay?: any; days?: Array<{ holiday?: string | null; kind?: string; net_hours?: number; amount?: number }> } | null;
 }
 export interface PayslipPeriod { id: number; start_date: string; end_date: string; }
 
@@ -43,6 +43,9 @@ const esc = (v: unknown): string =>
 // Plain 2-decimal peso amount with thousands separators (grids read cleaner without the ₱ sign;
 // the bottom GROSS/NET band adds ₱ for emphasis).
 const money = (n: unknown) => (Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// Earnings Qty: whole counts print bare (3 days), fractional hours keep 2 decimals (9.45 hours).
+const qtyStr = (n: number) => (Number.isInteger(n) ? String(n) : (Math.round(n * 100) / 100).toFixed(2));
 const peso = (n: unknown) => `₱${money(n)}`;
 
 const MONTHS = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
@@ -140,11 +143,27 @@ function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
   const regQty = (Number(l.days_present) || 0) + 0.5 * halfDays;
   const regQtyStr = Number.isInteger(regQty) ? String(regQty) : regQty.toFixed(1);
 
-  // Reg./Special holiday split from the stored per-day breakdown (already-computed amounts).
-  let regHol = 0, specHol = 0;
+  // Reg./Special holiday split AND the premium-row quantities, both read from the stored per-day
+  // breakdown (already-computed amounts — nothing is recalculated here). The Sunday/holiday rows
+  // used to print a blank Qty, so an employee saw an Amount with no visible basis for it. Each row
+  // now states what it was paid for: premium rows are paid per HOUR worked (Rate = hourly × the
+  // multiplier), so Qty is net hours and Qty × Rate reconciles to Amount, give or take the centavo
+  // the stored per-day net_hours rounding costs — same as the Reg. OT row above.
+  //
+  // A holiday NOT worked but still paid is a different shape: one whole DAY at the daily rate, not
+  // hours × premium. Folding it into the Reg./Special rows would make Qty × Rate nonsense, so it
+  // gets its own row. Keeping it OUT of regHol/specHol is why that row must exist — otherwise the
+  // money would silently disappear from the slip and Total Earnings would not tie to GROSS.
+  let regHol = 0, specHol = 0, sundayHours = 0, regHolHours = 0, specHolHours = 0;
+  let holOffDays = 0, holOffPay = 0;
   for (const d of (l.breakdown && l.breakdown.days) || []) {
-    if (d.holiday === 'regular') regHol += Number(d.amount) || 0;
-    else if (d.holiday === 'special') specHol += Number(d.amount) || 0;
+    const amt = Number(d.amount) || 0;
+    const hrs = Number(d.net_hours) || 0;
+    if (d.kind === 'sunday_worked') sundayHours += hrs;
+    else if (d.kind === 'holiday_worked') {
+      if (d.holiday === 'special') { specHol += amt; specHolHours += hrs; }
+      else { regHol += amt; regHolHours += hrs; }
+    } else if (d.kind === 'holiday_not_worked' && amt > 0) { holOffDays += 1; holOffPay += amt; }
   }
 
   const undertime = Number(l.late_undertime_deduction) || 0;
@@ -190,9 +209,10 @@ function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
           <tr><th class="lbl" style="text-align:left">Earnings</th><th>Qty</th><th>Rate</th><th>Amount</th></tr>
           <tr><td class="lbl">Reg. day</td><td class="num">${esc(regQtyStr)}</td><td class="num">${money(dailyRate)}</td><td class="num">${money(l.base_pay)}</td></tr>
           <tr><td class="lbl">Reg. OT</td><td class="num">${esc(l.ot_hours)}</td><td class="num">${money(otRate)}</td><td class="num">${money(l.ot_pay)}</td></tr>
-          <tr><td class="lbl">Sunday</td><td class="num"></td><td class="num">${money(sundayRate)}</td><td class="num">${money(l.sunday_pay)}</td></tr>
-          <tr><td class="lbl">Reg. Hol.</td><td class="num"></td><td class="num">${money(regHolRate)}</td><td class="num">${money(regHol)}</td></tr>
-          <tr><td class="lbl">Special Hol.</td><td class="num"></td><td class="num">${money(specHolRate)}</td><td class="num">${money(specHol)}</td></tr>
+          <tr><td class="lbl">Sunday</td><td class="num">${esc(qtyStr(sundayHours))}</td><td class="num">${money(sundayRate)}</td><td class="num">${money(l.sunday_pay)}</td></tr>
+          <tr><td class="lbl">Reg. Hol.</td><td class="num">${esc(qtyStr(regHolHours))}</td><td class="num">${money(regHolRate)}</td><td class="num">${money(regHol)}</td></tr>
+          <tr><td class="lbl">Special Hol.</td><td class="num">${esc(qtyStr(specHolHours))}</td><td class="num">${money(specHolRate)}</td><td class="num">${money(specHol)}</td></tr>
+          ${holOffPay > 0 ? `<tr><td class="lbl">Holiday (not worked)</td><td class="num">${esc(qtyStr(holOffDays))}</td><td class="num">${money(dailyRate)}</td><td class="num">${money(holOffPay)}</td></tr>` : ''}
           <tr class="tot"><td class="lbl">Total Earnings</td><td class="num"></td><td class="num"></td><td class="num">${money(l.gross)}</td></tr>
         </tbody></table>
       </div>
