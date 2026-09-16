@@ -398,20 +398,26 @@ function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, o
                 {days.length} punched day{days.length === 1 ? '' : 's'} · {fmtHours(totalMin)} total
                 {breakMin > 0 ? <span style={{ color: '#7a6a0c' }}> · − {fmtHours(breakMin)} break</span> : null}
               </span>
-              {/* This is what the payslip's day count WILL show for this person -- same classification
-                  computePayroll uses. It routinely differs from the punched-day count on the left: a
+              {/* This is what the payslip's Qty WILL show for this person -- same classification
+                  computePayroll uses, combined the same way payslipPrint.ts does (present + 0.5 per
+                  half day) so this number matches the payslip's "Reg. day" Qty exactly, not just the
+                  raw present count. It routinely differs from the punched-day count on the left: a
                   no_out day above counts here as half, a true absence (no punch at all) has no row to
                   the left but does count here, and a worked Sunday/holiday counts to the left but not
                   here (it's paid separately). None of that is a bug; this label exists so the two
                   numbers are never mysterious side by side. */}
-              {classification && (classification.present || classification.half || classification.absent) ? (
-                <span style={{ fontSize: '12px', color: '#5a5a5a' }}
-                  title="What payroll counts for this period — a missing-OUT day counts as half, a day with no punch at all counts as absent, and a worked Sunday/holiday is paid separately and isn't in this tally. This can differ from the punched-day count on the left; that's expected.">
-                  Payroll: <strong style={{ color: '#000' }}>{classification.present}</strong> present
-                  {classification.half > 0 ? <> · {classification.half} half</> : null}
-                  {classification.absent > 0 ? <> · <span style={{ color: '#b91c1c' }}>{classification.absent} absent</span></> : null}
-                </span>
-              ) : null}
+              {classification && (classification.present || classification.half || classification.absent) ? (() => {
+                const qty = classification.present + 0.5 * classification.half;
+                const qtyStr = Number.isInteger(qty) ? String(qty) : qty.toFixed(1);
+                return (
+                  <span style={{ fontSize: '12px', color: '#5a5a5a' }}
+                    title="What the payslip's Qty will show for this period (Present + ½ per half day) — a missing-OUT day counts as half, a day with no punch at all counts as absent, and a worked Sunday/holiday is paid separately and isn't in this tally. This can differ from the punched-day count on the left; that's expected.">
+                    Payroll: <strong style={{ color: '#000' }}>{qtyStr}</strong> days
+                    {classification.half > 0 ? <> ({classification.present} present + {classification.half} half)</> : null}
+                    {classification.absent > 0 ? <> · <span style={{ color: '#b91c1c' }}>{classification.absent} absent</span></> : null}
+                  </span>
+                );
+              })() : null}
               <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }} title="Cash advance (BALE) for this period">
                 <span style={{ fontSize: '11px', color: '#8a8a8a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>BALE</span>
                 <BaleInput personId={person.person_id} value={bale} onSave={onSaveBale} editable={role === 'admin'} />

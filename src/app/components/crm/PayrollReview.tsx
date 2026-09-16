@@ -248,13 +248,19 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
                 const totalDed = l.breakdown?.deductions?.total != null
                   ? Number(l.breakdown.deductions.total)
                   : Number(l.late_undertime_deduction) + Number(l.sss_ee) + Number(l.philhealth_ee) + Number(l.pagibig_ee) + Number(l.withholding) + Number(l.bale);
+                // Same Qty the payslip prints for "Reg. day" (payslipPrint.ts) — days_present plus
+                // a 0.5 credit per half day (missing-OUT day). Showing bare days_present here used to
+                // read as e.g. "5" while the payslip printed "5.5" for the same person/period.
+                const halfDays = Number(l.breakdown?.totals?.half_days) || 0;
+                const daysQty = Number(l.days_present) + 0.5 * halfDays;
+                const daysQtyStr = Number.isInteger(daysQty) ? String(daysQty) : daysQty.toFixed(1);
                 return (
                   <tr key={l.person_id}>
                     <td style={{ ...S.td, fontWeight: 600, color: '#000' }}>{l.full_name}
                       {(l.department || l.position) ? <div style={{ fontSize: '12px', color: '#8a8a8a', fontWeight: 400 }}>{[l.department, l.position].filter(Boolean).join(' · ')}</div> : null}
                     </td>
                     <td style={S.td}>{l.employment_type === 'monthly' ? 'Monthly' : 'Daily'}</td>
-                    <td style={S.td}>{l.days_present}{l.absent_days ? <span style={{ color: '#b91c1c', fontSize: '12px' }}> · {l.absent_days} abs</span> : null}</td>
+                    <td style={S.td} title="Same Qty the payslip prints for Reg. day">{daysQtyStr}{halfDays ? <span style={{ color: '#7a6a0c', fontSize: '12px' }}> · {halfDays} half</span> : null}{l.absent_days ? <span style={{ color: '#b91c1c', fontSize: '12px' }}> · {l.absent_days} abs</span> : null}</td>
                     <td style={S.td}>{peso(l.base_pay)}</td>
                     <td style={S.td}>{Number(l.ot_pay) ? <>{peso(l.ot_pay)}<div style={{ fontSize: '11px', color: '#8a8a8a' }}>{l.ot_hours}h</div></> : '—'}</td>
                     <td style={S.td}>{Number(l.sunday_pay) ? peso(l.sunday_pay) : '—'}</td>
