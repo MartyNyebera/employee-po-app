@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { RefreshCw, Lock, Unlock, Plus, Search, Pencil, History, ShieldCheck } from 'lucide-react';
+import { RefreshCw, Lock, Unlock, Plus, Search, Pencil, History, ShieldCheck, Home } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { S, Modal, Field, TextInput, TextArea, PrimaryBtn, GhostBtn, pill, peso } from './crmKit';
@@ -30,6 +30,7 @@ interface Day {
   breaks?: BreakInterval[];
   status: string | null; flags: string[]; pay_period_id: number | null;
   is_locked: boolean; is_adjusted: boolean; ot_approved: boolean; early_ot_approved: boolean; late_excused: boolean;
+  is_wfh?: boolean;
   full_name: string; department?: string | null; position?: string | null; ot_eligible?: boolean;
 }
 interface Adjustment {
@@ -44,7 +45,11 @@ interface Bale { person_id: number; amount: number | string | null; }
 // at all, so a raw row count can't see it), or a worked Sunday/holiday (paid separately, excluded
 // from present/half/absent entirely) -- none of which is a bug, but nothing used to explain it.
 interface Classification { person_id: number; present: number; half: number; absent: number; naive_days: number; }
-interface Sheet { period: Period; rows: Day[]; bale?: Bale[]; classification?: Classification[]; }
+// empty_days: scheduled dates in this period on which NOBODY has an attendance row. Usually a closed
+// office or an unrecorded off-site day rather than a genuine all-hands absence — and costly, because
+// an unworked regular holiday only pays when the preceding scheduled day has attendance.
+interface Sheet { period: Period; rows: Day[]; bale?: Bale[]; classification?: Classification[]; empty_days?: string[]; }
+interface PersonOption { id: number; full_name: string; }
 
 const fmtDay = (ymd: string) => new Date(ymd + 'T00:00:00').toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric' });
 const fmtTime = (iso: string | null) => iso ? new Date(iso).toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit', hour12: true }) : '—';
@@ -111,6 +116,7 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
   const [search, setSearch] = useState('');
   const [deptFilter, setDeptFilter] = useState('');
   const [showNew, setShowNew] = useState(false);
+  const [wfhFor, setWfhFor] = useState<string | null>(null); // date to seed the WFH modal with, '' = none picked
   const [editing, setEditing] = useState<Day | null>(null);
   const [historyOf, setHistoryOf] = useState<Day | null>(null);
   // person_id -> BALE amount (string, for the input). Populated from the sheet on load.
@@ -271,7 +277,28 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
         {period && canRebuild && <button style={S.rowBtn} onClick={rebuild} disabled={busy}><RefreshCw size={13} style={{ verticalAlign: '-2px', marginRight: '5px' }} />Rebuild from punches</button>}
         {period && !locked && <button style={{ ...S.rowBtn, borderColor: '#e3ca63', color: '#7a6a0c' }} onClick={lock} disabled={busy}><Lock size={13} style={{ verticalAlign: '-2px', marginRight: '5px' }} />Lock period</button>}
         {period && locked && role === 'admin' && !period.payroll_finalized && <button style={{ ...S.rowBtn, borderColor: '#e3ca63', color: '#7a6a0c' }} onClick={unlock} disabled={busy}><Unlock size={13} style={{ verticalAlign: '-2px', marginRight: '5px' }} />Unlock period</button>}
+        {/* Period-scoped on purpose: a person who worked off-site has NO rows, so they render no group
+            at all and there is no row anywhere on this screen to hang a per-day button on. */}
+        {period && role === 'admin' && <button style={S.rowBtn} onClick={() => setWfhFor('')} disabled={busy}><Home size={13} style={{ verticalAlign: '-2px', marginRight: '5px' }} />Record WFH day</button>}
       </div>
+
+      {/* A whole scheduled day with no attendance anywhere is the failure this feature exists for:
+          it silently denies everyone the following regular holiday's pay. Name the dates plainly. */}
+      {role === 'admin' && (sheet?.empty_days || []).length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', padding: '10px 14px', marginBottom: '16px', borderRadius: '8px', background: '#fffbeb', border: '1px solid #fcd34d', fontSize: '13px', color: '#78350f' }}>
+          <ShieldCheck size={15} style={{ flexShrink: 0, marginTop: '2px' }} />
+          <div>
+            <strong>No attendance recorded at all on {(sheet?.empty_days || []).map(fmtDay).join(', ')}.</strong>{' '}
+            If the office was closed that day, nothing is wrong. If anyone worked from home, record it —
+            an unworked regular holiday only pays when the scheduled day before it has attendance.
+            {(sheet?.empty_days || []).map(d => (
+              <button key={d} style={{ ...S.rowBtn, marginLeft: '8px', marginTop: '6px' }} onClick={() => setWfhFor(d)}>
+                Record WFH for {fmtDay(d)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {locked && (
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', marginBottom: '16px', borderRadius: '8px', background: '#f4f4f4', border: '1px solid #d6d6d6', fontSize: '13px', color: '#5a5a5a' }}>
@@ -325,6 +352,10 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
         setSheet(s => s ? { ...s, rows: s.rows.map(r => r.id === d.id ? d : r) } : s);
       }} />}
       {historyOf && <HistoryModal api={api} day={historyOf} onClose={() => setHistoryOf(null)} />}
+      {wfhFor !== null && period && (
+        <WfhModal api={api} period={period} seedDate={wfhFor} onClose={() => setWfhFor(null)}
+          onSaved={async () => { setWfhFor(null); if (selectedId !== null) await loadSheet(selectedId); }} />
+      )}
     </div>
   );
 }
@@ -461,6 +492,9 @@ function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, o
             <td style={S.td}>{fmtHours(paidMinutes(d))}</td>
             <td style={S.td}>
               {statusPill(d.status)}
+              {/* A WFH day was vouched for by an admin, not scanned at a station. Say so on the row —
+                  its times are the configured shift, not observed ones, and nothing else distinguishes it. */}
+              {d.is_wfh ? <span title="Work from home — recorded by an admin, not a station scan" style={{ marginLeft: '6px', fontSize: '11px', color: '#1d4ed8', fontWeight: 700 }}>· WFH</span> : null}
               {(d.flags || []).map(f => <span key={f} style={{ marginLeft: '6px', fontSize: '12px', color: '#b91c1c' }}>{FLAG_LABEL[f] || f}</span>)}
               {d.is_adjusted ? <span style={{ marginLeft: '6px', fontSize: '11px', color: '#7a6a0c', fontWeight: 600 }}>· edited</span> : null}
             </td>
@@ -478,8 +512,9 @@ function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, o
   );
 }
 
-// Correct a day. Each changed field is sent as its own logged adjustment (server writes an
-// attendance_adjustments row per call). A reason is required. Raw punches are never touched.
+// Correct a day. The server logs an attendance_adjustments row per changed FIELD, but both clock
+// times travel in ONE request so the IN/OUT pair is validated as it will finally stand.
+// A reason is required. Raw punches are never touched.
 function AdjustModal({ api, day, onClose, onSaved }: { api: Api; day: Day; onClose: () => void; onSaved: (d: Day) => void }) {
   const [firstIn, setFirstIn] = useState(toManilaInput(day.first_in));
   const [lastOut, setLastOut] = useState(toManilaInput(day.last_out));
@@ -492,18 +527,25 @@ function AdjustModal({ api, day, onClose, onSaved }: { api: Api; day: Day; onClo
 
   const save = async () => {
     if (!reason.trim()) { toast.error('A reason is required for a correction'); return; }
-    const changes: { field: string; value: string }[] = [];
-    if (firstIn !== origIn) changes.push({ field: 'first_in', value: firstIn });
-    if (lastOut !== origOut) changes.push({ field: 'last_out', value: lastOut });
-    if (status !== (day.status || 'incomplete')) changes.push({ field: 'status', value: status });
-    if (changes.length === 0) { toast.error('Nothing changed'); return; }
+    const times: Record<string, string> = {};
+    if (firstIn !== origIn) times.first_in = firstIn;
+    if (lastOut !== origOut) times.last_out = lastOut;
+    const statusChanged = status !== (day.status || 'incomplete');
+    const changed = Object.keys(times).length + (statusChanged ? 1 : 0);
+    if (changed === 0) { toast.error('Nothing changed'); return; }
     setSaving(true);
     try {
       let updated: Day | null = null;
-      for (const c of changes) {
-        updated = await api<Day>(`/attendance/days/${day.id}/adjust`, { method: 'POST', body: JSON.stringify({ ...c, reason: reason.trim() }) });
+      // Both times in ONE request: sent as two, the server checked each new value against the OTHER
+      // field's still-stored value, so moving a day from 08:00–17:00 to 18:00–22:00 was refused
+      // because 18:00 was compared with the old 17:00. One request also rules out a half-applied edit.
+      if (Object.keys(times).length) {
+        updated = await api<Day>(`/attendance/days/${day.id}/adjust`, { method: 'POST', body: JSON.stringify({ field: 'times', value: times, reason: reason.trim() }) });
       }
-      toast.success(`Correction logged (${changes.length} field${changes.length === 1 ? '' : 's'})`);
+      if (statusChanged) {
+        updated = await api<Day>(`/attendance/days/${day.id}/adjust`, { method: 'POST', body: JSON.stringify({ field: 'status', value: status, reason: reason.trim() }) });
+      }
+      toast.success(`Correction logged (${changed} field${changed === 1 ? '' : 's'})`);
       if (updated) onSaved(updated);
     } catch (e: any) { toast.error(e.message || 'Correction failed'); } finally { setSaving(false); }
   };
@@ -524,6 +566,97 @@ function AdjustModal({ api, day, onClose, onSaved }: { api: Api; day: Day; onClo
         </select>
       </Field>
       <Field label="Reason *"><TextArea value={reason} onChange={e => setReason(e.target.value)} placeholder="e.g. Forgot to clock out — confirmed left at 5:30 PM with supervisor" /></Field>
+    </Modal>
+  );
+}
+
+// Record a work-from-home day — the only path that brings an attendance row into being without a
+// station scan. Deliberately period-scoped and multi-select: the people who need this are precisely
+// the ones with NO rows on this screen (no scan, no row, no group rendered, nothing to click), and a
+// WFH day is nearly always a whole team at once.
+function WfhModal({ api, period, seedDate, onClose, onSaved }:
+  { api: Api; period: Period; seedDate: string; onClose: () => void; onSaved: () => void }) {
+  const [people, setPeople] = useState<(PersonOption & { status?: string; hired_on?: string | null; last_day?: string | null })[] | null>(null);
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [date, setDate] = useState(seedDate || period.start_date);
+  const [reason, setReason] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api<any[]>('/persons').then(rows => setPeople(rows.filter(p => p.status !== 'resigned')))
+      .catch(() => { setPeople([]); toast.error('Failed to load the roster'); });
+  }, []);
+
+  // Only offer people actually employed on the chosen date — payroll treats days outside someone's
+  // hire/last-day window as 'not_employed', so a WFH row there could never be paid.
+  const eligible = (people || []).filter(p =>
+    (!p.hired_on || date >= String(p.hired_on).slice(0, 10)) &&
+    (!p.last_day || date <= String(p.last_day).slice(0, 10)));
+
+  // A Sunday pays at the premium rate, so a WFH row there invents premium pay instead of a normal
+  // day. Not blocked — but never silent.
+  const isSunday = !!date && new Date(date + 'T00:00:00').getDay() === 0;
+
+  const toggle = (id: number) => setPicked(s => {
+    const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n;
+  });
+
+  const save = async () => {
+    if (!picked.size) { toast.error('Pick at least one person'); return; }
+    if (!date) { toast.error('Pick a date'); return; }
+    if (!reason.trim()) { toast.error('A reason is required for a work-from-home day'); return; }
+    setSaving(true);
+    let ok = 0; const failed: string[] = [];
+    for (const id of picked) {
+      try {
+        await api('/attendance/days/wfh', { method: 'POST', body: JSON.stringify({ person_id: id, work_date: date, reason: reason.trim() }) });
+        ok++;
+      } catch (e: any) {
+        failed.push(`${eligible.find(p => p.id === id)?.full_name || `#${id}`}: ${e.message || 'failed'}`);
+      }
+    }
+    setSaving(false);
+    if (ok) toast.success(`Work-from-home recorded for ${ok} ${ok === 1 ? 'person' : 'people'} — recompute payroll to apply it`);
+    failed.forEach(f => toast.error(f));
+    if (ok) onSaved();
+  };
+
+  return (
+    <Modal title="Record a work-from-home day" onClose={onClose}
+      footer={<><GhostBtn onClick={onClose}>Cancel</GhostBtn><PrimaryBtn onClick={save} disabled={saving}>{saving ? 'Saving…' : `Record WFH${picked.size ? ` (${picked.size})` : ''}`}</PrimaryBtn></>}>
+      <p style={{ fontSize: '12px', color: '#8a8a8a', marginTop: 0 }}>
+        Attendance normally comes only from station scans, so an off-site day leaves no record and the
+        person counts as absent. This records the day at the configured shift hours for that weekday
+        (Saturdays use the Saturday end time). Anyone who already has a row keeps their real scan times.
+      </p>
+      <Field label="Date">
+        <TextInput type="date" value={date} min={period.start_date} max={period.end_date}
+          onChange={e => setDate(e.target.value)} />
+      </Field>
+      {isSunday && (
+        <p style={{ fontSize: '12px', color: '#b45309', marginTop: '-4px' }}>
+          That date is a Sunday — Sunday work pays at the premium rate, so this will add premium pay,
+          not a normal day. Holidays behave the same way.
+        </p>
+      )}
+      <Field label={`Who worked from home${picked.size ? ` — ${picked.size} selected` : ''}`}>
+        {people === null
+          ? <div style={{ fontSize: '13px', color: '#8a8a8a' }}>Loading roster…</div>
+          : eligible.length === 0
+            ? <div style={{ fontSize: '13px', color: '#8a8a8a' }}>Nobody on the roster was employed on that date.</div>
+            : <div style={{ maxHeight: '190px', overflowY: 'auto', border: '1px solid #d6d6d6', borderRadius: '8px', padding: '6px' }}>
+                {eligible.map(p => (
+                  <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 6px', cursor: 'pointer', fontSize: '13px' }}>
+                    <input type="checkbox" checked={picked.has(p.id)} onChange={() => toggle(p.id)} />
+                    {p.full_name}
+                  </label>
+                ))}
+              </div>}
+      </Field>
+      <Field label="Reason *">
+        <TextArea value={reason} onChange={e => setReason(e.target.value)}
+          placeholder="e.g. Saturday work-from-home arrangement, approved by management" />
+      </Field>
     </Modal>
   );
 }

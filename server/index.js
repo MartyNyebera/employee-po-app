@@ -1250,6 +1250,13 @@ async function runMigrations() {
       // rate — it is a forgiveness, not a pro-rate. Admin-only, default off, not punch-derived, so
       // rebuild leaves it alone (survives rebuild exactly like ot_approved / early_ot_approved).
       await query(`ALTER TABLE attendance_days ADD COLUMN IF NOT EXISTS late_excused BOOLEAN DEFAULT FALSE`);
+      // Work-from-home marker. Attendance rows are otherwise ONLY ever derived from station scans, so
+      // a WFH day produces no row at all and the person silently reads as ABSENT -- which is exactly
+      // how a whole team lost its regular-holiday pay (eligibility asks whether the prior scheduled
+      // day has a first_in). This flag records "the admin vouched that this person worked, off-site".
+      // Like late_excused / ot_approved it is admin-set, not punch-derived, and rebuild leaves it be.
+      // It is a LABEL only: payroll never reads it, so a WFH day is paid by its times like any other.
+      await query(`ALTER TABLE attendance_days ADD COLUMN IF NOT EXISTS is_wfh BOOLEAN NOT NULL DEFAULT false`);
       // Unpaid personal-business break minutes for the day — docked time between a middle OUT and the
       // next IN (shared :15/:30/:00 rounding on the return, free lunch carved out). Precomputed by
       // rebuildAttendanceDays from the punches; a normal 2-tap day is 0. Payroll folds it into the
@@ -5995,6 +6002,7 @@ app.get('/api/attendance/periods/:id/sheet', requireRole(attendanceReviewRoles),
       `SELECT ad.id, ad.person_id, to_char(ad.work_date,'YYYY-MM-DD') AS work_date,
               ad.first_in, ad.last_out, ad.worked_minutes, ad.break_minutes, ad.status, ad.flags,
               ad.pay_period_id, ad.is_locked, ad.is_adjusted, ad.ot_approved, ad.early_ot_approved, ad.late_excused,
+              ad.is_wfh,
               p.full_name, p.department, p.position, p.ot_eligible
          FROM attendance_days ad
          JOIN persons p ON p.id = ad.person_id
@@ -6085,7 +6093,18 @@ app.get('/api/attendance/periods/:id/sheet', requireRole(attendanceReviewRoles),
       return { person_id: p.id, present, half, absent, naive_days: naiveCount[p.id] || 0 };
     }).filter(c => c.present || c.half || c.absent || c.naive_days); // drop people with nothing to show
 
-    res.json({ period, rows: rowsOut, bale: bale.rows, classification });
+    // Scheduled dates on which NOBODY in the company has an attendance row. A whole silent day like
+    // this is not just "everyone was absent" — it usually means the office was closed or the team was
+    // off-site, and nothing recorded it. It matters beyond the day itself: an unworked regular holiday
+    // pays only if the PRECEDING scheduled day has attendance, so one unrecorded company-wide day
+    // silently denies everyone their holiday pay (which is exactly what happened on Sat 2026-08-29).
+    // Future dates in an in-progress period are excluded — they are simply days that have not happened.
+    const datesWithAnyAttendance = new Set(cAttRows.map(r => r.d));
+    const todayManila = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+    const emptyDays = cDates.filter(d =>
+      d <= todayManila && !cHolidayMap[d] && dowYMD(d) !== 0 && !datesWithAnyAttendance.has(d));
+
+    res.json({ period, rows: rowsOut, bale: bale.rows, classification, empty_days: emptyDays });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -6126,16 +6145,32 @@ app.get('/api/attendance/days/:id/punches', requireRole(['admin']), async (req, 
 // Sets is_adjusted so a later rebuild won't revert it. Works on open and locked days alike.
 app.post('/api/attendance/days/:id/adjust', requireRole(['admin']), async (req, res) => {
   const { field, value, reason } = req.body || {};
-  if (!['first_in', 'last_out', 'status'].includes(field)) {
-    return res.status(400).json({ error: "field must be 'first_in', 'last_out' or 'status'" });
+  if (!['first_in', 'last_out', 'times', 'status'].includes(field)) {
+    return res.status(400).json({ error: "field must be 'first_in', 'last_out', 'times' or 'status'" });
   }
-  const clearing = value === null || value === '' || value === undefined;
-  if (field === 'status') {
-    if (!['complete', 'no_out', 'incomplete'].includes(value)) {
-      return res.status(400).json({ error: "status must be 'complete', 'no_out' or 'incomplete'" });
+  const isBlank = (v) => v === null || v === '' || v === undefined;
+  // 'times' carries BOTH clock times in one request, so the IN/OUT pair is validated against what the
+  // day will actually BE. Sending them as two requests validated each against the other's stale stored
+  // value: moving a day from 08:00-17:00 to 18:00-22:00 was refused because the new 18:00 IN was
+  // compared with the OLD 17:00 OUT, and a two-field edit could half-apply when the second call failed.
+  let timeEdits = null; // [{ field, value }] — every time field this request touches
+  if (field === 'times') {
+    const v = (value && typeof value === 'object') ? value : {};
+    timeEdits = ['first_in', 'last_out']
+      .filter(f => Object.prototype.hasOwnProperty.call(v, f))
+      .map(f => ({ field: f, value: v[f] }));
+    if (!timeEdits.length) return res.status(400).json({ error: "'times' needs first_in and/or last_out" });
+  } else if (field !== 'status') {
+    timeEdits = [{ field, value }];
+  }
+  if (timeEdits) {
+    for (const e of timeEdits) {
+      if (!isBlank(e.value) && Number.isNaN(new Date(e.value).getTime())) {
+        return res.status(400).json({ error: 'value must be a valid timestamp or empty to clear' });
+      }
     }
-  } else if (!clearing && Number.isNaN(new Date(value).getTime())) {
-    return res.status(400).json({ error: 'value must be a valid timestamp or empty to clear' });
+  } else if (!['complete', 'no_out', 'incomplete'].includes(value)) {
+    return res.status(400).json({ error: "status must be 'complete', 'no_out' or 'incomplete'" });
   }
   const client = await getClient();
   try {
@@ -6148,11 +6183,9 @@ app.post('/api/attendance/days/:id/adjust', requireRole(['admin']), async (req, 
       return res.status(403).json({ error: 'This pay period is locked — corrections are admin-only.' });
     }
 
-    let oldValue;
-    let newValue;
+    const auditRows = []; // one entry per field this request actually changes
     if (field === 'status') {
-      oldValue = day.status;
-      newValue = value;
+      auditRows.push({ field: 'status', old_value: day.status, new_value: value });
       // Pin 'status' so a later rebuild keeps this manual status instead of re-deriving it from times.
       await client.query(
         `UPDATE attendance_days
@@ -6170,44 +6203,51 @@ app.post('/api/attendance/days/:id/adjust', requireRole(['admin']), async (req, 
       // day — but payroll sees an IN past the late cutoff and counts the day as an ABSENCE. One AM/PM
       // slip in the datetime-local picker (8:00 PM entered for 8:00 AM) cost a real present day and a
       // day's pay. Compare in Manila exactly the way the UPDATE below stores it, and refuse the pair.
-      if (!clearing) {
-        const other = field === 'first_in' ? day.last_out : day.first_in;
-        if (other) {
-          const { rows: [t] } = await client.query(
-            `SELECT ($1::timestamp AT TIME ZONE 'Asia/Manila') AS ts,
-                    to_char($1::timestamp, 'HH24:MI') AS new_hhmm,
-                    to_char($2::timestamptz AT TIME ZONE 'Asia/Manila', 'HH24:MI') AS other_hhmm`,
-            [value, other]
-          );
-          const inTs = field === 'first_in' ? t.ts : other;
-          const outTs = field === 'first_in' ? other : t.ts;
-          if (new Date(outTs) <= new Date(inTs)) {
-            const inHHMM = field === 'first_in' ? t.new_hhmm : t.other_hhmm;
-            const outHHMM = field === 'first_in' ? t.other_hhmm : t.new_hhmm;
-            await client.query('ROLLBACK');
-            return res.status(400).json({
-              error: `Clock-IN (${inHHMM}) must be earlier than clock-OUT (${outHHMM}) — check AM/PM.`,
-            });
-          }
-        }
+      // Validate the FINAL pair — what the row will hold once this request is applied — not the
+      // incoming value against a stale stored one.
+      const edited = (f) => timeEdits.find(e => e.field === f);
+      const inEdit = edited('first_in'), outEdit = edited('last_out');
+      const conv = (await client.query(
+        `SELECT CASE WHEN $1::text IS NULL THEN NULL ELSE ($1::timestamp AT TIME ZONE 'Asia/Manila') END AS in_ts,
+                CASE WHEN $2::text IS NULL THEN NULL ELSE ($2::timestamp AT TIME ZONE 'Asia/Manila') END AS out_ts`,
+        [inEdit && !isBlank(inEdit.value) ? inEdit.value : null,
+         outEdit && !isBlank(outEdit.value) ? outEdit.value : null]
+      )).rows[0];
+      const finalIn = inEdit ? (isBlank(inEdit.value) ? null : conv.in_ts) : day.first_in;
+      const finalOut = outEdit ? (isBlank(outEdit.value) ? null : conv.out_ts) : day.last_out;
+      if (finalIn && finalOut && new Date(finalOut) <= new Date(finalIn)) {
+        const hhmm = (await client.query(
+          `SELECT to_char($1::timestamptz AT TIME ZONE 'Asia/Manila', 'HH24:MI') AS a,
+                  to_char($2::timestamptz AT TIME ZONE 'Asia/Manila', 'HH24:MI') AS b`,
+          [finalIn, finalOut])).rows[0];
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: `Clock-IN (${hhmm.a}) must be earlier than clock-OUT (${hhmm.b}) — check AM/PM.`,
+        });
       }
-      // field is 'first_in' or 'last_out' (whitelisted above) — safe to interpolate.
-      oldValue = day[field] ? new Date(day[field]).toISOString() : null;
-      newValue = clearing ? null : value;
       // The client sends Manila wall-clock (from a datetime-local input); interpret it in Manila.
       // FIELD-LEVEL PIN: setting a non-null value PINS this field (rebuild will keep it); CLEARING it
       // RELEASES the pin (removes it from adjusted_fields) so a later real scan can refill the field.
-      await client.query(
-        `UPDATE attendance_days
-            SET ${field} = CASE WHEN $1::text IS NULL THEN NULL
-                                ELSE ($1::timestamp AT TIME ZONE 'Asia/Manila') END,
-                adjusted_fields = CASE
-                  WHEN $1::text IS NULL                             THEN array_remove(adjusted_fields, '${field}')
-                  WHEN adjusted_fields @> ARRAY['${field}']::text[] THEN adjusted_fields
-                  ELSE array_append(adjusted_fields, '${field}') END
-          WHERE id = $2`,
-        [clearing ? null : value, day.id]
-      );
+      for (const e of timeEdits) {
+        const clearing = isBlank(e.value);
+        // e.field comes from the fixed whitelist above — safe to interpolate.
+        await client.query(
+          `UPDATE attendance_days
+              SET ${e.field} = CASE WHEN $1::text IS NULL THEN NULL
+                                    ELSE ($1::timestamp AT TIME ZONE 'Asia/Manila') END,
+                  adjusted_fields = CASE
+                    WHEN $1::text IS NULL                               THEN array_remove(adjusted_fields, '${e.field}')
+                    WHEN adjusted_fields @> ARRAY['${e.field}']::text[] THEN adjusted_fields
+                    ELSE array_append(adjusted_fields, '${e.field}') END
+            WHERE id = $2`,
+          [clearing ? null : e.value, day.id]
+        );
+        auditRows.push({
+          field: e.field,
+          old_value: day[e.field] ? new Date(day[e.field]).toISOString() : null,
+          new_value: clearing ? null : e.value,
+        });
+      }
       // Recompute the derived roll-up from the corrected times. worked_minutes AND the
       // status/flags must move together: adding a real OUT to a 'no_out' day has to flip it to
       // 'complete' and clear the missing_out flag (else the sheet keeps showing "No OUT" and a
@@ -6237,11 +6277,13 @@ app.post('/api/attendance/days/:id/adjust', requireRole(['admin']), async (req, 
         [day.id]
       );
     }
-    await client.query(
-      `INSERT INTO attendance_adjustments (day_id, field, old_value, new_value, reason, adjusted_by)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [day.id, field, oldValue, newValue, reason || null, req.user.id]
-    );
+    for (const a of auditRows) {
+      await client.query(
+        `INSERT INTO attendance_adjustments (day_id, field, old_value, new_value, reason, adjusted_by)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [day.id, a.field, a.old_value, a.new_value, reason || null, req.user.id]
+      );
+    }
     await client.query('COMMIT');
     const updated = await query(
       `SELECT ad.id, ad.person_id, to_char(ad.work_date,'YYYY-MM-DD') AS work_date,
@@ -6347,6 +6389,100 @@ app.post('/api/attendance/days/:id/excuse-late', requireRole(['admin']), async (
     );
     await client.query('COMMIT');
     res.json({ id: day.id, late_excused: excused });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Record a WORK-FROM-HOME day. ADMIN ONLY (Finance view-only), and the ONLY endpoint that can bring
+// an attendance_days row into existence outside a station scan — rebuild builds rows strictly from
+// attendance_punches, so an off-site day otherwise has no row and the person reads as ABSENT.
+//
+// Two shapes, deliberately different:
+//   • No row yet  → CREATE one at the configured shift times for that weekday. This is the case that
+//     matters: it is what gives the day a first_in, which is all an unworked regular holiday's
+//     eligibility check looks for on the preceding scheduled day.
+//   • Row exists  → only raise the flag. Real scan times are never overwritten by this endpoint;
+//     correcting times stays the /adjust endpoint's job.
+//
+// first_in/last_out are PINNED so the day survives intact if that person later turns out to have a
+// stray punch on the same date (a rebuild would otherwise merge a partial punch set in and could
+// blank first_in, silently re-creating the absence this exists to prevent). 'status' is deliberately
+// NOT pinned — it should always stay derived from the times, and pinning it would let a later time
+// edit leave the row reading 'complete' with no IN.
+app.post('/api/attendance/days/wfh', requireRole(['admin']), async (req, res) => {
+  const personId = Number(req.body && req.body.person_id);
+  const workDate = String((req.body && req.body.work_date) || '').trim();
+  const reason = String((req.body && req.body.reason) || '').trim();
+  if (!Number.isInteger(personId) || personId <= 0) return res.status(400).json({ error: 'person_id is required' });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(workDate)) return res.status(400).json({ error: 'work_date must be YYYY-MM-DD' });
+  if (!reason) return res.status(400).json({ error: 'A reason is required for a work-from-home day' });
+
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const person = (await client.query(
+      `SELECT id, full_name, to_char(hired_on,'YYYY-MM-DD') AS hired_on, to_char(last_day,'YYYY-MM-DD') AS last_day
+         FROM persons WHERE id = $1`, [personId])).rows[0];
+    if (!person) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Person not found' }); }
+    // Never vouch for a day outside someone's employment window — payroll treats those as
+    // 'not_employed', so a WFH row there would be an unpayable orphan.
+    if ((person.hired_on && workDate < person.hired_on) || (person.last_day && workDate > person.last_day)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `${person.full_name} was not employed on ${workDate}.` });
+    }
+
+    const existing = (await client.query(
+      'SELECT * FROM attendance_days WHERE person_id = $1 AND work_date = $2::date FOR UPDATE',
+      [personId, workDate])).rows[0];
+
+    if (existing) {
+      if (!existing.is_wfh) {
+        await client.query('UPDATE attendance_days SET is_wfh = true, updated_at = NOW() WHERE id = $1', [existing.id]);
+        await client.query(
+          `INSERT INTO attendance_adjustments (day_id, field, old_value, new_value, reason, adjusted_by)
+           VALUES ($1, 'is_wfh', 'false', 'true', $2, $3)`, [existing.id, reason, req.user.id]);
+      }
+      await client.query('COMMIT');
+      return res.json({ id: existing.id, person_id: personId, work_date: workDate, is_wfh: true, created: false });
+    }
+
+    const s = (await client.query(
+      'SELECT work_start, work_end, work_end_sat FROM payroll_settings WHERE id = 1')).rows[0] || {};
+    const meta = (await client.query(
+      `SELECT EXTRACT(DOW FROM $1::date)::int AS dow,
+              (SELECT id     FROM pay_periods WHERE $1::date BETWEEN start_date AND end_date ORDER BY id DESC LIMIT 1) AS period_id,
+              (SELECT status FROM pay_periods WHERE $1::date BETWEEN start_date AND end_date ORDER BY id DESC LIMIT 1) AS period_status`,
+      [workDate])).rows[0];
+    const startHHMM = s.work_start || '08:00';
+    const endHHMM = (meta.dow === 6 ? (s.work_end_sat || s.work_end) : s.work_end) || '17:00';
+
+    const created = (await client.query(
+      `INSERT INTO attendance_days
+         (person_id, work_date, first_in, last_out, worked_minutes, status, flags, break_minutes,
+          is_wfh, is_adjusted, adjusted_fields, pay_period_id, is_locked, updated_at)
+       VALUES ($1, $2::date,
+               ($3::timestamp AT TIME ZONE 'Asia/Manila'),
+               ($4::timestamp AT TIME ZONE 'Asia/Manila'),
+               ROUND(EXTRACT(EPOCH FROM (($4::timestamp AT TIME ZONE 'Asia/Manila')
+                                       - ($3::timestamp AT TIME ZONE 'Asia/Manila'))) / 60.0)::int,
+               'complete', '[]'::jsonb, 0,
+               true, true, ARRAY['first_in','last_out']::text[], $5, $6, NOW())
+       RETURNING id, worked_minutes`,
+      [personId, workDate, `${workDate}T${startHHMM}`, `${workDate}T${endHHMM}`,
+       meta.period_id || null, meta.period_status === 'locked']
+    )).rows[0];
+
+    await client.query(
+      `INSERT INTO attendance_adjustments (day_id, field, old_value, new_value, reason, adjusted_by)
+       VALUES ($1, 'wfh_day', NULL, $2, $3, $4)`,
+      [created.id, `${startHHMM}-${endHHMM}`, reason, req.user.id]);
+    await client.query('COMMIT');
+    res.json({ id: created.id, person_id: personId, work_date: workDate, is_wfh: true, created: true,
+      first_in: startHHMM, last_out: endHHMM, worked_minutes: created.worked_minutes });
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
     res.status(500).json({ error: err.message });
