@@ -37,7 +37,14 @@ interface Adjustment {
   reason: string | null; adjusted_by: string | null; adjusted_at: string;
 }
 interface Bale { person_id: number; amount: number | string | null; }
-interface Sheet { period: Period; rows: Day[]; bale?: Bale[]; }
+// Present/Half/Absent per person for this period, using the SAME classification computePayroll uses
+// (server/index.js classifyScheduledDay) -- this is what the eventual payslip's day count will be.
+// naive_days is a plain count of attendance_days rows in range, kept for comparison: it disagrees
+// whenever someone has a no_out day (payroll discounts it to a half), a true absence (no row exists
+// at all, so a raw row count can't see it), or a worked Sunday/holiday (paid separately, excluded
+// from present/half/absent entirely) -- none of which is a bug, but nothing used to explain it.
+interface Classification { person_id: number; present: number; half: number; absent: number; naive_days: number; }
+interface Sheet { period: Period; rows: Day[]; bale?: Bale[]; classification?: Classification[]; }
 
 const fmtDay = (ymd: string) => new Date(ymd + 'T00:00:00').toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric' });
 const fmtTime = (iso: string | null) => iso ? new Date(iso).toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit', hour12: true }) : '—';
@@ -169,6 +176,12 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
     return Array.from(map.values());
   }, [filtered]);
 
+  const classByPerson = useMemo(() => {
+    const map = new Map<number, Classification>();
+    (sheet?.classification || []).forEach(c => map.set(c.person_id, c));
+    return map;
+  }, [sheet]);
+
   const rebuild = async () => {
     if (selectedId === null) return;
     setBusy(true);
@@ -299,7 +312,8 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
               : groups.map(g => (
                 <PersonGroup key={g.person.person_id} group={g} role={role} canEditRow={canEditRow}
                   onEdit={setEditing} onHistory={setHistoryOf} onToggleOt={toggleOt} onToggleExcuseLate={toggleExcuseLate}
-                  bale={baleMap[g.person.person_id] ?? ''} onSaveBale={saveBale} periodLocked={locked} />
+                  bale={baleMap[g.person.person_id] ?? ''} onSaveBale={saveBale} periodLocked={locked}
+                  classification={classByPerson.get(g.person.person_id)} />
               ))}
           </tbody>
         </table>
@@ -358,7 +372,7 @@ function BaleInput({ personId, value, onSave, editable }: { personId: number; va
   );
 }
 
-function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, onToggleExcuseLate, bale, onSaveBale }: {
+function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, onToggleExcuseLate, bale, onSaveBale, classification }: {
   group: { person: Day; days: Day[]; totalMin: number; breakMin: number };
   role: 'admin' | 'accounting';
   canEditRow: (d: Day) => boolean; onEdit: (d: Day) => void; onHistory: (d: Day) => void;
@@ -366,6 +380,7 @@ function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, o
   onToggleExcuseLate: (d: Day, excused: boolean) => void;
   bale: string; onSaveBale: (personId: number, amount: string) => void;
   periodLocked: boolean;
+  classification?: Classification;
 }) {
   const { person, days, totalMin, breakMin } = group;
   const meta = [person.department, person.position].filter(Boolean).join(' · ');
@@ -378,11 +393,25 @@ function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, o
               <span style={{ fontWeight: 700, color: '#000' }}>{person.full_name}</span>
               {meta ? <span style={{ color: '#8a8a8a', fontSize: '13px' }}>{'  ·  ' + meta}</span> : null}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '18px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '18px', flexWrap: 'wrap' }}>
               <span style={{ color: '#5a5a5a', fontSize: '13px' }}>
-                {days.length} day{days.length === 1 ? '' : 's'} · {fmtHours(totalMin)} total
+                {days.length} punched day{days.length === 1 ? '' : 's'} · {fmtHours(totalMin)} total
                 {breakMin > 0 ? <span style={{ color: '#7a6a0c' }}> · − {fmtHours(breakMin)} break</span> : null}
               </span>
+              {/* This is what the payslip's day count WILL show for this person -- same classification
+                  computePayroll uses. It routinely differs from the punched-day count on the left: a
+                  no_out day above counts here as half, a true absence (no punch at all) has no row to
+                  the left but does count here, and a worked Sunday/holiday counts to the left but not
+                  here (it's paid separately). None of that is a bug; this label exists so the two
+                  numbers are never mysterious side by side. */}
+              {classification && (classification.present || classification.half || classification.absent) ? (
+                <span style={{ fontSize: '12px', color: '#5a5a5a' }}
+                  title="What payroll counts for this period — a missing-OUT day counts as half, a day with no punch at all counts as absent, and a worked Sunday/holiday is paid separately and isn't in this tally. This can differ from the punched-day count on the left; that's expected.">
+                  Payroll: <strong style={{ color: '#000' }}>{classification.present}</strong> present
+                  {classification.half > 0 ? <> · {classification.half} half</> : null}
+                  {classification.absent > 0 ? <> · <span style={{ color: '#b91c1c' }}>{classification.absent} absent</span></> : null}
+                </span>
+              ) : null}
               <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }} title="Cash advance (BALE) for this period">
                 <span style={{ fontSize: '11px', color: '#8a8a8a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>BALE</span>
                 <BaleInput personId={person.person_id} value={bale} onSave={onSaveBale} editable={role === 'admin'} />

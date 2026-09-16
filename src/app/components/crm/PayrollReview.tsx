@@ -15,7 +15,12 @@ type Api = <T = any>(path: string, init?: RequestInit) => Promise<T>;
 
 interface Period { id: number; start_date: string; end_date: string; status: 'open' | 'locked'; payroll_finalized?: boolean; finalized_by?: string | null; finalized_at?: string | null;
   // Auto-derived (read-only) cutoff classification: 'first' cutoff of its month deducts PhilHealth/Pag-IBIG.
-  cutoff_half?: 'first' | 'second'; cutoff_month?: string | null; }
+  cutoff_half?: 'first' | 'second'; cutoff_month?: string | null;
+  // Server-computed: true when attendance in this period's range was touched (edited, backfilled, an
+  // OT/late-excuse toggle) AFTER the LAST compute -- compute snapshots attendance into payroll_lines
+  // once and never re-reads it, so the lines below can silently go stale. Only ever true on a period
+  // that's actually locked and not finalized (recompute is blocked on a finalized one regardless).
+  stale_attendance?: boolean; }
 // Short label for the cutoff badge, e.g. "1st cutoff · Sep" / "2nd cutoff".
 const cutoffLabel = (p?: Period | null) => {
   if (!p || !p.cutoff_half) return '';
@@ -196,6 +201,12 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
       {finalized && (
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', marginBottom: '16px', borderRadius: '8px', background: '#eef7ee', border: '1px solid #b9dcb9', fontSize: '13px', color: '#2f6b2f' }}>
           <Lock size={15} /> This payroll is <strong>finalized</strong>{period?.finalized_at ? ` (${new Date(period.finalized_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })})` : ''}. Recompute is locked so a later settings change can't restate it. Un-finalize to recompute.
+        </div>
+      )}
+
+      {period?.stale_attendance && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', marginBottom: '16px', borderRadius: '8px', background: '#fff8e6', border: '1px solid #e8cf8a', fontSize: '13px', color: '#7a5c0c' }}>
+          <AlertTriangle size={15} /> Attendance for this period changed after it was last computed — days, hours, OT and deductions below may be out of date. Recompute to refresh them before printing or finalizing.
         </div>
       )}
 

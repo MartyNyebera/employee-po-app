@@ -1264,6 +1264,25 @@ async function runMigrations() {
       // (true ⇔ adjusted_fields is non-empty) so existing consumers keep working. Existing manually
       // corrected rows are backfilled (see runtime backfill below) so nothing reverts on first rebuild.
       await query(`ALTER TABLE attendance_days ADD COLUMN IF NOT EXISTS adjusted_fields TEXT[] NOT NULL DEFAULT '{}'`);
+      // Last-touched stamp, so Payroll can tell whether a period's attendance changed AFTER it was
+      // last computed (compute reads a snapshot into payroll_lines and never re-reads attendance_days
+      // afterward -- see computed_at on payroll_lines). Deliberately added WITHOUT a default first: a
+      // plain `DEFAULT NOW()` would backdate every EXISTING row to the moment this migration runs,
+      // which would make every already-computed period look like its attendance had just changed the
+      // instant this deploys -- including finalized periods, which can't even be recomputed. Instead,
+      // existing rows are backfilled from the best honest signal available: their latest logged
+      // attendance_adjustments.adjusted_at if they have one, else their own created_at. Guarded by
+      // `updated_at IS NULL`, so this backfill runs exactly once and is a no-op on every later boot.
+      await query(`ALTER TABLE attendance_days ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ`);
+      await query(`
+        UPDATE attendance_days ad SET updated_at = GREATEST(ad.created_at, COALESCE(
+          (SELECT MAX(aa.adjusted_at) FROM attendance_adjustments aa WHERE aa.day_id = ad.id), ad.created_at))
+        WHERE ad.updated_at IS NULL`);
+      await query(`ALTER TABLE attendance_days ALTER COLUMN updated_at SET DEFAULT NOW()`);
+      await query(`ALTER TABLE attendance_days ALTER COLUMN updated_at SET NOT NULL`);
+      // The two write paths that UPDATE an existing row (rebuild's upsert, and the admin /adjust /
+      // OT / excuse-late endpoints) explicitly set updated_at = NOW() alongside their other SETs;
+      // DEFAULT NOW() covers every future INSERT for free.
       await query(`CREATE INDEX IF NOT EXISTS idx_attendance_days_date ON attendance_days(work_date)`);
       console.log('✅ attendance_days table ready');
     } catch (err) { console.log('ℹ️ attendance_days table skipped:', err.message); }
@@ -5015,6 +5034,25 @@ const round4 = (x) => Math.round((Number(x) || 0) * 10000) / 10000;
 const addDaysYMD = (ymd, n) => { const [y, m, d] = ymd.split('-').map(Number); const dt = new Date(Date.UTC(y, m - 1, d + n)); return dt.toISOString().slice(0, 10); };
 const dowYMD = (ymd) => { const [y, m, d] = ymd.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)).getUTCDay(); }; // 0=Sun
 const dateListYMD = (start, end) => { const out = []; let c = start; while (c <= end) { out.push(c); c = addDaysYMD(c, 1); } return out; };
+// Classifies a SCHEDULED day (non-holiday, non-Sunday — computePayroll checks those separately and
+// never calls this for them) into the same four buckets that drive days_present/half_days/absent_days:
+//   'absent_too_late' — clocked in, but after the latest valid IN for the day → whole day absent (₱0).
+//   'no_out_half'      — clocked in on time, but no OUT → half day.
+//   'work'             — clocked in on time, has an OUT → a full present day.
+//   'absent'           — no IN at all, while employed.
+//   'not_employed'     — no IN, and outside the [hired_on, last_day] window (not an absence).
+// This is the SINGLE source of truth for that decision, used by computePayroll below AND by the
+// `classification` block GET /api/attendance/periods/:id/sheet adds to its response, which lets the
+// Attendance/Timesheet screen show the same Present/Half/Absent counts the payslip will show —
+// instead of a raw "row exists" tally that silently disagrees with it (e.g. it doesn't discount a
+// no_out day to a half, doesn't count a no-punch day as an absence, and counts a worked Sunday/
+// holiday as a plain day when payroll pays and tracks those separately, outside these three buckets).
+// Pure function — no side effects, no money math; computePayroll still owns every peso calculation.
+const classifyScheduledDay = ({ hasIN, inMin, outMin, latestInMin, employed }) => {
+  if (hasIN && inMin > latestInMin) return 'absent_too_late';
+  if (hasIN) return outMin === null ? 'no_out_half' : 'work';
+  return employed ? 'absent' : 'not_employed';
+};
 
 // ---- Calendar helpers for the cutoff/payday DATE SUGGESTER (create-period UI only) ----
 // A "workday" = NOT Sunday (rest day) AND NOT a holiday (from the holidays table). holidaySet is a
@@ -5230,13 +5268,18 @@ async function computePayroll(periodId) {
         // Latest valid clock-in for the day: shift end − buffer (weekday 16:00, Saturday 15:00 by
         // default). A clock-in strictly LATER than this is too late to count as a working day.
         const latestInMin = dayEndMin - lateAbsentBuffer;
-        if (hasIN && inMin > latestInMin) {
+        // The present/half/absent DECISION is delegated to the shared classifier (see its definition
+        // above) so this can never quietly drift from what the Attendance screen shows. Everything
+        // below this line is unchanged money math, now branching on that decision instead of
+        // re-deriving it.
+        const kind = classifyScheduledDay({ hasIN, inMin, outMin, latestInMin, employed: employed(d) });
+        if (kind === 'absent_too_late') {
           // Too late → the whole day is ABSENT (₱0): no half day, no late/undertime/OT. Counts as an
           // absence (a monthly salary is docked a day like any absence; a daily earns nothing for it).
           absentDays++;
           Object.assign(day, { kind: 'absent_too_late', in_min: inMin, late_min: Math.max(0, inMin - startMin),
             note: `clocked in after ${minToHHMM(latestInMin)} (${lateAbsentBuffer}m before ${minToHHMM(dayEndMin)}) — too late, absent (₱0)` });
-        } else if (hasIN) {
+        } else if (kind === 'no_out_half' || kind === 'work') {
           const rawLate = Math.max(0, inMin - startMin);
           const counted = countedLateMinutes(inMin, startMin, lateGrace, lateTier1, lateCutoff);
           // An AUTHORIZED late start (admin "Excuse Late" toggle) waives the late PENALTY for the day:
@@ -5247,7 +5290,7 @@ async function computePayroll(periodId) {
           const countedForDed = excused ? 0 : counted;
           // Late applies to both full and half days — flows into the late-deduction bucket (0 if excused).
           lateMin += rawLate; countedLate += countedForDed;
-          if (outMin === null) {
+          if (kind === 'no_out_half') {
             // Missing OUT (no_out): HALF day. Contributes half the daily basis to base (via the
             // half-day count below), and the day's late is already in countedLate — so the net for
             // the day is (dailyBasis/2 − lateDeduction). NO undertime (no OUT to measure) and NO OT.
@@ -5281,7 +5324,7 @@ async function computePayroll(periodId) {
             Object.assign(day, { kind: 'work', late_min: rawLate, counted_late_min: countedForDed, late_excused: excused, excused_late_min: excused ? counted : 0, undertime_min: ut, break_min: brk,
               ot_hours: round2(oth), early_ot_hours: round2(earlyOt), late_ot_hours: round2(lateOt) });
           }
-        } else if (employed(d)) {
+        } else if (kind === 'absent') {
           absentDays++;
           day.kind = 'absent';
         } else {
@@ -5459,7 +5502,23 @@ app.get('/api/payroll/periods/:id/lines', requireRole(['admin', 'accounting']), 
       `SELECT pl.*, p.full_name, p.department, p.position
          FROM payroll_lines pl JOIN persons p ON p.id = pl.person_id
         WHERE pl.pay_period_id = $1 ORDER BY p.full_name ASC`, [req.params.id]);
-    res.json({ period, lines: rows.rows });
+    // Staleness guard: compute() snapshots attendance into payroll_lines once and never re-reads it, so
+    // an attendance edit made afterward (correcting a day, toggling OT/late-excuse, or an admin backfill
+    // like a work-from-home day) silently leaves the stored lines out of date until someone remembers to
+    // recompute. Compare the EARLIEST computed_at among this period's lines against the LATEST
+    // attendance_days.updated_at in its date range — if attendance moved after that, flag it. This is a
+    // warning only: it never blocks printing/reviewing and never recomputes anything by itself.
+    // Only actionable on a period that CAN actually be recomputed — a finalized period rejects
+    // recompute outright (see the L5 guard in computePayroll), so flagging one here would tell an
+    // admin to do something the system won't let them do.
+    const recomputable = period.status === 'locked' && period.payroll_finalized !== true;
+    const staleChk = (recomputable && rows.rows.length) ? (await query(
+      `SELECT (SELECT MIN(computed_at) FROM payroll_lines WHERE pay_period_id = $1) AS computed_at,
+              (SELECT MAX(updated_at) FROM attendance_days WHERE work_date BETWEEN $2 AND $3) AS attendance_updated_at`,
+      [req.params.id, period.start_date, period.end_date])).rows[0] : null;
+    const staleAttendance = !!(staleChk && staleChk.computed_at && staleChk.attendance_updated_at
+      && new Date(staleChk.attendance_updated_at) > new Date(staleChk.computed_at));
+    res.json({ period: { ...period, stale_attendance: staleAttendance }, lines: rows.rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -5660,7 +5719,8 @@ async function rebuildAttendanceDays(startDate, endDate) {
                              ELSE 'incomplete' END,
        flags          = CASE WHEN ${MERGED_IN} IS NOT NULL AND ${MERGED_OUT} IS NULL THEN '["missing_out"]'::jsonb
                              WHEN ${MERGED_IN} IS NULL                                THEN '["missing_in"]'::jsonb
-                             ELSE '[]'::jsonb END
+                             ELSE '[]'::jsonb END,
+       updated_at     = NOW()
      WHERE attendance_days.is_locked = false`,
     [startDate, endDate]
   );
@@ -5702,7 +5762,7 @@ async function rebuildAttendanceDays(startDate, endDate) {
   }
   if (pids.length) {
     await query(
-      `UPDATE attendance_days ad SET break_minutes = v.brk
+      `UPDATE attendance_days ad SET break_minutes = v.brk, updated_at = NOW()
          FROM (SELECT unnest($1::int[]) AS person_id, unnest($2::date[]) AS work_date, unnest($3::int[]) AS brk) v
         WHERE ad.person_id = v.person_id AND ad.work_date = v.work_date
           AND ad.is_locked = false AND ad.is_adjusted = false`,
@@ -5979,7 +6039,53 @@ app.get('/api/attendance/periods/:id/sheet', requireRole(attendanceReviewRoles),
     const rowsOut = rows.rows.map(r => ({ ...r, breaks: r.is_adjusted ? [] : (breaksByKey[`${r.person_id}|${r.work_date}`] || []) }));
     // Per-person BALE (cash advance) captured for this period — [{ person_id, amount }].
     const bale = await query('SELECT person_id, amount FROM payroll_bale WHERE pay_period_id = $1', [period.id]);
-    res.json({ period, rows: rowsOut, bale: bale.rows });
+
+    // Present/Half/Absent per person, using classifyScheduledDay -- the SAME function computePayroll
+    // uses to decide days_present/half_days/absent_days. This is what lets this screen show numbers
+    // that will match the eventual payslip, instead of the plain "how many attendance_days rows exist"
+    // count (naive_days below), which silently disagrees whenever someone has a no_out day (payroll
+    // counts it as a half, not a full day), an absence (no row exists at all, so a naive count of rows
+    // can't see it), or a worked Sunday/holiday (paid separately, excluded from all three buckets).
+    // Read-only: nothing here writes to payroll_lines or attendance_days.
+    const cSettings = (await query(`SELECT work_start, work_end, work_end_sat, late_absent_buffer_minutes FROM payroll_settings WHERE id = 1`)).rows[0] || {};
+    const cStartMin = hhmmToMin(cSettings.work_start), cEndMin = hhmmToMin(cSettings.work_end), cSatEndMin = hhmmToMin(cSettings.work_end_sat || cSettings.work_end);
+    const cLateAbsentBuffer = Number(cSettings.late_absent_buffer_minutes ?? 60);
+    const cHolidayMap = {};
+    (await query(`SELECT to_char(holiday_date,'YYYY-MM-DD') AS d, type FROM holidays WHERE holiday_date BETWEEN $1 AND $2`, [period.start_date, period.end_date])).rows
+      .forEach(h => { cHolidayMap[h.d] = h.type; });
+    // H1, matching computePayroll's own persons query: everyone employed for ANY part of the period.
+    const cPersons = (await query(
+      `SELECT id, to_char(hired_on,'YYYY-MM-DD') AS hired_on, to_char(last_day,'YYYY-MM-DD') AS last_day
+         FROM persons WHERE (last_day IS NULL OR last_day >= $1) AND (hired_on IS NULL OR hired_on <= $2)`,
+      [period.start_date, period.end_date])).rows;
+    const cAttRows = (await query(
+      `SELECT person_id, to_char(work_date,'YYYY-MM-DD') AS d,
+              CASE WHEN first_in IS NULL THEN NULL ELSE ROUND(EXTRACT(EPOCH FROM ((first_in AT TIME ZONE 'Asia/Manila')::time)) / 60)::int END AS in_min,
+              CASE WHEN last_out IS NULL THEN NULL ELSE ROUND(EXTRACT(EPOCH FROM ((last_out AT TIME ZONE 'Asia/Manila')::time)) / 60)::int END AS out_min
+         FROM attendance_days WHERE work_date BETWEEN $1 AND $2`,
+      [period.start_date, period.end_date])).rows;
+    const cAttMap = {}, naiveCount = {};
+    cAttRows.forEach(r => { (cAttMap[r.person_id] || (cAttMap[r.person_id] = {}))[r.d] = r; naiveCount[r.person_id] = (naiveCount[r.person_id] || 0) + 1; });
+    const cDates = dateListYMD(period.start_date, period.end_date);
+    const classification = cPersons.map(p => {
+      let present = 0, half = 0, absent = 0;
+      const pAtt = cAttMap[p.id] || {};
+      for (const d of cDates) {
+        if (cHolidayMap[d] || dowYMD(d) === 0) continue; // paid separately; not present/half/absent
+        const row = pAtt[d];
+        const inMin = row ? row.in_min : null, outMin = row ? row.out_min : null;
+        const hasIN = inMin !== null;
+        const dayEndMin = dowYMD(d) === 6 ? cSatEndMin : cEndMin;
+        const employed = (!p.hired_on || d >= p.hired_on) && (!p.last_day || d <= p.last_day);
+        const kind = classifyScheduledDay({ hasIN, inMin, outMin, latestInMin: dayEndMin - cLateAbsentBuffer, employed });
+        if (kind === 'work') present++;
+        else if (kind === 'no_out_half') half++;
+        else if (kind === 'absent_too_late' || kind === 'absent') absent++;
+      }
+      return { person_id: p.id, present, half, absent, naive_days: naiveCount[p.id] || 0 };
+    }).filter(c => c.present || c.half || c.absent || c.naive_days); // drop people with nothing to show
+
+    res.json({ period, rows: rowsOut, bale: bale.rows, classification });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -6053,7 +6159,8 @@ app.post('/api/attendance/days/:id/adjust', requireRole(['admin']), async (req, 
             SET status = $1,
                 adjusted_fields = CASE WHEN adjusted_fields @> ARRAY['status']::text[] THEN adjusted_fields
                                        ELSE array_append(adjusted_fields, 'status') END,
-                is_adjusted = true
+                is_adjusted = true,
+                updated_at = NOW()
           WHERE id = $2`,
         [value, day.id]
       );
@@ -6098,7 +6205,8 @@ app.post('/api/attendance/days/:id/adjust', requireRole(['admin']), async (req, 
                 -- by the rebuild break pass, so this stays 0 and payroll won't dock a removed/test break).
                 break_minutes = 0,
                 -- Keep is_adjusted as the derived compat flag: true ⇔ at least one field is pinned.
-                is_adjusted = (cardinality(adjusted_fields) > 0)
+                is_adjusted = (cardinality(adjusted_fields) > 0),
+                updated_at = NOW()
           WHERE id = $1`,
         [day.id]
       );
@@ -6141,7 +6249,7 @@ app.post('/api/attendance/days/:id/ot', requireRole(['admin']), async (req, res)
     const day = dr.rows[0];
     if (!day) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Day not found' }); }
     const oldVal = day.ot_approved ? 'true' : 'false';
-    await client.query('UPDATE attendance_days SET ot_approved = $1 WHERE id = $2', [approved, day.id]);
+    await client.query('UPDATE attendance_days SET ot_approved = $1, updated_at = NOW() WHERE id = $2', [approved, day.id]);
     await client.query(
       `INSERT INTO attendance_adjustments (day_id, field, old_value, new_value, reason, adjusted_by)
        VALUES ($1, 'ot_approved', $2, $3, 'OT approval toggle', $4)`,
@@ -6173,7 +6281,7 @@ app.post('/api/attendance/days/:id/early-ot', requireRole(['admin']), async (req
     const day = dr.rows[0];
     if (!day) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Day not found' }); }
     const oldVal = day.early_ot_approved ? 'true' : 'false';
-    await client.query('UPDATE attendance_days SET early_ot_approved = $1 WHERE id = $2', [approved, day.id]);
+    await client.query('UPDATE attendance_days SET early_ot_approved = $1, updated_at = NOW() WHERE id = $2', [approved, day.id]);
     await client.query(
       `INSERT INTO attendance_adjustments (day_id, field, old_value, new_value, reason, adjusted_by)
        VALUES ($1, 'early_ot_approved', $2, $3, 'Early OT approval toggle', $4)`,
@@ -6205,7 +6313,7 @@ app.post('/api/attendance/days/:id/excuse-late', requireRole(['admin']), async (
     const day = dr.rows[0];
     if (!day) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Day not found' }); }
     const oldVal = day.late_excused ? 'true' : 'false';
-    await client.query('UPDATE attendance_days SET late_excused = $1 WHERE id = $2', [excused, day.id]);
+    await client.query('UPDATE attendance_days SET late_excused = $1, updated_at = NOW() WHERE id = $2', [excused, day.id]);
     await client.query(
       `INSERT INTO attendance_adjustments (day_id, field, old_value, new_value, reason, adjusted_by)
        VALUES ($1, 'late_excused', $2, $3, 'Excuse Late toggle', $4)`,
