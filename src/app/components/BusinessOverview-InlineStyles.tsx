@@ -18,7 +18,8 @@ export function BusinessOverview(_props: BusinessOverviewProps) {
   return (
     <div style={{ padding: '24px', fontFamily: 'Poppins, sans-serif' }}>
       {/* Project Overview — per-project budget vs committed spend (approved/ordered purchase
-          requests). Grey card so the white per-project cards inside it stand out. */}
+          requests plus direct project expenses). Grey card so the white per-project cards inside it
+          stand out. */}
       <div style={{
         background: '#ececec',
         border: '1px solid #d6d6d6',
@@ -29,7 +30,7 @@ export function BusinessOverview(_props: BusinessOverviewProps) {
           Project Budgets
         </h2>
         <p style={{ fontSize: '13px', color: '#5a5a5a', marginBottom: '24px' }}>
-          Remaining budget vs spend for each project — spend counts approved &amp; ordered purchase requests linked to the project.
+          Remaining budget vs spend for each project — spend is approved &amp; ordered purchase requests plus direct expenses logged against the project.
         </p>
         <ProjectBudgetChart />
       </div>

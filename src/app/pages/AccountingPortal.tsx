@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ClipboardList, PenTool, Menu, X, Search, Clock, Calendar, CheckCircle2,
   XCircle, Printer, LogOut, Upload, Eraser, Eye, Briefcase, Plus, Trash2, Pencil,
-  PanelLeftClose, PanelLeftOpen, FileText, PackageMinus, CalendarCheck, Calculator, Building2,
+  PanelLeftClose, PanelLeftOpen, FileText, PackageMinus, CalendarCheck, Calculator, Building2, Receipt, Ban,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { onBackdropDown, backdropClose } from '../lib/backdrop';
@@ -71,8 +71,21 @@ interface Facility {
   id: string; name: string; description?: string; status?: string;
   location?: string; budgetAllocation?: number;
 }
-// Which PR statuses count as committed spend (mirrors ProjectBudgetChart).
-const SPEND_STATUSES = new Set<PRStatus>(['approved', 'ordered']);
+// Spend is never summed in the browser. GET /api/projects/spend and /api/facilities/spend are the
+// one definition (PROJECT_SPEND_SQL in server/index.js), shared with the admin dashboard chart.
+interface ProjectSpend {
+  projectId: string; budget: number; spentPrs: number; spentExpenses: number;
+  spent: number; remaining: number; overBudget: number;
+}
+interface FacilitySpend { facilityId: string; spent: number; }
+// A direct project cost logged here instead of through a purchase request. `amount` is the receipt
+// amount as paid (VAT included) — PR spend is VAT-exclusive; the difference is deliberate.
+interface ProjectExpense {
+  id: number; projectId: string; description: string; amount: number; expenseDate: string;
+  payee?: string | null; referenceNo?: string | null; createdBy?: string | null; createdAt?: string;
+  voidedAt?: string | null; voidedBy?: string | null; voidReason?: string | null;
+}
+const manilaToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
 interface Session { id: number; full_name: string; email: string; phone?: string; }
 
 const TOKEN_KEY = 'accounting_token';
@@ -647,6 +660,258 @@ function FacilityModal({ initial, onClose, onSaved }: { initial: Facility | null
 }
 
 // ============================================================================
+// Log Expense — a direct project cost (gas, Lalamove, meals, a one-off payment) that never went
+// through a purchase request. Entered straight in, no approval step. Who logged it is taken from
+// the login on the server, never from this form.
+// ============================================================================
+function LogExpenseModal({ projects, initialProjectId, onClose, onSaved }: {
+  projects: Project[]; initialProjectId: string; onClose: () => void; onSaved: (projectId: string) => void;
+}) {
+  const today = manilaToday();
+  const [f, setF] = useState({ projectId: initialProjectId, amount: '', expenseDate: today, description: '', payee: '', referenceNo: '' });
+  const [saving, setSaving] = useState(false);
+  const set = (k: keyof typeof f, v: string) => setF(p => ({ ...p, [k]: v }));
+  // Live projects first; a Completed one stays pickable because receipts often arrive after the job.
+  const ordered = useMemo(() => [...projects].sort((a, b) =>
+    Number(a.status === 'Completed') - Number(b.status === 'Completed') || a.name.localeCompare(b.name)), [projects]);
+
+  const save = async () => {
+    const amount = f.amount.replace(/,/g, '').trim();
+    if (!f.projectId) { toast.error('Choose a project'); return; }
+    if (!/^\d+(\.\d{1,2})?$/.test(amount) || !(Number(amount) > 0)) { toast.error('Enter the amount paid, e.g. 1250.50'); return; }
+    if (!f.description.trim()) { toast.error('Description is required'); return; }
+    if (!f.expenseDate) { toast.error('Choose the expense date'); return; }
+    setSaving(true);
+    try {
+      await aFetch(`/projects/${f.projectId}/expenses`, {
+        method: 'POST',
+        body: JSON.stringify({ amount, expenseDate: f.expenseDate, description: f.description.trim(), payee: f.payee.trim(), referenceNo: f.referenceNo.trim() }),
+      });
+      toast.success(`Expense of ${peso(Number(amount))} logged`);
+      onSaved(f.projectId);
+    } catch (e: any) { toast.error('Log failed: ' + e.message); } finally { setSaving(false); }
+  };
+
+  const input = 'w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500';
+  const label = 'block text-sm font-medium text-gray-700 mb-1';
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onMouseDown={onBackdropDown} onClick={backdropClose(onClose)}>
+      <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+          <h3 className="font-bold text-gray-900">Log Expense</h3>
+          <button onClick={onClose} className="p-1 rounded-md text-gray-400 hover:bg-gray-100"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 overflow-y-auto space-y-4">
+          <div>
+            <label className={label}>Project <span className="text-red-500">*</span></label>
+            <select value={f.projectId} onChange={e => set('projectId', e.target.value)} className={`${input} bg-white`}>
+              <option value="">Choose a project…</option>
+              {ordered.map(p => <option key={p.id} value={p.id}>{p.name}{p.status === 'Completed' ? ' (completed)' : ''}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className={label}>Amount paid (₱) <span className="text-red-500">*</span></label>
+              <input inputMode="decimal" value={f.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00" className={input} />
+            </div>
+            <div>
+              <label className={label}>Date <span className="text-red-500">*</span></label>
+              <input type="date" max={today} value={f.expenseDate} onChange={e => set('expenseDate', e.target.value)} className={input} />
+            </div>
+          </div>
+          <p className="-mt-2 text-xs text-gray-400">The full amount on the receipt, VAT included.</p>
+          <div>
+            <label className={label}>Description <span className="text-red-500">*</span></label>
+            <textarea value={f.description} onChange={e => set('description', e.target.value)} rows={2} maxLength={500}
+              placeholder="e.g. Lalamove — steel delivery to site" className={`${input} resize-none`} />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className={label}>Paid to <span className="text-gray-400 font-normal">(optional)</span></label>
+              <input value={f.payee} onChange={e => set('payee', e.target.value)} maxLength={200} className={input} />
+            </div>
+            <div>
+              <label className={label}>OR / receipt no. <span className="text-gray-400 font-normal">(optional)</span></label>
+              <input value={f.referenceNo} onChange={e => set('referenceNo', e.target.value)} maxLength={100} className={input} />
+            </div>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 px-5 py-4 border-t border-gray-200">
+          <button onClick={onClose} className="px-4 py-2 text-sm font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">Cancel</button>
+          <button onClick={save} disabled={saving} className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">{saving ? 'Saving…' : 'Log Expense'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// A project's expenses — the spend summary (from the server), every logged expense, and Void.
+// Voiding keeps the row (struck through, with who/why) so the money record is never lost; it just
+// stops counting toward spend.
+// ============================================================================
+function ProjectExpensesModal({ project, spend, reloadKey, onClose, onLog, onChanged }: {
+  project: Project; spend: ProjectSpend | null; reloadKey: number;
+  onClose: () => void; onLog: () => void; onChanged: () => void;
+}) {
+  const [rows, setRows] = useState<ProjectExpense[] | null>(null);
+  const [voiding, setVoiding] = useState<ProjectExpense | null>(null);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    try { setRows(await aFetch<ProjectExpense[]>(`/projects/${project.id}/expenses`)); }
+    catch (e: any) { toast.error('Could not load expenses: ' + e.message); setRows([]); }
+  };
+  useEffect(() => { load(); }, [project.id, reloadKey]);
+
+  const confirmVoid = async () => {
+    if (!voiding) return;
+    if (!reason.trim()) { toast.error('A reason is required'); return; }
+    setBusy(true);
+    try {
+      await aFetch(`/project-expenses/${voiding.id}/void`, { method: 'POST', body: JSON.stringify({ reason: reason.trim() }) });
+      toast.success(`Expense of ${peso(voiding.amount)} voided`);
+      setVoiding(null); setReason('');
+      await load();
+      onChanged();
+    } catch (e: any) { toast.error('Void failed: ' + e.message); } finally { setBusy(false); }
+  };
+
+  const fmtDate = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' });
+  // People type the reference either bare ("88121") or with the prefix ("OR 88121", "O.R. #88121");
+  // normalise so it never reads "OR OR 88121". The lookahead keeps e.g. "ORD-551" intact.
+  const refLabel = (r: string) => `OR ${r.replace(/^\s*o\.?\s*r\.?(?![a-z])\s*(no\.?|#)?\s*/i, '')}`;
+  const meta = (x: ProjectExpense) => [x.payee, x.referenceNo && refLabel(x.referenceNo)].filter(Boolean).join(' · ');
+  const voidAction = (x: ProjectExpense) => x.voidedAt
+    ? <span className="text-xs font-medium text-gray-400">Voided</span>
+    : <button onClick={() => { setVoiding(x); setReason(''); }} className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Ban className="w-3.5 h-3.5" /> Void</button>;
+  // A flex-wrap strip, not a grid: professional-design-complete.css forces `.grid-cols-2` with
+  // !important, which beats any sm:grid-cols-N and would pin this to two columns everywhere.
+  const stat = (label: string, value: string, tone = 'text-gray-900') => (
+    <div className="min-w-[7rem]">
+      <div className="text-[11px] uppercase tracking-wide text-gray-500">{label}</div>
+      <div className={`text-sm font-semibold ${tone} whitespace-nowrap`}>{value}</div>
+    </div>
+  );
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onMouseDown={onBackdropDown} onClick={backdropClose(onClose)}>
+      <div className="w-full max-w-3xl bg-white rounded-2xl shadow-xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-gray-200">
+          <div className="min-w-0">
+            <h3 className="font-bold text-gray-900 truncate">{project.name}</h3>
+            <p className="text-xs text-gray-500">Direct expenses — costs that didn't go through a purchase request</p>
+          </div>
+          <button onClick={onClose} className="p-1 rounded-md text-gray-400 hover:bg-gray-100 flex-shrink-0"><X className="w-5 h-5" /></button>
+        </div>
+
+        <div className="px-5 py-3 border-b border-gray-100 bg-gray-50 flex flex-wrap gap-x-8 gap-y-3">
+          {stat('Budget', spend ? peso(spend.budget) : '—')}
+          {stat('Purchased', spend ? peso(spend.spentPrs) : '—')}
+          {stat('Expenses', spend ? peso(spend.spentExpenses) : '—')}
+          {stat('Total spent', spend ? peso(spend.spent) : '—')}
+          {spend && spend.overBudget > 0
+            ? stat('Over budget', peso(spend.overBudget), 'text-red-600')
+            : stat('Remaining', spend ? peso(spend.remaining) : '—')}
+        </div>
+
+        <div className="p-5 overflow-y-auto">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-sm text-gray-500">{rows ? `${rows.length} record${rows.length === 1 ? '' : 's'}` : 'Loading…'}</span>
+            <button onClick={onLog} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Plus className="w-3.5 h-3.5" /> Log Expense</button>
+          </div>
+          {rows && rows.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-10 text-gray-400"><Receipt className="w-9 h-9 mb-2 text-gray-300" /><p className="text-sm">No expenses logged for this project yet.</p></div>
+          ) : rows && (
+            <>
+            {/* Phone: one card per expense, so the amount is always on screen (a table scrolls it away). */}
+            <div className="sm:hidden space-y-2">
+              {rows.map(x => {
+                const voided = !!x.voidedAt;
+                return (
+                  <div key={x.id} className={`border border-gray-200 rounded-xl p-3 ${voided ? 'bg-gray-50' : ''}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className={voided ? 'text-gray-400 line-through' : 'text-gray-900'}>{x.description}</div>
+                        <div className="text-xs text-gray-400">{[fmtDate(x.expenseDate), meta(x)].filter(Boolean).join(' · ')}</div>
+                      </div>
+                      <div className={`whitespace-nowrap font-semibold ${voided ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{peso(x.amount)}</div>
+                    </div>
+                    {voided && <div className="text-xs text-red-600 mt-1">Voided by {x.voidedBy || 'unknown'}: {x.voidReason}</div>}
+                    <div className="mt-2 flex items-center justify-between gap-3">
+                      <span className="text-xs text-gray-500 truncate">Logged by {x.createdBy || '—'}</span>
+                      {voidAction(x)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="hidden sm:block border border-gray-200 rounded-xl overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-700 uppercase tracking-wide">
+                      <th className="px-3 py-2.5">Date</th>
+                      <th className="px-3 py-2.5">Description</th>
+                      <th className="px-3 py-2.5 text-right">Amount</th>
+                      <th className="px-3 py-2.5">Logged by</th>
+                      <th className="px-3 py-2.5 text-right"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map(x => {
+                      const voided = !!x.voidedAt;
+                      return (
+                        <tr key={x.id} className={`border-b border-gray-100 last:border-0 align-top ${voided ? 'bg-gray-50' : ''}`}>
+                          <td className={`px-3 py-2.5 whitespace-nowrap ${voided ? 'text-gray-400' : 'text-gray-700'}`}>{fmtDate(x.expenseDate)}</td>
+                          <td className="px-3 py-2.5 min-w-[14rem]">
+                            <div className={voided ? 'text-gray-400 line-through' : 'text-gray-900'}>{x.description}</div>
+                            {meta(x) && <div className="text-xs text-gray-400">{meta(x)}</div>}
+                            {voided && (
+                              <div className="text-xs text-red-600 mt-0.5">Voided by {x.voidedBy || 'unknown'}: {x.voidReason}</div>
+                            )}
+                          </td>
+                          <td className={`px-3 py-2.5 text-right whitespace-nowrap font-semibold ${voided ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{peso(x.amount)}</td>
+                          <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">{x.createdBy || '—'}</td>
+                          <td className="px-3 py-2.5 text-right whitespace-nowrap">{voidAction(x)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {voiding && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" onMouseDown={onBackdropDown} onClick={backdropClose(() => setVoiding(null))}>
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-gray-200">
+              <h3 className="font-bold text-gray-900">Void this expense?</h3>
+              <p className="mt-1 text-sm text-gray-500">{peso(voiding.amount)} — {voiding.description}</p>
+            </div>
+            <div className="p-5 space-y-2">
+              <label className="block text-sm font-medium text-gray-700">Reason <span className="text-red-500">*</span></label>
+              <textarea autoFocus value={reason} onChange={e => setReason(e.target.value)} rows={3} maxLength={500}
+                placeholder="e.g. Duplicate — already logged under OR 88120"
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+              <p className="text-xs text-gray-400">The record stays on file, struck through, and stops counting toward this project's spend.</p>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-4 border-t border-gray-200">
+              <button onClick={() => setVoiding(null)} className="px-4 py-2 text-sm font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">Cancel</button>
+              <button onClick={confirmVoid} disabled={busy || !reason.trim()} className="px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50">{busy ? 'Voiding…' : 'Void expense'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
 // Portal shell
 // ============================================================================
 function Portal({ session, onSignOut }: { session: Session; onSignOut: () => void }) {
@@ -667,18 +932,29 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const [showProjectModal, setShowProjectModal] = useState(false);
   const [editingFacility, setEditingFacility] = useState<Facility | null>(null);
   const [showFacilityModal, setShowFacilityModal] = useState(false);
+  // Spend per project/facility, straight from the server. null = couldn't load → shown as "—",
+  // never as a misleading ₱0.00.
+  const [projectSpend, setProjectSpend] = useState<Record<string, ProjectSpend> | null>(null);
+  const [facilitySpend, setFacilitySpend] = useState<Record<string, number> | null>(null);
+  const [logExpenseFor, setLogExpenseFor] = useState<string | null>(null); // project id, '' = let them pick
+  const [expensesFor, setExpensesFor] = useState<Project | null>(null);
+  const [expensesReload, setExpensesReload] = useState(0);
 
   // silent: background poll — no spinner, no toast on a blip (see useLiveRefresh).
   const loadAll = async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!silent) setLoading(true);
     try {
-      const [prs, pos, prj, fac, sig] = await Promise.all([
+      const [prs, pos, prj, fac, sig, pSpend, fSpend] = await Promise.all([
         aFetch<PurchaseRequest[]>('/purchase-requests'),
         aFetch<PurchaseOrder[]>('/purchase-orders').catch(() => [] as PurchaseOrder[]),
         aFetch<Project[]>('/projects'),
         aFetch<Facility[]>('/facilities').catch(() => [] as Facility[]),
         aFetch<{ signature: string | null }>('/accounting/signature').catch(() => ({ signature: null })),
+        aFetch<ProjectSpend[]>('/projects/spend').catch(() => null),
+        aFetch<FacilitySpend[]>('/facilities/spend').catch(() => null),
       ]);
+      setProjectSpend(pSpend ? Object.fromEntries(pSpend.map(s => [s.projectId, s])) : null);
+      setFacilitySpend(fSpend ? Object.fromEntries(fSpend.map(s => [s.facilityId, s.spent])) : null);
       setRequests(prs || []);
       // Only real purchase orders (the table is shared with Sales Orders, discriminated by
       // order_type — accounting reviews purchases, not sales).
@@ -692,7 +968,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   };
   useEffect(() => { loadAll(); }, []);
   // Paused while a review is in flight or a project/facility modal is open.
-  useLiveRefresh(() => loadAll({ silent: true }), { enabled: !busyId && !showProjectModal && !editingProject && !showFacilityModal && !editingFacility });
+  useLiveRefresh(() => loadAll({ silent: true }), { enabled: !busyId && !showProjectModal && !editingProject && !showFacilityModal && !editingFacility && logExpenseFor === null && !expensesFor });
 
   const review = async (pr: PurchaseRequest) => {
     if (!(await confirmDialog({ title: `Confirm you have reviewed ${pr.prNumber}?`, message: 'Your e-signature is attached and it moves to Purchasing to raise a purchase order.', confirmLabel: 'Confirm review' }))) return;
@@ -748,18 +1024,6 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     try { await aFetch(`/facilities/${f.id}`, { method: 'DELETE' }); toast.success('Facility deleted'); }
     catch (e: any) { setFacilities(prev); toast.error('Delete failed: ' + e.message); }
   };
-
-  // Committed spend per facility = Σ of approved/ordered PRs charged to it (finalTotal when priced,
-  // else the estimate) — the same rule ProjectBudgetChart uses for project spend.
-  const spentByFacility = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const pr of requests) {
-      if (!pr.facilityId || !SPEND_STATUSES.has(pr.status)) continue;
-      const cost = (pr.finalTotal != null ? pr.finalTotal : pr.total) || 0;
-      m.set(pr.facilityId, (m.get(pr.facilityId) || 0) + Number(cost));
-    }
-    return m;
-  }, [requests]);
 
   const filtered = useMemo(() => requests.filter(r => {
     if (statusFilter !== 'all' && r.status !== statusFilter) return false;
@@ -856,9 +1120,12 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h2 className="font-semibold text-gray-900">Project Allocation</h2>
-                  <p className="text-sm text-gray-500">Project master data — these appear in the employee's "For (Project)" picker.</p>
+                  <p className="text-sm text-gray-500">Project master data — these appear in the employee's "For (Project)" picker. Spent is approved &amp; ordered purchase requests plus the direct expenses logged here.</p>
                 </div>
-                <button onClick={() => { setEditingProject(null); setShowProjectModal(true); }} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Plus className="w-4 h-4" /> New Project</button>
+                <div className="flex flex-wrap gap-2 flex-shrink-0">
+                  <button onClick={() => setLogExpenseFor('')} disabled={projects.length === 0} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium whitespace-nowrap border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"><Receipt className="w-4 h-4" /> Log Expense</button>
+                  <button onClick={() => { setEditingProject(null); setShowProjectModal(true); }} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium whitespace-nowrap bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Plus className="w-4 h-4" /> New Project</button>
+                </div>
               </div>
               {loading ? <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading…</div>
                 : projects.length === 0 ? (
@@ -873,11 +1140,15 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                             <th className="px-4 py-3">Status</th>
                             <th className="px-4 py-3">Timeline</th>
                             <th className="px-4 py-3 text-right">Budget</th>
+                            <th className="px-4 py-3 text-right">Spent</th>
+                            <th className="px-4 py-3 text-right">Remaining</th>
                             <th className="px-4 py-3 text-right">Actions</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {projects.map(p => (
+                          {projects.map(p => {
+                            const s = projectSpend?.[p.id];
+                            return (
                             <tr key={p.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
                               <td className="px-4 py-3">
                                 <div className="font-medium text-gray-900">{p.name}</div>
@@ -887,13 +1158,29 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                               <td className="px-4 py-3 text-gray-500 text-xs">
                                 {p.startDate ? new Date(p.startDate).toLocaleDateString() : '—'} → {p.endDate ? new Date(p.endDate).toLocaleDateString() : '—'}
                               </td>
-                              <td className="px-4 py-3 text-right font-semibold text-gray-900">{peso(p.budgetAllocation || 0)}</td>
+                              <td className="px-4 py-3 text-right font-semibold text-gray-900 whitespace-nowrap">{peso(p.budgetAllocation || 0)}</td>
                               <td className="px-4 py-3 text-right whitespace-nowrap">
-                                <button onClick={() => { setEditingProject(p); setShowProjectModal(true); }} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Pencil className="w-3.5 h-3.5" /> Edit</button>
+                                {s ? (
+                                  <>
+                                    <div className="font-semibold text-gray-900">{peso(s.spent)}</div>
+                                    <div className="text-xs text-gray-400">PRs {peso(s.spentPrs)} · Exp. {peso(s.spentExpenses)}</div>
+                                  </>
+                                ) : <span className="text-gray-400">—</span>}
+                              </td>
+                              <td className="px-4 py-3 text-right whitespace-nowrap">
+                                {!s ? <span className="text-gray-400">—</span>
+                                  : s.overBudget > 0
+                                    ? <div><div className="font-semibold text-red-600">{peso(0)}</div><div className="text-xs font-medium text-red-600">Over by {peso(s.overBudget)}</div></div>
+                                    : <span className="font-semibold text-gray-900">{peso(s.remaining)}</span>}
+                              </td>
+                              <td className="px-4 py-3 text-right whitespace-nowrap">
+                                <button onClick={() => setExpensesFor(p)} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Receipt className="w-3.5 h-3.5" /> Expenses</button>
+                                <button onClick={() => { setEditingProject(p); setShowProjectModal(true); }} className="ml-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Pencil className="w-3.5 h-3.5" /> Edit</button>
                                 <button onClick={() => deleteProject(p)} className="ml-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Trash2 className="w-3.5 h-3.5" /> Delete</button>
                               </td>
                             </tr>
-                          ))}
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -928,14 +1215,14 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                         </thead>
                         <tbody>
                           {facilities.map(f => {
-                            const spent = spentByFacility.get(f.id) || 0;
+                            const spent = facilitySpend ? facilitySpend[f.id] ?? 0 : null;
                             return (
                               <tr key={f.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
                                 <td className="px-4 py-3">
                                   <div className="font-medium text-gray-900">{f.name}</div>
                                 </td>
                                 <td className="px-4 py-3 text-gray-500 max-w-md">{f.description || '—'}</td>
-                                <td className="px-4 py-3 text-right font-semibold text-gray-900">{peso(spent)}</td>
+                                <td className="px-4 py-3 text-right font-semibold text-gray-900">{spent === null ? <span className="font-normal text-gray-400">—</span> : peso(spent)}</td>
                                 <td className="px-4 py-3 text-right whitespace-nowrap">
                                   <button onClick={() => { setEditingFacility(f); setShowFacilityModal(true); }} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Pencil className="w-3.5 h-3.5" /> Edit</button>
                                   <button onClick={() => deleteFacility(f)} className="ml-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Trash2 className="w-3.5 h-3.5" /> Delete</button>
@@ -1090,6 +1377,18 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
       )}
       {showFacilityModal && (
         <FacilityModal initial={editingFacility} onClose={() => setShowFacilityModal(false)} onSaved={() => { setShowFacilityModal(false); loadAll(); }} />
+      )}
+      {/* Expenses list first, Log Expense after it: opened from inside the list, the log form is the
+          later sibling and so sits on top of it. */}
+      {expensesFor && (
+        <ProjectExpensesModal project={expensesFor} spend={projectSpend?.[expensesFor.id] ?? null} reloadKey={expensesReload}
+          onClose={() => setExpensesFor(null)} onLog={() => setLogExpenseFor(expensesFor.id)}
+          onChanged={() => loadAll({ silent: true })} />
+      )}
+      {logExpenseFor !== null && (
+        <LogExpenseModal projects={projects} initialProjectId={logExpenseFor}
+          onClose={() => setLogExpenseFor(null)}
+          onSaved={() => { setLogExpenseFor(null); setExpensesReload(n => n + 1); loadAll({ silent: true }); }} />
       )}
     </div>
   );

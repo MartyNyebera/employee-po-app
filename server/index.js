@@ -719,6 +719,46 @@ async function runMigrations() {
       console.log('✅ facilities table ready');
     } catch (err) { console.log('ℹ️ facilities table skipped:', err.message); }
 
+    // Project expenses — direct costs charged to a project that never go through a purchase
+    // request (gas, Lalamove, meals, a one-off payment). A project's real spend is PRs + these,
+    // summed in ONE place: PROJECT_SPEND_SQL behind GET /api/projects/spend.
+    //
+    // AMOUNT BASIS, recorded on purpose: `amount` is the full amount actually paid — the receipt
+    // price as-is, VAT included, no VAT math. PR spend uses purchase_requests.final_total, the
+    // VAT-EXCLUSIVE subtotal. The two bases differ deliberately; do not "fix" one to match the other.
+    //
+    // project_id is ON DELETE RESTRICT so a project with money records can't be hard-deleted out
+    // from under them (PRs use SET NULL, which is how a deleted project's spend used to vanish).
+    // DELETE /api/projects/:id turns that into a 409 pointing at Mark as Complete. Cancelling an
+    // expense is a VOID — voided_* stamped, row kept for the audit trail — and voided rows don't
+    // count toward spend. Facility expenses later, additively: add a nullable facility_id, drop NOT
+    // NULL on project_id, CHECK (num_nonnulls(project_id, facility_id) = 1).
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS project_expenses (
+          id BIGSERIAL PRIMARY KEY,
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+          description TEXT NOT NULL CHECK (btrim(description) <> ''),
+          amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+          expense_date DATE NOT NULL,
+          payee TEXT,
+          reference_no TEXT,
+          created_by TEXT,
+          created_by_id TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          voided_at TIMESTAMPTZ,
+          voided_by TEXT,
+          voided_by_id TEXT,
+          void_reason TEXT,
+          CONSTRAINT project_expenses_void_needs_reason
+            CHECK (voided_at IS NULL OR btrim(COALESCE(void_reason, '')) <> '')
+        )
+      `);
+      await query(`CREATE INDEX IF NOT EXISTS idx_project_expenses_project ON project_expenses(project_id)`);
+      console.log('✅ project_expenses table ready');
+    } catch (err) { console.log('ℹ️ project_expenses table skipped:', err.message); }
+
     // Purchase requests (employee-filed via /production portal; line items stored as JSONB)
     try {
       await query(`
@@ -7334,6 +7374,174 @@ app.get('/api/projects', async (req, res) => {
     res.json(r.rows.map(mapProject));
   } catch (err) { console.error('projects list error:', err); res.status(500).json({ error: err.message }); }
 });
+// ====================== PROJECT SPEND ======================
+// THE one definition of committed spend. Every Spent / Remaining on screen comes from here — the
+// browser never sums purchase requests itself any more. Spend figures deliberately stay OUT of
+// GET /api/projects: that list is readable by any signed-in role (the employee's PR picker loads
+// it), while these routes are owner/admin/accounting only.
+//
+// PR spend is the old browser rule, unchanged — a request in 'approved' or 'ordered' counts at
+// COALESCE(final_total, total) — plus ONE extra condition: it must still have a VALID purchase
+// order. A request's valid PO is any purchase order linked to it (purchase_request_id, not a sales
+// order) whose status is not 'rejected'. That closes the hole where a request stayed 'ordered'
+// after its PO was rejected or deleted and so counted as spend forever:
+//   - PO rejected  → no valid PO → the request stops counting. Resubmitting the PO puts it back to
+//     'pending', which is valid again, so it counts again.
+//   - PO deleted   → the row is gone → no valid PO → stops counting.
+//   - Re-PO (the rejected PO stays, a new correct PO is raised for the same request) → the new one
+//     is valid, so the request counts — ONCE. The check is an EXISTS on the request's own row, so
+//     the sum still walks purchase_requests one row per request; two POs can never add a request
+//     twice. The amount is the request's final_total, which POST /api/purchase-orders overwrites
+//     with the pricing of whichever PO was raised last — i.e. the current one, never the rejected.
+// Every approved request at the time this shipped had exactly one PO, none rejected, so this
+// changed no existing total.
+//
+// PRs and expenses are summed SEPARATELY and only then joined. Joining projects → PRs → expenses in
+// one pass multiplies rows (3 PRs × 2 expenses = 6 rows) and inflates both sums.
+const SPEND_TARGET_COLUMN = { project: 'project_id', facility: 'facility_id' };
+function prSpendCte(target) {
+  const col = SPEND_TARGET_COLUMN[target];
+  if (!col) throw new Error(`unknown spend target: ${target}`);
+  return `
+    SELECT pr.${col} AS target_id, SUM(COALESCE(pr.final_total, pr.total)) AS amt
+      FROM purchase_requests pr
+     WHERE pr.${col} IS NOT NULL
+       AND pr.status IN ('approved', 'ordered')
+       AND EXISTS (SELECT 1 FROM purchase_orders po
+                    WHERE po.purchase_request_id = pr.id
+                      AND COALESCE(po.order_type, 'purchase') <> 'sales'
+                      AND po.status <> 'rejected')
+     GROUP BY pr.${col}`;
+}
+const PROJECT_SPEND_SQL = `
+  WITH pr AS (${prSpendCte('project')}),
+       ex AS (SELECT project_id AS target_id, SUM(amount) AS amt
+                FROM project_expenses
+               WHERE voided_at IS NULL
+               GROUP BY project_id)
+  SELECT p.id, p.name, p.status,
+         COALESCE(p.budget_allocation, 0)                                        AS budget,
+         COALESCE(pr.amt, 0)                                                     AS spent_prs,
+         COALESCE(ex.amt, 0)                                                     AS spent_expenses,
+         COALESCE(pr.amt, 0) + COALESCE(ex.amt, 0)                               AS spent,
+         GREATEST(COALESCE(p.budget_allocation, 0) - COALESCE(pr.amt, 0) - COALESCE(ex.amt, 0), 0) AS remaining,
+         GREATEST(COALESCE(pr.amt, 0) + COALESCE(ex.amt, 0) - COALESCE(p.budget_allocation, 0), 0) AS over_budget
+    FROM projects p
+    LEFT JOIN pr ON pr.target_id = p.id
+    LEFT JOIN ex ON ex.target_id = p.id
+   ORDER BY p.name ASC`;
+const FACILITY_SPEND_SQL = `
+  WITH pr AS (${prSpendCte('facility')})
+  SELECT f.id, f.name, COALESCE(pr.amt, 0) AS spent_prs, COALESCE(pr.amt, 0) AS spent
+    FROM facilities f
+    LEFT JOIN pr ON pr.target_id = f.id
+   ORDER BY f.name ASC`;
+const money2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
+
+// GET /api/projects/spend — per project: budget, spentPrs, spentExpenses, spent, remaining (0 floor)
+// and overBudget (0 floor). Registered before /api/projects/:id so "spend" isn't read as an id.
+app.get('/api/projects/spend', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
+  try {
+    const r = await query(PROJECT_SPEND_SQL);
+    res.json(r.rows.map(row => ({
+      projectId: row.id, name: row.name, status: row.status,
+      budget: money2(row.budget), spentPrs: money2(row.spent_prs), spentExpenses: money2(row.spent_expenses),
+      spent: money2(row.spent), remaining: money2(row.remaining), overBudget: money2(row.over_budget),
+    })));
+  } catch (err) { console.error('project spend error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// Expense rows are only ever listed per project, voided ones included (struck through on screen),
+// so the audit trail stays visible where the money was logged.
+function mapProjectExpense(r) {
+  return r && {
+    id: Number(r.id), projectId: r.project_id, description: r.description, amount: money2(r.amount),
+    expenseDate: r.expense_date, payee: r.payee, referenceNo: r.reference_no,
+    createdBy: r.created_by, createdAt: r.created_at,
+    voidedAt: r.voided_at, voidedBy: r.voided_by, voidReason: r.void_reason,
+  };
+}
+const EXPENSE_COLUMNS = `id, project_id, to_char(expense_date, 'YYYY-MM-DD') AS expense_date, description, amount,
+  payee, reference_no, created_by, created_at, voided_at, voided_by, void_reason`;
+
+app.get('/api/projects/:id/expenses', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT ${EXPENSE_COLUMNS} FROM project_expenses WHERE project_id = $1
+        ORDER BY expense_date DESC, id DESC`, [req.params.id]);
+    res.json(r.rows.map(mapProjectExpense));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Direct entry, no approval step (Accounting + Admin/owner). Who logged it comes from the login,
+// never the body. Allowed on a Completed project too — receipts routinely arrive after the job ends.
+app.post('/api/projects/:id/expenses', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const description = String(b.description ?? '').trim();
+    if (!description) return res.status(400).json({ error: 'Description is required' });
+    if (description.length > 500) return res.status(400).json({ error: 'Description is too long (500 characters max)' });
+
+    // Receipt amount as-is (VAT included). Rejected rather than silently rounded if it has more
+    // than 2 decimals, since NUMERIC(14,2) would otherwise quietly change what was typed.
+    const amountStr = String(b.amount ?? '').trim();
+    if (!/^\d+(\.\d{1,2})?$/.test(amountStr)) return res.status(400).json({ error: 'Amount must be a peso amount with up to 2 decimals, e.g. 1250.50' });
+    const amount = Number(amountStr);
+    if (!(amount > 0)) return res.status(400).json({ error: 'Amount must be greater than zero' });
+    if (amount >= 1e12) return res.status(400).json({ error: 'Amount is too large' });
+
+    const expenseDate = String(b.expenseDate ?? '').trim();
+    const parsed = /^\d{4}-\d{2}-\d{2}$/.test(expenseDate) ? new Date(`${expenseDate}T00:00:00Z`) : null;
+    if (!parsed || isNaN(parsed) || parsed.toISOString().slice(0, 10) !== expenseDate) {
+      return res.status(400).json({ error: 'Expense date must be a valid date (YYYY-MM-DD)' });
+    }
+    const todayManila = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+    if (expenseDate > todayManila) return res.status(400).json({ error: 'Expense date cannot be in the future' });
+
+    const optional = (v, max) => {
+      const s = String(v ?? '').trim();
+      return s ? s.slice(0, max) : null;
+    };
+    const project = await query('SELECT id FROM projects WHERE id = $1', [req.params.id]);
+    if (!project.rows[0]) return res.status(404).json({ error: 'Project not found' });
+
+    const r = await query(
+      `INSERT INTO project_expenses (project_id, description, amount, expense_date, payee, reference_no, created_by, created_by_id)
+       VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8)
+       RETURNING ${EXPENSE_COLUMNS}`,
+      [req.params.id, description, amountStr, expenseDate, optional(b.payee, 200), optional(b.referenceNo, 100),
+       req.user?.name || null, req.user?.id != null ? String(req.user.id) : null]
+    );
+    res.status(201).json(mapProjectExpense(r.rows[0]));
+  } catch (err) { console.error('project expense create error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// VOID, never delete: the row stays for the audit trail and simply stops counting toward spend.
+app.post('/api/project-expenses/:id/void', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
+  const reason = String(req.body?.reason ?? '').trim();
+  if (!reason) return res.status(400).json({ error: 'A reason is required to void an expense' });
+  if (!/^\d+$/.test(String(req.params.id))) return res.status(404).json({ error: 'Expense not found' });
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const cur = await client.query('SELECT id, voided_at FROM project_expenses WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (!cur.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Expense not found' }); }
+    if (cur.rows[0].voided_at) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'This expense is already voided' }); }
+    const r = await client.query(
+      `UPDATE project_expenses
+          SET voided_at = NOW(), voided_by = $1, voided_by_id = $2, void_reason = $3, updated_at = NOW()
+        WHERE id = $4
+        RETURNING ${EXPENSE_COLUMNS}`,
+      [req.user?.name || null, req.user?.id != null ? String(req.user.id) : null, reason.slice(0, 500), req.params.id]
+    );
+    await client.query('COMMIT');
+    res.json(mapProjectExpense(r.rows[0]));
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: err.message });
+  } finally { client.release(); }
+});
+
 app.get('/api/projects/:id', async (req, res) => {
   try {
     const r = await query('SELECT * FROM projects WHERE id = $1', [req.params.id]);
@@ -7409,18 +7617,38 @@ app.post('/api/projects/:id/reactivate', requireRole(['owner','admin']), async (
   } catch (err) { console.error('project reactivate error:', err); res.status(500).json({ error: err.message }); }
 });
 app.delete('/api/projects/:id', requireRole(['owner','admin','accounting']), async (req, res) => {
+  // project_expenses.project_id is ON DELETE RESTRICT — voided rows included, since they are audit
+  // records too. Checked up front for a clear message; the 23503 catch covers an expense logged
+  // between this check and the DELETE.
+  const blocked = (n) => res.status(409).json({
+    error: `This project has ${n} expense record${n === 1 ? '' : 's'}, so it can't be deleted — money records must keep their project. Use Mark as Complete to retire it instead.`,
+  });
   try {
+    const ex = await query('SELECT COUNT(*)::int AS n FROM project_expenses WHERE project_id = $1', [req.params.id]);
+    if (ex.rows[0].n > 0) return blocked(ex.rows[0].n);
     const r = await query('DELETE FROM projects WHERE id = $1', [req.params.id]);
     if (!r.rowCount) return res.status(404).json({ error: 'Project not found' });
     res.json({ message: 'Project deleted', id: req.params.id });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    if (err.code === '23503') {
+      const ex = await query('SELECT COUNT(*)::int AS n FROM project_expenses WHERE project_id = $1', [req.params.id]).catch(() => null);
+      return blocked(ex?.rows[0]?.n || 1);
+    }
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ====================== FACILITIES ======================
 // Internal company facilities (equipment/items used internally, not client projects). Mirrors
 // PROJECTS: reads open to any authenticated user (the PR "For" picker needs them); writes are
-// owner/admin/accounting. A facility just carries a budget target; spend is derived client-side
-// from the purchase requests charged to it (same as Project Budgets).
+// owner/admin/accounting. A facility just carries a budget target; its spend comes from
+// GET /api/facilities/spend, the same PR rule as projects (prSpendCte). No facility expenses yet.
+app.get('/api/facilities/spend', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
+  try {
+    const r = await query(FACILITY_SPEND_SQL);
+    res.json(r.rows.map(row => ({ facilityId: row.id, name: row.name, spentPrs: money2(row.spent_prs), spent: money2(row.spent) })));
+  } catch (err) { console.error('facility spend error:', err); res.status(500).json({ error: err.message }); }
+});
 app.get('/api/facilities', async (req, res) => {
   try {
     const { search, status } = req.query;

@@ -75,7 +75,12 @@ export function ProjectsList({ isAdmin }: { isAdmin: boolean }) {
     if (!(await confirmDialog({ title: `Delete project "${p.name}"?`, message: 'This cannot be undone, and purchase requests charged to it will fall back to "Personal use". To retire a finished project without losing anything, use Mark as Complete instead.', confirmLabel: 'Delete', tone: 'danger' }))) return;
     const prev = rows; setRows(rows.filter(r => r.id !== p.id));
     try { await fetchApi(`/projects/${p.id}`, { method: 'DELETE' }); toast.success('Project deleted'); }
-    catch { setRows(prev); toast.error('Delete failed'); }
+    catch (e: any) {
+      setRows(prev);
+      // Surface the server's reason — e.g. the 409 for a project with expense records, which tells
+      // the admin to Mark as Complete instead. fetchApi prefixes "API request failed for <path>: ".
+      toast.error(String(e?.message || 'Delete failed').replace(/^API request failed for [^:]+: /, ''));
+    }
   };
 
   // SOFT ARCHIVE. Nothing is deleted and no link is broken — the row keeps its id, so every
