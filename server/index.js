@@ -1377,6 +1377,33 @@ async function runMigrations() {
       console.log('✅ pay_periods + attendance_adjustments tables ready');
     } catch (err) { console.log('ℹ️ pay_periods/attendance_adjustments tables skipped:', err.message); }
 
+    // Grace-allowance notices. An append-only log of what the STATION ANNOUNCED to someone whose
+    // monthly grace allowance was already spent — accountability only, with NO pay effect anywhere:
+    // the grace window still forgives the late in full and nothing is ever deducted for it.
+    //
+    // This is deliberately NOT the counter. The authoritative count is always DERIVED from
+    // attendance_days.first_in (see isGraceUse / graceUsesInMonth), so it follows admin edits. The
+    // announcement is judged at scan time on the RAW punch, which can later disagree with the
+    // derived count — the RPi clock runs late, a day gets hand-corrected, one person taps everyone's
+    // QR. Keeping the announcement separately is exactly what makes such a mismatch explainable
+    // ("the station said 4th on the 8th, but that day now reads 08:00 after a correction") instead
+    // of mysterious. Never read as a source of truth for how many uses someone has.
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS attendance_grace_notices (
+          id SERIAL PRIMARY KEY,
+          person_id INTEGER NOT NULL REFERENCES persons(id),
+          work_date DATE NOT NULL,
+          punched_at TIMESTAMPTZ NOT NULL,
+          uses_at_scan INTEGER NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      await query(`CREATE INDEX IF NOT EXISTS idx_attendance_grace_notices_person_date
+                     ON attendance_grace_notices(person_id, work_date)`);
+      console.log('✅ attendance_grace_notices table ready');
+    } catch (err) { console.log('ℹ️ attendance_grace_notices table skipped:', err.message); }
+
     // ONE-TIME BACKFILL of attendance_days.adjusted_fields for rows that were manually corrected
     // BEFORE field-level pinning existed (they carry is_adjusted = true but no per-field pins yet).
     // Runs only for such rows (guard: is_adjusted = true AND adjusted_fields = '{}'), so it is a no-op
@@ -1762,10 +1789,32 @@ app.get('/api/admin/queue-counts', requireAuth, requireRole(['admin']), async (r
          (SELECT COUNT(*) FROM inventory_withdrawal_requests WHERE status = 'warehouse-approved')::int AS withdrawals`
     );
     const row = r.rows[0];
+    // Grace-allowance notices announced at the station THIS calendar month. NAMED, because "3
+    // employees" tells whoever has to have the conversation nothing. Read from the announcement log
+    // rather than recomputed, because the question this card answers is "who was already told", which
+    // is what the admin follows up on. No money in this payload — accountability only.
+    // Isolated in its own try: a failure here must never blank the queue badges beside it.
+    let graceNotices = { count: 0, people: [] };
+    try {
+      const g = await query(
+        `SELECT p.full_name, to_char(gn.work_date,'YYYY-MM-DD') AS work_date, gn.uses_at_scan
+           FROM attendance_grace_notices gn
+           JOIN persons p ON p.id = gn.person_id
+          WHERE to_char(gn.work_date,'YYYY-MM')
+                = to_char((NOW() AT TIME ZONE 'Asia/Manila')::date,'YYYY-MM')
+          ORDER BY gn.work_date DESC, p.full_name
+          LIMIT 20`
+      );
+      graceNotices = {
+        count: g.rows.length,
+        people: g.rows.map(x => ({ name: x.full_name, work_date: x.work_date, uses: x.uses_at_scan })),
+      };
+    } catch { /* leave it empty — the badges matter more than this card */ }
     res.json({
       purchaseRequests: row.purchase_requests,
       purchaseOrders: row.purchase_orders,
       withdrawals: row.withdrawals,
+      graceNotices,
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -5051,6 +5100,108 @@ const countedLateMinutes = (inMin, startMin, grace, tier1, cutoff) => {
   if (rawLate <= cutoff) return cutoff;
   return roundUpToQuarterMark(inMin) - startMin;
 };
+// A "grace USE": the day's final IN landed INSIDE the forgiven window — 1..grace minutes late (08:01
+// to 08:10 on the defaults). The person WAS late, the late rule charges nothing, and one of their
+// three monthly allowances is spent.
+//
+// Deliberately computed from the same `inMin - startMin` that countedLateMinutes uses above, so the
+// two can never drift: everything this returns true for is exactly what that function forgives to 0.
+// Arriving early or exactly on time is 0 late and is NOT a use. Callers must pass the SAME rounded
+// minute-of-day the late calc uses (Math.round, see computePayroll) so that a 08:10:31 scan reads as
+// 08:11 here exactly as it does there — late, not a grace use.
+//
+// PURELY INFORMATIONAL. Nothing in the payroll compute calls this and no deduction is derived from
+// it; it exists only to drive the station notice and the admin attention card.
+const isGraceUse = (inMin, startMin, grace) => {
+  if (inMin === null || inMin === undefined) return false;
+  const rawLate = inMin - startMin;
+  return rawLate >= 1 && rawLate <= grace;
+};
+// How many grace uses a calendar month allows before the station starts saying something. Past this
+// the notice fires on EVERY further grace use (4th, 5th, 6th…), never just once.
+const GRACE_USES_ALLOWED = 3;
+const ordinal = (n) => {
+  const s = ['th', 'st', 'nd', 'rd'][(n % 100 - n % 10 !== 10) ? Math.min(n % 10, 4) % 4 : 0];
+  return `${n}${s || 'th'}`;
+};
+// payroll_settings for the scan hot path. The station scans all day and the policy row changes maybe
+// twice a year, so a 60s TTL keeps the common path to zero extra round-trips while a settings edit
+// still takes effect within a minute.
+let graceSettingsCache = { at: 0, val: null };
+const graceSettings = async () => {
+  if (graceSettingsCache.val && Date.now() - graceSettingsCache.at < 60000) return graceSettingsCache.val;
+  const r = (await query(`SELECT work_start, late_grace_minutes FROM payroll_settings WHERE id = 1`)).rows[0] || {};
+  const val = { startMin: hhmmToMin(r.work_start || '08:00'), grace: Number(r.late_grace_minutes ?? 10) };
+  graceSettingsCache = { at: Date.now(), val };
+  return val;
+};
+// THE authoritative grace-use count for one person in one CALENDAR month (YYYY-MM), returned as the
+// list of dates. DERIVED, never stored: it reads attendance_days.first_in, which is the very column
+// an admin edit writes and the late calc reads — so correcting a day to 08:00 makes a use vanish and
+// correcting one into 08:01-08:10 makes one appear, with nothing to re-sync.
+//
+// Excluded by policy: Sundays and holidays (the late rule does not apply there at all), late_excused
+// days (an authorised late start is already forgiven — charging an allowance for a day you excused
+// would contradict it), and days with no IN.
+//
+// excludeDate drops one date from the tally, which the scan path needs: at scan time today has no
+// attendance_days row yet (rebuild creates it later), so today is counted from the live punch instead.
+const graceUsesInMonth = async (personId, ym, excludeDate = null) => {
+  const rows = (await query(
+    `SELECT to_char(ad.work_date,'YYYY-MM-DD') AS d,
+            EXTRACT(EPOCH FROM ((ad.first_in AT TIME ZONE 'Asia/Manila')::time)) / 60 AS in_min
+       FROM attendance_days ad
+      WHERE ad.person_id = $1
+        AND to_char(ad.work_date,'YYYY-MM') = $2
+        AND ad.first_in IS NOT NULL
+        AND COALESCE(ad.late_excused, false) = false
+        AND EXTRACT(DOW FROM ad.work_date) <> 0
+        AND NOT EXISTS (SELECT 1 FROM holidays h WHERE h.holiday_date = ad.work_date)
+      ORDER BY ad.work_date`,
+    [personId, ym])).rows;
+  const { startMin, grace } = await graceSettings();
+  return rows
+    .filter(r => r.d !== excludeDate && isGraceUse(Math.round(Number(r.in_min)), startMin, grace))
+    .map(r => r.d);
+};
+// Build the station's grace-allowance notice for a punch just written, or null. Gated hard, in order:
+//   • an IN (an OUT is never a late arrival)
+//   • the day's FIRST tap — a return from a mid-day break must not re-announce
+//   • a SCHEDULED working day: not a Sunday, not a holiday (the scan endpoint itself has no such
+//     check, and deliberately still records those punches — Sunday and holiday work is paid at a
+//     premium, so refusing the scan would silently destroy that pay)
+//   • the punch itself inside the grace band
+//   • the allowance already spent
+// ADVISORY, not a ledger entry: this judges the RAW punch, while the authoritative count follows
+// later admin edits. Worded as an observation for that reason, and there is no pay consequence
+// either way — a wrong notice costs one conversation, nothing more.
+const maybeGraceNotice = async ({ person, punch, firstTapOfDay }) => {
+  if (punch.punch_type !== 'in' || !firstTapOfDay) return null;
+  const when = (await query(
+    `SELECT to_char($1::timestamptz AT TIME ZONE 'Asia/Manila','YYYY-MM-DD') AS d,
+            to_char($1::timestamptz AT TIME ZONE 'Asia/Manila','YYYY-MM')    AS ym,
+            EXTRACT(DOW FROM ($1::timestamptz AT TIME ZONE 'Asia/Manila'))   AS dow,
+            EXTRACT(EPOCH FROM (($1::timestamptz AT TIME ZONE 'Asia/Manila')::time)) / 60 AS in_min,
+            EXISTS (SELECT 1 FROM holidays h
+                     WHERE h.holiday_date = ($1::timestamptz AT TIME ZONE 'Asia/Manila')::date) AS holiday`,
+    [punch.punched_at])).rows[0];
+  if (Number(when.dow) === 0 || when.holiday) return null;
+  const { startMin, grace } = await graceSettings();
+  if (!isGraceUse(Math.round(Number(when.in_min)), startMin, grace)) return null;
+  const uses = (await graceUsesInMonth(person.id, when.ym, when.d)).length + 1;
+  if (uses <= GRACE_USES_ALLOWED) return null;
+  // Log what was announced, so a later mismatch against the derived count is explainable.
+  await query(
+    `INSERT INTO attendance_grace_notices (person_id, work_date, punched_at, uses_at_scan)
+     VALUES ($1, $2, $3, $4)`,
+    [person.id, when.d, punch.punched_at, uses]
+  );
+  return {
+    kind: 'grace_limit', uses, limit: GRACE_USES_ALLOWED,
+    message: `That's your ${ordinal(uses)} late arrival this month (allowance is ${GRACE_USES_ALLOWED}). `
+      + 'No deduction — please see admin to explain.',
+  };
+};
 // Unpaid personal-business break: docked minutes for ONE break gap [outMin → returnMin], applying
 // the shared round-UP to the RETURN and carving out the free lunch window (lunch is never docked and
 // never rounded). All minute-of-day. A break that runs INTO lunch docks only up to lunchStart; a
@@ -5671,8 +5822,19 @@ app.post('/api/attendance/scan', requireRole(['station']), async (req, res) => {
       [person.id, punchType, stationId]
     );
     await client.query('COMMIT');
-    res.json({ ok: true, punch_type: ins.rows[0].punch_type, punched_at: ins.rows[0].punched_at,
-      person: { id: person.id, name: person.full_name, position: person.position, photo: person.photo_url } });
+    const punch = ins.rows[0];
+    // Advisory grace-allowance notice for the station. Computed AFTER the commit and wrapped so it can
+    // never cost anyone their punch: a failure here logs and returns no notice rather than rolling
+    // back a legitimate clock-in for the sake of a notification. (It must be outside the transaction
+    // for that to hold — a failed query inside one poisons it, so a caught error would still lose the
+    // punch.) `!latest` is what makes this the day's FIRST tap rather than a return from a break.
+    let notice = null;
+    try {
+      notice = await maybeGraceNotice({ person, punch, firstTapOfDay: !latest });
+    } catch (e) { console.error('[grace-notice] skipped:', e.message); }
+    res.json({ ok: true, punch_type: punch.punch_type, punched_at: punch.punched_at,
+      person: { id: person.id, name: person.full_name, position: person.position, photo: person.photo_url },
+      ...(notice ? { notice } : {}) });
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
     res.status(500).json({ error: err.message });

@@ -159,9 +159,16 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
   // from the server (GET /api/admin/queue-counts), fetched on mount and kept fresh by the
   // same visibility-gated poll the lists use, so a badge appears/clears without a manual
   // refresh. A failed poll leaves the last-known counts untouched (never zeroes the badges).
-  const [counts, setCounts] = useState({ purchaseRequests: 0, purchaseOrders: 0, withdrawals: 0 });
+  // graceNotices rides along on the same endpoint: who the clock station has told this month that they
+  // passed their 3 grace arrivals. Accountability only — no pay effect, nothing to approve.
+  const [counts, setCounts] = useState<{
+    purchaseRequests: number; purchaseOrders: number; withdrawals: number;
+    graceNotices: { count: number; people: { name: string; work_date: string; uses: number }[] };
+  }>({ purchaseRequests: 0, purchaseOrders: 0, withdrawals: 0, graceNotices: { count: 0, people: [] } });
   const loadCounts = async () => {
-    try { setCounts(await fetchApi('/admin/queue-counts')); } catch { /* keep last-known */ }
+    // Merged rather than replaced so an older server that omits a key can't blank the card.
+    try { const next = await fetchApi('/admin/queue-counts'); setCounts(c => ({ ...c, ...next })); }
+    catch { /* keep last-known */ }
   };
   useEffect(() => { loadCounts(); }, []);
   // Also refresh the counts each time the admin leaves a queue view (they likely just cleared
@@ -341,6 +348,14 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
         { label: 'Purchase requests to verify', count: counts.purchaseRequests, onView: () => setCurrentView('purchase-requests') },
         { label: 'Purchase orders to approve', count: counts.purchaseOrders, onView: () => setCurrentView('purchase-orders') },
         { label: 'Withdrawals to approve', count: counts.withdrawals, onView: () => setCurrentView('withdrawal-requests') },
+        // No onView: there is deliberately no grace report to jump to. The names ARE the notification.
+        {
+          label: 'Grace allowance exceeded (late arrivals)',
+          count: counts.graceNotices?.count ?? 0,
+          detail: (counts.graceNotices?.people ?? [])
+            .map(p => `${p.name} — ${new Date(`${p.work_date}T00:00:00`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} (use ${p.uses})`)
+            .join(' · '),
+        },
       ]} />
       {/* Sidebar. Matches the portal shell: a fixed drawer under lg, an in-flow rail above it.
           The admin previously had no mobile behaviour at all — the sidebar simply ate the

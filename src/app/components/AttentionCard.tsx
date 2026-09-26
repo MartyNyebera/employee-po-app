@@ -9,7 +9,10 @@ import { Bell, X } from 'lucide-react';
 // poll. The red accent matches the one shared count bubble (NavBadge).
 // ============================================================================
 
-export interface AttentionItem { label: string; count: number; onView: () => void }
+// `detail` is an optional second line for items where the count alone says nothing useful (e.g. WHICH
+// employees passed their grace allowance). `onView` is optional: an item with nowhere to jump to
+// renders as plain text instead of a button, rather than offering a click that does nothing.
+export interface AttentionItem { label: string; count: number; onView?: () => void; detail?: string }
 
 export function AttentionCard({ items }: { items: AttentionItem[] }) {
   const active = items.filter(i => i.count > 0);
@@ -31,16 +34,26 @@ export function AttentionCard({ items }: { items: AttentionItem[] }) {
         <button onClick={() => setDismissedAt(total)} title="Dismiss" className="p-1 rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-600"><X className="w-4 h-4" /></button>
       </div>
       <ul className="divide-y divide-gray-100">
-        {active.map((it, i) => (
-          <li key={i}>
-            <button onClick={it.onView} className="w-full flex items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-gray-50">
-              <span className="text-sm text-gray-700">{it.label}</span>
+        {active.map((it, i) => {
+          const body = (
+            <>
+              <span className="flex-1 min-w-0">
+                <span className="block text-sm text-gray-700">{it.label}</span>
+                {it.detail ? <span className="block text-xs text-gray-500 mt-0.5 break-words">{it.detail}</span> : null}
+              </span>
               <span className="flex items-center gap-2">
                 <span className="min-w-[18px] h-[18px] px-1.5 rounded-full bg-red-600 text-white text-[11px] font-bold leading-[18px] text-center">{it.count > 99 ? '99+' : it.count}</span>
               </span>
-            </button>
-          </li>
-        ))}
+            </>
+          );
+          return (
+            <li key={i}>
+              {it.onView
+                ? <button onClick={it.onView} className="w-full flex items-start justify-between gap-3 px-4 py-2.5 text-left hover:bg-gray-50">{body}</button>
+                : <div className="w-full flex items-start justify-between gap-3 px-4 py-2.5 text-left">{body}</div>}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

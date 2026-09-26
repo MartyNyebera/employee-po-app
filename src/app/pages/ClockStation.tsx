@@ -106,7 +106,10 @@ function StationSetup({ connecting, error, hasSecret, onActivate, onReset }: {
 
 // ---- The live clock + scan capture ---------------------------------------
 interface PunchRow { id: number; punch_type: 'in' | 'out'; punched_at: string; full_name: string; position?: string | null; photo_url?: string | null; }
-type Flash = { kind: 'in' | 'out' | 'info' | 'error'; name?: string; position?: string | null; time?: string; message?: string; photo?: string | null } | null;
+// `notice` is the advisory grace-allowance line (4th+ late arrival this month). It rides ALONGSIDE a
+// normal 'in' flash rather than replacing it — the person really is clocked in and nothing is
+// deducted, so the green ✓ stays and the notice sits under it in amber.
+type Flash = { kind: 'in' | 'out' | 'info' | 'error'; name?: string; position?: string | null; time?: string; message?: string; photo?: string | null; notice?: string } | null;
 
 // Round avatar with an initials fallback — a missing photo never breaks the flash or the list.
 const initialsOf = (name?: string) =>
@@ -153,10 +156,14 @@ function ClockView({ secret, stationName, onSignOut }: { secret: string; station
 
   useEffect(() => { loadToday(); const t = window.setInterval(loadToday, 20000); return () => clearInterval(t); }, [loadToday]);
 
-  const showFlash = useCallback((f: Flash) => {
+  // dwellMs defaults to the usual quick 2.5s confirmation; a flash carrying a notice to READ needs
+  // longer. It is a parameter rather than derived from the flash so the caller decides — this is a
+  // hands-free kiosk (the scanner input is force-refocused on every click), so there is no sensible
+  // "click to dismiss" and the timeout is the only control.
+  const showFlash = useCallback((f: Flash, dwellMs = 2500) => {
     setFlash(f);
     if (flashTimer.current) clearTimeout(flashTimer.current);
-    flashTimer.current = window.setTimeout(() => setFlash(null), 2500);
+    flashTimer.current = window.setTimeout(() => setFlash(null), dwellMs);
   }, []);
 
   const handleScan = useCallback(async (code: string) => {
@@ -167,7 +174,14 @@ function ClockView({ secret, stationName, onSignOut }: { secret: string; station
       const data = await res.json().catch(() => ({} as any));
       if (!res.ok) showFlash({ kind: 'error', message: data.error || 'Scan failed' });
       else if (data.ignored) showFlash({ kind: 'info', name: data.person?.name, position: data.person?.position, photo: data.person?.photo, message: data.message });
-      else { showFlash({ kind: data.punch_type, name: data.person?.name, position: data.person?.position, photo: data.person?.photo, time: data.punched_at }); loadToday(); }
+      else {
+        // A grace-allowance notice holds the flash ~8s so it can actually be read; a plain punch keeps
+        // the quick 2.5s confirmation.
+        const notice: string | undefined = data.notice?.message;
+        showFlash({ kind: data.punch_type, name: data.person?.name, position: data.person?.position, photo: data.person?.photo, time: data.punched_at, notice },
+          notice ? 8000 : 2500);
+        loadToday();
+      }
     } catch { showFlash({ kind: 'error', message: 'Network error — try again' }); }
     finally { setBusy(false); refocus(); }
   }, [busy, secret, showFlash, loadToday, refocus]);
@@ -242,6 +256,13 @@ function ClockView({ secret, stationName, onSignOut }: { secret: string; station
             {flash.position ? <div style={{ fontSize: 'min(3.2vw, 22px)', color: '#e2e8f0', opacity: 0.8, marginTop: '6px' }}>{flash.position}</div> : null}
             {flash.time ? <div style={{ fontSize: '28px', color: '#e2e8f0', marginTop: '8px', fontVariantNumeric: 'tabular-nums' }}>{fmtTime(flash.time)}</div> : null}
             {flash.message ? <div style={{ fontSize: '22px', color: '#e2e8f0', marginTop: '12px', maxWidth: '680px' }}>{flash.message}</div> : null}
+            {/* Grace-allowance notice: amber, clearly separated from the ✓ above it, and explicit that
+                nothing is deducted — the point is to prompt a conversation, not to alarm anyone. */}
+            {flash.notice ? (
+              <div style={{ marginTop: '22px', padding: '14px 20px', maxWidth: '680px', borderRadius: '12px', background: 'rgba(0,0,0,0.28)', border: '2px solid #fbbf24' }}>
+                <div style={{ fontSize: 'min(3vw, 22px)', fontWeight: 700, color: '#fbbf24', lineHeight: 1.4 }}>{flash.notice}</div>
+              </div>
+            ) : null}
           </>
         )}
       </div>
