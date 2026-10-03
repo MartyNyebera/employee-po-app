@@ -21,6 +21,7 @@ import { WithdrawalTab } from '../components/WithdrawalTab';
 import { nextDeptFor } from '../lib/nextDept';
 import { TimesheetReview } from '../components/crm/TimesheetReview';
 import { TradingProfitBars } from '../components/TradingProfitBars';
+import { ExpensesHistory, type TargetOption } from '../components/ExpensesHistory';
 import { PayrollReview } from '../components/crm/PayrollReview';
 
 // ============================================================================
@@ -36,7 +37,7 @@ import { PayrollReview } from '../components/crm/PayrollReview';
 // ============================================================================
 
 type PRStatus = 'pending' | 'reviewed' | 'verified' | 'ordered' | 'approved' | 'disapproved';
-type PortalView = 'new-pr' | 'requests' | 'orders' | 'projects' | 'tradings' | 'facilities' | 'withdrawals' | 'timesheet' | 'payroll' | 'signature';
+type PortalView = 'new-pr' | 'requests' | 'orders' | 'projects' | 'tradings' | 'facilities' | 'expenses' | 'withdrawals' | 'timesheet' | 'payroll' | 'signature';
 
 // Section C — #12: Accounting is also the FIRST gate of the purchase-ORDER flow. Purchasing
 // raises an order ('pending'); Accounting reviews it here (→ 'accounting-approved', passing it
@@ -110,7 +111,7 @@ const TARGET_PATH: Record<TargetKind, string> = { project: 'projects', trading: 
 // `amount` here and `expenseTotal` are both receipt money, VAT included — PR spend is VAT-exclusive;
 // the difference is deliberate and must not be "fixed".
 interface ExpenseAllocation {
-  allocationId: number; expenseId: number;
+  allocationId: number; expenseId: number; serialNo?: string | null;
   projectId?: string | null; tradingId?: string | null; facilityId?: string | null;
   amount: number; expenseTotal: number; isSplit: boolean; allocationCount: number;
   targets?: string | null;
@@ -937,7 +938,9 @@ function ExpensesModal({ target, stats, reloadKey, onClose, onLog, onChanged }: 
   // People type the reference either bare ("88121") or with the prefix ("OR 88121", "O.R. #88121");
   // normalise so it never reads "OR OR 88121". The lookahead keeps e.g. "ORD-551" intact.
   const refLabel = (r: string) => `OR ${r.replace(/^\s*o\.?\s*r\.?(?![a-z])\s*(no\.?|#)?\s*/i, '')}`;
-  const meta = (x: ExpenseAllocation) => [x.payee, x.referenceNo && refLabel(x.referenceNo)].filter(Boolean).join(' · ');
+  // The voucher number leads, because it is what ties this line to a piece of paper in a folder.
+  // It belongs to the whole receipt, so on a split it is the SAME number on every line here.
+  const meta = (x: ExpenseAllocation) => [x.serialNo, x.payee, x.referenceNo && refLabel(x.referenceNo)].filter(Boolean).join(' · ');
   // A split line shows ITS share as the amount, and says what the whole receipt was and how it was
   // divided — otherwise ₱600 against a ₱1,000 receipt looks like a data error.
   const splitNote = (x: ExpenseAllocation) => !x.isSplit ? null : (
@@ -1328,6 +1331,15 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const pendingCount = requests.filter(r => r.status === 'pending').length;
   const pendingOrderCount = orders.filter(o => o.status === 'pending').length;
 
+  // Everything an expense can be charged to, for the history view's "Charged to" filter. Built from
+  // the lists already loaded rather than a fresh fetch, so the picker and the rest of the portal
+  // can never disagree about what exists.
+  const expenseTargets: TargetOption[] = useMemo(() => [
+    ...projects.map(p => ({ kind: 'project' as const, id: p.id, name: p.name })),
+    ...tradings.map(t => ({ kind: 'trading' as const, id: t.id, name: t.name })),
+    ...facilities.map(f => ({ kind: 'facility' as const, id: f.id, name: f.name })),
+  ], [projects, tradings, facilities]);
+
   const NAV: { id: PortalView; label: string; icon: any }[] = [
     { id: 'new-pr', label: 'New Purchase Request', icon: FileText },
     { id: 'requests', label: 'Purchase Requests', icon: ClipboardList },
@@ -1335,6 +1347,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     { id: 'projects', label: 'Project Allocation', icon: Briefcase },
     { id: 'tradings', label: 'Trading Deals', icon: ArrowLeftRight },
     { id: 'facilities', label: 'Facilities', icon: Building2 },
+    { id: 'expenses', label: 'Expenses History', icon: Receipt },
     { id: 'withdrawals', label: 'Withdrawals Request', icon: PackageMinus },
     { id: 'timesheet', label: 'Attendance Sheet', icon: CalendarCheck },
     { id: 'payroll', label: 'Payroll', icon: Calculator },
@@ -1403,6 +1416,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 
         <main className="flex-1 overflow-y-auto p-4 lg:p-6">
           {view === 'signature' && <SignaturePad initial={signature} onSaved={setSignature} />}
+
+          {view === 'expenses' && <ExpensesHistory api={aFetch} targets={expenseTargets} />}
 
           {view === 'withdrawals' && <WithdrawalTab fetchFn={aFetch} />}
 

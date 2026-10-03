@@ -825,6 +825,11 @@ async function runMigrations() {
       await query(`
         CREATE TABLE IF NOT EXISTS expenses (
           id BIGSERIAL PRIMARY KEY,
+          -- EXP-YYYY-NNNN, the VOUCHER number: one per receipt, never one per allocation line. A
+          -- voucher that splits across two projects is still a single voucher, which is the whole
+          -- reason the serial lives on the parent. Backfilled, then made UNIQUE/NOT NULL/immutable
+          -- in its own block below, after the project_expenses migration has landed its rows.
+          serial_no TEXT,
           description TEXT NOT NULL CHECK (btrim(description) <> ''),
           amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
           expense_date DATE NOT NULL,
@@ -843,6 +848,9 @@ async function runMigrations() {
             CHECK (voided_at IS NULL OR btrim(COALESCE(void_reason, '')) <> '')
         )
       `);
+      // CREATE TABLE IF NOT EXISTS adds nothing to a table that already exists, so the live DB
+      // needs the explicit ALTER as well.
+      await query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS serial_no TEXT`);
       // Makes the project_expenses migration below idempotent across restarts.
       await query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_expenses_migrated_from
                      ON expenses(migrated_from_project_expense_id)
@@ -937,6 +945,93 @@ async function runMigrations() {
       `);
       if (mig.rowCount) console.log(`✅ migrated ${mig.rowCount} project_expenses row(s) into expenses + allocations`);
     } catch (err) { console.log('ℹ️ project_expenses migration skipped:', err.message); }
+
+    // ============== EXPENSE VOUCHER SERIALS (EXP-YYYY-NNNN) ==============
+    // Backfill every pre-existing expense in CREATION order, so the oldest receipt is EXP-2026-0001
+    // and the numbers run in the order the vouchers were actually written. Voided rows are numbered
+    // too: a voided voucher still exists physically, still has to be found during a reconciliation,
+    // and skipping it would leave an unexplained gap in the sequence.
+    //
+    // Runs after the project_expenses migration so the rows it created are numbered as well.
+    //
+    // When reading what already exists the year comes from the SERIAL, not from created_at — the
+    // serial is the authority on which year's sequence a number belongs to. Each year's partition is
+    // offset by that year's current max, so a half-finished backfill resumes instead of colliding.
+    try {
+      const bf = await query(`
+        WITH existing AS (
+          SELECT split_part(serial_no, '-', 2)::int AS yr,
+                 MAX(NULLIF(split_part(serial_no, '-', 3), '')::int) AS hi
+            FROM expenses
+           WHERE serial_no ~ '^EXP-[0-9]{4}-[0-9]+$'
+           GROUP BY 1
+        ), ordered AS (
+          SELECT e.id,
+                 EXTRACT(YEAR FROM e.created_at)::int AS yr,
+                 ROW_NUMBER() OVER (PARTITION BY EXTRACT(YEAR FROM e.created_at)
+                                        ORDER BY e.created_at ASC, e.id ASC) AS seq
+            FROM expenses e
+           WHERE e.serial_no IS NULL
+        )
+        UPDATE expenses e
+           SET serial_no = 'EXP-' || o.yr || '-' || lpad((o.seq + COALESCE(x.hi, 0))::text, 4, '0')
+          FROM ordered o
+          LEFT JOIN existing x ON x.yr = o.yr
+         WHERE e.id = o.id
+        RETURNING e.id, e.serial_no
+      `);
+      if (bf.rowCount) {
+        console.log(`✅ backfilled ${bf.rowCount} expense voucher serial(s): ` +
+          bf.rows.map(r => `#${r.id}=${r.serial_no}`).join(', '));
+      }
+
+      // UNIQUE is the real guard on the read-then-increment recipe every serial in this system uses
+      // (pr_number, po_number, delivery_number and request_number all have one): two concurrent
+      // writers reading the same max collide here instead of both keeping the number.
+      await query(`DO $do$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'expenses_serial_no_key') THEN
+          ALTER TABLE expenses ADD CONSTRAINT expenses_serial_no_key UNIQUE (serial_no);
+        END IF;
+      END $do$`);
+
+      // NOT NULL only once nothing is left unnumbered, so a surprise row can never wedge the boot.
+      const nulls = await query(`SELECT COUNT(*)::int AS n FROM expenses WHERE serial_no IS NULL`);
+      if (nulls.rows[0].n === 0) {
+        await query(`DO $do$ BEGIN
+          IF EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_name = 'expenses' AND column_name = 'serial_no'
+                        AND is_nullable = 'YES') THEN
+            ALTER TABLE expenses ALTER COLUMN serial_no SET NOT NULL;
+          END IF;
+        END $do$`);
+      } else {
+        console.log(`ℹ️ ${nulls.rows[0].n} expense(s) still unnumbered — serial_no left nullable`);
+      }
+
+      // IMMUTABLE: a voucher number is the link to a piece of paper in a folder. Renumbering one
+      // after the fact would silently point the record at a different physical document, so the DB
+      // refuses it outright rather than trusting every present and future writer to behave.
+      // NULL -> value is allowed, which is what lets the backfill above run at all.
+      await query(`
+        CREATE OR REPLACE FUNCTION expense_serial_immutable() RETURNS trigger AS $fn$
+        BEGIN
+          IF OLD.serial_no IS NOT NULL AND NEW.serial_no IS DISTINCT FROM OLD.serial_no THEN
+            RAISE EXCEPTION 'expense voucher % cannot be renumbered (attempted %)',
+                            OLD.serial_no, COALESCE(NEW.serial_no, 'NULL')
+              USING ERRCODE = 'check_violation';
+          END IF;
+          RETURN NEW;
+        END $fn$ LANGUAGE plpgsql
+      `);
+      await query(`DO $do$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_expense_serial_immutable') THEN
+          CREATE TRIGGER trg_expense_serial_immutable
+            BEFORE UPDATE OF serial_no ON expenses
+            FOR EACH ROW EXECUTE FUNCTION expense_serial_immutable();
+        END IF;
+      END $do$`);
+      console.log('✅ expense voucher serials ready (EXP-YYYY-NNNN, unique + immutable)');
+    } catch (err) { console.log('ℹ️ expense voucher serials skipped:', err.message); }
 
     // Backfill the trading PRs that were invisible to every spend view: both FKs null and
     // project_label = 'Trading'. Each gets its own trading record named from its first line item so
@@ -7881,7 +7976,7 @@ const TARGET_TABLE = { project: 'projects', trading: 'tradings', facility: 'faci
 // receipt it came from and to show the other targets it was split with.
 function mapAllocation(r) {
   return r && {
-    allocationId: Number(r.allocation_id), expenseId: Number(r.expense_id),
+    allocationId: Number(r.allocation_id), expenseId: Number(r.expense_id), serialNo: r.serial_no ?? null,
     projectId: r.project_id, tradingId: r.trading_id, facilityId: r.facility_id,
     amount: money2(r.amount), expenseTotal: money2(r.expense_total),
     isSplit: Number(r.alloc_count) > 1, allocationCount: Number(r.alloc_count),
@@ -7892,21 +7987,27 @@ function mapAllocation(r) {
   };
 }
 
-// `targets` is a human-readable summary of how the receipt was split ("Casadi 600.00 · Trading X
-// 400.00"), built in SQL so the browser never has to fetch the sibling lines to explain a split.
-const ALLOCATION_SELECT = `
-  SELECT ea.id AS allocation_id, ea.expense_id, ea.project_id, ea.trading_id, ea.facility_id,
-         ea.amount, e.amount AS expense_total, e.description,
-         to_char(e.expense_date, 'YYYY-MM-DD') AS expense_date,
-         e.payee, e.reference_no, e.created_by, e.created_at,
-         e.voided_at, e.voided_by, e.void_reason,
-         (SELECT COUNT(*) FROM expense_allocations a2 WHERE a2.expense_id = e.id) AS alloc_count,
+// A human-readable summary of how one receipt was split ("Casadi 600.00 · Trading X 400.00"), built
+// in SQL so the browser never has to fetch the sibling lines to explain a split — and never has to
+// add the shares up itself. It is correlated on e.id, so every query using it must expose the
+// parent expense under the alias e. Shared by the per-target lists and the Expenses History, so a split reads
+// identically on every screen instead of drifting between two copies of this expression.
+const ALLOC_TARGETS_SUMMARY = `
          (SELECT string_agg(COALESCE(p2.name, t2.name, f2.name, '?') || ' ' || to_char(a2.amount, 'FM999999999990.00'), ' · ' ORDER BY a2.id)
             FROM expense_allocations a2
             LEFT JOIN projects   p2 ON p2.id = a2.project_id
             LEFT JOIN tradings   t2 ON t2.id = a2.trading_id
             LEFT JOIN facilities f2 ON f2.id = a2.facility_id
-           WHERE a2.expense_id = e.id) AS targets
+           WHERE a2.expense_id = e.id) AS targets`;
+
+const ALLOCATION_SELECT = `
+  SELECT ea.id AS allocation_id, ea.expense_id, ea.project_id, ea.trading_id, ea.facility_id,
+         ea.amount, e.amount AS expense_total, e.serial_no, e.description,
+         to_char(e.expense_date, 'YYYY-MM-DD') AS expense_date,
+         e.payee, e.reference_no, e.created_by, e.created_at,
+         e.voided_at, e.voided_by, e.void_reason,
+         (SELECT COUNT(*) FROM expense_allocations a2 WHERE a2.expense_id = e.id) AS alloc_count,
+${ALLOC_TARGETS_SUMMARY}
     FROM expense_allocations ea
     JOIN expenses e ON e.id = ea.expense_id`;
 
@@ -7925,6 +8026,27 @@ function mountExpenseList(path, target) {
 mountExpenseList('/api/projects/:id/expenses', 'project');
 mountExpenseList('/api/tradings/:id/expenses', 'trading');
 mountExpenseList('/api/facilities/:id/expenses', 'facility');
+
+// EXP-YYYY-NNNN, the voucher number. The SAME recipe as pr_number (:8363), po_number,
+// delivery_number and request_number, not a parallel mechanism: read the highest number already
+// issued under THIS YEAR's prefix, add one, zero-pad to four.
+//
+// Two details in that recipe are load-bearing rather than cosmetic. The year in the LIKE is what
+// makes the sequence reset every January — in a new year the pattern matches nothing, so counter
+// falls back to 1. And the zero-padding is what lets ORDER BY work at all: these are TEXT columns,
+// so without the padding '0010' would sort below '009' and the max would be wrong.
+//
+// Takes a client because it runs inside the create transaction, unlike the other four which are
+// standalone inserts.
+async function nextExpenseSerial(client) {
+  const year = new Date().getFullYear();
+  const last = await client.query(
+    `SELECT serial_no FROM expenses WHERE serial_no LIKE $1 ORDER BY serial_no DESC LIMIT 1`,
+    [`EXP-${year}-%`]);
+  let counter = 1;
+  if (last.rows[0]) { const n = parseInt(last.rows[0].serial_no.split('-')[2], 10); if (!isNaN(n)) counter = n + 1; }
+  return `EXP-${year}-${String(counter).padStart(4, '0')}`;
+}
 
 // Shared validation for the parent receipt. Kept verbatim from the single-target version so nothing
 // about what counts as a valid amount or date has changed.
@@ -8003,13 +8125,36 @@ app.post('/api/expenses', requireRole(['owner', 'admin', 'accounting']), async (
       const t = await client.query(`SELECT id FROM ${TARGET_TABLE[l.kind]} WHERE id = $1`, [l.targetId]);
       if (!t.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: `${l.kind} not found: ${l.targetId}` }); }
     }
-    const parent = await client.query(
-      `INSERT INTO expenses (description, amount, expense_date, payee, reference_no, created_by, created_by_id)
-       VALUES ($1, $2, $3::date, $4, $5, $6, $7) RETURNING id`,
-      [v.description, v.amountStr, v.expenseDate, v.payee, v.referenceNo,
-       req.user?.name || null, req.user?.id != null ? String(req.user.id) : null]
-    );
-    const expenseId = parent.rows[0].id;
+    // The voucher number, retried on collision. The read-then-increment recipe is inherently racy
+    // and expenses_serial_no_key is what catches it — but here the insert is inside a transaction
+    // carrying the allocation lines, so letting a 23505 escape would throw away the whole receipt
+    // over a number we can simply re-read. The SAVEPOINT is what makes the retry possible at all:
+    // an error aborts the transaction otherwise, and nothing further could run inside it.
+    //
+    // The balance trigger is DEFERRED, so rolling back to this savepoint does not trip it.
+    let expenseId = null, serialNo = null;
+    for (let attempt = 0; attempt < 5 && expenseId === null; attempt++) {
+      serialNo = await nextExpenseSerial(client);
+      await client.query('SAVEPOINT serial_try');
+      try {
+        const parent = await client.query(
+          `INSERT INTO expenses (serial_no, description, amount, expense_date, payee, reference_no, created_by, created_by_id)
+           VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8) RETURNING id`,
+          [serialNo, v.description, v.amountStr, v.expenseDate, v.payee, v.referenceNo,
+           req.user?.name || null, req.user?.id != null ? String(req.user.id) : null]
+        );
+        expenseId = parent.rows[0].id;
+        await client.query('RELEASE SAVEPOINT serial_try');
+      } catch (e) {
+        await client.query('ROLLBACK TO SAVEPOINT serial_try');
+        if (e.code === '23505' && String(e.constraint || '').includes('serial_no')) continue;
+        throw e;
+      }
+    }
+    if (expenseId === null) {
+      await client.query('ROLLBACK');
+      return res.status(503).json({ error: 'Could not assign a voucher number — please try again' });
+    }
     for (const l of a.lines) {
       await client.query(
         `INSERT INTO expense_allocations (expense_id, project_id, trading_id, facility_id, amount)
@@ -8020,7 +8165,7 @@ app.post('/api/expenses', requireRole(['owner', 'admin', 'accounting']), async (
     }
     await client.query('COMMIT');
     const r = await query(`${ALLOCATION_SELECT} WHERE ea.expense_id = $1 ORDER BY ea.id ASC`, [expenseId]);
-    res.status(201).json({ expenseId: Number(expenseId), allocations: r.rows.map(mapAllocation) });
+    res.status(201).json({ expenseId: Number(expenseId), serialNo, allocations: r.rows.map(mapAllocation) });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     // The deferred balance trigger and the one-target CHECK both surface as 23514.
@@ -8055,6 +8200,128 @@ app.post('/api/expenses/:id/void', requireRole(['owner', 'admin', 'accounting'])
     await client.query('ROLLBACK').catch(() => {});
     res.status(500).json({ error: err.message });
   } finally { client.release(); }
+});
+
+// ============================== EXPENSES HISTORY ==============================
+// GET /api/expenses — every receipt, newest first, as a reconciliation surface: the voucher number
+// to match against the physical paper, and what it was charged to.
+//
+// ONE ROW PER RECEIPT, not per allocation line. The per-target lists above deliberately do the
+// opposite (a split expense appears under each target it touches, showing that target's share),
+// because they answer "what was charged to this project". This answers "what vouchers exist", and
+// there a split receipt must appear exactly once or the count of vouchers would not match the count
+// of pieces of paper.
+//
+// Read-only on purpose: voiding stays on the per-target list, next to the share it affects, so an
+// accidental void from a long history list is not even possible here.
+//
+// Every peso figure — each row's total, each share, and the summary totals — is produced by SQL.
+// The browser renders what it is given and adds nothing up.
+app.get('/api/expenses', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
+  try {
+    const q = req.query || {};
+    const dateOrNull = (v) => { const t = String(v ?? '').trim(); return /^\d{4}-\d{2}-\d{2}$/.test(t) ? t : null; };
+    const from = dateOrNull(q.from), to = dateOrNull(q.to);
+    if (from && to && from > to) return res.status(400).json({ error: 'The "from" date is after the "to" date' });
+
+    // Anything unrecognised means 'all'. A filter that silently hid rows would be worse than no
+    // filter at all on a surface whose job is to prove nothing is missing.
+    const status = ['active', 'voided'].includes(String(q.status)) ? String(q.status) : 'all';
+
+    // target=project:PRJ-123 — the kind resolves through TARGET_KEY, the same whitelist the spend
+    // CTEs use, so the column name can never come from the request.
+    let targetCol = null, targetParam = 0;
+    const params = [], where = [];
+    const rawTarget = String(q.target ?? '').trim();
+    if (rawTarget) {
+      const i = rawTarget.indexOf(':');
+      const kind = i === -1 ? '' : rawTarget.slice(0, i);
+      const id = i === -1 ? '' : rawTarget.slice(i + 1).trim();
+      if (!TARGET_KEY[kind] || !id) return res.status(400).json({ error: 'target must be kind:id, e.g. project:PRJ-1' });
+      targetCol = TARGET_KEY[kind];
+      params.push(id); targetParam = params.length;
+      // EXISTS, never a JOIN: joining the allocations in would return a split receipt once per
+      // matching line and double its amount in the totals below.
+      where.push(`EXISTS (SELECT 1 FROM expense_allocations a WHERE a.expense_id = e.id AND a.${targetCol} = $${targetParam})`);
+    }
+    if (from) { params.push(from); where.push(`e.expense_date >= $${params.length}::date`); }
+    if (to)   { params.push(to);   where.push(`e.expense_date <= $${params.length}::date`); }
+    if (status === 'active') where.push('e.voided_at IS NULL');
+    if (status === 'voided') where.push('e.voided_at IS NOT NULL');
+    const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+
+    // When a target filter is on, this is that target's share of each receipt — the figure that
+    // actually ties to the project's spend, as opposed to the receipt's full face value.
+    const hereJoin = targetCol ? `
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(a.amount), 0) AS amt FROM expense_allocations a
+         WHERE a.expense_id = e.id AND a.${targetCol} = $${targetParam}
+      ) h ON true` : '';
+
+    // The summary describes the WHOLE filtered set, not the page, so paging cannot change a total.
+    // Active and voided are summed separately and never added together: a voided voucher counts
+    // toward nothing, and one grand total would quietly put it back.
+    const sums = await query(`
+      SELECT COUNT(*)::int                                                  AS count,
+             COUNT(*) FILTER (WHERE e.voided_at IS NULL)::int               AS active_count,
+             COUNT(*) FILTER (WHERE e.voided_at IS NOT NULL)::int           AS voided_count,
+             COALESCE(SUM(e.amount) FILTER (WHERE e.voided_at IS NULL), 0)     AS active_total,
+             COALESCE(SUM(e.amount) FILTER (WHERE e.voided_at IS NOT NULL), 0) AS voided_total
+             ${targetCol ? ', COALESCE(SUM(h.amt) FILTER (WHERE e.voided_at IS NULL), 0) AS active_allocated_total' : ''}
+        FROM expenses e${hereJoin}
+       ${whereSql}`, params);
+
+    const pg = pageClause(req, params.length + 1);
+    const rows = await query(`
+      SELECT e.id, e.serial_no, to_char(e.expense_date, 'YYYY-MM-DD') AS expense_date,
+             e.description, e.amount, e.payee, e.reference_no,
+             e.created_by, e.created_at, e.voided_at, e.voided_by, e.void_reason,
+             (SELECT COUNT(*) FROM expense_allocations a2 WHERE a2.expense_id = e.id) AS alloc_count,
+      ${ALLOC_TARGETS_SUMMARY},
+             (SELECT json_agg(json_build_object(
+                        'kind', CASE WHEN a3.project_id IS NOT NULL THEN 'project'
+                                     WHEN a3.trading_id IS NOT NULL THEN 'trading' ELSE 'facility' END,
+                        'targetId', COALESCE(a3.project_id, a3.trading_id, a3.facility_id),
+                        'name', COALESCE(p3.name, t3.name, f3.name),
+                        'amount', a3.amount) ORDER BY a3.id)
+                FROM expense_allocations a3
+                LEFT JOIN projects   p3 ON p3.id = a3.project_id
+                LEFT JOIN tradings   t3 ON t3.id = a3.trading_id
+                LEFT JOIN facilities f3 ON f3.id = a3.facility_id
+               WHERE a3.expense_id = e.id) AS allocations
+             ${targetCol ? ', h.amt AS allocated_here' : ''}
+        FROM expenses e${hereJoin}
+       ${whereSql}
+       -- expense_date is the voucher's own date and is what a reconciliation reads down; id breaks
+       -- ties so two receipts dated the same day keep a stable, repeatable order across pages.
+       ORDER BY e.expense_date DESC, e.id DESC${pg.sql}`, [...params, ...pg.params]);
+
+    const sm = sums.rows[0];
+    res.json({
+      expenses: rows.rows.map(r => ({
+        expenseId: Number(r.id), serialNo: r.serial_no,
+        expenseDate: r.expense_date, description: r.description,
+        amount: money2(r.amount),
+        allocatedHere: r.allocated_here === undefined ? null : money2(r.allocated_here),
+        allocationCount: Number(r.alloc_count), isSplit: Number(r.alloc_count) > 1,
+        targets: r.targets || null,
+        allocations: (r.allocations || []).map(a => ({ ...a, amount: money2(a.amount) })),
+        payee: r.payee, referenceNo: r.reference_no,
+        createdBy: r.created_by, createdAt: r.created_at,
+        status: r.voided_at ? 'voided' : 'active',
+        voidedAt: r.voided_at, voidedBy: r.voided_by, voidReason: r.void_reason,
+      })),
+      summary: {
+        count: sm.count, activeCount: sm.active_count, voidedCount: sm.voided_count,
+        activeTotal: money2(sm.active_total), voidedTotal: money2(sm.voided_total),
+        activeAllocatedTotal: sm.active_allocated_total === undefined ? null : money2(sm.active_allocated_total),
+      },
+      filters: { from, to, status, target: rawTarget || null },
+    });
+  } catch (err) {
+    console.error('expense history error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/projects/:id', async (req, res) => {
