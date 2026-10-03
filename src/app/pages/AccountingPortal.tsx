@@ -3,6 +3,7 @@ import {
   ClipboardList, PenTool, Menu, X, Search, Clock, Calendar, CheckCircle2,
   XCircle, Printer, LogOut, Upload, Eraser, Eye, Briefcase, Plus, Trash2, Pencil,
   PanelLeftClose, PanelLeftOpen, FileText, PackageMinus, CalendarCheck, Calculator, Building2, Receipt, Ban,
+  ArrowLeftRight, Split,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { onBackdropDown, backdropClose } from '../lib/backdrop';
@@ -34,7 +35,7 @@ import { PayrollReview } from '../components/crm/PayrollReview';
 // ============================================================================
 
 type PRStatus = 'pending' | 'reviewed' | 'verified' | 'ordered' | 'approved' | 'disapproved';
-type PortalView = 'new-pr' | 'requests' | 'orders' | 'projects' | 'facilities' | 'withdrawals' | 'timesheet' | 'payroll' | 'signature';
+type PortalView = 'new-pr' | 'requests' | 'orders' | 'projects' | 'tradings' | 'facilities' | 'withdrawals' | 'timesheet' | 'payroll' | 'signature';
 
 // Section C — #12: Accounting is also the FIRST gate of the purchase-ORDER flow. Purchasing
 // raises an order ('pending'); Accounting reviews it here (→ 'accounting-approved', passing it
@@ -71,17 +72,45 @@ interface Facility {
   id: string; name: string; description?: string; status?: string;
   location?: string; budgetAllocation?: number;
 }
-// Spend is never summed in the browser. GET /api/projects/spend and /api/facilities/spend are the
-// one definition (PROJECT_SPEND_SQL in server/index.js), shared with the admin dashboard chart.
+// A TRADING DEAL as a cost centre — the third sibling of Project and Facility. It carries a selling
+// price rather than a budget, because the useful question for a trade is margin, not budget adherence.
+//
+// Not to be confused with the sales-line taxonomy ('Trading (electrical)', 'Trading (mechanical)')
+// used on inquiries and sales orders. Same word, unrelated concept.
+interface Trading {
+  id: string; name: string; client?: string | null; status?: string;
+  sellingPrice?: number | null; salesOrderId?: string | null;
+}
+// Spend is never summed in the browser. GET /api/projects/spend, /api/tradings/spend and
+// /api/facilities/spend are the one definition (PROJECT_SPEND_SQL and friends in server/index.js),
+// shared with the admin dashboard chart.
 interface ProjectSpend {
   projectId: string; budget: number; spentPrs: number; spentExpenses: number;
   spent: number; remaining: number; overBudget: number;
 }
-interface FacilitySpend { facilityId: string; spent: number; }
-// A direct project cost logged here instead of through a purchase request. `amount` is the receipt
-// amount as paid (VAT included) — PR spend is VAT-exclusive; the difference is deliberate.
-interface ProjectExpense {
-  id: number; projectId: string; description: string; amount: number; expenseDate: string;
+interface TradingSpend {
+  tradingId: string; name: string; client?: string | null; status?: string;
+  sellingPrice: number | null; spentPrs: number; spentExpenses: number; spent: number;
+  margin: number | null;
+}
+interface FacilitySpend { facilityId: string; spentPrs: number; spentExpenses: number; spent: number; }
+
+// What a target can be. One expense is split across allocation lines, and each line charges exactly
+// ONE of these — enforced by a num_nonnulls CHECK in the DB, not just here.
+type TargetKind = 'project' | 'trading' | 'facility';
+interface TargetRef { kind: TargetKind; id: string; name: string }
+const TARGET_PATH: Record<TargetKind, string> = { project: 'projects', trading: 'tradings', facility: 'facilities' };
+
+// ONE allocation line as the server returns it: this target's own share (`amount`) plus the receipt
+// it came from (`expenseTotal`), so a split can be explained without fetching its sibling lines.
+// `amount` here and `expenseTotal` are both receipt money, VAT included — PR spend is VAT-exclusive;
+// the difference is deliberate and must not be "fixed".
+interface ExpenseAllocation {
+  allocationId: number; expenseId: number;
+  projectId?: string | null; tradingId?: string | null; facilityId?: string | null;
+  amount: number; expenseTotal: number; isSplit: boolean; allocationCount: number;
+  targets?: string | null;
+  description: string; expenseDate: string;
   payee?: string | null; referenceNo?: string | null; createdBy?: string | null; createdAt?: string;
   voidedAt?: string | null; voidedBy?: string | null; voidReason?: string | null;
 }
@@ -660,35 +689,101 @@ function FacilityModal({ initial, onClose, onSaved }: { initial: Facility | null
 }
 
 // ============================================================================
-// Log Expense — a direct project cost (gas, Lalamove, meals, a one-off payment) that never went
-// through a purchase request. Entered straight in, no approval step. Who logged it is taken from
-// the login on the server, never from this form.
+// Log Expense — a direct cost (gas, Lalamove, meals, a one-off payment) that never went through a
+// purchase request. Entered straight in, no approval step. Who logged it is taken from the login on
+// the server, never from this form.
+//
+// ONE receipt, SPLIT across one or more allocation lines. Each line charges exactly one target —
+// a project, a trading deal or a facility — and the lines must add up to the receipt total to the
+// centavo. A plain single-target expense is just one line, so the simple case stays simple.
+//
+// Balance is computed in CENTAVOS as integers, never by summing floats: adding 0.1-style values and
+// comparing against a total is exactly how a split silently ends up a centavo out.
 // ============================================================================
-function LogExpenseModal({ projects, initialProjectId, onClose, onSaved }: {
-  projects: Project[]; initialProjectId: string; onClose: () => void; onSaved: (projectId: string) => void;
+const toCentavos = (v: string) => {
+  const t = String(v ?? '').replace(/,/g, '').trim();
+  return /^\d+(\.\d{1,2})?$/.test(t) ? Math.round(Number(t) * 100) : null;
+};
+interface AllocDraft { key: number; target: string; amount: string }
+// The <select> value encodes both kind and id ("project:PRJ-123") so one dropdown can offer all
+// three target types without a second "what kind is it" control.
+const encodeTarget = (kind: TargetKind, id: string) => `${kind}:${id}`;
+const decodeTarget = (v: string): { kind: TargetKind; id: string } | null => {
+  const i = v.indexOf(':');
+  if (i < 0) return null;
+  const kind = v.slice(0, i) as TargetKind;
+  const id = v.slice(i + 1);
+  return id && (kind === 'project' || kind === 'trading' || kind === 'facility') ? { kind, id } : null;
+};
+
+function LogExpenseModal({ projects, tradings, facilities, initialTarget, onClose, onSaved }: {
+  projects: Project[]; tradings: Trading[]; facilities: Facility[];
+  initialTarget: TargetRef | null; onClose: () => void; onSaved: () => void;
 }) {
   const today = manilaToday();
-  const [f, setF] = useState({ projectId: initialProjectId, amount: '', expenseDate: today, description: '', payee: '', referenceNo: '' });
+  const [f, setF] = useState({ amount: '', expenseDate: today, description: '', payee: '', referenceNo: '' });
+  const [rows, setRows] = useState<AllocDraft[]>([
+    { key: 1, target: initialTarget ? encodeTarget(initialTarget.kind, initialTarget.id) : '', amount: '' },
+  ]);
   const [saving, setSaving] = useState(false);
+  const nextKey = useRef(2);
   const set = (k: keyof typeof f, v: string) => setF(p => ({ ...p, [k]: v }));
-  // Live projects first; a Completed one stays pickable because receipts often arrive after the job.
-  const ordered = useMemo(() => [...projects].sort((a, b) =>
-    Number(a.status === 'Completed') - Number(b.status === 'Completed') || a.name.localeCompare(b.name)), [projects]);
+
+  // Live entries first; a Completed project/trading stays pickable because receipts often arrive
+  // after the job is done.
+  const byStatus = <T extends { name: string; status?: string | null }>(xs: T[]) => [...xs].sort((a, b) =>
+    Number(a.status === 'Completed') - Number(b.status === 'Completed') || a.name.localeCompare(b.name));
+  const groups = useMemo(() => [
+    { label: 'Projects', kind: 'project' as TargetKind, items: byStatus(projects) },
+    { label: 'Trading deals', kind: 'trading' as TargetKind, items: byStatus(tradings) },
+    { label: 'Facilities', kind: 'facility' as TargetKind, items: byStatus(facilities) },
+  ].filter(g => g.items.length > 0), [projects, tradings, facilities]);
+
+  const totalCentavos = toCentavos(f.amount);
+  const allocCentavos = rows.reduce((t, r) => t + (toCentavos(r.amount) ?? 0), 0);
+  const balanced = totalCentavos !== null && totalCentavos > 0 && allocCentavos === totalCentavos;
+  const remaining = (totalCentavos ?? 0) - allocCentavos;
+
+  const addRow = () => setRows(p => [...p, { key: nextKey.current++, target: '', amount: '' }]);
+  const delRow = (key: number) => setRows(p => (p.length === 1 ? p : p.filter(r => r.key !== key)));
+  const setRow = (key: number, k: 'target' | 'amount', v: string) =>
+    setRows(p => p.map(r => (r.key === key ? { ...r, [k]: v } : r)));
+  // Fill the last unallocated amount in one click — the common case for a two-way split.
+  const fillRest = (key: number) => {
+    const others = rows.filter(r => r.key !== key).reduce((t, r) => t + (toCentavos(r.amount) ?? 0), 0);
+    const rest = (totalCentavos ?? 0) - others;
+    if (rest > 0) setRow(key, 'amount', (rest / 100).toFixed(2));
+  };
 
   const save = async () => {
     const amount = f.amount.replace(/,/g, '').trim();
-    if (!f.projectId) { toast.error('Choose a project'); return; }
-    if (!/^\d+(\.\d{1,2})?$/.test(amount) || !(Number(amount) > 0)) { toast.error('Enter the amount paid, e.g. 1250.50'); return; }
+    if (totalCentavos === null || totalCentavos <= 0) { toast.error('Enter the amount paid, e.g. 1250.50'); return; }
     if (!f.description.trim()) { toast.error('Description is required'); return; }
     if (!f.expenseDate) { toast.error('Choose the expense date'); return; }
+    const allocations: Record<string, string>[] = [];
+    for (const [i, r] of rows.entries()) {
+      const t = decodeTarget(r.target);
+      if (!t) { toast.error(`Line ${i + 1}: choose what to charge`); return; }
+      if (toCentavos(r.amount) === null || toCentavos(r.amount)! <= 0) { toast.error(`Line ${i + 1}: enter an amount`); return; }
+      allocations.push({ [`${t.kind}Id`]: t.id, amount: r.amount.replace(/,/g, '').trim() });
+    }
+    // Guard here as well as on the server and in the DB: three layers, because an unbalanced
+    // expense is money that silently belongs to nobody.
+    if (!balanced) {
+      toast.error(`Allocated ${peso(allocCentavos / 100)} of ${peso(totalCentavos / 100)} — they must match exactly`);
+      return;
+    }
     setSaving(true);
     try {
-      await aFetch(`/projects/${f.projectId}/expenses`, {
+      await aFetch('/expenses', {
         method: 'POST',
-        body: JSON.stringify({ amount, expenseDate: f.expenseDate, description: f.description.trim(), payee: f.payee.trim(), referenceNo: f.referenceNo.trim() }),
+        body: JSON.stringify({
+          amount, expenseDate: f.expenseDate, description: f.description.trim(),
+          payee: f.payee.trim(), referenceNo: f.referenceNo.trim(), allocations,
+        }),
       });
-      toast.success(`Expense of ${peso(Number(amount))} logged`);
-      onSaved(f.projectId);
+      toast.success(`Expense of ${peso(Number(amount))} logged across ${allocations.length} target${allocations.length === 1 ? '' : 's'}`);
+      onSaved();
     } catch (e: any) { toast.error('Log failed: ' + e.message); } finally { setSaving(false); }
   };
 
@@ -696,19 +791,12 @@ function LogExpenseModal({ projects, initialProjectId, onClose, onSaved }: {
   const label = 'block text-sm font-medium text-gray-700 mb-1';
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onMouseDown={onBackdropDown} onClick={backdropClose(onClose)}>
-      <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
           <h3 className="font-bold text-gray-900">Log Expense</h3>
           <button onClick={onClose} className="p-1 rounded-md text-gray-400 hover:bg-gray-100"><X className="w-5 h-5" /></button>
         </div>
         <div className="p-5 overflow-y-auto space-y-4">
-          <div>
-            <label className={label}>Project <span className="text-red-500">*</span></label>
-            <select value={f.projectId} onChange={e => set('projectId', e.target.value)} className={`${input} bg-white`}>
-              <option value="">Choose a project…</option>
-              {ordered.map(p => <option key={p.id} value={p.id}>{p.name}{p.status === 'Completed' ? ' (completed)' : ''}</option>)}
-            </select>
-          </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className={label}>Amount paid (₱) <span className="text-red-500">*</span></label>
@@ -725,6 +813,61 @@ function LogExpenseModal({ projects, initialProjectId, onClose, onSaved }: {
             <textarea value={f.description} onChange={e => set('description', e.target.value)} rows={2} maxLength={500}
               placeholder="e.g. Lalamove — steel delivery to site" className={`${input} resize-none`} />
           </div>
+
+          {/* ---- the split table ---- */}
+          <div className="border border-gray-200 rounded-xl overflow-hidden">
+            <div className="flex items-center justify-between gap-3 px-3 py-2.5 bg-gray-50 border-b border-gray-200">
+              <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-700"><Split className="w-4 h-4 text-gray-500" /> Charge to</div>
+              <button onClick={addRow} className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50"><Plus className="w-3.5 h-3.5" /> Add split</button>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {rows.map((r, i) => (
+                <div key={r.key} className="p-3 flex flex-col sm:flex-row sm:items-end gap-2">
+                  <div className="flex-1 min-w-0">
+                    {i === 0 && <label className="block text-xs font-medium text-gray-500 mb-1">Target</label>}
+                    <select value={r.target} onChange={e => setRow(r.key, 'target', e.target.value)} className={`${input} bg-white`}>
+                      <option value="">Choose a project, trading or facility…</option>
+                      {groups.map(g => (
+                        <optgroup key={g.kind} label={g.label}>
+                          {g.items.map(x => (
+                            <option key={x.id} value={encodeTarget(g.kind, x.id)}>
+                              {x.name}{x.status === 'Completed' ? ' (completed)' : ''}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="w-full sm:w-36">
+                    {i === 0 && <label className="block text-xs font-medium text-gray-500 mb-1">Amount (₱)</label>}
+                    <input inputMode="decimal" value={r.amount} onChange={e => setRow(r.key, 'amount', e.target.value)}
+                      placeholder="0.00" className={`${input} text-right`} />
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => fillRest(r.key)} title="Fill the remaining amount"
+                      className="px-2 py-2 text-xs font-medium border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 whitespace-nowrap">Rest</button>
+                    <button onClick={() => delRow(r.key)} disabled={rows.length === 1} title="Remove this line"
+                      className="p-2 text-gray-400 rounded-lg hover:bg-gray-50 hover:text-gray-600 disabled:opacity-30"><Trash2 className="w-4 h-4" /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {/* The running balance. Save stays disabled until this reads exactly balanced. */}
+            <div className={`px-3 py-2.5 border-t text-sm flex flex-wrap items-center justify-between gap-2 ${
+              balanced ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                       : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+              <span className="font-medium">
+                Allocated {peso(allocCentavos / 100)} of {totalCentavos === null ? '—' : peso(totalCentavos / 100)}
+              </span>
+              <span className="font-semibold whitespace-nowrap">
+                {totalCentavos === null ? 'Enter the receipt amount first'
+                  : balanced ? 'Balanced ✓'
+                  : remaining > 0 ? `${peso(remaining / 100)} left to allocate`
+                  : `${peso(-remaining / 100)} over-allocated`}
+              </span>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className={label}>Paid to <span className="text-gray-400 font-normal">(optional)</span></label>
@@ -738,7 +881,8 @@ function LogExpenseModal({ projects, initialProjectId, onClose, onSaved }: {
         </div>
         <div className="flex justify-end gap-2 px-5 py-4 border-t border-gray-200">
           <button onClick={onClose} className="px-4 py-2 text-sm font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">Cancel</button>
-          <button onClick={save} disabled={saving} className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">{saving ? 'Saving…' : 'Log Expense'}</button>
+          <button onClick={save} disabled={saving || !balanced} title={balanced ? '' : 'The split must add up to the receipt total'}
+            className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">{saving ? 'Saving…' : 'Log Expense'}</button>
         </div>
       </div>
     </div>
@@ -746,32 +890,39 @@ function LogExpenseModal({ projects, initialProjectId, onClose, onSaved }: {
 }
 
 // ============================================================================
-// A project's expenses — the spend summary (from the server), every logged expense, and Void.
-// Voiding keeps the row (struck through, with who/why) so the money record is never lost; it just
-// stops counting toward spend.
+// A target's expenses — the spend summary (from the server), every allocation line charged to it,
+// and Void. Works for a project, a trading deal or a facility; only the stat strip differs, because
+// a project has a budget to measure against and a trading has a selling price.
+//
+// Voiding keeps the rows (struck through, with who/why) so the money record is never lost; it just
+// stops counting toward spend. A void reverses the WHOLE receipt, every split line of it at once —
+// the confirmation says so explicitly when the receipt was split, because voiding from one project's
+// screen also pulls the money off whatever else it was shared with.
 // ============================================================================
-function ProjectExpensesModal({ project, spend, reloadKey, onClose, onLog, onChanged }: {
-  project: Project; spend: ProjectSpend | null; reloadKey: number;
+function ExpensesModal({ target, stats, reloadKey, onClose, onLog, onChanged }: {
+  target: TargetRef;
+  stats: { label: string; value: string; tone?: string }[];
+  reloadKey: number;
   onClose: () => void; onLog: () => void; onChanged: () => void;
 }) {
-  const [rows, setRows] = useState<ProjectExpense[] | null>(null);
-  const [voiding, setVoiding] = useState<ProjectExpense | null>(null);
+  const [rows, setRows] = useState<ExpenseAllocation[] | null>(null);
+  const [voiding, setVoiding] = useState<ExpenseAllocation | null>(null);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
-    try { setRows(await aFetch<ProjectExpense[]>(`/projects/${project.id}/expenses`)); }
+    try { setRows(await aFetch<ExpenseAllocation[]>(`/${TARGET_PATH[target.kind]}/${target.id}/expenses`)); }
     catch (e: any) { toast.error('Could not load expenses: ' + e.message); setRows([]); }
   };
-  useEffect(() => { load(); }, [project.id, reloadKey]);
+  useEffect(() => { load(); }, [target.kind, target.id, reloadKey]);
 
   const confirmVoid = async () => {
     if (!voiding) return;
     if (!reason.trim()) { toast.error('A reason is required'); return; }
     setBusy(true);
     try {
-      await aFetch(`/project-expenses/${voiding.id}/void`, { method: 'POST', body: JSON.stringify({ reason: reason.trim() }) });
-      toast.success(`Expense of ${peso(voiding.amount)} voided`);
+      await aFetch(`/expenses/${voiding.expenseId}/void`, { method: 'POST', body: JSON.stringify({ reason: reason.trim() }) });
+      toast.success(`Expense of ${peso(voiding.expenseTotal)} voided`);
       setVoiding(null); setReason('');
       await load();
       onChanged();
@@ -782,37 +933,40 @@ function ProjectExpensesModal({ project, spend, reloadKey, onClose, onLog, onCha
   // People type the reference either bare ("88121") or with the prefix ("OR 88121", "O.R. #88121");
   // normalise so it never reads "OR OR 88121". The lookahead keeps e.g. "ORD-551" intact.
   const refLabel = (r: string) => `OR ${r.replace(/^\s*o\.?\s*r\.?(?![a-z])\s*(no\.?|#)?\s*/i, '')}`;
-  const meta = (x: ProjectExpense) => [x.payee, x.referenceNo && refLabel(x.referenceNo)].filter(Boolean).join(' · ');
-  const voidAction = (x: ProjectExpense) => x.voidedAt
+  const meta = (x: ExpenseAllocation) => [x.payee, x.referenceNo && refLabel(x.referenceNo)].filter(Boolean).join(' · ');
+  // A split line shows ITS share as the amount, and says what the whole receipt was and how it was
+  // divided — otherwise ₱600 against a ₱1,000 receipt looks like a data error.
+  const splitNote = (x: ExpenseAllocation) => !x.isSplit ? null : (
+    <div className="text-xs text-blue-700 mt-0.5 flex items-start gap-1">
+      <Split className="w-3 h-3 mt-0.5 flex-shrink-0" />
+      <span>{peso(x.amount)} of a {peso(x.expenseTotal)} receipt split {x.allocationCount} ways{x.targets ? ` — ${x.targets}` : ''}</span>
+    </div>
+  );
+  const voidAction = (x: ExpenseAllocation) => x.voidedAt
     ? <span className="text-xs font-medium text-gray-400">Voided</span>
     : <button onClick={() => { setVoiding(x); setReason(''); }} className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Ban className="w-3.5 h-3.5" /> Void</button>;
   // A flex-wrap strip, not a grid: professional-design-complete.css forces `.grid-cols-2` with
   // !important, which beats any sm:grid-cols-N and would pin this to two columns everywhere.
   const stat = (label: string, value: string, tone = 'text-gray-900') => (
-    <div className="min-w-[7rem]">
+    <div className="min-w-[7rem]" key={label}>
       <div className="text-[11px] uppercase tracking-wide text-gray-500">{label}</div>
       <div className={`text-sm font-semibold ${tone} whitespace-nowrap`}>{value}</div>
     </div>
   );
+  const KIND_LABEL: Record<TargetKind, string> = { project: 'project', trading: 'trading deal', facility: 'facility' };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onMouseDown={onBackdropDown} onClick={backdropClose(onClose)}>
       <div className="w-full max-w-3xl bg-white rounded-2xl shadow-xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-gray-200">
           <div className="min-w-0">
-            <h3 className="font-bold text-gray-900 truncate">{project.name}</h3>
+            <h3 className="font-bold text-gray-900 truncate">{target.name}</h3>
             <p className="text-xs text-gray-500">Direct expenses — costs that didn't go through a purchase request</p>
           </div>
           <button onClick={onClose} className="p-1 rounded-md text-gray-400 hover:bg-gray-100 flex-shrink-0"><X className="w-5 h-5" /></button>
         </div>
 
         <div className="px-5 py-3 border-b border-gray-100 bg-gray-50 flex flex-wrap gap-x-8 gap-y-3">
-          {stat('Budget', spend ? peso(spend.budget) : '—')}
-          {stat('Purchased', spend ? peso(spend.spentPrs) : '—')}
-          {stat('Expenses', spend ? peso(spend.spentExpenses) : '—')}
-          {stat('Total spent', spend ? peso(spend.spent) : '—')}
-          {spend && spend.overBudget > 0
-            ? stat('Over budget', peso(spend.overBudget), 'text-red-600')
-            : stat('Remaining', spend ? peso(spend.remaining) : '—')}
+          {stats.map(s => stat(s.label, s.value, s.tone))}
         </div>
 
         <div className="p-5 overflow-y-auto">
@@ -821,7 +975,7 @@ function ProjectExpensesModal({ project, spend, reloadKey, onClose, onLog, onCha
             <button onClick={onLog} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Plus className="w-3.5 h-3.5" /> Log Expense</button>
           </div>
           {rows && rows.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-10 text-gray-400"><Receipt className="w-9 h-9 mb-2 text-gray-300" /><p className="text-sm">No expenses logged for this project yet.</p></div>
+            <div className="flex flex-col items-center justify-center py-10 text-gray-400"><Receipt className="w-9 h-9 mb-2 text-gray-300" /><p className="text-sm">No expenses logged for this {KIND_LABEL[target.kind]} yet.</p></div>
           ) : rows && (
             <>
             {/* Phone: one card per expense, so the amount is always on screen (a table scrolls it away). */}
@@ -829,11 +983,12 @@ function ProjectExpensesModal({ project, spend, reloadKey, onClose, onLog, onCha
               {rows.map(x => {
                 const voided = !!x.voidedAt;
                 return (
-                  <div key={x.id} className={`border border-gray-200 rounded-xl p-3 ${voided ? 'bg-gray-50' : ''}`}>
+                  <div key={x.allocationId} className={`border border-gray-200 rounded-xl p-3 ${voided ? 'bg-gray-50' : ''}`}>
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className={voided ? 'text-gray-400 line-through' : 'text-gray-900'}>{x.description}</div>
                         <div className="text-xs text-gray-400">{[fmtDate(x.expenseDate), meta(x)].filter(Boolean).join(' · ')}</div>
+                        {splitNote(x)}
                       </div>
                       <div className={`whitespace-nowrap font-semibold ${voided ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{peso(x.amount)}</div>
                     </div>
@@ -853,7 +1008,7 @@ function ProjectExpensesModal({ project, spend, reloadKey, onClose, onLog, onCha
                     <tr className="border-b border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-700 uppercase tracking-wide">
                       <th className="px-3 py-2.5">Date</th>
                       <th className="px-3 py-2.5">Description</th>
-                      <th className="px-3 py-2.5 text-right">Amount</th>
+                      <th className="px-3 py-2.5 text-right">Charged here</th>
                       <th className="px-3 py-2.5">Logged by</th>
                       <th className="px-3 py-2.5 text-right"></th>
                     </tr>
@@ -862,11 +1017,12 @@ function ProjectExpensesModal({ project, spend, reloadKey, onClose, onLog, onCha
                     {rows.map(x => {
                       const voided = !!x.voidedAt;
                       return (
-                        <tr key={x.id} className={`border-b border-gray-100 last:border-0 align-top ${voided ? 'bg-gray-50' : ''}`}>
+                        <tr key={x.allocationId} className={`border-b border-gray-100 last:border-0 align-top ${voided ? 'bg-gray-50' : ''}`}>
                           <td className={`px-3 py-2.5 whitespace-nowrap ${voided ? 'text-gray-400' : 'text-gray-700'}`}>{fmtDate(x.expenseDate)}</td>
                           <td className="px-3 py-2.5 min-w-[14rem]">
                             <div className={voided ? 'text-gray-400 line-through' : 'text-gray-900'}>{x.description}</div>
                             {meta(x) && <div className="text-xs text-gray-400">{meta(x)}</div>}
+                            {splitNote(x)}
                             {voided && (
                               <div className="text-xs text-red-600 mt-0.5">Voided by {x.voidedBy || 'unknown'}: {x.voidReason}</div>
                             )}
@@ -891,14 +1047,20 @@ function ProjectExpensesModal({ project, spend, reloadKey, onClose, onLog, onCha
           <div className="w-full max-w-md bg-white rounded-2xl shadow-xl" onClick={e => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-gray-200">
               <h3 className="font-bold text-gray-900">Void this expense?</h3>
-              <p className="mt-1 text-sm text-gray-500">{peso(voiding.amount)} — {voiding.description}</p>
+              <p className="mt-1 text-sm text-gray-500">{peso(voiding.expenseTotal)} — {voiding.description}</p>
             </div>
             <div className="p-5 space-y-2">
+              {voiding.isSplit && (
+                <div className="flex items-start gap-2 p-3 mb-1 text-xs rounded-lg bg-amber-50 border border-amber-200 text-amber-800">
+                  <Split className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <span>This receipt is split {voiding.allocationCount} ways{voiding.targets ? ` (${voiding.targets})` : ''}. Voiding it removes the money from <strong>all</strong> of them, not just this one.</span>
+                </div>
+              )}
               <label className="block text-sm font-medium text-gray-700">Reason <span className="text-red-500">*</span></label>
               <textarea autoFocus value={reason} onChange={e => setReason(e.target.value)} rows={3} maxLength={500}
                 placeholder="e.g. Duplicate — already logged under OR 88120"
                 className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
-              <p className="text-xs text-gray-400">The record stays on file, struck through, and stops counting toward this project's spend.</p>
+              <p className="text-xs text-gray-400">The record stays on file, struck through, and stops counting toward spend.</p>
             </div>
             <div className="flex justify-end gap-2 px-5 py-4 border-t border-gray-200">
               <button onClick={() => setVoiding(null)} className="px-4 py-2 text-sm font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">Cancel</button>
@@ -907,6 +1069,82 @@ function ProjectExpensesModal({ project, spend, reloadKey, onClose, onLog, onCha
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ============================================================================
+// New / Edit a trading deal. Name is all that's required; a selling price is optional and only
+// exists so the Trading Deals table can show margin. No budget field — see the Trading interface.
+// ============================================================================
+function TradingModal({ trading, onClose, onSaved }: {
+  trading: Trading | null; onClose: () => void; onSaved: () => void;
+}) {
+  const [f, setF] = useState({
+    name: trading?.name ?? '', client: trading?.client ?? '',
+    status: trading?.status ?? 'Active',
+    sellingPrice: trading?.sellingPrice != null ? String(trading.sellingPrice) : '',
+  });
+  const [saving, setSaving] = useState(false);
+  const set = (k: keyof typeof f, v: string) => setF(p => ({ ...p, [k]: v }));
+
+  const save = async () => {
+    if (!f.name.trim()) { toast.error('Name is required'); return; }
+    const price = f.sellingPrice.replace(/,/g, '').trim();
+    if (price && (!/^\d+(\.\d{1,2})?$/.test(price) || Number(price) < 0)) { toast.error('Selling price must be a peso amount, or left blank'); return; }
+    setSaving(true);
+    try {
+      const body = JSON.stringify({
+        name: f.name.trim(), client: f.client.trim() || null,
+        status: f.status, sellingPrice: price === '' ? null : price,
+      });
+      if (trading) await aFetch(`/tradings/${trading.id}`, { method: 'PATCH', body });
+      else await aFetch('/tradings', { method: 'POST', body });
+      toast.success(trading ? 'Trading updated' : 'Trading created');
+      onSaved();
+    } catch (e: any) { toast.error('Save failed: ' + e.message); } finally { setSaving(false); }
+  };
+
+  const input = 'w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500';
+  const label = 'block text-sm font-medium text-gray-700 mb-1';
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onMouseDown={onBackdropDown} onClick={backdropClose(onClose)}>
+      <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+          <h3 className="font-bold text-gray-900">{trading ? 'Edit Trading Deal' : 'New Trading Deal'}</h3>
+          <button onClick={onClose} className="p-1 rounded-md text-gray-400 hover:bg-gray-100"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 overflow-y-auto space-y-4">
+          <div>
+            <label className={label}>Name <span className="text-red-500">*</span></label>
+            <input autoFocus value={f.name} onChange={e => set('name', e.target.value)} maxLength={200}
+              placeholder="e.g. Air pumps — RESUN ACO-012 for NHK" className={input} />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className={label}>Client <span className="text-gray-400 font-normal">(optional)</span></label>
+              <input value={f.client} onChange={e => set('client', e.target.value)} maxLength={200} className={input} />
+            </div>
+            <div>
+              <label className={label}>Status</label>
+              <select value={f.status} onChange={e => set('status', e.target.value)} className={`${input} bg-white`}>
+                <option value="Active">Active</option>
+                <option value="On Hold">On Hold</option>
+                <option value="Completed">Completed</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className={label}>Selling price (₱) <span className="text-gray-400 font-normal">(optional)</span></label>
+            <input inputMode="decimal" value={f.sellingPrice} onChange={e => set('sellingPrice', e.target.value)} placeholder="0.00" className={input} />
+            <p className="mt-1 text-xs text-gray-400">Only used to show margin (selling price − cost). Leave blank to just accumulate cost.</p>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 px-5 py-4 border-t border-gray-200">
+          <button onClick={onClose} className="px-4 py-2 text-sm font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">Cancel</button>
+          <button onClick={save} disabled={saving} className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">{saving ? 'Saving…' : trading ? 'Save changes' : 'Create trading'}</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -932,29 +1170,39 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const [showProjectModal, setShowProjectModal] = useState(false);
   const [editingFacility, setEditingFacility] = useState<Facility | null>(null);
   const [showFacilityModal, setShowFacilityModal] = useState(false);
-  // Spend per project/facility, straight from the server. null = couldn't load → shown as "—",
-  // never as a misleading ₱0.00.
+  const [tradings, setTradings] = useState<Trading[]>([]);
+  const [editingTrading, setEditingTrading] = useState<Trading | null>(null);
+  const [showTradingModal, setShowTradingModal] = useState(false);
+  // Spend per project/trading/facility, straight from the server. null = couldn't load → shown as
+  // "—", never as a misleading ₱0.00.
   const [projectSpend, setProjectSpend] = useState<Record<string, ProjectSpend> | null>(null);
-  const [facilitySpend, setFacilitySpend] = useState<Record<string, number> | null>(null);
-  const [logExpenseFor, setLogExpenseFor] = useState<string | null>(null); // project id, '' = let them pick
-  const [expensesFor, setExpensesFor] = useState<Project | null>(null);
+  const [tradingSpend, setTradingSpend] = useState<Record<string, TradingSpend> | null>(null);
+  const [facilitySpend, setFacilitySpend] = useState<Record<string, FacilitySpend> | null>(null);
+  // The Log Expense modal: { target } pre-selects the first split line, null = closed.
+  // `target: null` inside the object means "open, nothing pre-selected".
+  const [logExpense, setLogExpense] = useState<{ target: TargetRef | null } | null>(null);
+  const [expensesFor, setExpensesFor] = useState<TargetRef | null>(null);
   const [expensesReload, setExpensesReload] = useState(0);
 
   // silent: background poll — no spinner, no toast on a blip (see useLiveRefresh).
   const loadAll = async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!silent) setLoading(true);
     try {
-      const [prs, pos, prj, fac, sig, pSpend, fSpend] = await Promise.all([
+      const [prs, pos, prj, fac, trd, sig, pSpend, fSpend, tSpend] = await Promise.all([
         aFetch<PurchaseRequest[]>('/purchase-requests'),
         aFetch<PurchaseOrder[]>('/purchase-orders').catch(() => [] as PurchaseOrder[]),
         aFetch<Project[]>('/projects'),
         aFetch<Facility[]>('/facilities').catch(() => [] as Facility[]),
+        aFetch<Trading[]>('/tradings').catch(() => [] as Trading[]),
         aFetch<{ signature: string | null }>('/accounting/signature').catch(() => ({ signature: null })),
         aFetch<ProjectSpend[]>('/projects/spend').catch(() => null),
         aFetch<FacilitySpend[]>('/facilities/spend').catch(() => null),
+        aFetch<TradingSpend[]>('/tradings/spend').catch(() => null),
       ]);
       setProjectSpend(pSpend ? Object.fromEntries(pSpend.map(s => [s.projectId, s])) : null);
-      setFacilitySpend(fSpend ? Object.fromEntries(fSpend.map(s => [s.facilityId, s.spent])) : null);
+      setFacilitySpend(fSpend ? Object.fromEntries(fSpend.map(s => [s.facilityId, s])) : null);
+      setTradingSpend(tSpend ? Object.fromEntries(tSpend.map(s => [s.tradingId, s])) : null);
+      setTradings(trd || []);
       setRequests(prs || []);
       // Only real purchase orders (the table is shared with Sales Orders, discriminated by
       // order_type — accounting reviews purchases, not sales).
@@ -968,7 +1216,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   };
   useEffect(() => { loadAll(); }, []);
   // Paused while a review is in flight or a project/facility modal is open.
-  useLiveRefresh(() => loadAll({ silent: true }), { enabled: !busyId && !showProjectModal && !editingProject && !showFacilityModal && !editingFacility && logExpenseFor === null && !expensesFor });
+  useLiveRefresh(() => loadAll({ silent: true }), { enabled: !busyId && !showProjectModal && !editingProject && !showFacilityModal && !editingFacility && !showTradingModal && !editingTrading && !logExpense && !expensesFor });
 
   const review = async (pr: PurchaseRequest) => {
     if (!(await confirmDialog({ title: `Confirm you have reviewed ${pr.prNumber}?`, message: 'Your e-signature is attached and it moves to Purchasing to raise a purchase order.', confirmLabel: 'Confirm review' }))) return;
@@ -1018,6 +1266,48 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     catch (e: any) { setProjects(prev); toast.error('Delete failed: ' + e.message); }
   };
 
+  // The stat strip above a target's expense list. Each target type measures itself differently: a
+  // project against its budget, a trading against its selling price (margin), a facility against
+  // nothing at all — so the strip is built per kind rather than pretending they share a shape.
+  const expenseStats = (t: TargetRef): { label: string; value: string; tone?: string }[] => {
+    if (t.kind === 'project') {
+      const s = projectSpend?.[t.id] ?? null;
+      return [
+        { label: 'Budget', value: s ? peso(s.budget) : '—' },
+        { label: 'Purchased', value: s ? peso(s.spentPrs) : '—' },
+        { label: 'Expenses', value: s ? peso(s.spentExpenses) : '—' },
+        { label: 'Total spent', value: s ? peso(s.spent) : '—' },
+        s && s.overBudget > 0
+          ? { label: 'Over budget', value: peso(s.overBudget), tone: 'text-red-600' }
+          : { label: 'Remaining', value: s ? peso(s.remaining) : '—' },
+      ];
+    }
+    if (t.kind === 'trading') {
+      const s = tradingSpend?.[t.id] ?? null;
+      return [
+        { label: 'Purchased', value: s ? peso(s.spentPrs) : '—' },
+        { label: 'Expenses', value: s ? peso(s.spentExpenses) : '—' },
+        { label: 'Total cost', value: s ? peso(s.spent) : '—' },
+        { label: 'Selling price', value: s && s.sellingPrice != null ? peso(s.sellingPrice) : '—' },
+        { label: 'Margin', value: s && s.margin !== null ? peso(s.margin) : '—',
+          tone: s && s.margin !== null && s.margin < 0 ? 'text-red-600' : 'text-emerald-700' },
+      ];
+    }
+    const s = facilitySpend?.[t.id] ?? null;
+    return [
+      { label: 'Purchased', value: s ? peso(s.spentPrs) : '—' },
+      { label: 'Expenses', value: s ? peso(s.spentExpenses) : '—' },
+      { label: 'Total spent', value: s ? peso(s.spent) : '—' },
+    ];
+  };
+
+  // A trading carrying PRs or expense allocations is refused by the server (409) — the same
+  // protection projects have. Retire it by setting its status to Completed instead.
+  const deleteTrading = async (t: Trading) => {
+    if (!(await confirmDialog({ title: `Delete "${t.name}"?`, message: 'This cannot be undone. A trading with purchase requests or expenses on it cannot be deleted.', confirmLabel: 'Delete trading', danger: true }))) return;
+    try { await aFetch(`/tradings/${t.id}`, { method: 'DELETE' }); toast.success('Trading deleted'); loadAll(); }
+    catch (e: any) { toast.error(e.message || 'Delete failed'); }
+  };
   const deleteFacility = async (f: Facility) => {
     if (!(await confirmDialog({ title: `Delete facility "${f.name}"?`, message: 'Purchase requests that referenced it will show as "Personal use".', confirmLabel: 'Delete', tone: 'danger' }))) return;
     const prev = facilities; setFacilities(facilities.filter(x => x.id !== f.id));
@@ -1039,6 +1329,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     { id: 'requests', label: 'Purchase Requests', icon: ClipboardList },
     { id: 'orders', label: 'Purchase Orders', icon: FileText },
     { id: 'projects', label: 'Project Allocation', icon: Briefcase },
+    { id: 'tradings', label: 'Trading Deals', icon: ArrowLeftRight },
     { id: 'facilities', label: 'Facilities', icon: Building2 },
     { id: 'withdrawals', label: 'Withdrawals Request', icon: PackageMinus },
     { id: 'timesheet', label: 'Attendance Sheet', icon: CalendarCheck },
@@ -1123,7 +1414,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                   <p className="text-sm text-gray-500">Project master data — these appear in the employee's "For (Project)" picker. Spent is approved &amp; ordered purchase requests plus the direct expenses logged here.</p>
                 </div>
                 <div className="flex flex-wrap gap-2 flex-shrink-0">
-                  <button onClick={() => setLogExpenseFor('')} disabled={projects.length === 0} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium whitespace-nowrap border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"><Receipt className="w-4 h-4" /> Log Expense</button>
+                  <button onClick={() => setLogExpense({ target: null })} disabled={projects.length === 0 && tradings.length === 0 && facilities.length === 0} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium whitespace-nowrap border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"><Receipt className="w-4 h-4" /> Log Expense</button>
                   <button onClick={() => { setEditingProject(null); setShowProjectModal(true); }} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium whitespace-nowrap bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Plus className="w-4 h-4" /> New Project</button>
                 </div>
               </div>
@@ -1174,7 +1465,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                                     : <span className="font-semibold text-gray-900">{peso(s.remaining)}</span>}
                               </td>
                               <td className="px-4 py-3 text-right whitespace-nowrap">
-                                <button onClick={() => setExpensesFor(p)} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Receipt className="w-3.5 h-3.5" /> Expenses</button>
+                                <button onClick={() => setExpensesFor({ kind: 'project', id: p.id, name: p.name })} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Receipt className="w-3.5 h-3.5" /> Expenses</button>
                                 <button onClick={() => { setEditingProject(p); setShowProjectModal(true); }} className="ml-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Pencil className="w-3.5 h-3.5" /> Edit</button>
                                 <button onClick={() => deleteProject(p)} className="ml-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Trash2 className="w-3.5 h-3.5" /> Delete</button>
                               </td>
@@ -1215,16 +1506,23 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                         </thead>
                         <tbody>
                           {facilities.map(f => {
-                            const spent = facilitySpend ? facilitySpend[f.id] ?? 0 : null;
+                            const fs = facilitySpend ? facilitySpend[f.id] ?? null : null;
+                            const spent = facilitySpend ? (fs ? fs.spent : 0) : null;
                             return (
                               <tr key={f.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
                                 <td className="px-4 py-3">
                                   <div className="font-medium text-gray-900">{f.name}</div>
                                 </td>
                                 <td className="px-4 py-3 text-gray-500 max-w-md">{f.description || '—'}</td>
-                                <td className="px-4 py-3 text-right font-semibold text-gray-900">{spent === null ? <span className="font-normal text-gray-400">—</span> : peso(spent)}</td>
+                                <td className="px-4 py-3 text-right font-semibold text-gray-900 whitespace-nowrap">
+                                  {spent === null ? <span className="font-normal text-gray-400">—</span> : <>
+                                    <div>{peso(spent)}</div>
+                                    {fs && fs.spentExpenses > 0 && <div className="text-xs font-normal text-gray-400">PRs {peso(fs.spentPrs)} · Exp. {peso(fs.spentExpenses)}</div>}
+                                  </>}
+                                </td>
                                 <td className="px-4 py-3 text-right whitespace-nowrap">
-                                  <button onClick={() => { setEditingFacility(f); setShowFacilityModal(true); }} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Pencil className="w-3.5 h-3.5" /> Edit</button>
+                                  <button onClick={() => setExpensesFor({ kind: 'facility', id: f.id, name: f.name })} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Receipt className="w-3.5 h-3.5" /> Expenses</button>
+                                  <button onClick={() => { setEditingFacility(f); setShowFacilityModal(true); }} className="ml-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Pencil className="w-3.5 h-3.5" /> Edit</button>
                                   <button onClick={() => deleteFacility(f)} className="ml-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Trash2 className="w-3.5 h-3.5" /> Delete</button>
                                 </td>
                               </tr>
@@ -1238,6 +1536,79 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
             </div>
           )}
 
+
+          {/* ---- Trading Deals: cost centres for the company's trading purchases ---- */}
+          {view === 'tradings' && (
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                <div>
+                  <h2 className="font-semibold text-gray-900">Trading Deals</h2>
+                  <p className="text-sm text-gray-500">Each trading deal is its own cost centre, like a project — purchase requests and expenses charged to it add up here. Cost is the total of its purchase requests plus its share of any expense. A selling price is optional and only used to show margin; there is no budget.</p>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2 sm:flex-shrink-0">
+                  <button onClick={() => setLogExpense({ target: null })} disabled={projects.length === 0 && tradings.length === 0 && facilities.length === 0} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium whitespace-nowrap border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"><Receipt className="w-4 h-4" /> Log Expense</button>
+                  <button onClick={() => { setEditingTrading(null); setShowTradingModal(true); }} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium whitespace-nowrap bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Plus className="w-4 h-4" /> New Trading</button>
+                </div>
+              </div>
+              {loading ? <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading…</div>
+                : tradings.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-48 text-gray-400"><ArrowLeftRight className="w-10 h-10 mb-3 text-gray-300" /><p className="font-medium text-gray-500">No trading deals yet</p><p className="text-sm">Create one to start tracking what a trade cost.</p></div>
+                ) : (
+                  <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-700 uppercase tracking-wide">
+                            <th className="px-4 py-3">Trading</th>
+                            <th className="px-4 py-3">Status</th>
+                            <th className="px-4 py-3 text-right">Cost</th>
+                            <th className="px-4 py-3 text-right">Selling price</th>
+                            <th className="px-4 py-3 text-right">Margin</th>
+                            <th className="px-4 py-3 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {tradings.map(t => {
+                            const sp = tradingSpend?.[t.id] ?? null;
+                            return (
+                            <tr key={t.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                              <td className="px-4 py-3">
+                                <div className="font-medium text-gray-900">{t.name}</div>
+                                {t.client && <div className="text-xs text-gray-400">{t.client}</div>}
+                              </td>
+                              <td className="px-4 py-3"><span className="text-xs font-medium px-2.5 py-1 rounded-full border bg-gray-50 text-gray-700 border-gray-200">{t.status || 'Active'}</span></td>
+                              <td className="px-4 py-3 text-right whitespace-nowrap">
+                                {sp ? (
+                                  <>
+                                    <div className="font-semibold text-gray-900">{peso(sp.spent)}</div>
+                                    <div className="text-xs text-gray-400">PRs {peso(sp.spentPrs)} · Exp. {peso(sp.spentExpenses)}</div>
+                                  </>
+                                ) : <span className="text-gray-400">—</span>}
+                              </td>
+                              <td className="px-4 py-3 text-right whitespace-nowrap text-gray-900">
+                                {t.sellingPrice != null ? peso(t.sellingPrice) : <span className="text-gray-400">—</span>}
+                              </td>
+                              {/* Margin only means something once a selling price is recorded; without one
+                                  this stays blank rather than implying a loss equal to the whole cost. */}
+                              <td className="px-4 py-3 text-right whitespace-nowrap">
+                                {!sp || sp.margin === null ? <span className="text-gray-400">—</span>
+                                  : <span className={`font-semibold ${sp.margin < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{peso(sp.margin)}</span>}
+                              </td>
+                              <td className="px-4 py-3 text-right whitespace-nowrap">
+                                <button onClick={() => setExpensesFor({ kind: 'trading', id: t.id, name: t.name })} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Receipt className="w-3.5 h-3.5" /> Expenses</button>
+                                <button onClick={() => { setEditingTrading(t); setShowTradingModal(true); }} className="ml-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Pencil className="w-3.5 h-3.5" /> Edit</button>
+                                <button onClick={() => deleteTrading(t)} className="ml-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Trash2 className="w-3.5 h-3.5" /> Delete</button>
+                              </td>
+                            </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+            </div>
+          )}
           {view === 'requests' && (
             <div className="space-y-4">
               {!signature && (
@@ -1378,17 +1749,22 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
       {showFacilityModal && (
         <FacilityModal initial={editingFacility} onClose={() => setShowFacilityModal(false)} onSaved={() => { setShowFacilityModal(false); loadAll(); }} />
       )}
+      {showTradingModal && (
+        <TradingModal trading={editingTrading} onClose={() => { setShowTradingModal(false); setEditingTrading(null); }}
+          onSaved={() => { setShowTradingModal(false); setEditingTrading(null); loadAll(); }} />
+      )}
       {/* Expenses list first, Log Expense after it: opened from inside the list, the log form is the
           later sibling and so sits on top of it. */}
       {expensesFor && (
-        <ProjectExpensesModal project={expensesFor} spend={projectSpend?.[expensesFor.id] ?? null} reloadKey={expensesReload}
-          onClose={() => setExpensesFor(null)} onLog={() => setLogExpenseFor(expensesFor.id)}
+        <ExpensesModal target={expensesFor} reloadKey={expensesReload}
+          stats={expenseStats(expensesFor)}
+          onClose={() => setExpensesFor(null)} onLog={() => setLogExpense({ target: expensesFor })}
           onChanged={() => loadAll({ silent: true })} />
       )}
-      {logExpenseFor !== null && (
-        <LogExpenseModal projects={projects} initialProjectId={logExpenseFor}
-          onClose={() => setLogExpenseFor(null)}
-          onSaved={() => { setLogExpenseFor(null); setExpensesReload(n => n + 1); loadAll({ silent: true }); }} />
+      {logExpense && (
+        <LogExpenseModal projects={projects} tradings={tradings} facilities={facilities} initialTarget={logExpense.target}
+          onClose={() => setLogExpense(null)}
+          onSaved={() => { setLogExpense(null); setExpensesReload(n => n + 1); loadAll({ silent: true }); }} />
       )}
     </div>
   );

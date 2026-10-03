@@ -759,6 +759,212 @@ async function runMigrations() {
       console.log('✅ project_expenses table ready');
     } catch (err) { console.log('ℹ️ project_expenses table skipped:', err.message); }
 
+    // ======================= TRADINGS =======================
+    // A trading deal as a first-class COST CENTRE, sibling to projects and facilities. Before this,
+    // "Trading" was only purchase_requests.project_label = 'Trading' — a display string with no id,
+    // so every trading purchase was indistinguishable from every other AND invisible to every spend
+    // view (both spend queries require project_id / facility_id to be non-null).
+    //
+    // selling_price, NOT a budget, on purpose: the useful question for a trade is margin (what it
+    // cost vs what it sold for), and the budget_allocation offered on facilities has sat at 0.00 on
+    // all three of them since it was added. Mirrors how projects carry contract_price.
+    //
+    // sales_order_id is a deliberately UNCONSTRAINED text bridge for the day sales_orders is
+    // actually used (it has 0 rows today). No FK: a hard dependency on an unused module would block
+    // this feature on that module's adoption.
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS tradings (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL CHECK (btrim(name) <> ''),
+          client TEXT,
+          status TEXT DEFAULT 'Active',
+          selling_price NUMERIC(14,2),
+          sales_order_id TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      console.log('✅ tradings table ready');
+    } catch (err) { console.log('ℹ️ tradings table skipped:', err.message); }
+
+    // Charge a PR to a trading, exactly as project_id / facility_id already do. ON DELETE RESTRICT
+    // rather than the SET NULL those two use: SET NULL is precisely "how a deleted project's spend
+    // used to vanish" (see the project_expenses note above), and the whole point of this feature is
+    // to stop trading money being invisible. A trading with PRs on it must be retired, not deleted.
+    try {
+      await query(`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS trading_id TEXT`);
+      await query(`DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'purchase_requests_trading_id_fkey') THEN
+          ALTER TABLE purchase_requests
+            ADD CONSTRAINT purchase_requests_trading_id_fkey
+            FOREIGN KEY (trading_id) REFERENCES tradings(id) ON DELETE RESTRICT;
+        END IF;
+      END $$`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_purchase_requests_trading ON purchase_requests(trading_id)`);
+      console.log('✅ purchase_requests.trading_id ready');
+    } catch (err) { console.log('ℹ️ purchase_requests.trading_id skipped:', err.message); }
+
+    // ============== EXPENSES + ALLOCATIONS (replaces project_expenses) ==============
+    // One expense, many allocation lines. A ₱1,000 gas receipt can be split ₱600 to a project and
+    // ₱400 to a trading; a single-target expense is simply one allocation line.
+    //
+    // This REPLACES the one-expense-one-project shape of project_expenses, and supersedes the plan
+    // written in that table's comment (add a nullable facility_id + num_nonnulls CHECK on the
+    // expense itself). Half-building both would leave two code paths summing money. project_expenses
+    // is LEFT IN PLACE, frozen and no longer read by anything, as a pre-migration audit copy.
+    //
+    // AMOUNT BASIS, unchanged and still deliberate: expenses.amount is the full amount paid — the
+    // receipt as-is, VAT included. PR spend uses purchase_requests.final_total, the VAT-EXCLUSIVE
+    // subtotal. The two bases differ on purpose; do not "fix" one to match the other.
+    //
+    // Cancelling is still a VOID (voided_* stamped, rows kept); voiding the parent takes all of its
+    // allocation lines out of every spend sum at once, since each spend CTE joins back to the parent
+    // and filters voided_at IS NULL.
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS expenses (
+          id BIGSERIAL PRIMARY KEY,
+          description TEXT NOT NULL CHECK (btrim(description) <> ''),
+          amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+          expense_date DATE NOT NULL,
+          payee TEXT,
+          reference_no TEXT,
+          created_by TEXT,
+          created_by_id TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          voided_at TIMESTAMPTZ,
+          voided_by TEXT,
+          voided_by_id TEXT,
+          void_reason TEXT,
+          migrated_from_project_expense_id BIGINT,
+          CONSTRAINT expenses_void_needs_reason
+            CHECK (voided_at IS NULL OR btrim(COALESCE(void_reason, '')) <> '')
+        )
+      `);
+      // Makes the project_expenses migration below idempotent across restarts.
+      await query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_expenses_migrated_from
+                     ON expenses(migrated_from_project_expense_id)
+                   WHERE migrated_from_project_expense_id IS NOT NULL`);
+      await query(`
+        CREATE TABLE IF NOT EXISTS expense_allocations (
+          id BIGSERIAL PRIMARY KEY,
+          expense_id BIGINT NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+          project_id TEXT REFERENCES projects(id) ON DELETE RESTRICT,
+          trading_id TEXT REFERENCES tradings(id) ON DELETE RESTRICT,
+          facility_id TEXT REFERENCES facilities(id) ON DELETE RESTRICT,
+          amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          -- Exactly one target per line. Real FKs, never a polymorphic target_type/target_id: a
+          -- polymorphic column cannot carry a foreign key, so a stale or mistyped id would silently
+          -- orphan money -- the exact failure this system already got burned by.
+          CONSTRAINT expense_allocations_one_target
+            CHECK (num_nonnulls(project_id, trading_id, facility_id) = 1)
+        )
+      `);
+      await query(`CREATE INDEX IF NOT EXISTS idx_expense_alloc_expense  ON expense_allocations(expense_id)`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_expense_alloc_project  ON expense_allocations(project_id)  WHERE project_id  IS NOT NULL`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_expense_alloc_trading  ON expense_allocations(trading_id)  WHERE trading_id  IS NOT NULL`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_expense_alloc_facility ON expense_allocations(facility_id) WHERE facility_id IS NOT NULL`);
+      console.log('✅ expenses + expense_allocations tables ready');
+    } catch (err) { console.log('ℹ️ expenses/expense_allocations skipped:', err.message); }
+
+    // DB-LEVEL balance guard: allocations must sum to the parent's amount. A plain CHECK cannot see
+    // across rows, so this is a CONSTRAINT TRIGGER — and DEFERRABLE INITIALLY DEFERRED, which is
+    // what makes it usable: the write transaction inserts the parent and its lines one statement at
+    // a time, so the books only have to balance at COMMIT, not after every INSERT. The API also
+    // checks the sum before writing; this is the backstop that makes an unbalanced expense
+    // impossible even from psql or a future endpoint that forgets.
+    try {
+      await query(`
+        CREATE OR REPLACE FUNCTION expense_balance_check() RETURNS trigger AS $fn$
+        DECLARE eid BIGINT; total NUMERIC(14,2); alloc NUMERIC(14,2);
+        BEGIN
+          IF TG_TABLE_NAME = 'expenses' THEN
+            IF TG_OP = 'DELETE' THEN eid := OLD.id; ELSE eid := NEW.id; END IF;
+          ELSE
+            IF TG_OP = 'DELETE' THEN eid := OLD.expense_id; ELSE eid := NEW.expense_id; END IF;
+          END IF;
+          SELECT amount INTO total FROM expenses WHERE id = eid;
+          -- Parent already gone (ON DELETE CASCADE removed its lines): nothing left to balance.
+          IF total IS NULL THEN RETURN NULL; END IF;
+          SELECT COALESCE(SUM(amount), 0) INTO alloc FROM expense_allocations WHERE expense_id = eid;
+          IF alloc <> total THEN
+            RAISE EXCEPTION 'expense % is %, but its allocations total % — they must be equal', eid, total, alloc
+              USING ERRCODE = 'check_violation';
+          END IF;
+          RETURN NULL;
+        END $fn$ LANGUAGE plpgsql
+      `);
+      for (const [name, tbl, ev] of [
+        ['trg_expense_alloc_balance', 'expense_allocations', 'INSERT OR UPDATE OR DELETE'],
+        ['trg_expense_amount_balance', 'expenses', 'INSERT OR UPDATE'],
+      ]) {
+        await query(`DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = '${name}') THEN
+            CREATE CONSTRAINT TRIGGER ${name} AFTER ${ev} ON ${tbl}
+              DEFERRABLE INITIALLY DEFERRED
+              FOR EACH ROW EXECUTE FUNCTION expense_balance_check();
+          END IF;
+        END $$`);
+      }
+      console.log('✅ expense balance guard ready');
+    } catch (err) { console.log('ℹ️ expense balance guard skipped:', err.message); }
+
+    // One-time migration: every project_expenses row becomes a parent expense with exactly ONE
+    // allocation line pointing at the same project for the same amount, so spend does not move by a
+    // centavo. Voided rows migrate too, void stamps intact — they are audit records, and the expense
+    // list renders them struck through. Idempotent via migrated_from_project_expense_id.
+    try {
+      const mig = await query(`
+        WITH src AS (
+          SELECT pe.* FROM project_expenses pe
+           WHERE NOT EXISTS (SELECT 1 FROM expenses e WHERE e.migrated_from_project_expense_id = pe.id)
+        ), ins AS (
+          INSERT INTO expenses (description, amount, expense_date, payee, reference_no, created_by,
+                                created_by_id, created_at, updated_at, voided_at, voided_by,
+                                voided_by_id, void_reason, migrated_from_project_expense_id)
+          SELECT description, amount, expense_date, payee, reference_no, created_by, created_by_id,
+                 created_at, updated_at, voided_at, voided_by, voided_by_id, void_reason, id
+            FROM src
+          RETURNING id, migrated_from_project_expense_id, amount
+        )
+        INSERT INTO expense_allocations (expense_id, project_id, amount)
+        SELECT ins.id, src.project_id, ins.amount
+          FROM ins JOIN src ON src.id = ins.migrated_from_project_expense_id
+        RETURNING id
+      `);
+      if (mig.rowCount) console.log(`✅ migrated ${mig.rowCount} project_expenses row(s) into expenses + allocations`);
+    } catch (err) { console.log('ℹ️ project_expenses migration skipped:', err.message); }
+
+    // Backfill the trading PRs that were invisible to every spend view: both FKs null and
+    // project_label = 'Trading'. Each gets its own trading record named from its first line item so
+    // the two are finally distinguishable, then the PR is attached to it. Placeholder names —
+    // renameable in the Accounting portal. Runs only for PRs not already attached.
+    try {
+      const bf = await query(`
+        WITH src AS (
+          SELECT pr.id, pr.pr_number,
+                 COALESCE(NULLIF(btrim(pr.items->0->>'description'), ''), 'unnamed') AS first_item
+            FROM purchase_requests pr
+           WHERE pr.trading_id IS NULL AND pr.project_id IS NULL AND pr.facility_id IS NULL
+             AND pr.project_label = 'Trading'
+        ), ins AS (
+          INSERT INTO tradings (id, name)
+          SELECT 'TRD-' || EXTRACT(EPOCH FROM NOW())::bigint || '-' || src.id,
+                 'Trading — ' || left(src.first_item, 80) || ' (' || src.pr_number || ')'
+            FROM src
+          RETURNING id, name
+        )
+        UPDATE purchase_requests pr SET trading_id = ins.id, updated_at = NOW()
+          FROM ins, src
+         WHERE src.id = pr.id AND ins.name LIKE '%(' || src.pr_number || ')'
+        RETURNING pr.pr_number, pr.trading_id
+      `);
+      if (bf.rowCount) console.log(`✅ attached ${bf.rowCount} Trading PR(s) to new trading records`);
+    } catch (err) { console.log('ℹ️ trading PR backfill skipped:', err.message); }
+
     // Purchase requests (employee-filed via /production portal; line items stored as JSONB)
     try {
       await query(`
@@ -7309,6 +7515,8 @@ function mapPurchaseRequest(r) {
     projectId: r.project_id, projectName: r.project_name ?? r.project_label ?? null, projectLabel: r.project_label ?? null,
     // Internal-facility charge (mutually exclusive with projectId). facilityName comes from the join.
     facilityId: r.facility_id ?? null, facilityName: r.facility_name ?? null,
+    // Trading-deal charge, the third mutually-exclusive target. tradingName comes from the join.
+    tradingId: r.trading_id ?? null, tradingName: r.trading_name ?? null,
     neededBy: r.needed_by, supplier: r.supplier, notes: r.notes,
     items: Array.isArray(r.items) ? r.items : (r.items || []),
     total: r.total === null ? 0 : parseFloat(r.total),
@@ -7560,7 +7768,7 @@ app.get('/api/projects', async (req, res) => {
 //
 // PRs and expenses are summed SEPARATELY and only then joined. Joining projects → PRs → expenses in
 // one pass multiplies rows (3 PRs × 2 expenses = 6 rows) and inflates both sums.
-const SPEND_TARGET_COLUMN = { project: 'project_id', facility: 'facility_id' };
+const SPEND_TARGET_COLUMN = { project: 'project_id', facility: 'facility_id', trading: 'trading_id' };
 function prSpendCte(target) {
   const col = SPEND_TARGET_COLUMN[target];
   if (!col) throw new Error(`unknown spend target: ${target}`);
@@ -7575,12 +7783,25 @@ function prSpendCte(target) {
                       AND po.status <> 'rejected')
      GROUP BY pr.${col}`;
 }
+// Expense spend now comes from expense_allocations, not from one project_id on the expense itself,
+// so a split receipt charges each target only its own share. Same target-column parameterisation as
+// prSpendCte, and the same two-CTE discipline: this is summed on its own and joined afterwards,
+// never in one pass with the PR sum. The join back to the parent is what makes a VOID reverse every
+// line of a split at once.
+function allocSpendCte(target) {
+  const col = SPEND_TARGET_COLUMN[target];
+  if (!col) throw new Error(`unknown spend target: ${target}`);
+  return `
+    SELECT ea.${col} AS target_id, SUM(ea.amount) AS amt
+      FROM expense_allocations ea
+      JOIN expenses e ON e.id = ea.expense_id
+     WHERE ea.${col} IS NOT NULL
+       AND e.voided_at IS NULL
+     GROUP BY ea.${col}`;
+}
 const PROJECT_SPEND_SQL = `
   WITH pr AS (${prSpendCte('project')}),
-       ex AS (SELECT project_id AS target_id, SUM(amount) AS amt
-                FROM project_expenses
-               WHERE voided_at IS NULL
-               GROUP BY project_id)
+       ex AS (${allocSpendCte('project')})
   SELECT p.id, p.name, p.status,
          COALESCE(p.budget_allocation, 0)                                        AS budget,
          COALESCE(pr.amt, 0)                                                     AS spent_prs,
@@ -7592,11 +7813,33 @@ const PROJECT_SPEND_SQL = `
     LEFT JOIN pr ON pr.target_id = p.id
     LEFT JOIN ex ON ex.target_id = p.id
    ORDER BY p.name ASC`;
+// Tradings have no budget by design (margin is the question, not budget adherence), so this reports
+// cost and — when a selling price is recorded — margin against it. Same two-CTE shape as projects.
+const TRADING_SPEND_SQL = `
+  WITH pr AS (${prSpendCte('trading')}),
+       ex AS (${allocSpendCte('trading')})
+  SELECT t.id, t.name, t.client, t.status, t.selling_price, t.sales_order_id, t.created_at,
+         COALESCE(pr.amt, 0)                       AS spent_prs,
+         COALESCE(ex.amt, 0)                       AS spent_expenses,
+         COALESCE(pr.amt, 0) + COALESCE(ex.amt, 0) AS spent,
+         CASE WHEN t.selling_price IS NULL THEN NULL
+              ELSE t.selling_price - (COALESCE(pr.amt, 0) + COALESCE(ex.amt, 0)) END AS margin
+    FROM tradings t
+    LEFT JOIN pr ON pr.target_id = t.id
+    LEFT JOIN ex ON ex.target_id = t.id
+   ORDER BY t.created_at DESC, t.name ASC`;
+// Facilities can now receive allocation lines too, so they are no longer the odd one out with
+// PR-only spend. A facility with no allocations reports exactly what it reported before.
 const FACILITY_SPEND_SQL = `
-  WITH pr AS (${prSpendCte('facility')})
-  SELECT f.id, f.name, COALESCE(pr.amt, 0) AS spent_prs, COALESCE(pr.amt, 0) AS spent
+  WITH pr AS (${prSpendCte('facility')}),
+       ex AS (${allocSpendCte('facility')})
+  SELECT f.id, f.name,
+         COALESCE(pr.amt, 0)                       AS spent_prs,
+         COALESCE(ex.amt, 0)                       AS spent_expenses,
+         COALESCE(pr.amt, 0) + COALESCE(ex.amt, 0) AS spent
     FROM facilities f
     LEFT JOIN pr ON pr.target_id = f.id
+    LEFT JOIN ex ON ex.target_id = f.id
    ORDER BY f.name ASC`;
 const money2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
 
@@ -7613,91 +7856,192 @@ app.get('/api/projects/spend', requireRole(['owner', 'admin', 'accounting']), as
   } catch (err) { console.error('project spend error:', err); res.status(500).json({ error: err.message }); }
 });
 
-// Expense rows are only ever listed per project, voided ones included (struck through on screen),
-// so the audit trail stays visible where the money was logged.
-function mapProjectExpense(r) {
+// ====================== EXPENSES (parent) + ALLOCATIONS ======================
+// An expense is ONE receipt with ONE total, split across one or more allocation lines. A line
+// charges exactly one target — a project, a trading, or a facility — and the lines must sum to the
+// parent's amount. The sum is checked here AND by a deferred constraint trigger in the DB, so an
+// unbalanced expense cannot exist even if it is written from outside this API.
+//
+// Listing is per target (voided rows included, struck through on screen), so the audit trail stays
+// visible where the money was charged. A split expense therefore appears under every target it
+// touches, each showing ITS OWN share in `amount` alongside the receipt's `expenseTotal`.
+const TARGET_KEY = { project: 'project_id', trading: 'trading_id', facility: 'facility_id' };
+const TARGET_TABLE = { project: 'projects', trading: 'tradings', facility: 'facilities' };
+
+// One allocation line as the UI needs it: its own share, plus enough of the parent to render the
+// receipt it came from and to show the other targets it was split with.
+function mapAllocation(r) {
   return r && {
-    id: Number(r.id), projectId: r.project_id, description: r.description, amount: money2(r.amount),
-    expenseDate: r.expense_date, payee: r.payee, referenceNo: r.reference_no,
+    allocationId: Number(r.allocation_id), expenseId: Number(r.expense_id),
+    projectId: r.project_id, tradingId: r.trading_id, facilityId: r.facility_id,
+    amount: money2(r.amount), expenseTotal: money2(r.expense_total),
+    isSplit: Number(r.alloc_count) > 1, allocationCount: Number(r.alloc_count),
+    targets: r.targets || null,
+    description: r.description, expenseDate: r.expense_date, payee: r.payee, referenceNo: r.reference_no,
     createdBy: r.created_by, createdAt: r.created_at,
     voidedAt: r.voided_at, voidedBy: r.voided_by, voidReason: r.void_reason,
   };
 }
-const EXPENSE_COLUMNS = `id, project_id, to_char(expense_date, 'YYYY-MM-DD') AS expense_date, description, amount,
-  payee, reference_no, created_by, created_at, voided_at, voided_by, void_reason`;
 
-app.get('/api/projects/:id/expenses', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
-  try {
-    const r = await query(
-      `SELECT ${EXPENSE_COLUMNS} FROM project_expenses WHERE project_id = $1
-        ORDER BY expense_date DESC, id DESC`, [req.params.id]);
-    res.json(r.rows.map(mapProjectExpense));
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
+// `targets` is a human-readable summary of how the receipt was split ("Casadi 600.00 · Trading X
+// 400.00"), built in SQL so the browser never has to fetch the sibling lines to explain a split.
+const ALLOCATION_SELECT = `
+  SELECT ea.id AS allocation_id, ea.expense_id, ea.project_id, ea.trading_id, ea.facility_id,
+         ea.amount, e.amount AS expense_total, e.description,
+         to_char(e.expense_date, 'YYYY-MM-DD') AS expense_date,
+         e.payee, e.reference_no, e.created_by, e.created_at,
+         e.voided_at, e.voided_by, e.void_reason,
+         (SELECT COUNT(*) FROM expense_allocations a2 WHERE a2.expense_id = e.id) AS alloc_count,
+         (SELECT string_agg(COALESCE(p2.name, t2.name, f2.name, '?') || ' ' || to_char(a2.amount, 'FM999999999990.00'), ' · ' ORDER BY a2.id)
+            FROM expense_allocations a2
+            LEFT JOIN projects   p2 ON p2.id = a2.project_id
+            LEFT JOIN tradings   t2 ON t2.id = a2.trading_id
+            LEFT JOIN facilities f2 ON f2.id = a2.facility_id
+           WHERE a2.expense_id = e.id) AS targets
+    FROM expense_allocations ea
+    JOIN expenses e ON e.id = ea.expense_id`;
+
+// GET the allocation lines charged to one target. Mounted for all three target types so no target is
+// a second-class citizen (facilities used to have no expenses at all).
+function mountExpenseList(path, target) {
+  app.get(path, requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
+    try {
+      const r = await query(
+        `${ALLOCATION_SELECT} WHERE ea.${TARGET_KEY[target]} = $1
+          ORDER BY e.expense_date DESC, e.id DESC, ea.id ASC`, [req.params.id]);
+      res.json(r.rows.map(mapAllocation));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+}
+mountExpenseList('/api/projects/:id/expenses', 'project');
+mountExpenseList('/api/tradings/:id/expenses', 'trading');
+mountExpenseList('/api/facilities/:id/expenses', 'facility');
+
+// Shared validation for the parent receipt. Kept verbatim from the single-target version so nothing
+// about what counts as a valid amount or date has changed.
+function validateExpenseParent(b) {
+  const description = String(b.description ?? '').trim();
+  if (!description) return { error: 'Description is required' };
+  if (description.length > 500) return { error: 'Description is too long (500 characters max)' };
+
+  // Receipt amount as-is (VAT included). Rejected rather than silently rounded if it has more
+  // than 2 decimals, since NUMERIC(14,2) would otherwise quietly change what was typed.
+  const amountStr = String(b.amount ?? '').trim();
+  if (!/^\d+(\.\d{1,2})?$/.test(amountStr)) return { error: 'Amount must be a peso amount with up to 2 decimals, e.g. 1250.50' };
+  const amount = Number(amountStr);
+  if (!(amount > 0)) return { error: 'Amount must be greater than zero' };
+  if (amount >= 1e12) return { error: 'Amount is too large' };
+
+  const expenseDate = String(b.expenseDate ?? '').trim();
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(expenseDate) ? new Date(`${expenseDate}T00:00:00Z`) : null;
+  if (!parsed || isNaN(parsed) || parsed.toISOString().slice(0, 10) !== expenseDate) {
+    return { error: 'Expense date must be a valid date (YYYY-MM-DD)' };
+  }
+  const todayManila = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+  if (expenseDate > todayManila) return { error: 'Expense date cannot be in the future' };
+
+  const optional = (v, max) => { const s = String(v ?? '').trim(); return s ? s.slice(0, max) : null; };
+  return { description, amountStr, amount, expenseDate, payee: optional(b.payee, 200), referenceNo: optional(b.referenceNo, 100) };
+}
+
+// Normalises the allocation lines and proves they balance. Money is compared in CENTAVOS as integers
+// — summing 0.1-style floats and comparing to a total is exactly how a split silently fails to add
+// up by a centavo.
+function validateAllocations(raw, totalStr) {
+  if (!Array.isArray(raw) || raw.length === 0) return { error: 'At least one allocation line is required' };
+  if (raw.length > 50) return { error: 'Too many allocation lines (50 max)' };
+  const lines = [];
+  let centavos = 0;
+  for (const [i, a] of raw.entries()) {
+    const n = i + 1;
+    const amtStr = String(a?.amount ?? '').trim();
+    if (!/^\d+(\.\d{1,2})?$/.test(amtStr)) return { error: `Line ${n}: amount must be a peso amount with up to 2 decimals` };
+    if (!(Number(amtStr) > 0)) return { error: `Line ${n}: amount must be greater than zero` };
+    const picked = ['project', 'trading', 'facility'].filter(k => {
+      const v = a?.[`${k}Id`];
+      return v !== undefined && v !== null && String(v).trim() !== '';
+    });
+    if (picked.length === 0) return { error: `Line ${n}: pick a project, trading or facility to charge` };
+    if (picked.length > 1) return { error: `Line ${n}: a line can only charge ONE target, got ${picked.length}` };
+    lines.push({ kind: picked[0], targetId: String(a[`${picked[0]}Id`]).trim(), amountStr: amtStr });
+    centavos += Math.round(Number(amtStr) * 100);
+  }
+  const totalCentavos = Math.round(Number(totalStr) * 100);
+  if (centavos !== totalCentavos) {
+    return { error: `Allocations total ${(centavos / 100).toFixed(2)} but the expense is ${(totalCentavos / 100).toFixed(2)} — they must be equal` };
+  }
+  return { lines };
+}
 
 // Direct entry, no approval step (Accounting + Admin/owner). Who logged it comes from the login,
 // never the body. Allowed on a Completed project too — receipts routinely arrive after the job ends.
-app.post('/api/projects/:id/expenses', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
+//
+// The whole receipt is one transaction: parent, then every line. The balance trigger is DEFERRED, so
+// it fires once at COMMIT rather than rejecting the first line for not yet equalling the total.
+app.post('/api/expenses', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
+  const b = req.body || {};
+  const v = validateExpenseParent(b);
+  if (v.error) return res.status(400).json({ error: v.error });
+  const a = validateAllocations(b.allocations, v.amountStr);
+  if (a.error) return res.status(400).json({ error: a.error });
+
+  const client = await getClient();
   try {
-    const b = req.body || {};
-    const description = String(b.description ?? '').trim();
-    if (!description) return res.status(400).json({ error: 'Description is required' });
-    if (description.length > 500) return res.status(400).json({ error: 'Description is too long (500 characters max)' });
-
-    // Receipt amount as-is (VAT included). Rejected rather than silently rounded if it has more
-    // than 2 decimals, since NUMERIC(14,2) would otherwise quietly change what was typed.
-    const amountStr = String(b.amount ?? '').trim();
-    if (!/^\d+(\.\d{1,2})?$/.test(amountStr)) return res.status(400).json({ error: 'Amount must be a peso amount with up to 2 decimals, e.g. 1250.50' });
-    const amount = Number(amountStr);
-    if (!(amount > 0)) return res.status(400).json({ error: 'Amount must be greater than zero' });
-    if (amount >= 1e12) return res.status(400).json({ error: 'Amount is too large' });
-
-    const expenseDate = String(b.expenseDate ?? '').trim();
-    const parsed = /^\d{4}-\d{2}-\d{2}$/.test(expenseDate) ? new Date(`${expenseDate}T00:00:00Z`) : null;
-    if (!parsed || isNaN(parsed) || parsed.toISOString().slice(0, 10) !== expenseDate) {
-      return res.status(400).json({ error: 'Expense date must be a valid date (YYYY-MM-DD)' });
+    await client.query('BEGIN');
+    // Every target must exist. Checked inside the transaction so a target deleted mid-request still
+    // fails cleanly rather than relying on the FK error text.
+    for (const l of a.lines) {
+      const t = await client.query(`SELECT id FROM ${TARGET_TABLE[l.kind]} WHERE id = $1`, [l.targetId]);
+      if (!t.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: `${l.kind} not found: ${l.targetId}` }); }
     }
-    const todayManila = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
-    if (expenseDate > todayManila) return res.status(400).json({ error: 'Expense date cannot be in the future' });
-
-    const optional = (v, max) => {
-      const s = String(v ?? '').trim();
-      return s ? s.slice(0, max) : null;
-    };
-    const project = await query('SELECT id FROM projects WHERE id = $1', [req.params.id]);
-    if (!project.rows[0]) return res.status(404).json({ error: 'Project not found' });
-
-    const r = await query(
-      `INSERT INTO project_expenses (project_id, description, amount, expense_date, payee, reference_no, created_by, created_by_id)
-       VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8)
-       RETURNING ${EXPENSE_COLUMNS}`,
-      [req.params.id, description, amountStr, expenseDate, optional(b.payee, 200), optional(b.referenceNo, 100),
+    const parent = await client.query(
+      `INSERT INTO expenses (description, amount, expense_date, payee, reference_no, created_by, created_by_id)
+       VALUES ($1, $2, $3::date, $4, $5, $6, $7) RETURNING id`,
+      [v.description, v.amountStr, v.expenseDate, v.payee, v.referenceNo,
        req.user?.name || null, req.user?.id != null ? String(req.user.id) : null]
     );
-    res.status(201).json(mapProjectExpense(r.rows[0]));
-  } catch (err) { console.error('project expense create error:', err); res.status(500).json({ error: err.message }); }
+    const expenseId = parent.rows[0].id;
+    for (const l of a.lines) {
+      await client.query(
+        `INSERT INTO expense_allocations (expense_id, project_id, trading_id, facility_id, amount)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [expenseId, l.kind === 'project' ? l.targetId : null, l.kind === 'trading' ? l.targetId : null,
+         l.kind === 'facility' ? l.targetId : null, l.amountStr]
+      );
+    }
+    await client.query('COMMIT');
+    const r = await query(`${ALLOCATION_SELECT} WHERE ea.expense_id = $1 ORDER BY ea.id ASC`, [expenseId]);
+    res.status(201).json({ expenseId: Number(expenseId), allocations: r.rows.map(mapAllocation) });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    // The deferred balance trigger and the one-target CHECK both surface as 23514.
+    if (err.code === '23514') return res.status(400).json({ error: err.message });
+    console.error('expense create error:', err);
+    res.status(500).json({ error: err.message });
+  } finally { client.release(); }
 });
 
-// VOID, never delete: the row stays for the audit trail and simply stops counting toward spend.
-app.post('/api/project-expenses/:id/void', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
+// VOID, never delete: the rows stay for the audit trail and simply stop counting toward spend. One
+// void takes the WHOLE receipt out — every allocation line of a split at once — because each spend
+// CTE joins back to this parent and filters on voided_at.
+app.post('/api/expenses/:id/void', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
   const reason = String(req.body?.reason ?? '').trim();
   if (!reason) return res.status(400).json({ error: 'A reason is required to void an expense' });
   if (!/^\d+$/.test(String(req.params.id))) return res.status(404).json({ error: 'Expense not found' });
   const client = await getClient();
   try {
     await client.query('BEGIN');
-    const cur = await client.query('SELECT id, voided_at FROM project_expenses WHERE id = $1 FOR UPDATE', [req.params.id]);
+    const cur = await client.query('SELECT id, voided_at FROM expenses WHERE id = $1 FOR UPDATE', [req.params.id]);
     if (!cur.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Expense not found' }); }
     if (cur.rows[0].voided_at) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'This expense is already voided' }); }
-    const r = await client.query(
-      `UPDATE project_expenses
-          SET voided_at = NOW(), voided_by = $1, voided_by_id = $2, void_reason = $3, updated_at = NOW()
-        WHERE id = $4
-        RETURNING ${EXPENSE_COLUMNS}`,
+    await client.query(
+      `UPDATE expenses SET voided_at = NOW(), voided_by = $1, voided_by_id = $2, void_reason = $3, updated_at = NOW()
+        WHERE id = $4`,
       [req.user?.name || null, req.user?.id != null ? String(req.user.id) : null, reason.slice(0, 500), req.params.id]
     );
     await client.query('COMMIT');
-    res.json(mapProjectExpense(r.rows[0]));
+    const r = await query(`${ALLOCATION_SELECT} WHERE ea.expense_id = $1 ORDER BY ea.id ASC`, [req.params.id]);
+    res.json({ expenseId: Number(req.params.id), allocations: r.rows.map(mapAllocation) });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     res.status(500).json({ error: err.message });
@@ -7779,23 +8123,130 @@ app.post('/api/projects/:id/reactivate', requireRole(['owner','admin']), async (
   } catch (err) { console.error('project reactivate error:', err); res.status(500).json({ error: err.message }); }
 });
 app.delete('/api/projects/:id', requireRole(['owner','admin','accounting']), async (req, res) => {
-  // project_expenses.project_id is ON DELETE RESTRICT — voided rows included, since they are audit
-  // records too. Checked up front for a clear message; the 23503 catch covers an expense logged
-  // between this check and the DELETE.
+  // expense_allocations.project_id is ON DELETE RESTRICT — voided rows included, since they are
+  // audit records too. Counted as ALLOCATION LINES now rather than whole expenses: a split receipt
+  // charging this project one line still has to block the delete. Checked up front for a clear
+  // message; the 23503 catch covers an allocation logged between this check and the DELETE.
   const blocked = (n) => res.status(409).json({
     error: `This project has ${n} expense record${n === 1 ? '' : 's'}, so it can't be deleted — money records must keep their project. Use Mark as Complete to retire it instead.`,
   });
   try {
-    const ex = await query('SELECT COUNT(*)::int AS n FROM project_expenses WHERE project_id = $1', [req.params.id]);
+    const ex = await query('SELECT COUNT(*)::int AS n FROM expense_allocations WHERE project_id = $1', [req.params.id]);
     if (ex.rows[0].n > 0) return blocked(ex.rows[0].n);
     const r = await query('DELETE FROM projects WHERE id = $1', [req.params.id]);
     if (!r.rowCount) return res.status(404).json({ error: 'Project not found' });
     res.json({ message: 'Project deleted', id: req.params.id });
   } catch (err) {
     if (err.code === '23503') {
-      const ex = await query('SELECT COUNT(*)::int AS n FROM project_expenses WHERE project_id = $1', [req.params.id]).catch(() => null);
+      const ex = await query('SELECT COUNT(*)::int AS n FROM expense_allocations WHERE project_id = $1', [req.params.id]).catch(() => null);
       return blocked(ex?.rows[0]?.n || 1);
     }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ====================== TRADINGS ======================
+// Trading deals as cost centres, the third sibling beside projects and facilities. Reads are open to
+// any signed-in user because the PR "For" picker needs them, exactly like projects and facilities;
+// spend and writes are owner/admin/accounting.
+//
+// NOTE ON THE WORD "TRADING": this is a trading DEAL, a cost centre with an id. It is unrelated to
+// the sales-line taxonomy ('Trading (electrical)', 'Trading (mechanical)') stored in
+// sales_orders.line / inquiries.line. Same word, different concept — do not merge them.
+function mapTrading(r) {
+  return r && {
+    id: r.id, name: r.name, client: r.client, status: r.status,
+    sellingPrice: r.selling_price === null || r.selling_price === undefined ? null : parseFloat(r.selling_price),
+    salesOrderId: r.sales_order_id ?? null,
+    createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+// Per trading: PR cost + expense-allocation cost, and margin against selling_price when one is set.
+// Registered before /api/tradings/:id so "spend" isn't read as an id.
+app.get('/api/tradings/spend', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
+  try {
+    const r = await query(TRADING_SPEND_SQL);
+    res.json(r.rows.map(row => ({
+      tradingId: row.id, name: row.name, client: row.client, status: row.status,
+      sellingPrice: row.selling_price === null ? null : money2(row.selling_price),
+      salesOrderId: row.sales_order_id ?? null,
+      spentPrs: money2(row.spent_prs), spentExpenses: money2(row.spent_expenses), spent: money2(row.spent),
+      margin: row.margin === null ? null : money2(row.margin),
+    })));
+  } catch (err) { console.error('trading spend error:', err); res.status(500).json({ error: err.message }); }
+});
+app.get('/api/tradings', async (req, res) => {
+  try {
+    const { search, status } = req.query;
+    const where = ['1=1']; const params = []; let i = 1;
+    if (search) { where.push(`LOWER(name) LIKE $${i++}`); params.push(`%${String(search).toLowerCase()}%`); }
+    if (status) { where.push(`status = $${i++}`); params.push(status); }
+    const r = await query(`SELECT * FROM tradings WHERE ${where.join(' AND ')} ORDER BY created_at DESC, name ASC`, params);
+    res.json(r.rows.map(mapTrading));
+  } catch (err) { console.error('tradings list error:', err); res.status(500).json({ error: err.message }); }
+});
+app.get('/api/tradings/:id', async (req, res) => {
+  try {
+    const r = await query('SELECT * FROM tradings WHERE id = $1', [req.params.id]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Trading not found' });
+    res.json(mapTrading(r.rows[0]));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+const tradingPrice = (v) => (v === undefined || v === null || v === '' ? null : Number(v));
+app.post('/api/tradings', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.name || !String(b.name).trim()) return res.status(400).json({ error: 'Trading name is required' });
+    const price = tradingPrice(b.sellingPrice);
+    if (price !== null && (!isFinite(price) || price < 0)) return res.status(400).json({ error: 'Selling price must be a non-negative number or blank' });
+    const r = await query(
+      `INSERT INTO tradings (id, name, client, status, selling_price, sales_order_id)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [newId('TRD'), String(b.name).trim(), orNull(b.client), orNull(b.status) || 'Active', price, orNull(b.salesOrderId)]
+    );
+    res.status(201).json(mapTrading(r.rows[0]));
+  } catch (err) { console.error('trading create error:', err); res.status(500).json({ error: err.message }); }
+});
+app.patch('/api/tradings/:id', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const cols = { name: b.name, client: b.client, status: b.status, selling_price: b.sellingPrice, sales_order_id: b.salesOrderId };
+    const sets = []; const params = []; let i = 1;
+    for (const [k, v] of Object.entries(cols)) {
+      if (v === undefined) continue;
+      if (k === 'name' && !String(v ?? '').trim()) return res.status(400).json({ error: 'Trading name cannot be empty' });
+      sets.push(`${k} = $${i++}`);
+      if (k === 'selling_price') {
+        const price = tradingPrice(v);
+        if (price !== null && (!isFinite(price) || price < 0)) return res.status(400).json({ error: 'Selling price must be a non-negative number or blank' });
+        params.push(price);
+      } else params.push(orNull(v));
+    }
+    if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
+    sets.push('updated_at = NOW()'); params.push(req.params.id);
+    const r = await query(`UPDATE tradings SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`, params);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Trading not found' });
+    res.json(mapTrading(r.rows[0]));
+  } catch (err) { console.error('trading update error:', err); res.status(500).json({ error: err.message }); }
+});
+// Same protection projects have: a trading carrying money records can't be deleted out from under
+// them. Both its PRs (ON DELETE RESTRICT) and its allocations (ON DELETE RESTRICT) block it.
+app.delete('/api/tradings/:id', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
+  try {
+    const n = (await query(
+      `SELECT (SELECT COUNT(*)::int FROM expense_allocations WHERE trading_id = $1)
+            + (SELECT COUNT(*)::int FROM purchase_requests  WHERE trading_id = $1) AS n`,
+      [req.params.id])).rows[0].n;
+    if (n > 0) {
+      return res.status(409).json({
+        error: `This trading has ${n} money record${n === 1 ? '' : 's'} (purchase requests or expenses), so it can't be deleted. Set its status to Completed to retire it instead.`,
+      });
+    }
+    const r = await query('DELETE FROM tradings WHERE id = $1', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Trading not found' });
+    res.json({ message: 'Trading deleted', id: req.params.id });
+  } catch (err) {
+    if (err.code === '23503') return res.status(409).json({ error: "This trading has money records, so it can't be deleted." });
     res.status(500).json({ error: err.message });
   }
 });
@@ -7803,12 +8254,16 @@ app.delete('/api/projects/:id', requireRole(['owner','admin','accounting']), asy
 // ====================== FACILITIES ======================
 // Internal company facilities (equipment/items used internally, not client projects). Mirrors
 // PROJECTS: reads open to any authenticated user (the PR "For" picker needs them); writes are
-// owner/admin/accounting. A facility just carries a budget target; its spend comes from
-// GET /api/facilities/spend, the same PR rule as projects (prSpendCte). No facility expenses yet.
+// owner/admin/accounting. A facility carries a budget target; its spend comes from
+// GET /api/facilities/spend — the same PR rule as projects (prSpendCte) and, since expense
+// allocations landed, its share of any split receipt charged to it.
 app.get('/api/facilities/spend', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
   try {
     const r = await query(FACILITY_SPEND_SQL);
-    res.json(r.rows.map(row => ({ facilityId: row.id, name: row.name, spentPrs: money2(row.spent_prs), spent: money2(row.spent) })));
+    res.json(r.rows.map(row => ({
+      facilityId: row.id, name: row.name, spentPrs: money2(row.spent_prs),
+      spentExpenses: money2(row.spent_expenses), spent: money2(row.spent),
+    })));
   } catch (err) { console.error('facility spend error:', err); res.status(500).json({ error: err.message }); }
 });
 app.get('/api/facilities', async (req, res) => {
@@ -7899,9 +8354,9 @@ app.post('/api/purchase-requests', requireAuth, async (req, res) => {
 
     const id = newId('PR');
     const r = await query(
-      `INSERT INTO purchase_requests (id, pr_number, employee_id, employee_name, project_id, facility_id, project_label, needed_by, supplier, notes, items, total, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,'pending') RETURNING *`,
-      [id, prNumber, employeeId, employeeName, orNull(b.projectId), orNull(b.facilityId), orNull(b.projectLabel), orNull(b.neededBy), orNull(b.supplier), orNull(b.notes), JSON.stringify(items), total]
+      `INSERT INTO purchase_requests (id, pr_number, employee_id, employee_name, project_id, facility_id, trading_id, project_label, needed_by, supplier, notes, items, total, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,'pending') RETURNING *`,
+      [id, prNumber, employeeId, employeeName, orNull(b.projectId), orNull(b.facilityId), orNull(b.tradingId), orNull(b.projectLabel), orNull(b.neededBy), orNull(b.supplier), orNull(b.notes), JSON.stringify(items), total]
     );
     res.status(201).json(mapPurchaseRequest(r.rows[0]));
   } catch (err) { sendDbError(res, err, 'purchase-request create'); }
@@ -7919,9 +8374,11 @@ app.get('/api/purchase-requests/mine', requireAuth, async (req, res) => {
   try {
     const byId = effectiveRole(req.user) === 'employee';
     const r = await query(
-      `SELECT pr.*, COALESCE(p.name, f.name, pr.project_label) AS project_name, f.name AS facility_name FROM purchase_requests pr
+      `SELECT pr.*, COALESCE(p.name, f.name, t.name, pr.project_label) AS project_name,
+              f.name AS facility_name, t.name AS trading_name FROM purchase_requests pr
        LEFT JOIN projects p ON p.id = pr.project_id
        LEFT JOIN facilities f ON f.id = pr.facility_id
+       LEFT JOIN tradings t ON t.id = pr.trading_id
        WHERE ${byId ? 'pr.employee_id = $1' : '(pr.employee_id IS NULL AND pr.employee_name = $1)'}
        ORDER BY pr.created_at DESC, pr.pr_number DESC`,
       [byId ? (req.user?.id ?? null) : (req.user?.name ?? null)]
@@ -7941,9 +8398,11 @@ app.get('/api/purchase-requests', requireRole(['admin', 'purchasing', 'accountin
     if (effectiveRole(req.user) === 'purchasing') where.push(`pr.status <> 'pending'`);
     const pg = pageClause(req, params.length + 1);
     const r = await query(
-      `SELECT pr.*, COALESCE(p.name, f.name, pr.project_label) AS project_name, f.name AS facility_name FROM purchase_requests pr
+      `SELECT pr.*, COALESCE(p.name, f.name, t.name, pr.project_label) AS project_name,
+              f.name AS facility_name, t.name AS trading_name FROM purchase_requests pr
        LEFT JOIN projects p ON p.id = pr.project_id
        LEFT JOIN facilities f ON f.id = pr.facility_id
+       LEFT JOIN tradings t ON t.id = pr.trading_id
        -- created_at is a real TIMESTAMPTZ so this is already newest-first; pr_number is a
        -- deterministic tiebreaker for the theoretical same-instant case, giving a total order.
        WHERE ${where.join(' AND ')} ORDER BY pr.created_at DESC, pr.pr_number DESC${pg.sql}`,
@@ -7995,10 +8454,10 @@ app.patch('/api/purchase-requests/:id', requireRole(['admin']), async (req, res)
     const r = await query(
       `UPDATE purchase_requests
           SET items = $1::jsonb, total = $2, needed_by = $3, project_id = $4, notes = $5,
-              project_label = COALESCE($6, project_label), facility_id = $7,
+              project_label = COALESCE($6, project_label), facility_id = $7, trading_id = $8,
               status = 'pending', updated_at = NOW()
-        WHERE id = $8 RETURNING *`,
-      [JSON.stringify(items), total, orNull(b.neededBy), orNull(b.projectId), orNull(b.notes), orNull(b.projectLabel), orNull(b.facilityId), req.params.id]
+        WHERE id = $9 RETURNING *`,
+      [JSON.stringify(items), total, orNull(b.neededBy), orNull(b.projectId), orNull(b.notes), orNull(b.projectLabel), orNull(b.facilityId), orNull(b.tradingId), req.params.id]
     );
     res.json(mapPurchaseRequest(r.rows[0]));
   } catch (err) { console.error('purchase-request edit error:', err); res.status(500).json({ error: err.message }); }

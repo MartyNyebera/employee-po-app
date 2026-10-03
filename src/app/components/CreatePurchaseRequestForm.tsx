@@ -24,6 +24,8 @@ interface FormLine { id: string; no: number; kind?: 'labor'; description: string
 interface InventoryItem { id: string; itemCode: string; itemName: string; quantity: number; unit: string; location?: string; }
 interface Project { id: string; name: string; status?: string; }
 interface Facility { id: string; name: string; status?: string; }
+// A trading DEAL (a cost centre with an id), not the 'Trading (electrical)' sales-line taxonomy.
+interface Trading { id: string; name: string; status?: string; }
 // A completed (soft-archived) project must not be offered on a NEW request. The server already
 // applies this via ?active=1; repeating it here is deliberate belt-and-braces, so a browser still
 // running a cached bundle against the new server -- or the reverse -- behaves the same either way.
@@ -33,9 +35,13 @@ interface ItemRequest { id: string; requestNumber?: string | null; itemName: str
 
 const UNITS = ['pcs', 'bags', 'kg', 'liters', 'gallons', 'meters', 'boxes', 'sets', 'Lot', 'units'];
 // "For (Project)" is required; Personal use gets its own sentinel (mapped back to a null
-// projectId on submit) and '' means "nothing picked yet". Trading is a second no-project sentinel
-// for the company's trading purchases (not tied to any project): it submits with projectId null but
-// carries a "Trading" projectLabel so the request reads "Trading" through review and the printout.
+// projectId on submit) and '' means "nothing picked yet".
+//
+// Trading now has TWO forms. Picking a named trading DEAL from the Trading deals group charges the
+// request to that deal's id (tradingId), which is what makes it show up in its cost. The generic
+// "Trading" sentinel is kept for a purchase that has no specific deal yet: it submits with every FK
+// null and only a "Trading" projectLabel, exactly as it always did — which also means its cost is
+// not attributed to anything, so the named option is the one to prefer.
 const PERSONAL_USE = '__personal__';
 const TRADING = '__trading__';
 
@@ -225,8 +231,9 @@ export function CreatePurchaseRequestForm({ fetchApi, session, onSubmitted, allo
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [facilities, setFacilities] = useState<Facility[]>([]);
-  // Holds the picked "For" value: a project id, a facility id, or the PERSONAL_USE / TRADING
-  // sentinel. On submit it is routed to projectId vs facilityId by membership (ids are distinct).
+  const [tradings, setTradings] = useState<Trading[]>([]);
+  // Holds the picked "For" value: a project id, a facility id, a trading id, or the PERSONAL_USE /
+  // TRADING sentinel. On submit it is routed to the right FK by membership (ids are distinct).
   const [projectId, setProjectId] = useState<string>('');
   const [neededBy, setNeededBy] = useState('');
   const [lineItems, setLineItems] = useState<FormLine[]>([emptyLine(1)]);
@@ -235,14 +242,16 @@ export function CreatePurchaseRequestForm({ fetchApi, session, onSubmitted, allo
 
   const loadRefs = async () => {
     try {
-      const [inv, prj, fac] = await Promise.all([
+      const [inv, prj, fac, trd] = await Promise.all([
         fetchApi<InventoryItem[]>('/inventory'),
         fetchApi<Project[]>('/projects?active=1').catch(() => [] as Project[]),
         fetchApi<Facility[]>('/facilities').catch(() => [] as Facility[]),
+        fetchApi<Trading[]>('/tradings').catch(() => [] as Trading[]),
       ]);
       setInventory(inv || []);
       setProjects((prj || []).filter(isPickable));
       setFacilities(fac || []);
+      setTradings((trd || []).filter(isPickable));
     } catch (e: any) {
       toast.error(e.message || 'Failed to load items and projects');
     }
@@ -290,13 +299,16 @@ export function CreatePurchaseRequestForm({ fetchApi, session, onSubmitted, allo
     setSubmitting(true);
     try {
       const pickedFacility = facilities.some((f) => f.id === projectId);
+      const pickedTrading = tradings.some((t) => t.id === projectId);
       await fetchApi('/purchase-requests', {
         method: 'POST',
         body: JSON.stringify({
-          // A real project id → projectId; a facility id → facilityId; sentinels → neither.
-          projectId: (projectId === PERSONAL_USE || projectId === TRADING || pickedFacility) ? null : projectId,
+          // A real project id → projectId; a facility id → facilityId; a trading id → tradingId;
+          // sentinels → none of them.
+          projectId: (projectId === PERSONAL_USE || projectId === TRADING || pickedFacility || pickedTrading) ? null : projectId,
           facilityId: pickedFacility ? projectId : null,
-          projectLabel: projectId === TRADING ? 'Trading' : null,
+          tradingId: pickedTrading ? projectId : null,
+          projectLabel: (projectId === TRADING || pickedTrading) ? 'Trading' : null,
           neededBy,
           items: valid.map((li, i) => li.kind === 'labor'
             ? {
@@ -341,13 +353,18 @@ export function CreatePurchaseRequestForm({ fetchApi, session, onSubmitted, allo
                     {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </optgroup>
                 )}
+                {allowTrading && tradings.length > 0 && (
+                  <optgroup label="Trading deals">
+                    {tradings.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </optgroup>
+                )}
                 {facilities.length > 0 && (
                   <optgroup label="Facilities">
                     {facilities.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
                   </optgroup>
                 )}
                 <optgroup label="Other">
-                  {allowTrading && <option value={TRADING}>Trading</option>}
+                  {allowTrading && <option value={TRADING}>Trading (no specific deal)</option>}
                   <option value={PERSONAL_USE}>Personal use</option>
                 </optgroup>
               </select>

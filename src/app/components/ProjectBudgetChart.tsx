@@ -22,6 +22,15 @@ interface SpendRow {
   projectId: string; name: string; status?: string;
   budget: number; spentPrs: number; spentExpenses: number; spent: number; remaining: number; overBudget: number;
 }
+// Trading deals are shown as a COST STRIP below the project cards, not as more bars. The bars here
+// measure spend against a budget, and a trading deliberately has no budget — a bar with nothing to
+// fill would be a chart of one number. What matters for a trade is cost and, where a selling price
+// was recorded, margin, so that is what this lists.
+interface TradingRow {
+  tradingId: string; name: string; status?: string;
+  spentPrs: number; spentExpenses: number; spent: number;
+  sellingPrice: number | null; margin: number | null;
+}
 
 const fmt = (v: number) =>
   v >= 1e6 ? '₱' + (v / 1e6).toFixed(1) + 'M'
@@ -38,13 +47,20 @@ const SHADES = {
 
 export function ProjectBudgetChart() {
   const [rows, setRows] = useState<SpendRow[]>([]);
+  const [tradings, setTradings] = useState<TradingRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
       try {
-        const spend = await fetchApi<SpendRow[]>('/projects/spend');
+        // Both from the server's own spend definitions; nothing is summed in the browser. A missing
+        // /tradings/spend (an older server) just leaves the strip out rather than failing the chart.
+        const [spend, trd] = await Promise.all([
+          fetchApi<SpendRow[]>('/projects/spend'),
+          fetchApi<TradingRow[]>('/tradings/spend').catch(() => [] as TradingRow[]),
+        ]);
         setRows((spend || []).filter(r => r.status !== 'Completed' && (r.budget > 0 || r.spent > 0)));
+        setTradings((trd || []).filter(r => r.status !== 'Completed' && r.spent > 0));
       } catch { /* leave empty */ }
       finally { setLoading(false); }
     })();
@@ -53,14 +69,44 @@ export function ProjectBudgetChart() {
   if (loading) {
     return <div className="w-full flex items-center justify-center" style={{ height: 220 }}><div className="w-8 h-8 rounded-full border-2 border-slate-300 border-t-[#d1b01b] animate-spin" /></div>;
   }
-  if (rows.length === 0) {
+  if (rows.length === 0 && tradings.length === 0) {
     return <div className="w-full border border-slate-200 rounded-lg flex items-center justify-center" style={{ height: 160 }}><p className="text-slate-500 text-sm">No project budgets yet — set a budget on a project, then link approved requests or log expenses to it.</p></div>;
   }
 
   const TRACK = 170; // px height of the bar track
   const BAR_W = 48;
 
+  const tradingStrip = tradings.length === 0 ? null : (
+    <div style={{ marginTop: rows.length ? '20px' : 0, border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
+      <div style={{ padding: '8px 12px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '12px', fontWeight: 700, color: '#334155' }}>
+        Trading deals — cost{tradings.some(t => t.margin !== null) ? ' and margin' : ''}
+      </div>
+      <div>
+        {tradings.map(t => (
+          <div key={t.tradingId} style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '12px', padding: '8px 12px', borderTop: '1px solid #f1f5f9' }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: '12px', color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</div>
+              <div style={{ fontSize: '10px', color: '#94a3b8' }} title={`Purchased ${peso(t.spentPrs)} · Expenses ${peso(t.spentExpenses)}`}>
+                Purchased {fmt(t.spentPrs)} · Expenses {fmt(t.spentExpenses)}
+              </div>
+            </div>
+            <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: '#0f172a' }} title={peso(t.spent)}>{fmt(t.spent)}</div>
+              {t.margin !== null && (
+                <div style={{ fontSize: '10px', fontWeight: 600, color: t.margin < 0 ? '#dc2626' : '#047857' }} title={peso(t.margin)}>
+                  {t.margin < 0 ? 'Loss ' : 'Margin '}{fmt(Math.abs(t.margin))}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
   return (
+    <>
+    {rows.length > 0 && (
     // A wrapping GRID, not a horizontal scroll rail: 3 cards per row on desktop (lg, >=1024px), 2 on
     // medium (sm, >=640px), 1 on mobile, stacking downward so every project is reachable by scrolling
     // the page instead of sideways. Tailwind is used here (as in the loading/empty states above)
@@ -127,5 +173,8 @@ export function ProjectBudgetChart() {
         );
       })}
     </div>
+    )}
+    {tradingStrip}
+    </>
   );
 }
