@@ -7822,8 +7822,17 @@ const TRADING_SPEND_SQL = `
          COALESCE(pr.amt, 0)                       AS spent_prs,
          COALESCE(ex.amt, 0)                       AS spent_expenses,
          COALESCE(pr.amt, 0) + COALESCE(ex.amt, 0) AS spent,
-         CASE WHEN t.selling_price IS NULL THEN NULL
-              ELSE t.selling_price - (COALESCE(pr.amt, 0) + COALESCE(ex.amt, 0)) END AS margin
+         -- PROFIT and MARGIN %, both computed here so no caller does money math in a browser.
+         --
+         -- NULLIF(selling_price, 0) is doing real work: a price of 0 is "not priced yet" just as
+         -- much as NULL is, and dividing by it would either divide by zero or report a 100% loss
+         -- equal to the whole cost. Both answers would be inventions, so both cases return NULL and
+         -- the UI prints "set selling price" rather than drawing a bar.
+         CASE WHEN NULLIF(t.selling_price, 0) IS NULL THEN NULL
+              ELSE t.selling_price - (COALESCE(pr.amt, 0) + COALESCE(ex.amt, 0)) END AS margin,
+         CASE WHEN NULLIF(t.selling_price, 0) IS NULL THEN NULL
+              ELSE ROUND(((t.selling_price - (COALESCE(pr.amt, 0) + COALESCE(ex.amt, 0)))
+                          / t.selling_price) * 100, 2) END AS margin_percent
     FROM tradings t
     LEFT JOIN pr ON pr.target_id = t.id
     LEFT JOIN ex ON ex.target_id = t.id
@@ -8161,7 +8170,12 @@ function mapTrading(r) {
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
-// Per trading: PR cost + expense-allocation cost, and margin against selling_price when one is set.
+// Per trading: PR cost + expense-allocation cost, plus profit and margin % against selling_price
+// when one is set. `margin` and `marginPercent` are both NULL until a non-zero selling price exists,
+// which is what lets the UI say "set selling price" instead of drawing a meaningless bar.
+//
+// Every figure here is computed in SQL. Nothing downstream multiplies, divides or subtracts money —
+// that invariant is why the Accounting table and the dashboard can never disagree.
 // Registered before /api/tradings/:id so "spend" isn't read as an id.
 app.get('/api/tradings/spend', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
   try {
@@ -8172,6 +8186,7 @@ app.get('/api/tradings/spend', requireRole(['owner', 'admin', 'accounting']), as
       salesOrderId: row.sales_order_id ?? null,
       spentPrs: money2(row.spent_prs), spentExpenses: money2(row.spent_expenses), spent: money2(row.spent),
       margin: row.margin === null ? null : money2(row.margin),
+      marginPercent: row.margin_percent === null ? null : money2(row.margin_percent),
     })));
   } catch (err) { console.error('trading spend error:', err); res.status(500).json({ error: err.message }); }
 });

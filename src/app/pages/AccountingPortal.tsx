@@ -20,6 +20,7 @@ import { CreatePurchaseRequestForm } from '../components/CreatePurchaseRequestFo
 import { WithdrawalTab } from '../components/WithdrawalTab';
 import { nextDeptFor } from '../lib/nextDept';
 import { TimesheetReview } from '../components/crm/TimesheetReview';
+import { TradingProfitBars } from '../components/TradingProfitBars';
 import { PayrollReview } from '../components/crm/PayrollReview';
 
 // ============================================================================
@@ -88,10 +89,13 @@ interface ProjectSpend {
   projectId: string; budget: number; spentPrs: number; spentExpenses: number;
   spent: number; remaining: number; overBudget: number;
 }
+// margin (profit) and marginPercent both come from TRADING_SPEND_SQL already computed — this screen
+// never does money math. Both are null until a non-zero selling price exists, which is what makes
+// "set selling price" distinguishable from a genuine zero margin.
 interface TradingSpend {
   tradingId: string; name: string; client?: string | null; status?: string;
   sellingPrice: number | null; spentPrs: number; spentExpenses: number; spent: number;
-  margin: number | null;
+  margin: number | null; marginPercent: number | null;
 }
 interface FacilitySpend { facilityId: string; spentPrs: number; spentExpenses: number; spent: number; }
 
@@ -1543,7 +1547,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
               <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                 <div>
                   <h2 className="font-semibold text-gray-900">Trading Deals</h2>
-                  <p className="text-sm text-gray-500">Each trading deal is its own cost centre, like a project — purchase requests and expenses charged to it add up here. Cost is the total of its purchase requests plus its share of any expense. A selling price is optional and only used to show margin; there is no budget.</p>
+                  <p className="text-sm text-gray-500">Each trading deal is its own cost centre, like a project — purchase requests and expenses charged to it add up here. Cost is the total of its purchase requests plus its share of any expense. Set a selling price to see profit and margin; there is no budget. Margin updates as costs are logged, so it tightens until the deal is done.</p>
                 </div>
                 <div className="flex flex-col sm:flex-row gap-2 sm:flex-shrink-0">
                   <button onClick={() => setLogExpense({ target: null })} disabled={projects.length === 0 && tradings.length === 0 && facilities.length === 0} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium whitespace-nowrap border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"><Receipt className="w-4 h-4" /> Log Expense</button>
@@ -1554,6 +1558,22 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                 : tradings.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-48 text-gray-400"><ArrowLeftRight className="w-10 h-10 mb-3 text-gray-300" /><p className="font-medium text-gray-500">No trading deals yet</p><p className="text-sm">Create one to start tracking what a trade cost.</p></div>
                 ) : (
+                  <>
+                  {/* One profit bar per deal — the same component the admin dashboard renders, fed by
+                      the same endpoint, so the two views can never disagree. Above the table because
+                      profit is the headline; the table below is the detail. */}
+                  {tradingSpend && (
+                    <TradingProfitBars rows={tradings.map(t => {
+                      const sp = tradingSpend[t.id];
+                      // A trading with no spend row yet (just created) still deserves a line, shown
+                      // as unpriced rather than silently dropped.
+                      return sp ?? {
+                        tradingId: t.id, name: t.name, client: t.client, status: t.status,
+                        spent: 0, spentPrs: 0, spentExpenses: 0,
+                        sellingPrice: t.sellingPrice ?? null, margin: null, marginPercent: null,
+                      };
+                    })} />
+                  )}
                   <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
@@ -1563,7 +1583,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                             <th className="px-4 py-3">Status</th>
                             <th className="px-4 py-3 text-right">Cost</th>
                             <th className="px-4 py-3 text-right">Selling price</th>
-                            <th className="px-4 py-3 text-right">Margin</th>
+                            <th className="px-4 py-3 text-right">Profit</th>
                             <th className="px-4 py-3 text-right">Actions</th>
                           </tr>
                         </thead>
@@ -1588,11 +1608,19 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                               <td className="px-4 py-3 text-right whitespace-nowrap text-gray-900">
                                 {t.sellingPrice != null ? peso(t.sellingPrice) : <span className="text-gray-400">—</span>}
                               </td>
-                              {/* Margin only means something once a selling price is recorded; without one
-                                  this stays blank rather than implying a loss equal to the whole cost. */}
+                              {/* Profit only means something once a selling price is recorded; without
+                                  one this says so rather than implying a loss equal to the whole cost.
+                                  A price of 0 counts as unpriced too — the server returns null for both. */}
                               <td className="px-4 py-3 text-right whitespace-nowrap">
-                                {!sp || sp.margin === null ? <span className="text-gray-400">—</span>
-                                  : <span className={`font-semibold ${sp.margin < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{peso(sp.margin)}</span>}
+                                {!sp || sp.margin === null ? <span className="text-xs text-gray-400">set selling price</span>
+                                  : <>
+                                      <div className={`font-semibold ${sp.margin < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{peso(sp.margin)}</div>
+                                      {sp.marginPercent !== null && (
+                                        <div className={`text-xs font-medium ${sp.margin < 0 ? 'text-red-500' : 'text-emerald-600'}`}>
+                                          {sp.marginPercent < 0 ? '−' : ''}{Math.abs(sp.marginPercent).toFixed(1)}%{sp.margin < 0 ? ' loss' : ' margin'}
+                                        </div>
+                                      )}
+                                    </>}
                               </td>
                               <td className="px-4 py-3 text-right whitespace-nowrap">
                                 <button onClick={() => setExpensesFor({ kind: 'trading', id: t.id, name: t.name })} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50"><Receipt className="w-3.5 h-3.5" /> Expenses</button>
@@ -1606,6 +1634,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                       </table>
                     </div>
                   </div>
+                  </>
                 )}
             </div>
           )}

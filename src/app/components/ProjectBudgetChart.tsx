@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchApi } from '../api/client';
+import { TradingProfitBars, type TradingProfitRow } from './TradingProfitBars';
 
 // #7 — per-project budget vs spend. Each project carries an allotted budget (budget_allocation);
 // spend is committed purchase requests PLUS direct project expenses (gas, Lalamove, meals…).
@@ -22,15 +23,13 @@ interface SpendRow {
   projectId: string; name: string; status?: string;
   budget: number; spentPrs: number; spentExpenses: number; spent: number; remaining: number; overBudget: number;
 }
-// Trading deals are shown as a COST STRIP below the project cards, not as more bars. The bars here
-// measure spend against a budget, and a trading deliberately has no budget — a bar with nothing to
-// fill would be a chart of one number. What matters for a trade is cost and, where a selling price
-// was recorded, margin, so that is what this lists.
-interface TradingRow {
-  tradingId: string; name: string; status?: string;
-  spentPrs: number; spentExpenses: number; spent: number;
-  sellingPrice: number | null; margin: number | null;
-}
+// Trading deals sit BELOW the project cards as one PROFIT bar each, not as more budget bars. The
+// bars above measure spend against a budget and a trading deliberately has none, so a budget bar
+// would be a chart of one number. Profit against selling price is the figure that means something
+// for a trade.
+//
+// Rendered by the shared TradingProfitBars component — the identical view Accounting's Trading Deals
+// section uses, from the identical /tradings/spend payload, so the two screens cannot disagree.
 
 const fmt = (v: number) =>
   v >= 1e6 ? '₱' + (v / 1e6).toFixed(1) + 'M'
@@ -47,7 +46,7 @@ const SHADES = {
 
 export function ProjectBudgetChart() {
   const [rows, setRows] = useState<SpendRow[]>([]);
-  const [tradings, setTradings] = useState<TradingRow[]>([]);
+  const [tradings, setTradings] = useState<TradingProfitRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -57,7 +56,7 @@ export function ProjectBudgetChart() {
         // /tradings/spend (an older server) just leaves the strip out rather than failing the chart.
         const [spend, trd] = await Promise.all([
           fetchApi<SpendRow[]>('/projects/spend'),
-          fetchApi<TradingRow[]>('/tradings/spend').catch(() => [] as TradingRow[]),
+          fetchApi<TradingProfitRow[]>('/tradings/spend').catch(() => [] as TradingProfitRow[]),
         ]);
         setRows((spend || []).filter(r => r.status !== 'Completed' && (r.budget > 0 || r.spent > 0)));
         setTradings((trd || []).filter(r => r.status !== 'Completed' && r.spent > 0));
@@ -77,30 +76,8 @@ export function ProjectBudgetChart() {
   const BAR_W = 48;
 
   const tradingStrip = tradings.length === 0 ? null : (
-    <div style={{ marginTop: rows.length ? '20px' : 0, border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
-      <div style={{ padding: '8px 12px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '12px', fontWeight: 700, color: '#334155' }}>
-        Trading deals — cost{tradings.some(t => t.margin !== null) ? ' and margin' : ''}
-      </div>
-      <div>
-        {tradings.map(t => (
-          <div key={t.tradingId} style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '12px', padding: '8px 12px', borderTop: '1px solid #f1f5f9' }}>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: '12px', color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</div>
-              <div style={{ fontSize: '10px', color: '#94a3b8' }} title={`Purchased ${peso(t.spentPrs)} · Expenses ${peso(t.spentExpenses)}`}>
-                Purchased {fmt(t.spentPrs)} · Expenses {fmt(t.spentExpenses)}
-              </div>
-            </div>
-            <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: '#0f172a' }} title={peso(t.spent)}>{fmt(t.spent)}</div>
-              {t.margin !== null && (
-                <div style={{ fontSize: '10px', fontWeight: 600, color: t.margin < 0 ? '#dc2626' : '#047857' }} title={peso(t.margin)}>
-                  {t.margin < 0 ? 'Loss ' : 'Margin '}{fmt(Math.abs(t.margin))}
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
+    <div style={{ marginTop: rows.length ? '20px' : 0 }}>
+      <TradingProfitBars rows={tradings} compact />
     </div>
   );
 
