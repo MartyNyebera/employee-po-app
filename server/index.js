@@ -53,7 +53,10 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { seed } from './seed.js';
 import { hashPassword, comparePassword, signToken, requireAuth, requireAdmin, requireSuperAdmin, requireRole, effectiveRole } from './auth.js';
-import { buildXlsx, STYLE } from './xlsx.js';
+import { buildXlsx, STYLE, colName } from './xlsx.js';
+// The SAME module src/app/lib/payslipPrint.ts reads, so the exported breakdown and the printed
+// payslip cannot disagree. Plain .js outside src/ precisely so both sides can import it.
+import { payrollBand, payslipEarnings, payslipDeductions } from '../shared/payrollLines.js';
 import { createSalesOrder, createPurchaseOrder } from './order-service.js';
 import { sendEmailToAdminsNewRequest, sendEmailToApplicant } from './email.js';
 
@@ -6076,32 +6079,22 @@ app.get('/api/payroll/periods/:id/export', requireRole(['admin', 'accounting']),
       only.length ? [req.params.id, only] : [req.params.id])).rows;
     if (rows.length === 0) return res.status(400).json({ error: 'Nothing to export — compute payroll for this period first.' });
 
-    // The Gross / Deductions / Net trio, reconciled so the exported row always reads
-    // Gross − Deductions = Net to the centavo. This mirrors src/app/lib/payrollBand.ts exactly —
-    // the frontend helper the summary table and the payslip band use — and the verification
-    // asserts the two agree on every live row.
+    // Gross / Deductions / Net and the per-line split all come from shared/payrollLines.js — the
+    // same module the printed payslip reads — so a cell here and the same figure on her slip are
+    // the same computation, not two that happen to agree today. Nothing is recomputed: the
+    // amounts are the engine's own stored values, only split into the rows a payslip shows.
     //
-    // WHY DERIVE IT: computePayroll rounds gross, the deduction total and net INDEPENDENTLY from
-    // unrounded values, and round2(a) − round2(b) is not always round2(a − b). That is how a row
-    // came to show 9,266.31 − 438.61 = 8,827.70 against a stored NET of 8,827.71. Net is correct
-    // and is what gets paid, so net is never recomputed; the DISPLAYED deduction becomes
-    // gross − net, i.e. what was actually withheld, and the arithmetic closes by construction.
-    //
-    // Where deductions exceeded pay the engine floors net at 0 and records the remainder as
-    // pay.deduction_shortfall. gross − net is then simply what was actually TAKEN, and the
-    // remainder is written off by the owner's decision — not collected, not carried forward.
-    // This file goes to employees and to the accountant's own working copy, so it carries no
-    // uncollected figure at all; the write-off is recorded in the per-person Verify breakdown
+    // The band is DERIVED rather than read column-for-column because computePayroll rounds gross,
+    // the deduction total and net INDEPENDENTLY from unrounded values, and round2(a) − round2(b)
+    // is not always round2(a − b) — that is how a row came to show 9,266.31 − 438.61 = 8,827.70
+    // against a stored NET of 8,827.71. Net is what gets paid and is never recomputed; the
+    // DISPLAYED deduction is gross − net, what was actually withheld, so the row closes by
+    // construction. Where obligations exceeded someone's pay the engine floored net at 0 and the
+    // remainder is written off (owner's decision — not collected, not carried forward); the
+    // itemised columns are capped to match, exactly as the slip caps them, and no uncollected
+    // figure appears anywhere in this file. That record lives in the per-person Verify breakdown
     // in the app, which is admin/accounting only.
     const cent = (v) => Math.round((Number(v) || 0) * 100);
-    const bandOf = (r) => {
-      const g = cent(r.gross), n = cent(r.net);
-      const unc = cent(r.breakdown && r.breakdown.pay && r.breakdown.pay.deduction_shortfall);
-      return { gross: g / 100, deductions: (g - n) / 100, net: n / 100, uncollected: unc / 100 };
-    };
-    // Same Qty the payslip prints for "Reg. day" and the same number the screen's Days cell shows:
-    // days_present plus a half-day credit per missing-OUT day.
-    const daysOf = (r) => Number(r.days_present || 0) + 0.5 * (Number(r.breakdown && r.breakdown.totals && r.breakdown.totals.half_days) || 0);
     const money = (v) => Math.round(Number(v || 0) * 100) / 100;
 
     const MONTH = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -6110,57 +6103,96 @@ app.get('/api/payroll/periods/:id/export', requireRole(['admin', 'accounting']),
     const cutoff = cls.firstCutoff ? '1st cutoff' : '2nd cutoff';
 
     const T = STYLE;
-    const HEADS = ['Name', 'Type', 'Days', 'Base', 'OT', 'Sunday', 'Holiday', 'Gross', 'Deductions', 'Net'];
+    // One column per line a payslip prints, left to right in the order the slip prints them:
+    // the earnings grid (Qty / Rate / Amount per row), GROSS, the deduction grid, Total
+    // Deduction, NET PAY. The mapping is one-to-one with slipHtml() and is asserted as such by
+    // the tests — add a row to the slip and a column belongs here.
+    const HEADS = [
+      'Name', 'Type', 'Days',
+      'Daily Rate', 'Reg. day',
+      'OT Hrs', 'OT Rate', 'Reg. OT',
+      'Sunday Hrs', 'Sunday Rate', 'Sunday',
+      'Reg. Hol. Hrs', 'Reg. Hol. Rate', 'Reg. Hol.',
+      'Spec. Hol. Hrs', 'Spec. Hol. Rate', 'Special Hol.',
+      'Hol. Days (not worked)', 'Holiday pay',
+      'Rounding (earnings)',
+      'GROSS',
+      'SSS - EE', 'Philhealth - EE', 'Pagibig - EE', 'Withholding', 'Undertime', 'Personal break', 'BALE',
+      'Rounding (deductions)', 'Total Deduction',
+      'NET PAY',
+    ];
+    // The slip labels both residual rows plainly "Rounding", one in each grid. Two columns of that
+    // name in one sheet would be ambiguous, so they are qualified here — the mapping to the slip
+    // is still one row to one column.
+    // Which columns hold money, which hold an additive quantity, and which hold a rate. The TOTAL
+    // row sums the first two and leaves the rates blank — a column of rates has no meaningful sum.
+    const MONEY_COLS = [4, 7, 10, 13, 16, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30];
+    const QTY_COLS = [2, 5, 8, 11, 14, 17];
     const out = [
       [{ v: 'KIMOEL TRADING & CONSTRUCTION INCORPORATED', s: T.TITLE }],
-      [{ v: `Payroll summary — period ${period.id} · ${label} · ${cutoff}`, s: T.SUBTITLE }],
+      [{ v: `Payroll breakdown — period ${period.id} · ${label} · ${cutoff}`, s: T.SUBTITLE }],
       [{ v: `${period.start_date} to ${period.end_date} · ${period.status === 'locked' ? 'Locked' : 'Open'}`
             + `${period.payroll_finalized ? ' · Finalized' : ''}`
             + `${only.length ? ` · filtered to ${rows.length} of the period's people` : ''}`
             + ` · exported ${new Date().toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}`
             + `${req.user && req.user.name ? ` by ${req.user.name}` : ''}`, s: T.MUTED }],
       [],
+      // A light band naming the two halves. Unmerged on purpose — the label simply spills over the
+      // empty cells beside it, and the writer stays a single-sheet, no-merge format.
+      (() => { const g = HEADS.map(() => ({ v: '', s: T.TEXT })); g[3] = { v: '— EARNINGS —', s: T.MUTED }; g[21] = { v: '— DEDUCTIONS —', s: T.MUTED }; return g; })(),
       HEADS.map(h => ({ v: h, s: T.HEADER })),
     ];
     // Totals accumulate in whole centavos so a long column cannot drift by a float hair, and so
-    // the footer ties the same way each row does.
-    const tot = { gross: 0, ded: 0, net: 0 };
+    // the TOTAL row ties the same way each person's row does.
+    const tot = HEADS.map(() => 0);
     for (const r of rows) {
-      const band = bandOf(r);
-      tot.gross += cent(band.gross);
-      tot.ded += cent(band.deductions);
-      tot.net += cent(band.net);
-      out.push([
-        { v: r.full_name || '', s: T.TEXT },
-        { v: r.employment_type === 'monthly' ? 'Monthly' : 'Daily', s: T.TEXT },
-        { v: daysOf(r), s: T.NUMBER },
-        { v: money(r.base_pay), s: T.MONEY },
-        { v: money(r.ot_pay), s: T.MONEY },
-        { v: money(r.sunday_pay), s: T.MONEY },
-        { v: money(r.holiday_pay), s: T.MONEY },
-        { v: band.gross, s: T.MONEY },
-        { v: band.deductions, s: T.MONEY },
-        { v: band.net, s: T.MONEY },
-      ]);
+      const band = payrollBand(r);
+      const e = payslipEarnings(r);
+      const d = payslipDeductions(r, band);
+      const by = (k) => { const it = d.items.find(x => x.key === k); return it ? it.amount : 0; };
+      const cells = [
+        r.full_name || '',
+        r.employment_type === 'monthly' ? 'Monthly' : 'Daily',
+        e.regQty,
+        money(e.dailyRate), money(e.regAmount),
+        money(e.otHours), money(e.otRate), money(e.otAmount),
+        money(e.sundayHours), money(e.sundayRate), money(e.sundayAmount),
+        money(e.regHolHours), money(e.regHolRate), money(e.regHolAmount),
+        money(e.specHolHours), money(e.specHolRate), money(e.specHolAmount),
+        e.holOffDays, money(e.holOffAmount),
+        e.adjustment,
+        band.gross,
+        by('sss'), by('philhealth'), by('pagibig'), by('withholding'), by('undertime'), by('break'), by('bale'),
+        d.adjustment, d.total,
+        band.net,
+      ];
+      for (const i of MONEY_COLS) tot[i] += cent(cells[i]);
+      for (const i of QTY_COLS) tot[i] += cent(cells[i]);
+      out.push(cells.map((v, i) => ({
+        v,
+        s: i < 2 ? T.TEXT : (MONEY_COLS.includes(i) ? T.MONEY : T.NUMBER),
+      })));
     }
-    // Mirrors the on-screen footer: a head count and the three column totals. Deductions is a
-    // real total now that it reconciles, so the footer reads Gross − Deductions = Net as well.
-    out.push([
-      { v: `TOTAL (${rows.length} ${rows.length === 1 ? 'person' : 'people'})`, s: T.TOTAL_LABEL },
-      { v: '', s: T.TOTAL_LABEL }, { v: '', s: T.TOTAL_LABEL }, { v: '', s: T.TOTAL_LABEL },
-      { v: '', s: T.TOTAL_LABEL }, { v: '', s: T.TOTAL_LABEL }, { v: '', s: T.TOTAL_LABEL },
-      { v: tot.gross / 100, s: T.MONEY_BOLD },
-      { v: tot.ded / 100, s: T.MONEY_BOLD },
-      { v: tot.net / 100, s: T.MONEY_BOLD },
-    ]);
+    // A head count and every additive column's total, so she can check the file against her own
+    // figures at a glance. The money totals tie exactly as each row does: the earnings columns sum
+    // to GROSS, the deduction columns to Total Deduction, and GROSS − Total Deduction = NET PAY.
+    out.push(HEADS.map((_h, i) => {
+      if (i === 0) return { v: `TOTAL (${rows.length} ${rows.length === 1 ? 'person' : 'people'})`, s: T.TOTAL_LABEL };
+      if (MONEY_COLS.includes(i)) return { v: tot[i] / 100, s: T.MONEY_BOLD };
+      if (QTY_COLS.includes(i)) return { v: tot[i] / 100, s: T.MONEY_BOLD };
+      return { v: '', s: T.TOTAL_LABEL };
+    }));
 
-    const headerRow = 5;
+    const headerRow = 6;
+    // The writer's own column namer, so a column added to HEADS cannot put the filter range out
+    // of step with the sheet.
+    const lastCol = colName(HEADS.length - 1);
     const buf = buildXlsx({
       rows: out,
       sheetName: `Period ${period.id}`,
-      widths: [28, 10, 8, 12, 12, 12, 12, 13, 13, 13],
+      widths: [26, 9, 7, 11, 12, 8, 10, 11, 11, 12, 11, 13, 14, 11, 14, 15, 12, 20, 12, 18, 13, 11, 14, 12, 12, 11, 13, 11, 20, 14, 13],
       freezeRows: headerRow,
-      autoFilter: `A${headerRow}:J${headerRow + rows.length}`,
+      autoFilter: `A${headerRow}:${lastCol}${headerRow + rows.length}`,
     });
     // e.g. payroll-period-27-2026-09-15_to_09-29.xlsx
     const filename = `payroll-period-${period.id}-${period.start_date}_to_${period.end_date.slice(5)}.xlsx`;

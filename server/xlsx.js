@@ -79,7 +79,7 @@ const xmlEsc = (v) => String(v)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 
-const colName = (i) => {
+export const colName = (i) => {
   let s = '';
   for (let n = i + 1; n > 0;) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = (n - r - 1) / 26; }
   return s;

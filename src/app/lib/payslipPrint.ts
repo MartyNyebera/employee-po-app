@@ -9,6 +9,7 @@
 // recalculated. Admin and Accounting both print (payslips are their job); no data is changed.
 // ============================================================================
 import { payrollBand } from './payrollBand';
+import { payslipEarnings, payslipDeductions } from '../../../shared/payrollLines.js';
 
 // The subset of a payroll_lines row (as returned by GET /payroll/periods/:id/lines) the payslip
 // needs. Kept loose on purpose so this module isn't coupled to the screen's Line type.
@@ -132,121 +133,42 @@ const PAYSLIP_CSS = `
 `;
 
 function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
-  const ref = (l.breakdown && l.breakdown.reference) || {};
-  const hourly = Number(ref.hourly) || 0;
-  const mults = (ref.multipliers) || {};
-  const otMult = Number(mults.ot) || 1.25;
-  const otRate = hourly * otMult;
-  const dailyRate = Number(ref.daily_basis) || Number(ref.rate) || 0;
-  // Premium hourly rates for the Sunday/holiday earnings rows — shown even when nobody worked one
-  // that period (Qty/Amount 0), just like Reg. day always shows its rate. Same per-hour basis as
-  // Reg. OT (hourly × multiplier), read from the stored settings so it matches the computed amounts.
-  // DISPLAY ONLY — no pay math changes; the Amount columns are the already-computed values.
-  const sunMult = Number(mults.sunday) || 1.30;
-  const regHolMult = Number(mults.regular_holiday) || 2.0;
-  const spcHolMult = Number(mults.special_holiday) || 1.30;
-  const sundayRate = hourly * sunMult;
-  const regHolRate = hourly * regHolMult;
-  const specHolRate = hourly * spcHolMult;
+  // Every printed figure comes from shared/payrollLines.js, the one derivation the Excel export
+  // of this same breakdown also reads — so the slip and the spreadsheet cannot disagree. Nothing
+  // is recomputed: the amounts are the engine's own, only split into the rows shown here.
+  const E = payslipEarnings(l as any);
+  const dailyRate = E.dailyRate;
+  const otRate = E.otRate;
+  const sundayRate = E.sundayRate, regHolRate = E.regHolRate, specHolRate = E.specHolRate;
+  const sundayHours = E.sundayHours, regHolHours = E.regHolHours, specHolHours = E.specHolHours;
+  const regHol = E.regHolAmount, specHol = E.specHolAmount;
+  const holOffDays = E.holOffDays, holOffPay = E.holOffAmount;
+  // Printed only when the earnings column would not otherwise reach Total Earnings — the same
+  // sub-centavo residual the deduction grid's Rounding row closes, on the other side of the slip.
+  const earnRounding = E.adjustment;
+  // Reg. day quantity includes half days (a missing-OUT day counts as 0.5), so Qty × Rate = base_pay.
+  const regQtyStr = Number.isInteger(E.regQty) ? String(E.regQty) : E.regQty.toFixed(1);
 
-  // Reg. day quantity includes half days (missing-OUT days count as 0.5), so Qty × Rate = base_pay.
-  const halfDays = Number(l.breakdown && l.breakdown.totals && l.breakdown.totals.half_days) || 0;
-  const regQty = (Number(l.days_present) || 0) + 0.5 * halfDays;
-  const regQtyStr = Number.isInteger(regQty) ? String(regQty) : regQty.toFixed(1);
-
-  // Reg./Special holiday split AND the premium-row quantities, both read from the stored per-day
-  // breakdown (already-computed amounts — nothing is recalculated here). The Sunday/holiday rows
-  // used to print a blank Qty, so an employee saw an Amount with no visible basis for it. Each row
-  // now states what it was paid for: premium rows are paid per HOUR worked (Rate = hourly × the
-  // multiplier), so Qty is net hours and Qty × Rate reconciles to Amount, give or take the centavo
-  // the stored per-day net_hours rounding costs — same as the Reg. OT row above.
-  //
-  // A holiday NOT worked but still paid is a different shape: one whole DAY at the daily rate, not
-  // hours × premium. Folding it into the Reg./Special rows would make Qty × Rate nonsense, so it
-  // gets its own row. Keeping it OUT of regHol/specHol is why that row must exist — otherwise the
-  // money would silently disappear from the slip and Total Earnings would not tie to GROSS.
-  let regHol = 0, specHol = 0, sundayHours = 0, regHolHours = 0, specHolHours = 0;
-  let holOffDays = 0, holOffPay = 0;
-  for (const d of (l.breakdown && l.breakdown.days) || []) {
-    const amt = Number(d.amount) || 0;
-    const hrs = Number(d.net_hours) || 0;
-    if (d.kind === 'sunday_worked') sundayHours += hrs;
-    else if (d.kind === 'holiday_worked') {
-      if (d.holiday === 'special') { specHol += amt; specHolHours += hrs; }
-      else { regHol += amt; regHolHours += hrs; }
-    } else if (d.kind === 'holiday_not_worked' && amt > 0) { holOffDays += 1; holOffPay += amt; }
-  }
-
-  const undertime = Number(l.late_undertime_deduction) || 0;
-  // The unpaid personal-break dock (attendance_days.break_minutes × per-minute) is a REAL deduction
-  // the engine subtracts from net, but it has no payroll_lines column — it exists only inside the
-  // stored breakdown. Summing the columns therefore UNDER-states deductions, and the slip stopped
-  // tying: GROSS − Less Deductions came out ABOVE the printed NET PAY for anyone who took a mid-day
-  // personal break. So itemise it, and take the total from the engine's own figure — the exact
-  // number NET was derived from — rather than re-adding the columns and hoping they agree.
-  const ded = (l.breakdown && l.breakdown.deductions) || {};
-  // The printed band uses the SAME reconciled figures as the on-screen summary, so GROSS − Less
-  // Deductions = NET PAY exactly on every slip. payrollBand derives Less from gross − net; the
-  // stored net is printed untouched.
+  // The band uses the SAME reconciled figures as the on-screen summary and the Excel export, so
+  // GROSS − Less Deductions = NET PAY exactly on every slip. payrollBand derives Less from
+  // gross − net; the stored net is printed untouched.
   const band = payrollBand(l as any);
-  const breakDed = Number(ded.break) || 0;
-  // Everything the slip PRINTS comes off payrollBand, and the whole page reconciles on ONE
-  // figure — what was actually withheld (gross − net):
+  const D = payslipDeductions(l as any, band);
+  // The whole page reconciles on ONE figure — what was actually withheld (gross − net):
   //   items + Rounding          = Total Deduction
   //   Total Deduction           = Less Deductions
   //   GROSS − Less Deductions   = NET PAY
   //
   // Nothing on this page refers to an uncollected balance. Where obligations exceeded someone's
-  // pay the engine floored net at 0 and the remainder is written off (owner's decision) — not
+  // pay the engine floored net at ₱0 and the remainder is written off (owner's decision) — not
   // collected, not carried forward — so the slip must not show the employee a figure they
-  // supposedly still owe. It stays in the Verify breakdown for internal reconciliation.
-  //
-  // That leaves the itemised column needing to add up to what was withheld, and two different
-  // reasons it might not:
-  //
-  //  * A WRITTEN-OFF SHORTFALL (band.uncollected > 0). The obligations genuinely exceed the pay,
-  //    so the items are capped at the pay available, lowest priority last. Statutory
-  //    contributions and tax are listed first and so are withheld in full wherever the pay
-  //    covers them — the shortfall lands on the company's own lines (penalties, BALE) rather
-  //    than understating an SSS or PhilHealth figure. The slip then shows what was actually
-  //    taken from this person, item by item, with no mention of the write-off. The stored
-  //    columns are untouched, so remittance figures and the audit view still read the full
-  //    obligation.
-  //
-  //  * A SUB-CENTAVO ROUNDING RESIDUAL (Joan's per-minute break dock). Capping would shave a
-  //    centavo off whichever line happened to be last, so instead an explicit "Rounding" row
-  //    closes it — printed only when it is non-zero, so a reader adding up the column never
-  //    finds an unexplained gap.
-  const owedDed = band.deductions;
-  // Withholding priority, highest first. The cap below is spent from the top, so whatever the
-  // pay cannot cover falls on the LAST lines.
-  const dedRows: Array<[string, number]> = [
-    ['SSS - EE', Number(l.sss_ee) || 0],
-    ['Philhealth - EE', Number(l.philhealth_ee) || 0],
-    ['Pagibig - EE', Number(l.pagibig_ee) || 0],
-    ['Withholding', Number(l.withholding) || 0],
-    ['Undertime', undertime],
-    ['Personal break', breakDed],
-    ['BALE', Number(l.bale) || 0],
-  ];
-  const capped = band.uncollected > 0;
-  // Whole centavos, like payrollBand itself, so the cap cannot leave a float hair behind.
-  let dedLeft = Math.round(owedDed * 100);
-  const shownRows: Array<[string, number]> = dedRows.map(([k, v]) => {
-    if (!capped) return [k, v] as [string, number];
-    const take = Math.max(0, Math.min(Math.round(Number(v) * 100), dedLeft));
-    dedLeft -= take;
-    return [k, take / 100] as [string, number];
-  });
-  // The Rounding row closes whatever gap is left between the column AS PRINTED and the total,
-  // so a reader adding up the slip always arrives at the Total Deduction. It is derived from the
-  // rendered amounts rather than from the engine's stored total on purpose: each component is
-  // rounded to centavos for display, so the printed column can differ from the engine figure as
-  // well as from the paid one (Marlon's period 7 column printed 3,302.09 against 3,302.08
-  // withheld, because his break dock is 19.6849 shown as 19.69). Capping already lands exactly
-  // on the amount withheld, so this reads 0 on a written-off slip.
-  const shownCent = shownRows.reduce((a, [, v]) => a + Math.round(Number(v) * 100), 0);
-  const roundingRow = (shownCent - Math.round(owedDed * 100)) / 100;
+  // supposedly still owe. It stays in the Verify breakdown for internal reconciliation. The
+  // shared module documents how the itemised column is capped to match, and when the Rounding
+  // row is needed; it is printed only when non-zero, so a reader adding up the column never
+  // finds an unexplained gap.
+  const owedDed = D.total;
+  const shownRows: Array<[string, number]> = D.items.map(it => [it.label, it.amount]);
+  const roundingRow = D.adjustment;
 
   return `
   <div class="slip">
@@ -280,6 +202,7 @@ function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
           <tr><td class="lbl">Reg. Hol.</td><td class="num">${esc(qtyStr(regHolHours))}</td><td class="num">${money(regHolRate)}</td><td class="num">${money(regHol)}</td></tr>
           <tr><td class="lbl">Special Hol.</td><td class="num">${esc(qtyStr(specHolHours))}</td><td class="num">${money(specHolRate)}</td><td class="num">${money(specHol)}</td></tr>
           ${holOffPay > 0 ? `<tr><td class="lbl">Holiday pay</td><td class="num">${esc(qtyStr(holOffDays))}</td><td class="num">${money(dailyRate)}</td><td class="num">${money(holOffPay)}</td></tr>` : ''}
+          ${earnRounding !== 0 ? `<tr><td class="lbl">Rounding</td><td class="num"></td><td class="num"></td><td class="num">${money(earnRounding)}</td></tr>` : ''}
           <tr class="tot"><td class="lbl" colspan="3">Total Earnings</td><td class="num">${money(l.gross)}</td></tr>
         </tbody></table>
       </div>
@@ -290,7 +213,7 @@ function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
           <tbody>
           <tr><th class="lbl" style="text-align:left">Deductions</th><th>Amount</th></tr>
           ${shownRows.map(([k, v]) => `<tr><td class="lbl">${esc(k)}</td><td class="num">${money(v)}</td></tr>`).join('')}
-          ${roundingRow !== 0 ? `<tr><td class="lbl">Rounding</td><td class="num">${money(-roundingRow)}</td></tr>` : ''}
+          ${roundingRow !== 0 ? `<tr><td class="lbl">Rounding</td><td class="num">${money(roundingRow)}</td></tr>` : ''}
           <tr class="tot"><td class="lbl">Total Deduction</td><td class="num">${money(owedDed)}</td></tr>
         </tbody></table>
       </div>
