@@ -1,14 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Calculator, Search, FileSearch, Lock, Unlock, Printer, AlertTriangle } from 'lucide-react';
+import { Calculator, Search, FileSearch, Lock, Unlock, Printer, AlertTriangle, FileSpreadsheet } from 'lucide-react';
 import { toast } from 'sonner';
 import { S, Modal, TextInput, GhostBtn, pill, peso } from './crmKit';
 import { printPayslip, printPayslips } from '../../lib/payslipPrint';
+import { payrollBand } from '../../lib/payrollBand';
 
 // ============================================================================
 // Payroll Review (Phase 4b) — shared by the Admin dashboard and the Accounting portal. Shows the
 // computed payroll_lines for a LOCKED period with a complete, per-day line-by-line breakdown so
-// the numbers can be checked against a real payslip before anything is trusted. Admin computes;
-// Finance (accounting) views. NO payslip printing here (that is 4c).
+// the numbers can be checked against a real payslip before anything is trusted.
+//
+// Admin AND accounting have the WHOLE flow: compute, lock, finalize and un-finalize
+// (owner-approved — the accountant runs payroll end to end). Both can print payslips and export
+// the summary to Excel.
+//
+// The Gross / Deductions / Net columns come from payrollBand(), which derives the DISPLAYED
+// deduction as gross − net so the three always tie to the centavo. Net is never re-derived.
 // ============================================================================
 
 type Api = <T = any>(path: string, init?: RequestInit) => Promise<T>;
@@ -71,6 +78,16 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
   const [search, setSearch] = useState('');
   const [detail, setDetail] = useState<Line | null>(null);
   const [warnings, setWarnings] = useState<Warnings | null>(null);
+  const [exporting, setExporting] = useState(false);
+
+  // Compute is available to BOTH roles now. The REAL gate is requireRole(['admin','accounting'])
+  // on POST .../compute; this only decides whether the button is drawn. Written as an explicit
+  // check rather than dropped altogether so a future third role can't silently inherit it.
+  const canCompute = role === 'admin' || role === 'accounting';
+  // Finalize / un-finalize, now the accountant's too (same owner approval as Compute). Written
+  // as an explicit check rather than dropped so a future third role cannot inherit it silently.
+  // The REAL gates are requireRole(['admin','accounting']) on the two endpoints.
+  const canFinalize = role === 'admin' || role === 'accounting';
 
   useEffect(() => {
     api<Period[]>('/attendance/periods').then(rows => {
@@ -136,12 +153,45 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
     if (!r.ok) toast.error(r.error || 'Could not open the payslips');
   };
 
+  // Excel export of this table. The server builds the whole .xlsx from payroll_lines and hands
+  // it back as base64; nothing here touches a peso figure, so the file cannot disagree with the
+  // screen. When the search box is actually narrowing the table, the visible person_ids go along
+  // so the file matches what the reviewer is looking at — the same thing "Print all payslips"
+  // already does with the filtered set.
+  const exportXlsx = async () => {
+    if (selectedId === null) return;
+    setExporting(true);
+    try {
+      const narrowed = search.trim() !== '' && filtered.length !== lines.length;
+      const qs = narrowed ? `?persons=${filtered.map(l => l.person_id).join(',')}` : '';
+      const r = await api<{ filename: string; mime: string; base64: string; rowCount: number }>(
+        `/payroll/periods/${selectedId}/export${qs}`);
+      // base64 -> bytes. The ONLY arithmetic on the way to the file, and it is on characters.
+      const bytes = Uint8Array.from(atob(r.base64), c => c.charCodeAt(0));
+      const url = URL.createObjectURL(new Blob([bytes], { type: r.mime }));
+      const a = document.createElement('a');
+      a.href = url; a.download = r.filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      // Revoked on a delay: revoking immediately can cancel the download in some browsers.
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      toast.success(`Exported ${r.rowCount} ${r.rowCount === 1 ? 'row' : 'rows'} — ${r.filename}`);
+    } catch (e: any) { toast.error(e.message || 'Export failed'); } finally { setExporting(false); }
+  };
+
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
     return lines.filter(l => !q || l.full_name.toLowerCase().includes(q) || (l.department || '').toLowerCase().includes(q) || (l.position || '').toLowerCase().includes(q));
   }, [lines, search]);
 
-  const totals = useMemo(() => filtered.reduce((a, l) => ({ gross: a.gross + Number(l.gross), net: a.net + Number(l.net) }), { gross: 0, net: 0 }), [filtered]);
+  // Summed in whole centavos off the same reconciled band as the rows, so the footer ties too:
+  // total Gross − total Deductions = total Net.
+  const totals = useMemo(() => {
+    const c = filtered.reduce((a, l) => {
+      const b = payrollBand(l);
+      return { gross: a.gross + Math.round(b.gross * 100), ded: a.ded + Math.round(b.deductions * 100), net: a.net + Math.round(b.net * 100) };
+    }, { gross: 0, ded: 0, net: 0 });
+    return { gross: c.gross / 100, ded: c.ded / 100, net: c.net / 100 };
+  }, [filtered]);
 
   return (
     <div style={S.page}>
@@ -158,14 +208,24 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
               <Printer size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />Print all payslips{search && filtered.length !== lines.length ? ` (${filtered.length})` : ''}
             </button>
           )}
-          {role === 'admin' && (
+          {lines.length > 0 && (
+            <button style={{ ...S.rowBtn, padding: '9px 14px', fontWeight: 600, opacity: (exporting || filtered.length === 0) ? 0.55 : 1, cursor: (exporting || filtered.length === 0) ? 'default' : 'pointer' }}
+              onClick={exportXlsx} disabled={exporting || filtered.length === 0}
+              title={search && filtered.length !== lines.length
+                ? `Export the ${filtered.length} filtered row${filtered.length === 1 ? '' : 's'} to Excel (.xlsx)`
+                : 'Export this payroll summary to Excel (.xlsx)'}>
+              <FileSpreadsheet size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />
+              {exporting ? 'Exporting…' : 'Export to Excel'}{search && filtered.length !== lines.length ? ` (${filtered.length})` : ''}
+            </button>
+          )}
+          {canCompute && (
             <button style={{ ...S.addBtn, opacity: (!locked || busy || finalized) ? 0.55 : 1, cursor: (!locked || busy || finalized) ? 'default' : 'pointer' }}
               onClick={compute} disabled={!locked || busy || finalized}
               title={finalized ? 'Finalized — un-finalize first to recompute' : ''}>
               <Calculator size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />{busy ? 'Computing…' : 'Compute payroll'}
             </button>
           )}
-          {role === 'admin' && lines.length > 0 && (
+          {canFinalize && lines.length > 0 && (
             finalized ? (
               <button style={{ ...S.rowBtn, padding: '9px 14px', fontWeight: 600, opacity: busy ? 0.55 : 1 }} onClick={unfinalize} disabled={busy}
                 title="Re-open this payroll so it can be recomputed">
@@ -217,7 +277,7 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
             <div style={{ marginTop: '4px' }}>No pay rate set (skipped, not paid): {warnings.no_pay_rate!.map(p => p.full_name).join(', ')} — set a rate on the roster and recompute.</div>
           )}
           {(warnings.deduction_exceeds_pay?.length || 0) > 0 && (
-            <div style={{ marginTop: '4px' }}>Deductions exceeded pay (net floored to ₱0): {warnings.deduction_exceeds_pay!.map(p => `${p.full_name} (short ${peso(p.shortfall)})`).join(', ')} — the uncollected remainder needs handling (e.g. carry the BALE forward).</div>
+            <div style={{ marginTop: '4px' }}>Deductions exceeded pay (net floored to ₱0): {warnings.deduction_exceeds_pay!.map(p => `${p.full_name} (short ${peso(p.shortfall)})`).join(', ')} — that remainder is written off: not collected, not carried forward. It is recorded here and in each person's Verify breakdown, and appears on nothing the employee sees.</div>
           )}
         </div>
       )}
@@ -241,13 +301,13 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
               : !period ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={11}>Select a pay period.</td></tr>
               : filtered.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={11}>{locked ? 'No payroll computed yet — click Compute payroll.' : 'Lock this period, then compute.'}</td></tr>
               : filtered.map(l => {
-                // Same trap the payslip fell into: the personal-break dock is a real deduction with
-                // no payroll_lines column (it lives only in the breakdown), so re-adding the columns
-                // under-states it and this row would read Gross − Deductions ≠ Net. The engine's own
-                // total is what Net was derived from; the column sum is only a pre-breakdown fallback.
-                const totalDed = l.breakdown?.deductions?.total != null
-                  ? Number(l.breakdown.deductions.total)
-                  : Number(l.late_undertime_deduction) + Number(l.sss_ee) + Number(l.philhealth_ee) + Number(l.pagibig_ee) + Number(l.withholding) + Number(l.bale);
+                // Gross / Deductions / Net all come from one reconciled band so this row always
+                // reads Gross − Deductions = Net exactly. Deductions is derived as gross − net
+                // (what was actually withheld); Net is the stored, paid figure, untouched. Where
+                // deductions exceeded pay the engine floored net at ₱0 and the remainder is
+                // written off — it is NOT shown here, by the owner's decision; the Verify
+                // breakdown per person is where that write-off is recorded.
+                const band = payrollBand(l);
                 // Same Qty the payslip prints for "Reg. day" (payslipPrint.ts) — days_present plus
                 // a 0.5 credit per half day (missing-OUT day). Showing bare days_present here used to
                 // read as e.g. "5" while the payslip printed "5.5" for the same person/period.
@@ -265,9 +325,9 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
                     <td style={S.td}>{Number(l.ot_pay) ? <>{peso(l.ot_pay)}<div style={{ fontSize: '11px', color: '#8a8a8a' }}>{l.ot_hours}h</div></> : '—'}</td>
                     <td style={S.td}>{Number(l.sunday_pay) ? peso(l.sunday_pay) : '—'}</td>
                     <td style={S.td}>{Number(l.holiday_pay) ? peso(l.holiday_pay) : '—'}</td>
-                    <td style={{ ...S.td, fontWeight: 600 }}>{peso(l.gross)}</td>
-                    <td style={S.td}>{peso(totalDed)}</td>
-                    <td style={{ ...S.td, fontWeight: 700, color: '#000' }}>{peso(l.net)}</td>
+                    <td style={{ ...S.td, fontWeight: 600 }}>{peso(band.gross)}</td>
+                    <td style={S.td}>{peso(band.deductions)}</td>
+                    <td style={{ ...S.td, fontWeight: 700, color: '#000' }}>{peso(band.net)}</td>
                     <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                       <button title="Print payslip" style={S.rowBtn} onClick={() => printOne(l)}><Printer size={14} /></button>
                       <button title="Line-by-line breakdown" style={{ ...S.rowBtn, marginLeft: '6px' }} onClick={() => setDetail(l)}><FileSearch size={14} /></button>
@@ -280,7 +340,7 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
             <tfoot><tr>
               <td style={{ ...S.td, fontWeight: 700 }} colSpan={7}>Total ({filtered.length} {filtered.length === 1 ? 'person' : 'people'})</td>
               <td style={{ ...S.td, fontWeight: 700 }}>{peso(totals.gross)}</td>
-              <td style={S.td}></td>
+              <td style={{ ...S.td, fontWeight: 700 }}>{peso(totals.ded)}</td>
               <td style={{ ...S.td, fontWeight: 700, color: '#000' }}>{peso(totals.net)}</td>
               <td style={S.td}></td>
             </tr></tfoot>
@@ -466,6 +526,24 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
           <Row k="Withholding" v={peso(ded.withholding)} />
           <Row k="BALE" v={peso(ded.bale)} />
           <Row k="Total deductions" v={peso(ded.total)} strong />
+          {/* AUDIT VIEW — admin/accounting only, and the one place the difference is spelled out.
+              The summary table, the Excel export and the payslip all show what was actually
+              WITHHELD (gross − net). Where that is less than the itemised total above, the
+              difference is either a written-off shortfall (obligations exceeded pay, net floored
+              at ₱0 — not collected, not carried forward) or a sub-centavo rounding residual.
+              Both are named here so the write-off stays traceable internally while appearing on
+              nothing the employee sees. */}
+          {(() => {
+            const bd = payrollBand(line);
+            if (bd.uncollected === 0 && bd.rounding === 0) return null;
+            return (
+              <>
+                {bd.uncollected > 0 ? <Row k="Less written off (exceeded pay, not collected)" v={peso(-bd.uncollected)} /> : null}
+                {bd.rounding !== 0 ? <Row k="Rounding" v={peso(-bd.rounding)} /> : null}
+                <Row k="= Applied this period" v={peso(bd.deductions)} strong />
+              </>
+            );
+          })()}
         </div>
       </div>
       <div style={{ marginTop: '16px', padding: '12px 16px', background: '#f7f7f7', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

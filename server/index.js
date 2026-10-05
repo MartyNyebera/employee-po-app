@@ -53,6 +53,7 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { seed } from './seed.js';
 import { hashPassword, comparePassword, signToken, requireAuth, requireAdmin, requireSuperAdmin, requireRole, effectiveRole } from './auth.js';
+import { buildXlsx, STYLE } from './xlsx.js';
 import { createSalesOrder, createPurchaseOrder } from './order-service.js';
 import { sendEmailToAdminsNewRequest, sendEmailToApplicant } from './email.js';
 
@@ -5936,8 +5937,14 @@ async function computePayroll(periodId) {
   return { period, count: lines.length, lines, warnings: { no_pay_rate: noPayRate, deduction_exceeds_pay: deductionExceedsPay } };
 }
 
-// Compute payroll for a LOCKED period. ADMIN ONLY (it writes results). Idempotent.
-app.post('/api/payroll/periods/:id/compute', requireRole(['admin']), async (req, res) => {
+// Compute payroll for a LOCKED period. Admin + accounting (owner included via requireRole).
+// Accounting was deliberately view-only here until the owner approved handing payroll to the
+// accountant end to end; they already held Lock (attendanceReviewRoles) and now hold Compute too.
+// Admin KEEPS it — this widened the gate, it did not move it. Everything else about the compute is
+// untouched: same computePayroll, same locked-period requirement, same finalize/409 behaviour.
+// Finalize and un-finalize remain admin-only on purpose; approving a payroll is a separate decision
+// from calculating one.
+app.post('/api/payroll/periods/:id/compute', requireRole(['admin', 'accounting']), async (req, res) => {
   try {
     const r = await computePayroll(req.params.id);
     if (r.error === 'not_found') return res.status(404).json({ error: 'Pay period not found' });
@@ -5950,10 +5957,13 @@ app.post('/api/payroll/periods/:id/compute', requireRole(['admin']), async (req,
   }
 });
 
-// L5 — Finalize a computed payroll period. ADMIN ONLY. After this, recompute is blocked (409) until
-// un-finalized, so a later settings change can't silently restate approved pay. Requires computed
-// lines to exist (nothing to finalize otherwise).
-app.post('/api/payroll/periods/:id/finalize', requireRole(['admin']), async (req, res) => {
+// L5 — Finalize a computed payroll period. Admin + accounting (owner included via requireRole).
+// After this, recompute is blocked (409) until un-finalized, so a later settings change can't
+// silently restate approved pay. Requires computed lines to exist (nothing to finalize otherwise).
+// Accounting was granted this alongside Compute when the owner approved the accountant owning
+// payroll end to end — they now hold compute + lock + finalize + un-finalize. Admin KEEPS it: the
+// gate widened, it did not move. Nothing else about finalizing changed.
+app.post('/api/payroll/periods/:id/finalize', requireRole(['admin', 'accounting']), async (req, res) => {
   try {
     const pr = await query('SELECT id, status, payroll_finalized FROM pay_periods WHERE id = $1', [req.params.id]);
     const period = pr.rows[0];
@@ -5972,9 +5982,10 @@ app.post('/api/payroll/periods/:id/finalize', requireRole(['admin']), async (req
   }
 });
 
-// L5 — Un-finalize a period so it can be recomputed. ADMIN ONLY. Explicit, deliberate re-open of an
-// already-approved payroll.
-app.post('/api/payroll/periods/:id/unfinalize', requireRole(['admin']), async (req, res) => {
+// L5 — Un-finalize a period so it can be recomputed. Admin + accounting. Explicit, deliberate
+// re-open of an already-approved payroll; granted with Finalize above, same owner approval.
+// Still a deliberate, audited act — only WHO may do it expanded.
+app.post('/api/payroll/periods/:id/unfinalize', requireRole(['admin', 'accounting']), async (req, res) => {
   try {
     const upd = await query(
       `UPDATE pay_periods SET payroll_finalized = false, finalized_by = NULL, finalized_at = NULL WHERE id = $1
@@ -6018,6 +6029,147 @@ app.get('/api/payroll/periods/:id/lines', requireRole(['admin', 'accounting']), 
     const staleAttendance = !!(staleChk && staleChk.computed_at && staleChk.attendance_updated_at
       && new Date(staleChk.attendance_updated_at) > new Date(staleChk.computed_at));
     res.json({ period: { ...period, stale_attendance: staleAttendance }, lines: rows.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Excel (.xlsx) export of the payroll summary — the SAME per-employee rows the review table
+// shows, for ONE period. Admin + accounting, matching GET .../lines (the screen this exports).
+//
+// Built server-side on purpose, for two reasons. The figures have to come straight out of
+// payroll_lines with no browser arithmetic, and the role check has to be a real gate rather than
+// a hidden button. computePayroll is NOT called anywhere here: exporting reads, and can never
+// move a number or restate a finalized period.
+//
+// Handed back as base64 inside JSON rather than as a binary body. Both callers reach the API
+// through a JSON-only helper (the admin client.ts fetchApi and the accounting portal's aFetch),
+// and each keeps its token in a different place; returning base64 lets ONE shared component
+// serve both portals without threading a second raw-fetch prop, and its token, through two page
+// trees. The file is a few KB, so the ~33% base64 overhead costs nothing worth saving.
+//
+// ?persons=1,2,3 narrows it to those people, so when the reviewer has typed something into the
+// screen's search box the file matches the rows actually in front of them — the same thing
+// "Print all payslips" already does with the filtered set. Omitted means the whole period.
+app.get('/api/payroll/periods/:id/export', requireRole(['admin', 'accounting']), async (req, res) => {
+  try {
+    const pr = await query(
+      `SELECT id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date,
+              status, payroll_finalized, finalized_by, finalized_at
+         FROM pay_periods WHERE id = $1`, [req.params.id]);
+    const period = pr.rows[0];
+    if (!period) return res.status(404).json({ error: 'Pay period not found' });
+
+    // Same classification the period list badges with, so the cutoff named in the file agrees
+    // with the one on screen (and with which deductions actually applied).
+    const allP = (await query(`SELECT id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date FROM pay_periods`)).rows;
+    const cls = classifyFirstCutoff(period, allP);
+
+    // Digits only, so a person id can never arrive as text that reaches SQL.
+    const only = String(req.query.persons || '').split(',').map(x => x.trim()).filter(x => /^\d+$/.test(x)).map(Number);
+
+    const rows = (await query(
+      `SELECT pl.*, p.full_name
+         FROM payroll_lines pl JOIN persons p ON p.id = pl.person_id
+        WHERE pl.pay_period_id = $1${only.length ? ' AND pl.person_id = ANY($2::int[])' : ''}
+        ORDER BY p.full_name ASC`,
+      only.length ? [req.params.id, only] : [req.params.id])).rows;
+    if (rows.length === 0) return res.status(400).json({ error: 'Nothing to export — compute payroll for this period first.' });
+
+    // The Gross / Deductions / Net trio, reconciled so the exported row always reads
+    // Gross − Deductions = Net to the centavo. This mirrors src/app/lib/payrollBand.ts exactly —
+    // the frontend helper the summary table and the payslip band use — and the verification
+    // asserts the two agree on every live row.
+    //
+    // WHY DERIVE IT: computePayroll rounds gross, the deduction total and net INDEPENDENTLY from
+    // unrounded values, and round2(a) − round2(b) is not always round2(a − b). That is how a row
+    // came to show 9,266.31 − 438.61 = 8,827.70 against a stored NET of 8,827.71. Net is correct
+    // and is what gets paid, so net is never recomputed; the DISPLAYED deduction becomes
+    // gross − net, i.e. what was actually withheld, and the arithmetic closes by construction.
+    //
+    // Where deductions exceeded pay the engine floors net at 0 and records the remainder as
+    // pay.deduction_shortfall. gross − net is then simply what was actually TAKEN, and the
+    // remainder is written off by the owner's decision — not collected, not carried forward.
+    // This file goes to employees and to the accountant's own working copy, so it carries no
+    // uncollected figure at all; the write-off is recorded in the per-person Verify breakdown
+    // in the app, which is admin/accounting only.
+    const cent = (v) => Math.round((Number(v) || 0) * 100);
+    const bandOf = (r) => {
+      const g = cent(r.gross), n = cent(r.net);
+      const unc = cent(r.breakdown && r.breakdown.pay && r.breakdown.pay.deduction_shortfall);
+      return { gross: g / 100, deductions: (g - n) / 100, net: n / 100, uncollected: unc / 100 };
+    };
+    // Same Qty the payslip prints for "Reg. day" and the same number the screen's Days cell shows:
+    // days_present plus a half-day credit per missing-OUT day.
+    const daysOf = (r) => Number(r.days_present || 0) + 0.5 * (Number(r.breakdown && r.breakdown.totals && r.breakdown.totals.half_days) || 0);
+    const money = (v) => Math.round(Number(v || 0) * 100) / 100;
+
+    const MONTH = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const md = (ymd) => `${MONTH[Number(ymd.slice(5, 7)) - 1]} ${Number(ymd.slice(8, 10))}`;
+    const label = `${md(period.start_date)} – ${md(period.end_date)}, ${period.start_date.slice(0, 4)}`;
+    const cutoff = cls.firstCutoff ? '1st cutoff' : '2nd cutoff';
+
+    const T = STYLE;
+    const HEADS = ['Name', 'Type', 'Days', 'Base', 'OT', 'Sunday', 'Holiday', 'Gross', 'Deductions', 'Net'];
+    const out = [
+      [{ v: 'KIMOEL TRADING & CONSTRUCTION INCORPORATED', s: T.TITLE }],
+      [{ v: `Payroll summary — period ${period.id} · ${label} · ${cutoff}`, s: T.SUBTITLE }],
+      [{ v: `${period.start_date} to ${period.end_date} · ${period.status === 'locked' ? 'Locked' : 'Open'}`
+            + `${period.payroll_finalized ? ' · Finalized' : ''}`
+            + `${only.length ? ` · filtered to ${rows.length} of the period's people` : ''}`
+            + ` · exported ${new Date().toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}`
+            + `${req.user && req.user.name ? ` by ${req.user.name}` : ''}`, s: T.MUTED }],
+      [],
+      HEADS.map(h => ({ v: h, s: T.HEADER })),
+    ];
+    // Totals accumulate in whole centavos so a long column cannot drift by a float hair, and so
+    // the footer ties the same way each row does.
+    const tot = { gross: 0, ded: 0, net: 0 };
+    for (const r of rows) {
+      const band = bandOf(r);
+      tot.gross += cent(band.gross);
+      tot.ded += cent(band.deductions);
+      tot.net += cent(band.net);
+      out.push([
+        { v: r.full_name || '', s: T.TEXT },
+        { v: r.employment_type === 'monthly' ? 'Monthly' : 'Daily', s: T.TEXT },
+        { v: daysOf(r), s: T.NUMBER },
+        { v: money(r.base_pay), s: T.MONEY },
+        { v: money(r.ot_pay), s: T.MONEY },
+        { v: money(r.sunday_pay), s: T.MONEY },
+        { v: money(r.holiday_pay), s: T.MONEY },
+        { v: band.gross, s: T.MONEY },
+        { v: band.deductions, s: T.MONEY },
+        { v: band.net, s: T.MONEY },
+      ]);
+    }
+    // Mirrors the on-screen footer: a head count and the three column totals. Deductions is a
+    // real total now that it reconciles, so the footer reads Gross − Deductions = Net as well.
+    out.push([
+      { v: `TOTAL (${rows.length} ${rows.length === 1 ? 'person' : 'people'})`, s: T.TOTAL_LABEL },
+      { v: '', s: T.TOTAL_LABEL }, { v: '', s: T.TOTAL_LABEL }, { v: '', s: T.TOTAL_LABEL },
+      { v: '', s: T.TOTAL_LABEL }, { v: '', s: T.TOTAL_LABEL }, { v: '', s: T.TOTAL_LABEL },
+      { v: tot.gross / 100, s: T.MONEY_BOLD },
+      { v: tot.ded / 100, s: T.MONEY_BOLD },
+      { v: tot.net / 100, s: T.MONEY_BOLD },
+    ]);
+
+    const headerRow = 5;
+    const buf = buildXlsx({
+      rows: out,
+      sheetName: `Period ${period.id}`,
+      widths: [28, 10, 8, 12, 12, 12, 12, 13, 13, 13],
+      freezeRows: headerRow,
+      autoFilter: `A${headerRow}:J${headerRow + rows.length}`,
+    });
+    // e.g. payroll-period-27-2026-09-15_to_09-29.xlsx
+    const filename = `payroll-period-${period.id}-${period.start_date}_to_${period.end_date.slice(5)}.xlsx`;
+    res.json({
+      filename,
+      mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      base64: buf.toString('base64'),
+      rowCount: rows.length,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

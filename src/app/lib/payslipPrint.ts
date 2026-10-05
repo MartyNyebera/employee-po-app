@@ -8,6 +8,7 @@
 // from the stored per-day breakdown (summing amounts already computed by the 4b engine), not
 // recalculated. Admin and Accounting both print (payslips are their job); no data is changed.
 // ============================================================================
+import { payrollBand } from './payrollBand';
 
 // The subset of a payroll_lines row (as returned by GET /payroll/periods/:id/lines) the payslip
 // needs. Kept loose on purpose so this module isn't coupled to the screen's Line type.
@@ -184,14 +185,68 @@ function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
   // personal break. So itemise it, and take the total from the engine's own figure — the exact
   // number NET was derived from — rather than re-adding the columns and hoping they agree.
   const ded = (l.breakdown && l.breakdown.deductions) || {};
+  // The printed band uses the SAME reconciled figures as the on-screen summary, so GROSS − Less
+  // Deductions = NET PAY exactly on every slip. payrollBand derives Less from gross − net; the
+  // stored net is printed untouched.
+  const band = payrollBand(l as any);
   const breakDed = Number(ded.break) || 0;
-  const totalDed = ded.total != null
-    ? Number(ded.total)
-    : (Number(l.sss_ee) || 0) + (Number(l.philhealth_ee) || 0) + (Number(l.pagibig_ee) || 0)
-      + (Number(l.withholding) || 0) + undertime + breakDed + (Number(l.bale) || 0);
-  // When deductions exceed gross the engine floors NET at 0 and records the uncollected remainder.
-  // Without disclosing it, GROSS − Less would not equal the printed NET on such a slip either.
-  const shortfall = Number(l.breakdown && l.breakdown.pay && l.breakdown.pay.deduction_shortfall) || 0;
+  // Everything the slip PRINTS comes off payrollBand, and the whole page reconciles on ONE
+  // figure — what was actually withheld (gross − net):
+  //   items + Rounding          = Total Deduction
+  //   Total Deduction           = Less Deductions
+  //   GROSS − Less Deductions   = NET PAY
+  //
+  // Nothing on this page refers to an uncollected balance. Where obligations exceeded someone's
+  // pay the engine floored net at 0 and the remainder is written off (owner's decision) — not
+  // collected, not carried forward — so the slip must not show the employee a figure they
+  // supposedly still owe. It stays in the Verify breakdown for internal reconciliation.
+  //
+  // That leaves the itemised column needing to add up to what was withheld, and two different
+  // reasons it might not:
+  //
+  //  * A WRITTEN-OFF SHORTFALL (band.uncollected > 0). The obligations genuinely exceed the pay,
+  //    so the items are capped at the pay available, lowest priority last. Statutory
+  //    contributions and tax are listed first and so are withheld in full wherever the pay
+  //    covers them — the shortfall lands on the company's own lines (penalties, BALE) rather
+  //    than understating an SSS or PhilHealth figure. The slip then shows what was actually
+  //    taken from this person, item by item, with no mention of the write-off. The stored
+  //    columns are untouched, so remittance figures and the audit view still read the full
+  //    obligation.
+  //
+  //  * A SUB-CENTAVO ROUNDING RESIDUAL (Joan's per-minute break dock). Capping would shave a
+  //    centavo off whichever line happened to be last, so instead an explicit "Rounding" row
+  //    closes it — printed only when it is non-zero, so a reader adding up the column never
+  //    finds an unexplained gap.
+  const owedDed = band.deductions;
+  // Withholding priority, highest first. The cap below is spent from the top, so whatever the
+  // pay cannot cover falls on the LAST lines.
+  const dedRows: Array<[string, number]> = [
+    ['SSS - EE', Number(l.sss_ee) || 0],
+    ['Philhealth - EE', Number(l.philhealth_ee) || 0],
+    ['Pagibig - EE', Number(l.pagibig_ee) || 0],
+    ['Withholding', Number(l.withholding) || 0],
+    ['Undertime', undertime],
+    ['Personal break', breakDed],
+    ['BALE', Number(l.bale) || 0],
+  ];
+  const capped = band.uncollected > 0;
+  // Whole centavos, like payrollBand itself, so the cap cannot leave a float hair behind.
+  let dedLeft = Math.round(owedDed * 100);
+  const shownRows: Array<[string, number]> = dedRows.map(([k, v]) => {
+    if (!capped) return [k, v] as [string, number];
+    const take = Math.max(0, Math.min(Math.round(Number(v) * 100), dedLeft));
+    dedLeft -= take;
+    return [k, take / 100] as [string, number];
+  });
+  // The Rounding row closes whatever gap is left between the column AS PRINTED and the total,
+  // so a reader adding up the slip always arrives at the Total Deduction. It is derived from the
+  // rendered amounts rather than from the engine's stored total on purpose: each component is
+  // rounded to centavos for display, so the printed column can differ from the engine figure as
+  // well as from the paid one (Marlon's period 7 column printed 3,302.09 against 3,302.08
+  // withheld, because his break dock is 19.6849 shown as 19.69). Capping already lands exactly
+  // on the amount withheld, so this reads 0 on a written-off slip.
+  const shownCent = shownRows.reduce((a, [, v]) => a + Math.round(Number(v) * 100), 0);
+  const roundingRow = (shownCent - Math.round(owedDed * 100)) / 100;
 
   return `
   <div class="slip">
@@ -234,23 +289,17 @@ function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
           <colgroup><col style="width:60%"><col style="width:40%"></colgroup>
           <tbody>
           <tr><th class="lbl" style="text-align:left">Deductions</th><th>Amount</th></tr>
-          <tr><td class="lbl">SSS - EE</td><td class="num">${money(l.sss_ee)}</td></tr>
-          <tr><td class="lbl">Philhealth - EE</td><td class="num">${money(l.philhealth_ee)}</td></tr>
-          <tr><td class="lbl">Pagibig - EE</td><td class="num">${money(l.pagibig_ee)}</td></tr>
-          <tr><td class="lbl">Withholding</td><td class="num">${money(l.withholding)}</td></tr>
-          <tr><td class="lbl">Undertime</td><td class="num">${money(undertime)}</td></tr>
-          <tr><td class="lbl">Personal break</td><td class="num">${money(breakDed)}</td></tr>
-          <tr><td class="lbl">BALE</td><td class="num">${money(l.bale)}</td></tr>
-          <tr class="tot"><td class="lbl">Total Deduction</td><td class="num">${money(totalDed)}</td></tr>
+          ${shownRows.map(([k, v]) => `<tr><td class="lbl">${esc(k)}</td><td class="num">${money(v)}</td></tr>`).join('')}
+          ${roundingRow !== 0 ? `<tr><td class="lbl">Rounding</td><td class="num">${money(-roundingRow)}</td></tr>` : ''}
+          <tr class="tot"><td class="lbl">Total Deduction</td><td class="num">${money(owedDed)}</td></tr>
         </tbody></table>
       </div>
     </div>
 
     <div class="totband">
-      <div class="row"><span class="k">GROSS</span><span class="v">${peso(l.gross)}</span></div>
-      <div class="row"><span class="k">Less Deductions</span><span class="v">${peso(totalDed)}</span></div>
-      ${shortfall > 0 ? `<div class="row"><span class="k">Uncollected (carried forward)</span><span class="v">${peso(shortfall)}</span></div>` : ''}
-      <div class="row net"><span class="k">NET PAY</span><span class="v">${peso(l.net)}</span></div>
+      <div class="row"><span class="k">GROSS</span><span class="v">${peso(band.gross)}</span></div>
+      <div class="row"><span class="k">Less Deductions</span><span class="v">${peso(band.deductions)}</span></div>
+      <div class="row net"><span class="k">NET PAY</span><span class="v">${peso(band.net)}</span></div>
     </div>
 
     <div class="sign">
