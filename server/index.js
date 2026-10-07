@@ -1887,7 +1887,28 @@ async function runMigrations() {
           UNIQUE (pay_period_id, person_id)
         )
       `);
-      console.log('✅ payroll_settings + holidays + payroll_bale tables ready');
+      // Who last set the BALE. Additive — the eight rows that predate this keep NULL, which
+      // honestly reads as "set before changes were recorded" rather than naming someone.
+      await query(`ALTER TABLE payroll_bale ADD COLUMN IF NOT EXISTS updated_by TEXT`);
+      // Append-only trail of every BALE change. A BALE is the one payroll input that REDUCES
+      // take-home pay, so a wrong figure is money the employee does not receive — and until now the
+      // only trace of a change was updated_at moving, with no who and no previous value. Mirrors
+      // attendance_adjustments, but keyed on (period, person): a BALE has no attendance day to hang
+      // off. Never updated or deleted, only inserted into.
+      await query(`
+        CREATE TABLE IF NOT EXISTS payroll_bale_adjustments (
+          id SERIAL PRIMARY KEY,
+          pay_period_id INTEGER NOT NULL,
+          person_id INTEGER NOT NULL REFERENCES persons(id),
+          old_amount NUMERIC(12,2),
+          new_amount NUMERIC(12,2),
+          reason TEXT,
+          changed_by TEXT,
+          changed_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      await query(`CREATE INDEX IF NOT EXISTS idx_payroll_bale_adj ON payroll_bale_adjustments(pay_period_id, person_id)`);
+      console.log('✅ payroll_settings + holidays + payroll_bale (+ change log) tables ready');
     } catch (err) { console.log('ℹ️ payroll 4a tables skipped:', err.message); }
 
     // ===== Payroll — Phase 4b (computed results). Additive, new table only. =====
@@ -6763,8 +6784,9 @@ app.get('/api/attendance/periods/:id/sheet', requireRole(attendanceReviewRoles),
     // include test/superseded taps, so we do NOT surface punch-derived breaks for them (an adjusted
     // day is a single IN/OUT span with no mid-day break). Rebuilt (non-adjusted) days show breaks.
     const rowsOut = rows.rows.map(r => ({ ...r, breaks: r.is_adjusted ? [] : (breaksByKey[`${r.person_id}|${r.work_date}`] || []) }));
-    // Per-person BALE (cash advance) captured for this period — [{ person_id, amount }].
-    const bale = await query('SELECT person_id, amount FROM payroll_bale WHERE pay_period_id = $1', [period.id]);
+    // Per-person BALE (cash advance) captured for this period, with who last set it and when, so a
+    // figure that reduces someone's pay is never anonymous on the screen that shows it.
+    const bale = await query('SELECT person_id, amount, updated_by, updated_at FROM payroll_bale WHERE pay_period_id = $1', [period.id]);
 
     // Present/Half/Absent per person, using classifyScheduledDay -- the SAME function computePayroll
     // uses to decide days_present/half_days/absent_days. This is what lets this screen show numbers
@@ -7209,19 +7231,74 @@ app.post('/api/attendance/days/wfh', requireRole(['admin']), async (req, res) =>
   }
 });
 
-// Phase 4a: set a person's BALE (cash advance) for a period. ADMIN ONLY (Finance can see it on the
-// sheet but not edit). Upsert on (period, person). Stored only — 4b will deduct it. Blank clears it.
-app.put('/api/attendance/periods/:id/bale/:personId', requireRole(['admin']), async (req, res) => {
+// Phase 4a: set a person's BALE (cash advance) for a period. ADMIN or ACCOUNTING — the accountant
+// now runs payroll and approves the cash advances, so she enters them here; admin keeps exactly the
+// access it always had, this only widens the gate. Upsert on (period, person). Blank clears it.
+// Stored only — computePayroll deducts it, unchanged by this endpoint.
+//
+// Every change is logged to payroll_bale_adjustments (old -> new, who, when), in the SAME
+// transaction as the value, so a stored amount can never exist without its trail. The reason why
+// this got an audit log and a pay rate did not: a BALE is subtracted from net pay, so an error here
+// is money somebody does not take home, and more than one person can now type it.
+app.put('/api/attendance/periods/:id/bale/:personId', requireRole(attendanceReviewRoles), async (req, res) => {
   const amount = normalizePayRate(req.body ? req.body.amount : null);
   if (amount === INVALID_PAY) return res.status(400).json({ error: 'amount must be a non-negative number or blank' });
+  // Optional free-text note. No field sends one today (the entry is a bare inline number input);
+  // the column exists so a note can be captured later without another migration.
+  const reason = req.body && typeof req.body.reason === 'string' && req.body.reason.trim() ? req.body.reason.trim() : null;
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    // Lock the existing row first. Without FOR UPDATE a concurrent save could land between this
+    // read and the upsert below, and the log would record a transition that never happened.
+    const prev = (await client.query(
+      `SELECT amount FROM payroll_bale WHERE pay_period_id = $1 AND person_id = $2 FOR UPDATE`,
+      [req.params.id, req.params.personId]
+    )).rows[0];
+    const oldAmount = prev ? prev.amount : null;
+    const r = await client.query(
+      `INSERT INTO payroll_bale (pay_period_id, person_id, amount, updated_by) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (pay_period_id, person_id) DO UPDATE
+         SET amount = EXCLUDED.amount, updated_by = EXCLUDED.updated_by, updated_at = NOW()
+       RETURNING pay_period_id, person_id, amount, updated_by, updated_at`,
+      [req.params.id, req.params.personId, amount, req.user.id]
+    );
+    // Only a real change is an event. The input saves on blur, so tabbing through a field without
+    // touching it would otherwise file a log entry and bury the changes that matter. Compared as
+    // numbers because the stored value comes back as a string ('2000.00'), with null = not set.
+    const unchanged = oldAmount === null || oldAmount === undefined
+      ? amount === null
+      : (amount !== null && Number(oldAmount) === Number(amount));
+    if (!unchanged) {
+      await client.query(
+        `INSERT INTO payroll_bale_adjustments (pay_period_id, person_id, old_amount, new_amount, reason, changed_by)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [req.params.id, req.params.personId, oldAmount, amount, reason, req.user.id]
+      );
+    }
+    await client.query('COMMIT');
+    res.json(r.rows[0]);
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// The BALE change trail for a period: who set what, from what, when. Readable by both roles that
+// can now write it, so the log is not write-only data that needs a database console to see.
+app.get('/api/attendance/periods/:id/bale-history', requireRole(attendanceReviewRoles), async (req, res) => {
   try {
     const r = await query(
-      `INSERT INTO payroll_bale (pay_period_id, person_id, amount) VALUES ($1, $2, $3)
-       ON CONFLICT (pay_period_id, person_id) DO UPDATE SET amount = EXCLUDED.amount, updated_at = NOW()
-       RETURNING pay_period_id, person_id, amount`,
-      [req.params.id, req.params.personId, amount]
+      `SELECT a.id, a.person_id, p.full_name, a.old_amount, a.new_amount, a.reason, a.changed_by, a.changed_at
+         FROM payroll_bale_adjustments a
+         LEFT JOIN persons p ON p.id = a.person_id
+        WHERE a.pay_period_id = $1
+        ORDER BY a.changed_at DESC, a.id DESC`,
+      [req.params.id]
     );
-    res.json(r.rows[0]);
+    res.json(r.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

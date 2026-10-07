@@ -14,6 +14,8 @@ import { S, Modal, Field, TextInput, TextArea, PrimaryBtn, GhostBtn, pill, peso 
 // and lock a pay period. NO payroll math here (no pesos/rates/OT/holiday).
 //   • A correction to an OPEN day: admin or accounting.
 //   • A correction to a LOCKED day: admin only (accounting view is read-only).
+//   • BALE (cash advance) input: admin or accounting — the accountant runs payroll and approves
+//     the advances, so she enters them. Every change is logged server-side (who/old/new/when).
 // ============================================================================
 
 type Api = <T = any>(path: string, init?: RequestInit) => Promise<T>;
@@ -37,7 +39,12 @@ interface Adjustment {
   id: number; field: string; old_value: string | null; new_value: string | null;
   reason: string | null; adjusted_by: string | null; adjusted_at: string;
 }
-interface Bale { person_id: number; amount: number | string | null; }
+interface Bale {
+  person_id: number; amount: number | string | null;
+  // Who last set it and when. NULL on the rows that predate the change log — shown as nothing
+  // rather than guessed at.
+  updated_by?: string | null; updated_at?: string | null;
+}
 // Present/Half/Absent per person for this period, using the SAME classification computePayroll uses
 // (server/index.js classifyScheduledDay) -- this is what the eventual payslip's day count will be.
 // naive_days is a plain count of attendance_days rows in range, kept for comparison: it disagrees
@@ -121,6 +128,9 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
   const [historyOf, setHistoryOf] = useState<Day | null>(null);
   // person_id -> BALE amount (string, for the input). Populated from the sheet on load.
   const [baleMap, setBaleMap] = useState<Record<number, string>>({});
+  // person_id -> who last set that BALE and when, for the row's tooltip. Separate from baleMap
+  // because baleMap is the live input buffer and gets overwritten as she types.
+  const [baleMeta, setBaleMeta] = useState<Record<number, { by: string | null; at: string | null }>>({});
 
   const loadPeriods = async () => {
     try {
@@ -137,8 +147,13 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
       const s = await api<Sheet>(`/attendance/periods/${id}/sheet`);
       setSheet(s);
       const bm: Record<number, string> = {};
-      (s.bale || []).forEach(b => { bm[b.person_id] = b.amount === null || b.amount === undefined ? '' : String(b.amount); });
+      const meta: Record<number, { by: string | null; at: string | null }> = {};
+      (s.bale || []).forEach(b => {
+        bm[b.person_id] = b.amount === null || b.amount === undefined ? '' : String(b.amount);
+        meta[b.person_id] = { by: b.updated_by ?? null, at: b.updated_at ?? null };
+      });
       setBaleMap(bm);
+      setBaleMeta(meta);
     } catch { toast.error('Failed to load the review sheet'); }
     finally { setLoading(false); }
   };
@@ -150,6 +165,12 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
   // Accounting is view-only at all times — it can see, refresh, and read the correction history,
   // but never open an edit (the server also enforces this: adjust is admin-only, 403 otherwise).
   const canEditRow = (_d: Day) => role === 'admin';
+  // ...with ONE exception: the BALE. The accountant owns payroll and approves the cash advances, so
+  // she types them even though the rest of this sheet stays read-only for her. Both roles are named
+  // explicitly rather than inverted from a "not admin" test, so adding a third role later cannot
+  // hand it BALE access by accident. The server gate is the real one (requireRole on the PUT) —
+  // this only decides whether an input or static text renders.
+  const canSetBale = role === 'admin' || role === 'accounting';
   const canRebuild = role === 'admin' || (!!period && period.status === 'open');
 
   const departments = useMemo(() => {
@@ -243,12 +264,15 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
     } catch (e: any) { toast.error(e.message || 'Could not update Excuse Late'); }
   };
 
-  // Save a person's BALE for the selected period (admin-only). Blank clears it.
+  // Save a person's BALE for the selected period (admin or accounting). Blank clears it. The
+  // computation is untouched — this writes the same row the same way; only who may call it changed.
   const saveBale = async (personId: number, amount: string) => {
     if (selectedId === null) return;
     try {
-      await api(`/attendance/periods/${selectedId}/bale/${personId}`, { method: 'PUT', body: JSON.stringify({ amount: amount.trim() === '' ? null : Number(amount) }) });
+      const saved = await api<Bale>(`/attendance/periods/${selectedId}/bale/${personId}`, { method: 'PUT', body: JSON.stringify({ amount: amount.trim() === '' ? null : Number(amount) }) });
       setBaleMap(m => ({ ...m, [personId]: amount }));
+      // Reflect the audit stamp the server just wrote, so the row names the editor without a refetch.
+      setBaleMeta(m => ({ ...m, [personId]: { by: saved?.updated_by ?? null, at: saved?.updated_at ?? null } }));
       toast.success('BALE saved');
     } catch (e: any) { toast.error(e.message || 'Could not save BALE'); }
   };
@@ -340,6 +364,7 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
                 <PersonGroup key={g.person.person_id} group={g} role={role} canEditRow={canEditRow}
                   onEdit={setEditing} onHistory={setHistoryOf} onToggleOt={toggleOt} onToggleExcuseLate={toggleExcuseLate}
                   bale={baleMap[g.person.person_id] ?? ''} onSaveBale={saveBale} periodLocked={locked}
+                  canSetBale={canSetBale} baleMeta={baleMeta[g.person.person_id]}
                   classification={classByPerson.get(g.person.person_id)} />
               ))}
           </tbody>
@@ -389,7 +414,8 @@ function excuseLateCell(d: Day, role: 'admin' | 'accounting', onToggle: (d: Day,
   );
 }
 
-// BALE input — editable for admin (saves on blur/Enter), read-only peso text for Finance.
+// BALE input — editable for admin AND accounting (saves on blur/Enter), read-only peso text for
+// any other viewer. `editable` is decided by the caller; this component only renders.
 function BaleInput({ personId, value, onSave, editable }: { personId: number; value: string; onSave: (id: number, v: string) => void; editable: boolean }) {
   const [v, setV] = useState(value);
   useEffect(() => { setV(value); }, [value]);
@@ -403,13 +429,14 @@ function BaleInput({ personId, value, onSave, editable }: { personId: number; va
   );
 }
 
-function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, onToggleExcuseLate, bale, onSaveBale, classification }: {
+function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, onToggleExcuseLate, bale, onSaveBale, canSetBale, baleMeta, classification }: {
   group: { person: Day; days: Day[]; totalMin: number; breakMin: number };
   role: 'admin' | 'accounting';
   canEditRow: (d: Day) => boolean; onEdit: (d: Day) => void; onHistory: (d: Day) => void;
   onToggleOt: (d: Day, kind: 'early' | 'late', approved: boolean) => void;
   onToggleExcuseLate: (d: Day, excused: boolean) => void;
   bale: string; onSaveBale: (personId: number, amount: string) => void;
+  canSetBale: boolean; baleMeta?: { by: string | null; at: string | null };
   periodLocked: boolean;
   classification?: Classification;
 }) {
@@ -449,9 +476,12 @@ function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, o
                   </span>
                 );
               })() : null}
-              <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }} title="Cash advance (BALE) for this period">
+              <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                title={'Cash advance (BALE) for this period — deducted from net pay.'
+                  + (baleMeta?.at ? `\nLast set ${new Date(baleMeta.at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}${baleMeta.by ? ' by ' + baleMeta.by : ''}.` : '')
+                  + '\nEvery change is logged (old value, new value, who, when).'}>
                 <span style={{ fontSize: '11px', color: '#8a8a8a', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>BALE</span>
-                <BaleInput personId={person.person_id} value={bale} onSave={onSaveBale} editable={role === 'admin'} />
+                <BaleInput personId={person.person_id} value={bale} onSave={onSaveBale} editable={canSetBale} />
               </span>
             </div>
           </div>
