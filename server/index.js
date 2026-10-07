@@ -8641,6 +8641,55 @@ app.get('/api/tradings/spend', requireRole(['owner', 'admin', 'accounting']), as
     })));
   } catch (err) { console.error('trading spend error:', err); res.status(500).json({ error: err.message }); }
 });
+// The Trading PRs that have no trading deal yet — what the "New Trading Deal" form offers so the
+// accountant picks a PR instead of typing a deal's identity from scratch.
+//
+// WHAT COUNTS AS A CANDIDATE is the same predicate the startup backfill used (see the trading PR
+// backfill migration): project_label = 'Trading' with ALL THREE target FKs null. A Sales PR gets
+// that shape when the filer picks the "Trading" sentinel — "a trading purchase, no specific deal
+// yet". Picking an existing deal instead sets trading_id, so such a PR is already tracked and is
+// deliberately NOT offered again; that is what stops a second deal being created for a PR that
+// already has one.
+//
+// `amount` is COALESCE(final_total, total), NOT total: spend counts what Purchasing actually
+// priced the PR at, so showing the employee's estimate would promise a cost figure that never
+// arrives. `prTotal` is kept alongside it so the gap stays visible, exactly as mapPurchaseRequest
+// keeps both. `countsTowardCost` mirrors the other half of the spend gate — approved/ordered AND
+// a live non-sales purchase order — so a PR that would land as ₱0.00 today says so in the list
+// rather than looking broken after it is linked.
+//
+// `suggestedName` is derived here, server-side and identically to the backfill, so the name the
+// form proposes and the name a future backfill would produce cannot drift apart.
+app.get('/api/purchase-requests/trading-candidates', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT pr.id, pr.pr_number, pr.status, pr.supplier, pr.employee_name, pr.created_at,
+              pr.total, pr.final_total,
+              COALESCE(pr.final_total, pr.total) AS amount,
+              COALESCE(NULLIF(btrim(pr.items->0->>'description'), ''), 'unnamed') AS first_item,
+              jsonb_array_length(COALESCE(pr.items, '[]'::jsonb)) AS item_count,
+              'Trading — ' || left(COALESCE(NULLIF(btrim(pr.items->0->>'description'), ''), 'unnamed'), 80)
+                || ' (' || pr.pr_number || ')' AS suggested_name,
+              (pr.status IN ('approved', 'ordered')
+               AND EXISTS (SELECT 1 FROM purchase_orders po
+                            WHERE po.purchase_request_id = pr.id
+                              AND COALESCE(po.order_type, 'purchase') <> 'sales'
+                              AND po.status <> 'rejected')) AS counts_toward_cost
+         FROM purchase_requests pr
+        WHERE pr.project_label = 'Trading'
+          AND pr.trading_id IS NULL AND pr.project_id IS NULL AND pr.facility_id IS NULL
+        ORDER BY pr.created_at DESC, pr.pr_number DESC`);
+    res.json(r.rows.map(x => ({
+      id: x.id, prNumber: x.pr_number, status: x.status, supplier: x.supplier ?? null,
+      employeeName: x.employee_name ?? null, createdAt: x.created_at,
+      firstItem: x.first_item, itemCount: Number(x.item_count) || 0,
+      amount: money2(x.amount), prTotal: money2(x.total),
+      finalTotal: x.final_total === null ? null : money2(x.final_total),
+      countsTowardCost: x.counts_toward_cost === true,
+      suggestedName: x.suggested_name,
+    })));
+  } catch (err) { console.error('trading candidates error:', err); res.status(500).json({ error: err.message }); }
+});
 app.get('/api/tradings', async (req, res) => {
   try {
     const { search, status } = req.query;
@@ -8659,19 +8708,87 @@ app.get('/api/tradings/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 const tradingPrice = (v) => (v === undefined || v === null || v === '' ? null : Number(v));
+// Create a trading deal. Two shapes:
+//
+//   * BLANK — a name and the optional fields, exactly as before. For a deal with no PR yet.
+//   * FROM A TRADING PR — pass purchaseRequestId. The deal is created and that PR is attached to
+//     it (trading_id) so the PR's cost starts flowing into the deal immediately. `name` becomes
+//     optional in this shape: left out, it is derived the same way the startup backfill derives
+//     it, 'Trading — <first item> (<PR#>)'.
+//
+// The create and the link are ONE TRANSACTION on purpose. Done as two calls from the browser, a
+// failed second call would leave an unlinked orphan deal behind — and the accountant would have no
+// way to tell that from a deal she meant to create blank. Here either both happen or neither does.
+//
+// The PR is re-checked INSIDE the transaction, SELECT ... FOR UPDATE: it must exist, be a trading
+// PR, and still be unlinked. That row lock is what makes a double-submit (or two people at once)
+// impossible to turn into two deals for one PR — the second attempt waits, then sees trading_id
+// already set and is refused with 409. The dropdown filtering already hides linked PRs; this is
+// the gate that actually enforces it.
 app.post('/api/tradings', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
+  const b = req.body || {};
+  const prId = b.purchaseRequestId === undefined || b.purchaseRequestId === null || b.purchaseRequestId === ''
+    ? null : String(b.purchaseRequestId);
+  const price = tradingPrice(b.sellingPrice);
+  if (price !== null && (!isFinite(price) || price < 0)) return res.status(400).json({ error: 'Selling price must be a non-negative number or blank' });
+  if (!prId && (!b.name || !String(b.name).trim())) return res.status(400).json({ error: 'Trading name is required' });
+
+  if (!prId) {
+    try {
+      const r = await query(
+        `INSERT INTO tradings (id, name, client, status, selling_price, sales_order_id)
+         VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+        [newId('TRD'), String(b.name).trim(), orNull(b.client), orNull(b.status) || 'Active', price, orNull(b.salesOrderId)]
+      );
+      return res.status(201).json(mapTrading(r.rows[0]));
+    } catch (err) { console.error('trading create error:', err); return res.status(500).json({ error: err.message }); }
+  }
+
+  const client = await getClient();
   try {
-    const b = req.body || {};
-    if (!b.name || !String(b.name).trim()) return res.status(400).json({ error: 'Trading name is required' });
-    const price = tradingPrice(b.sellingPrice);
-    if (price !== null && (!isFinite(price) || price < 0)) return res.status(400).json({ error: 'Selling price must be a non-negative number or blank' });
-    const r = await query(
+    await client.query('BEGIN');
+    const pr = (await client.query(
+      `SELECT id, pr_number, project_label, trading_id, project_id, facility_id,
+              COALESCE(NULLIF(btrim(items->0->>'description'), ''), 'unnamed') AS first_item
+         FROM purchase_requests WHERE id = $1 FOR UPDATE`, [prId])).rows[0];
+    if (!pr) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Purchase request not found' }); }
+    if (pr.project_label !== 'Trading') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `${pr.pr_number} is not a Trading purchase request.` });
+    }
+    if (pr.trading_id) {
+      await client.query('ROLLBACK');
+      const existing = (await query('SELECT name FROM tradings WHERE id = $1', [pr.trading_id])).rows[0];
+      return res.status(409).json({
+        error: `${pr.pr_number} is already part of the trading deal "${existing ? existing.name : pr.trading_id}" — open that deal instead of creating a second one.`,
+      });
+    }
+    if (pr.project_id || pr.facility_id) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `${pr.pr_number} is already charged to a project or facility.` });
+    }
+
+    // Same derivation as the backfill migration, so a hand-made deal and a backfilled one are
+    // named identically for the same PR.
+    const name = (b.name && String(b.name).trim())
+      || `Trading — ${String(pr.first_item).slice(0, 80)} (${pr.pr_number})`;
+    const created = (await client.query(
       `INSERT INTO tradings (id, name, client, status, selling_price, sales_order_id)
        VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [newId('TRD'), String(b.name).trim(), orNull(b.client), orNull(b.status) || 'Active', price, orNull(b.salesOrderId)]
-    );
-    res.status(201).json(mapTrading(r.rows[0]));
-  } catch (err) { console.error('trading create error:', err); res.status(500).json({ error: err.message }); }
+      [newId('TRD'), name, orNull(b.client), orNull(b.status) || 'Active', price, orNull(b.salesOrderId)]
+    )).rows[0];
+    await client.query(
+      'UPDATE purchase_requests SET trading_id = $1, updated_at = NOW() WHERE id = $2',
+      [created.id, pr.id]);
+    await client.query('COMMIT');
+    res.status(201).json({ ...mapTrading(created), linkedPrNumber: pr.pr_number, linkedPrId: pr.id });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
+    console.error('trading create-from-PR error:', err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
 });
 app.patch('/api/tradings/:id', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
   try {
