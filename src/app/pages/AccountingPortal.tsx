@@ -83,23 +83,6 @@ interface Trading {
   id: string; name: string; client?: string | null; status?: string;
   sellingPrice?: number | null; salesOrderId?: string | null;
 }
-// A Trading purchase request that has no trading deal yet — what the New Trading Deal form offers
-// instead of making her type a deal's identity by hand. Served by
-// GET /api/purchase-requests/trading-candidates, which also derives suggestedName (the same
-// 'Trading — <item> (<PR#>)' the startup backfill produces) so the two can never drift.
-//
-// `amount` is what will actually land as cost — COALESCE(final_total, total), i.e. what Purchasing
-// priced it at, not the filer's estimate. `prTotal` is the estimate, shown only when it differs.
-// `countsTowardCost` is false until the PR is approved/ordered AND has a live purchase order; such
-// a PR still links fine but contributes ₱0.00 for now, and the form says so rather than leaving her
-// to wonder why the deal reads zero.
-interface TradingCandidate {
-  id: string; prNumber: string; status: string; supplier?: string | null;
-  employeeName?: string | null; createdAt?: string;
-  firstItem: string; itemCount: number;
-  amount: number; prTotal: number; finalTotal: number | null;
-  countsTowardCost: boolean; suggestedName: string;
-}
 // Spend is never summed in the browser. GET /api/projects/spend, /api/tradings/spend and
 // /api/facilities/spend are the one definition (PROJECT_SPEND_SQL and friends in server/index.js),
 // shared with the admin dashboard chart.
@@ -1098,22 +1081,8 @@ function ExpensesModal({ target, stats, reloadKey, onClose, onLog, onChanged }: 
 }
 
 // ============================================================================
-// New / Edit a trading deal. A selling price is optional and only exists so the Trading Deals table
-// can show margin. No budget field — see the Trading interface.
-//
-// CREATING FROM A TRADING PR is the main path. A Sales PR filed against the "Trading" option
-// arrives with no deal attached, and the deal's identity is already sitting in that PR — its line
-// items and its number. So the form leads with a dropdown of those unlinked PRs and fills the deal
-// from the one she picks; the server does the create and the link in a single transaction, which is
-// why there is no second "attach" call here to half-fail. The name it proposes is editable, and a
-// selling price can be added right away.
-//
-// The BLANK path stays, for a deal that genuinely has no PR yet. It is a radio choice rather than
-// a hidden fallback, and it is what the form falls back to when every trading PR is already linked
-// (the dropdown is then empty by design — a PR with a deal is never offered twice).
-//
-// Editing an existing deal shows none of this: the PR link is set at creation and is not something
-// this form re-points.
+// New / Edit a trading deal. Name is all that's required; a selling price is optional and only
+// exists so the Trading Deals table can show margin. No budget field — see the Trading interface.
 // ============================================================================
 function TradingModal({ trading, onClose, onSaved }: {
   trading: Trading | null; onClose: () => void; onSaved: () => void;
@@ -1126,39 +1095,8 @@ function TradingModal({ trading, onClose, onSaved }: {
   const [saving, setSaving] = useState(false);
   const set = (k: keyof typeof f, v: string) => setF(p => ({ ...p, [k]: v }));
 
-  // Candidates are only fetched when creating. 'loading' keeps the radio from flickering to the
-  // blank path and back before the list arrives.
-  const creating = !trading;
-  const [candidates, setCandidates] = useState<TradingCandidate[] | null>(null);
-  const [mode, setMode] = useState<'pr' | 'blank'>('pr');
-  const [prId, setPrId] = useState('');
-  useEffect(() => {
-    if (!creating) return;
-    aFetch<TradingCandidate[]>('/purchase-requests/trading-candidates')
-      .then(rows => {
-        setCandidates(rows || []);
-        // Nothing to pick from → the blank path is the only one, so start there.
-        if (!rows || rows.length === 0) setMode('blank');
-      })
-      .catch(() => setCandidates([]));
-  }, [creating]);
-  const picked = useMemo(() => (candidates || []).find(c => c.id === prId) || null, [candidates, prId]);
-  // Choosing a PR fills the name with the server's suggestion, but never clobbers something she
-  // has already typed over it — only a blank name or the previous suggestion is replaced.
-  const choosePr = (id: string) => {
-    const c = (candidates || []).find(x => x.id === id) || null;
-    setPrId(id);
-    setF(prev => {
-      const untouched = prev.name.trim() === '' || (candidates || []).some(x => x.suggestedName === prev.name);
-      return untouched ? { ...prev, name: c ? c.suggestedName : '' } : prev;
-    });
-  };
-
   const save = async () => {
-    const fromPr = creating && mode === 'pr';
-    if (fromPr && !prId) { toast.error('Pick a Trading PR, or switch to a blank deal'); return; }
-    // From a PR the name may be left blank — the server derives it. Otherwise it is required.
-    if (!fromPr && !f.name.trim()) { toast.error('Name is required'); return; }
+    if (!f.name.trim()) { toast.error('Name is required'); return; }
     const price = f.sellingPrice.replace(/,/g, '').trim();
     if (price && (!/^\d+(\.\d{1,2})?$/.test(price) || Number(price) < 0)) { toast.error('Selling price must be a peso amount, or left blank'); return; }
     setSaving(true);
@@ -1166,13 +1104,10 @@ function TradingModal({ trading, onClose, onSaved }: {
       const body = JSON.stringify({
         name: f.name.trim(), client: f.client.trim() || null,
         status: f.status, sellingPrice: price === '' ? null : price,
-        // The server creates the deal and attaches the PR in one transaction when this is present.
-        ...(fromPr ? { purchaseRequestId: prId } : {}),
       });
       if (trading) await aFetch(`/tradings/${trading.id}`, { method: 'PATCH', body });
       else await aFetch('/tradings', { method: 'POST', body });
-      toast.success(trading ? 'Trading updated'
-        : fromPr ? `Trading created from ${picked ? picked.prNumber : 'the PR'}` : 'Trading created');
+      toast.success(trading ? 'Trading updated' : 'Trading created');
       onSaved();
     } catch (e: any) { toast.error('Save failed: ' + e.message); } finally { setSaving(false); }
   };
@@ -1187,53 +1122,8 @@ function TradingModal({ trading, onClose, onSaved }: {
           <button onClick={onClose} className="p-1 rounded-md text-gray-400 hover:bg-gray-100"><X className="w-5 h-5" /></button>
         </div>
         <div className="p-5 overflow-y-auto space-y-4">
-          {creating && (
-            <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-3">
-              <div className="flex flex-wrap gap-x-5 gap-y-1">
-                <label className="inline-flex items-center gap-2 text-sm font-medium text-gray-700">
-                  <input type="radio" checked={mode === 'pr'} onChange={() => setMode('pr')}
-                    disabled={(candidates || []).length === 0} className="accent-blue-600" />
-                  From a Trading PR
-                </label>
-                <label className="inline-flex items-center gap-2 text-sm font-medium text-gray-700">
-                  <input type="radio" checked={mode === 'blank'} onChange={() => setMode('blank')} className="accent-blue-600" />
-                  Blank deal (no PR yet)
-                </label>
-              </div>
-              {mode === 'pr' && (
-                <>
-                  <select value={prId} onChange={e => choosePr(e.target.value)} className={`${input} bg-white`}>
-                    <option value="">{candidates === null ? 'Loading Trading PRs…' : 'Choose a Trading PR…'}</option>
-                    {(candidates || []).map(c => (
-                      <option key={c.id} value={c.id}>
-                        {c.prNumber} — {c.firstItem}{c.itemCount > 1 ? ` +${c.itemCount - 1} more` : ''} — {peso(c.amount)}
-                      </option>
-                    ))}
-                  </select>
-                  {candidates !== null && candidates.length === 0 && (
-                    <p className="text-xs text-gray-500">Every Trading purchase request already belongs to a deal, so there is nothing to pick. Use <span className="font-medium">Blank deal</span> for a deal that has no PR yet.</p>
-                  )}
-                  {picked && (
-                    <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900 space-y-0.5">
-                      <div><span className="font-semibold">{picked.prNumber}</span> · {picked.status}{picked.supplier ? ` · ${picked.supplier}` : ''}{picked.employeeName ? ` · filed by ${picked.employeeName}` : ''}</div>
-                      <div>{picked.itemCount} line{picked.itemCount === 1 ? '' : 's'}, first: {picked.firstItem}</div>
-                      <div>
-                        Cost into this deal: <span className="font-semibold">{peso(picked.amount)}</span>
-                        {picked.finalTotal !== null && picked.prTotal !== picked.finalTotal
-                          ? <span className="text-blue-700"> (priced by Purchasing; the filer estimated {peso(picked.prTotal)})</span> : null}
-                      </div>
-                      {!picked.countsTowardCost && (
-                        <div className="text-amber-800">No live purchase order yet, so this shows as {peso(0)} until Purchasing raises one. Linking it now is still fine.</div>
-                      )}
-                    </div>
-                  )}
-                  <p className="text-xs text-gray-500">A PR already attached to a deal is not listed, so this cannot create a second deal for the same PR.</p>
-                </>
-              )}
-            </div>
-          )}
           <div>
-            <label className={label}>Name {creating && mode === 'pr' ? <span className="text-gray-400 font-normal">(filled from the PR — edit if you like)</span> : <span className="text-red-500">*</span>}</label>
+            <label className={label}>Name <span className="text-red-500">*</span></label>
             <input autoFocus value={f.name} onChange={e => set('name', e.target.value)} maxLength={200}
               placeholder="e.g. Air pumps — RESUN ACO-012 for NHK" className={input} />
           </div>
