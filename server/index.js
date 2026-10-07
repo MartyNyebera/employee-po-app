@@ -809,6 +809,37 @@ async function runMigrations() {
       console.log('✅ purchase_requests.trading_id ready');
     } catch (err) { console.log('ℹ️ purchase_requests.trading_id skipped:', err.message); }
 
+    // ============== VAT BASIS on each entered price ==============
+    // A price on its own is ambiguous. Supplier and client prices arrive sometimes VAT-inclusive and
+    // sometimes VAT-exclusive, so "26,940" is two different revenues depending on which it is — and
+    // the deal it sits on is then reported at the wrong profit either way. Each entered price
+    // therefore carries its OWN basis, and the dual-basis profit view converts from it.
+    //
+    // NOT NULL DEFAULT 'inclusive' is the column AND the backfill in one step, and that default is
+    // the deliberate choice for the rows already priced (4 tradings, 5 projects when this shipped):
+    // those prices were typed the way the client is billed, i.e. VAT-inclusive. On an UNPRICED row
+    // the basis is inert — revenue stays NULL, so nothing reads it until a price is entered.
+    //
+    // 'exempt' means VAT-free: both bases equal the entered number. It is offered because the COST
+    // side already allows it — purchase_orders.vat_type can be 'non-vatable' — so a VAT-free trade
+    // is already representable on the buy side, and without this option the sell side would be
+    // forced to assert VAT that was never charged. No row uses it today.
+    try {
+      await query(`ALTER TABLE tradings ADD COLUMN IF NOT EXISTS selling_price_vat TEXT NOT NULL DEFAULT 'inclusive'`);
+      await query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS contract_price_vat TEXT NOT NULL DEFAULT 'inclusive'`);
+      // The CHECKs go on separately so they land on a table that already has the column, each
+      // guarded by name so a restart never tries to add it twice.
+      for (const [tbl, colName] of [['tradings', 'selling_price_vat'], ['projects', 'contract_price_vat']]) {
+        await query(`DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '${tbl}_${colName}_check') THEN
+            ALTER TABLE ${tbl} ADD CONSTRAINT ${tbl}_${colName}_check
+              CHECK (${colName} IN ('inclusive', 'exclusive', 'exempt'));
+          END IF;
+        END $$`);
+      }
+      console.log('✅ VAT basis ready (tradings.selling_price_vat, projects.contract_price_vat)');
+    } catch (err) { console.log('ℹ️ VAT basis columns skipped:', err.message); }
+
     // ============== EXPENSES + ALLOCATIONS (replaces project_expenses) ==============
     // One expense, many allocation lines. A ₱1,000 gas receipt can be split ₱600 to a project and
     // ₱400 to a trading; a single-target expense is simply one allocation line.
@@ -7772,6 +7803,7 @@ function mapProject(r) {
     client: r.client, location: r.location, startDate: r.start_date, endDate: r.end_date,
     budgetAllocation: r.budget_allocation === null ? 0 : parseFloat(r.budget_allocation),
     contractPrice: r.contract_price === null || r.contract_price === undefined ? null : parseFloat(r.contract_price),
+    contractPriceVat: r.contract_price_vat ?? 'inclusive',
     netProfitPercent: r.net_profit_percent === null || r.net_profit_percent === undefined ? null : parseFloat(r.net_profit_percent),
     completedAt: r.completed_at ?? null, completedBy: r.completed_by ?? null,
     createdAt: r.created_at, updatedAt: r.updated_at,
@@ -8047,13 +8079,79 @@ app.get('/api/projects', async (req, res) => {
 //
 // PRs and expenses are summed SEPARATELY and only then joined. Joining projects → PRs → expenses in
 // one pass multiplies rows (3 PRs × 2 expenses = 6 rows) and inflates both sums.
+// ====================== VAT BASIS → DUAL-BASIS MONEY ======================
+// ONE definition of the rate and of how each basis converts. Every dual-basis figure below is
+// derived through these helpers, so the rate lives in exactly one place on the server.
+//
+// 12% is the only rate in use: all 20 purchase orders on file are vat_type='vatable' and their
+// stored VAT ties to 12.0000% of subtotal (the 11.9996–12.0013% spread in the data is rounding
+// noise from computing net = gross/1.12 and VAT = gross − net at 2dp, not a different rate).
+//
+// VAT_BASES is the allowed tag set, matching the CHECK constraint on both price columns.
+const VAT_RATE = 0.12;
+const VAT_MULT = '1.12'; // SQL literal for 1 + VAT_RATE, written out so the generated SQL reads plainly
+const VAT_BASES = ['inclusive', 'exclusive', 'exempt'];
+const vatBasis = (v) => (v === undefined || v === null || v === '' ? null : (VAT_BASES.includes(String(v)) ? String(v) : undefined));
+
+// An entered price plus its basis, resolved to each basis. 'exempt' is VAT-free so both sides are
+// the entered number. The NULLIF(price, 0) guard is kept verbatim from the original margin columns:
+// a price of 0 is "not priced yet" just as much as NULL is, and both must stay NULL so the UI can
+// print "set selling price" instead of drawing a 100%-loss bar.
+const revenueExVat = (price, basis) => `
+         CASE WHEN NULLIF(${price}, 0) IS NULL THEN NULL
+              WHEN ${basis} = 'inclusive' THEN ROUND(${price} / ${VAT_MULT}, 2)
+              ELSE ${price} END`;
+const revenueIncVat = (price, basis) => `
+         CASE WHEN NULLIF(${price}, 0) IS NULL THEN NULL
+              WHEN ${basis} = 'exclusive' THEN ROUND(${price} * ${VAT_MULT}, 2)
+              ELSE ${price} END`;
+// Profit and margin % on one basis. Both stay NULL while revenue is NULL, so an unpriced row shows
+// blank rather than a loss equal to its whole cost.
+const profitOn = (rev, cost) => `
+         CASE WHEN ${rev} IS NULL THEN NULL ELSE ROUND(${rev} - ${cost}, 2) END`;
+const marginPctOn = (rev, cost) => `
+         CASE WHEN ${rev} IS NULL OR ${rev} = 0 THEN NULL
+              ELSE ROUND(((${rev} - ${cost}) / ${rev}) * 100, 2) END`;
+
 const SPEND_TARGET_COLUMN = { project: 'project_id', facility: 'facility_id', trading: 'trading_id' };
 function prSpendCte(target) {
   const col = SPEND_TARGET_COLUMN[target];
   if (!col) throw new Error(`unknown spend target: ${target}`);
+  // `amt` is the RAW figure every existing caller already reads and is byte-for-byte unchanged.
+  // amt_ex / amt_inc are additive: the same money expressed on each VAT basis, so the dual-basis
+  // profit view can compare revenue and cost like-for-like.
+  //
+  //  - final_total IS the PO's subtotal, i.e. already VAT-EXCLUSIVE (POST /api/purchase-orders
+  //    writes it as subTotal). So amt_ex takes it as-is, which is what makes the ex-VAT cost
+  //    reconcile to final_total exactly.
+  //  - amt_inc adds VAT back ONLY where the PO that priced it actually charged VAT. A
+  //    'non-vatable' PO's subtotal is already the whole amount payable (CreatePOModal returns 0
+  //    VAT for it, and PurchasingPortal sets netOfVat = totalAmount), so inflating that by 12%
+  //    would invent tax nobody paid. No such PO exists today; the form can raise one tomorrow.
+  //  - The COALESCE fallback (no priced PO yet, so pr.total — the employee's own estimate) is
+  //    VAT-INCLUSIVE by the convention PurchasingPortal states outright: "Entered unit prices are
+  //    treated as VAT-INCLUSIVE". It is therefore divided down for the ex column and taken as-is
+  //    for the inc column. Zero counted PRs have a NULL final_total today, so this branch changes
+  //    no figure on screen — it is here so the first one that appears is not silently mislabelled.
   return `
-    SELECT pr.${col} AS target_id, SUM(COALESCE(pr.final_total, pr.total)) AS amt
+    SELECT pr.${col} AS target_id, SUM(COALESCE(pr.final_total, pr.total)) AS amt,
+           SUM(CASE WHEN pr.final_total IS NOT NULL THEN pr.final_total
+                    ELSE ROUND(pr.total / ${VAT_MULT}, 2) END) AS amt_ex,
+           SUM(CASE WHEN pr.final_total IS NULL THEN pr.total
+                    WHEN COALESCE(vatpo.vat_type, 'vatable') = 'vatable' THEN ROUND(pr.final_total * ${VAT_MULT}, 2)
+                    ELSE pr.final_total END) AS amt_inc
       FROM purchase_requests pr
+      -- The request's own VALID purchase order — same predicate as the EXISTS below, so the row
+      -- whose vat_type is read is the very row that qualified the request as spend. A re-PO leaves
+      -- the rejected order in place, hence ORDER BY ... LIMIT 1 rather than a plain join: the
+      -- newest valid order is the one that priced it.
+      LEFT JOIN LATERAL (
+        SELECT po2.vat_type FROM purchase_orders po2
+         WHERE po2.purchase_request_id = pr.id
+           AND COALESCE(po2.order_type, 'purchase') <> 'sales'
+           AND po2.status <> 'rejected'
+         ORDER BY po2.created_date DESC, po2.id DESC
+         LIMIT 1) vatpo ON TRUE
      WHERE pr.${col} IS NOT NULL
        AND pr.status IN ('approved', 'ordered')
        AND EXISTS (SELECT 1 FROM purchase_orders po
@@ -8070,34 +8168,68 @@ function prSpendCte(target) {
 function allocSpendCte(target) {
   const col = SPEND_TARGET_COLUMN[target];
   if (!col) throw new Error(`unknown spend target: ${target}`);
+  // Same additive shape as prSpendCte: `amt` unchanged, the two basis columns new.
+  //
+  // An expense is the receipt as paid — VAT-INCLUDED, the basis documented on the expenses table
+  // itself. There is no VAT field anywhere on expenses or on an allocation line, so there is no
+  // per-receipt basis to read: amt_inc is the amount as recorded and amt_ex divides it down.
+  // A genuinely VAT-exempt receipt (a sari-sari store with no official receipt, say) is therefore
+  // shown slightly LOW on the ex-VAT side. Tagging each receipt is the follow-up if that matters;
+  // guessing per receipt here would be worse than one stated convention.
+  //
+  // Rounded per line and then summed, not summed and then rounded, so a split receipt's ex-VAT
+  // shares still add up to what each target is individually shown.
   return `
-    SELECT ea.${col} AS target_id, SUM(ea.amount) AS amt
+    SELECT ea.${col} AS target_id, SUM(ea.amount) AS amt,
+           SUM(ROUND(ea.amount / ${VAT_MULT}, 2)) AS amt_ex,
+           SUM(ea.amount) AS amt_inc
       FROM expense_allocations ea
       JOIN expenses e ON e.id = ea.expense_id
      WHERE ea.${col} IS NOT NULL
        AND e.voided_at IS NULL
      GROUP BY ea.${col}`;
 }
+// A project now reports PROFIT the way a trading deal always has, on both VAT bases, against its
+// contract_price and that price's basis. budget / spent / remaining / over_budget are untouched:
+// the budget view answers "is this overrunning its allowance", the profit view answers "did this
+// make money", and they are different questions measured against different numbers.
 const PROJECT_SPEND_SQL = `
   WITH pr AS (${prSpendCte('project')}),
-       ex AS (${allocSpendCte('project')})
-  SELECT p.id, p.name, p.status,
+       ex AS (${allocSpendCte('project')}),
+  base AS (
+  SELECT p.id, p.name, p.status, p.contract_price, p.contract_price_vat,
          COALESCE(p.budget_allocation, 0)                                        AS budget,
          COALESCE(pr.amt, 0)                                                     AS spent_prs,
          COALESCE(ex.amt, 0)                                                     AS spent_expenses,
          COALESCE(pr.amt, 0) + COALESCE(ex.amt, 0)                               AS spent,
          GREATEST(COALESCE(p.budget_allocation, 0) - COALESCE(pr.amt, 0) - COALESCE(ex.amt, 0), 0) AS remaining,
-         GREATEST(COALESCE(pr.amt, 0) + COALESCE(ex.amt, 0) - COALESCE(p.budget_allocation, 0), 0) AS over_budget
+         GREATEST(COALESCE(pr.amt, 0) + COALESCE(ex.amt, 0) - COALESCE(p.budget_allocation, 0), 0) AS over_budget,
+         COALESCE(pr.amt_ex, 0)                                                  AS cost_prs_ex,
+         COALESCE(ex.amt_ex, 0)                                                  AS cost_expenses_ex,
+         COALESCE(pr.amt_ex, 0) + COALESCE(ex.amt_ex, 0)                         AS cost_ex,
+         COALESCE(pr.amt_inc, 0)                                                 AS cost_prs_inc,
+         COALESCE(ex.amt_inc, 0)                                                 AS cost_expenses_inc,
+         COALESCE(pr.amt_inc, 0) + COALESCE(ex.amt_inc, 0)                       AS cost_inc,${revenueExVat('p.contract_price', 'p.contract_price_vat')} AS revenue_ex,${revenueIncVat('p.contract_price', 'p.contract_price_vat')} AS revenue_inc
     FROM projects p
     LEFT JOIN pr ON pr.target_id = p.id
     LEFT JOIN ex ON ex.target_id = p.id
-   ORDER BY p.name ASC`;
+  )
+  SELECT b.*,${profitOn('b.revenue_ex', 'b.cost_ex')} AS profit_ex,${marginPctOn('b.revenue_ex', 'b.cost_ex')} AS margin_ex_percent,${profitOn('b.revenue_inc', 'b.cost_inc')} AS profit_inc,${marginPctOn('b.revenue_inc', 'b.cost_inc')} AS margin_inc_percent
+    FROM base b
+   ORDER BY b.name ASC`;
 // Tradings have no budget by design (margin is the question, not budget adherence), so this reports
 // cost and — when a selling price is recorded — margin against it. Same two-CTE shape as projects.
 const TRADING_SPEND_SQL = `
   WITH pr AS (${prSpendCte('trading')}),
-       ex AS (${allocSpendCte('trading')})
-  SELECT t.id, t.name, t.client, t.status, t.selling_price, t.sales_order_id, t.created_at,
+       ex AS (${allocSpendCte('trading')}),
+  base AS (
+  SELECT t.id, t.name, t.client, t.status, t.selling_price, t.selling_price_vat, t.sales_order_id, t.created_at,
+         COALESCE(pr.amt_ex, 0)                          AS cost_prs_ex,
+         COALESCE(ex.amt_ex, 0)                          AS cost_expenses_ex,
+         COALESCE(pr.amt_ex, 0) + COALESCE(ex.amt_ex, 0) AS cost_ex,
+         COALESCE(pr.amt_inc, 0)                           AS cost_prs_inc,
+         COALESCE(ex.amt_inc, 0)                           AS cost_expenses_inc,
+         COALESCE(pr.amt_inc, 0) + COALESCE(ex.amt_inc, 0) AS cost_inc,${revenueExVat('t.selling_price', 't.selling_price_vat')} AS revenue_ex,${revenueIncVat('t.selling_price', 't.selling_price_vat')} AS revenue_inc,
          COALESCE(pr.amt, 0)                       AS spent_prs,
          COALESCE(ex.amt, 0)                       AS spent_expenses,
          COALESCE(pr.amt, 0) + COALESCE(ex.amt, 0) AS spent,
@@ -8115,7 +8247,15 @@ const TRADING_SPEND_SQL = `
     FROM tradings t
     LEFT JOIN pr ON pr.target_id = t.id
     LEFT JOIN ex ON ex.target_id = t.id
-   ORDER BY t.created_at DESC, t.name ASC`;
+  )
+  -- margin / margin_percent above are the ORIGINAL single-basis figures and are deliberately left
+  -- exactly as they were: the admin dashboard renders them and must not shift. The _ex / _inc pair
+  -- below is the new like-for-like view. They disagree on purpose — the original compares a
+  -- VAT-inclusive price against a mostly VAT-exclusive cost, which is the very confusion this adds
+  -- the basis tag to resolve.
+  SELECT b.*,${profitOn('b.revenue_ex', 'b.cost_ex')} AS profit_ex,${marginPctOn('b.revenue_ex', 'b.cost_ex')} AS margin_ex_percent,${profitOn('b.revenue_inc', 'b.cost_inc')} AS profit_inc,${marginPctOn('b.revenue_inc', 'b.cost_inc')} AS margin_inc_percent
+    FROM base b
+   ORDER BY b.created_at DESC, b.name ASC`;
 // Facilities can now receive allocation lines too, so they are no longer the odd one out with
 // PR-only spend. A facility with no allocations reports exactly what it reported before.
 const FACILITY_SPEND_SQL = `
@@ -8130,6 +8270,18 @@ const FACILITY_SPEND_SQL = `
     LEFT JOIN ex ON ex.target_id = f.id
    ORDER BY f.name ASC`;
 const money2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
+const money2n = (v) => (v === null || v === undefined ? null : money2(v));
+// The two basis blocks a spend row carries, shaped once so tradings and projects cannot drift.
+// revenue / profit / marginPercent are null for an unpriced row; cost is always a real number
+// because cost accrues whether or not a price has been set yet.
+const basisBlock = (row, k) => ({
+  revenue: money2n(row[`revenue_${k}`]),
+  cost: money2(row[`cost_${k}`]),
+  costPrs: money2(row[`cost_prs_${k}`]),
+  costExpenses: money2(row[`cost_expenses_${k}`]),
+  profit: money2n(row[`profit_${k}`]),
+  marginPercent: money2n(row[`margin_${k}_percent`]),
+});
 
 // GET /api/projects/spend — per project: budget, spentPrs, spentExpenses, spent, remaining (0 floor)
 // and overBudget (0 floor). Registered before /api/projects/:id so "spend" isn't read as an id.
@@ -8140,8 +8292,49 @@ app.get('/api/projects/spend', requireRole(['owner', 'admin', 'accounting']), as
       projectId: row.id, name: row.name, status: row.status,
       budget: money2(row.budget), spentPrs: money2(row.spent_prs), spentExpenses: money2(row.spent_expenses),
       spent: money2(row.spent), remaining: money2(row.remaining), overBudget: money2(row.over_budget),
+      // Additive. Every field above is unchanged; the dashboard reads only those.
+      contractPrice: money2n(row.contract_price), contractPriceVat: row.contract_price_vat,
+      exVat: basisBlock(row, 'ex'), incVat: basisBlock(row, 'inc'),
     })));
   } catch (err) { console.error('project spend error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/profit-rollup — the all-projects and all-tradings totals on both bases, summed in SQL
+// so the screen never adds money up itself.
+//
+// Only PRICED rows are in the totals. An unpriced row has no revenue, so including its cost would
+// report a company-wide loss made entirely of deals nobody has priced yet — the same invention the
+// per-row NULLIF guard exists to prevent. `priced` and `total` ride along so the screen can say
+// plainly how many rows the total covers.
+const ROLLUP_SQL = (inner) => `
+  SELECT * FROM (
+    SELECT count(*)::int AS total,
+           count(*) FILTER (WHERE revenue_ex IS NOT NULL)::int AS priced,
+           COALESCE(SUM(revenue_ex)  FILTER (WHERE revenue_ex  IS NOT NULL), 0) AS rev_ex,
+           COALESCE(SUM(cost_ex)     FILTER (WHERE revenue_ex  IS NOT NULL), 0) AS cost_ex,
+           COALESCE(SUM(revenue_inc) FILTER (WHERE revenue_inc IS NOT NULL), 0) AS rev_inc,
+           COALESCE(SUM(cost_inc)    FILTER (WHERE revenue_inc IS NOT NULL), 0) AS cost_inc
+      FROM (${inner}) s
+  ) a,
+  LATERAL (SELECT ROUND(a.rev_ex - a.cost_ex, 2) AS profit_ex,
+                  ROUND(a.rev_inc - a.cost_inc, 2) AS profit_inc,
+                  CASE WHEN a.rev_ex = 0 THEN NULL
+                       ELSE ROUND(((a.rev_ex - a.cost_ex) / a.rev_ex) * 100, 2) END AS margin_ex_percent,
+                  CASE WHEN a.rev_inc = 0 THEN NULL
+                       ELSE ROUND(((a.rev_inc - a.cost_inc) / a.rev_inc) * 100, 2) END AS margin_inc_percent) d`;
+app.get('/api/profit-rollup', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
+  try {
+    const shape = (r) => ({
+      total: r.total, priced: r.priced,
+      exVat: { revenue: money2(r.rev_ex), cost: money2(r.cost_ex), profit: money2(r.profit_ex), marginPercent: money2n(r.margin_ex_percent) },
+      incVat: { revenue: money2(r.rev_inc), cost: money2(r.cost_inc), profit: money2(r.profit_inc), marginPercent: money2n(r.margin_inc_percent) },
+    });
+    const [p, t] = await Promise.all([
+      query(ROLLUP_SQL(PROJECT_SPEND_SQL)),
+      query(ROLLUP_SQL(TRADING_SPEND_SQL)),
+    ]);
+    res.json({ vatRate: VAT_RATE, projects: shape(p.rows[0]), tradings: shape(t.rows[0]) });
+  } catch (err) { console.error('profit rollup error:', err); res.status(500).json({ error: err.message }); }
 });
 
 // ====================== EXPENSES (parent) + ALLOCATIONS ======================
@@ -8519,12 +8712,15 @@ app.post('/api/projects', requireRole(['owner','admin','accounting']), async (re
   try {
     const b = req.body;
     if (!b.name || !String(b.name).trim()) return res.status(400).json({ error: 'Project name is required' });
+    const basis = vatBasis(b.contractPriceVat);
+    if (basis === undefined) return res.status(400).json({ error: `Contract price VAT basis must be one of: ${VAT_BASES.join(', ')}` });
     const id = newId('PRJ');
     const r = await query(
-      `INSERT INTO projects (id,name,description,status,client,location,start_date,end_date,budget_allocation,contract_price,net_profit_percent)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      `INSERT INTO projects (id,name,description,status,client,location,start_date,end_date,budget_allocation,contract_price,contract_price_vat,net_profit_percent)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
       [id, b.name, orNull(b.description), orNull(b.status) || 'Active', orNull(b.client), orNull(b.location), orNull(b.startDate), orNull(b.endDate), Number(b.budgetAllocation) || 0,
        b.contractPrice === undefined || b.contractPrice === null || b.contractPrice === '' ? null : Number(b.contractPrice),
+       basis || 'inclusive',
        b.netProfitPercent === undefined || b.netProfitPercent === null || b.netProfitPercent === '' ? null : Number(b.netProfitPercent)]
     );
     res.status(201).json(mapProject(r.rows[0]));
@@ -8533,13 +8729,18 @@ app.post('/api/projects', requireRole(['owner','admin','accounting']), async (re
 app.patch('/api/projects/:id', requireRole(['owner','admin','accounting']), async (req, res) => {
   try {
     const b = req.body;
-    const cols = { name:b.name, description:b.description, status:b.status, client:b.client, location:b.location, start_date:b.startDate, end_date:b.endDate, budget_allocation:b.budgetAllocation, contract_price:b.contractPrice, net_profit_percent:b.netProfitPercent };
+    const cols = { name:b.name, description:b.description, status:b.status, client:b.client, location:b.location, start_date:b.startDate, end_date:b.endDate, budget_allocation:b.budgetAllocation, contract_price:b.contractPrice, contract_price_vat:b.contractPriceVat, net_profit_percent:b.netProfitPercent };
     const sets = []; const params = []; let i = 1;
     for (const [k, v] of Object.entries(cols)) {
       if (v === undefined) continue;
       sets.push(`${k} = $${i++}`);
       if (k === 'budget_allocation') params.push(Number(v) || 0);
       else if (k === 'contract_price') params.push(v === null || v === '' ? null : Number(v));
+      else if (k === 'contract_price_vat') {
+        const basis = vatBasis(v);
+        if (basis === undefined) return res.status(400).json({ error: `Contract price VAT basis must be one of: ${VAT_BASES.join(', ')}` });
+        params.push(basis || 'inclusive');
+      }
       else if (k === 'net_profit_percent') params.push(v === null || v === '' ? null : Number(v));
       else params.push(orNull(v));
     }
@@ -8617,6 +8818,7 @@ function mapTrading(r) {
   return r && {
     id: r.id, name: r.name, client: r.client, status: r.status,
     sellingPrice: r.selling_price === null || r.selling_price === undefined ? null : parseFloat(r.selling_price),
+    sellingPriceVat: r.selling_price_vat ?? 'inclusive',
     salesOrderId: r.sales_order_id ?? null,
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
@@ -8638,6 +8840,10 @@ app.get('/api/tradings/spend', requireRole(['owner', 'admin', 'accounting']), as
       spentPrs: money2(row.spent_prs), spentExpenses: money2(row.spent_expenses), spent: money2(row.spent),
       margin: row.margin === null ? null : money2(row.margin),
       marginPercent: row.margin_percent === null ? null : money2(row.margin_percent),
+      // Additive. margin / marginPercent above keep their original single-basis meaning for the
+      // dashboard; exVat / incVat are the like-for-like pair.
+      sellingPriceVat: row.selling_price_vat,
+      exVat: basisBlock(row, 'ex'), incVat: basisBlock(row, 'inc'),
     })));
   } catch (err) { console.error('trading spend error:', err); res.status(500).json({ error: err.message }); }
 });
@@ -8665,10 +8871,13 @@ app.post('/api/tradings', requireRole(['owner', 'admin', 'accounting']), async (
     if (!b.name || !String(b.name).trim()) return res.status(400).json({ error: 'Trading name is required' });
     const price = tradingPrice(b.sellingPrice);
     if (price !== null && (!isFinite(price) || price < 0)) return res.status(400).json({ error: 'Selling price must be a non-negative number or blank' });
+    const basis = vatBasis(b.sellingPriceVat);
+    if (basis === undefined) return res.status(400).json({ error: `Selling price VAT basis must be one of: ${VAT_BASES.join(', ')}` });
     const r = await query(
-      `INSERT INTO tradings (id, name, client, status, selling_price, sales_order_id)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [newId('TRD'), String(b.name).trim(), orNull(b.client), orNull(b.status) || 'Active', price, orNull(b.salesOrderId)]
+      `INSERT INTO tradings (id, name, client, status, selling_price, selling_price_vat, sales_order_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [newId('TRD'), String(b.name).trim(), orNull(b.client), orNull(b.status) || 'Active', price,
+       basis || 'inclusive', orNull(b.salesOrderId)]
     );
     res.status(201).json(mapTrading(r.rows[0]));
   } catch (err) { console.error('trading create error:', err); res.status(500).json({ error: err.message }); }
@@ -8676,7 +8885,8 @@ app.post('/api/tradings', requireRole(['owner', 'admin', 'accounting']), async (
 app.patch('/api/tradings/:id', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
   try {
     const b = req.body || {};
-    const cols = { name: b.name, client: b.client, status: b.status, selling_price: b.sellingPrice, sales_order_id: b.salesOrderId };
+    const cols = { name: b.name, client: b.client, status: b.status, selling_price: b.sellingPrice,
+                   selling_price_vat: b.sellingPriceVat, sales_order_id: b.salesOrderId };
     const sets = []; const params = []; let i = 1;
     for (const [k, v] of Object.entries(cols)) {
       if (v === undefined) continue;
@@ -8686,6 +8896,10 @@ app.patch('/api/tradings/:id', requireRole(['owner', 'admin', 'accounting']), as
         const price = tradingPrice(v);
         if (price !== null && (!isFinite(price) || price < 0)) return res.status(400).json({ error: 'Selling price must be a non-negative number or blank' });
         params.push(price);
+      } else if (k === 'selling_price_vat') {
+        const basis = vatBasis(v);
+        if (basis === undefined) return res.status(400).json({ error: `Selling price VAT basis must be one of: ${VAT_BASES.join(', ')}` });
+        params.push(basis || 'inclusive');
       } else params.push(orNull(v));
     }
     if (!sets.length) return res.status(400).json({ error: 'No fields to update' });

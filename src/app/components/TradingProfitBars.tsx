@@ -13,8 +13,19 @@
 // them here is what lets one component serve both hosts unchanged.
 // ============================================================================
 
+// One basis's already-computed figures, as /tradings/spend and /projects/spend now return them.
+export interface ProfitBasisFigures {
+  revenue: number | null;
+  cost: number;
+  costPrs: number;
+  costExpenses: number;
+  profit: number | null;
+  marginPercent: number | null;
+}
 export interface TradingProfitRow {
-  tradingId: string;
+  // `id` lets a project render through this same component; tradings keep tradingId. One of the two.
+  id?: string;
+  tradingId?: string;
   name: string;
   client?: string | null;
   status?: string;
@@ -26,6 +37,11 @@ export interface TradingProfitRow {
   // with no price gets no bar rather than a bar implying a 100% loss.
   margin: number | null;
   marginPercent: number | null;
+  // Present on the dual-basis payloads. When the `basis` prop names one, the bar is drawn from it
+  // instead of from margin/marginPercent above, so the same component serves the single-basis
+  // dashboard and the dual-basis accounting panels without either knowing about the other.
+  exVat?: ProfitBasisFigures;
+  incVat?: ProfitBasisFigures;
 }
 
 const peso = (v: number) =>
@@ -51,10 +67,25 @@ const RED_SOFT = '#fee2e2';
 // pinned rather than overflowing its container.
 const fillPct = (marginPercent: number) => Math.min(100, Math.max(2, Math.abs(marginPercent)));
 
-export function TradingProfitBars({ rows, compact = false }: { rows: TradingProfitRow[]; compact?: boolean }) {
+// Which numbers a row contributes. Without `basis` this is the original single-basis reading, so
+// the admin dashboard renders exactly as before. With it, the named basis block is used.
+const readRow = (r: TradingProfitRow, basis?: 'exVat' | 'incVat') => {
+  const b = basis ? r[basis] : undefined;
+  return b
+    ? { profit: b.profit, marginPercent: b.marginPercent, cost: b.cost, price: b.revenue, prs: b.costPrs, expenses: b.costExpenses }
+    : { profit: r.margin, marginPercent: r.marginPercent, cost: r.spent, price: r.sellingPrice, prs: r.spentPrs, expenses: r.spentExpenses };
+};
+
+export function TradingProfitBars({ rows, compact = false, basis, title }: {
+  rows: TradingProfitRow[];
+  compact?: boolean;
+  basis?: 'exVat' | 'incVat';
+  title?: string;
+}) {
   if (rows.length === 0) return null;
-  const priced = rows.filter(r => r.margin !== null);
-  const totalProfit = priced.reduce((t, r) => t + (r.margin as number), 0);
+  const priced = rows.filter(r => readRow(r, basis).profit !== null);
+  // Summing values the server already computed, which is display aggregation, not money math.
+  const totalProfit = priced.reduce((t, r) => t + (readRow(r, basis).profit as number), 0);
 
   return (
     <div style={{ border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden', background: '#fff' }}>
@@ -62,7 +93,14 @@ export function TradingProfitBars({ rows, compact = false }: { rows: TradingProf
         display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '10px',
         padding: '8px 12px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0',
       }}>
-        <span style={{ fontSize: '12px', fontWeight: 700, color: '#334155' }}>Trading profit</span>
+        <span style={{ fontSize: '12px', fontWeight: 700, color: '#334155' }}>
+          {title ?? 'Trading profit'}
+          {basis && (
+            <span style={{ fontWeight: 600, color: '#64748b' }}>
+              {basis === 'exVat' ? ' — VAT-exclusive' : ' — VAT-inclusive'}
+            </span>
+          )}
+        </span>
         {priced.length > 0 && (
           <span style={{ fontSize: '11px', fontWeight: 700, color: totalProfit < 0 ? RED : GREEN }} title={peso(totalProfit)}>
             {priced.length === rows.length ? 'Total' : `${priced.length} priced`} {fmt(totalProfit)}
@@ -72,11 +110,12 @@ export function TradingProfitBars({ rows, compact = false }: { rows: TradingProf
 
       <div>
         {rows.map(r => {
-          const unpriced = r.margin === null || r.marginPercent === null;
-          const loss = !unpriced && (r.margin as number) < 0;
-          const width = unpriced ? 0 : fillPct(r.marginPercent as number);
+          const v = readRow(r, basis);
+          const unpriced = v.profit === null || v.marginPercent === null;
+          const loss = !unpriced && (v.profit as number) < 0;
+          const width = unpriced ? 0 : fillPct(v.marginPercent as number);
           return (
-            <div key={r.tradingId} style={{ padding: compact ? '8px 12px' : '10px 12px', borderTop: '1px solid #f1f5f9' }}>
+            <div key={r.id ?? r.tradingId} style={{ padding: compact ? '8px 12px' : '10px 12px', borderTop: '1px solid #f1f5f9' }}>
               <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '10px' }}>
                 <span style={{
                   fontSize: '12px', color: '#0f172a', minWidth: 0,
@@ -86,8 +125,8 @@ export function TradingProfitBars({ rows, compact = false }: { rows: TradingProf
                   <span style={{ fontSize: '11px', fontWeight: 600, color: '#94a3b8', whiteSpace: 'nowrap' }}>set selling price</span>
                 ) : (
                   <span style={{ fontSize: '12px', fontWeight: 700, color: loss ? RED : GREEN, whiteSpace: 'nowrap' }}
-                    title={`${loss ? 'Loss' : 'Profit'} ${peso(Math.abs(r.margin as number))}`}>
-                    {fmt(r.margin as number)} <span style={{ fontWeight: 600, opacity: 0.85 }}>{pct(r.marginPercent as number)}</span>
+                    title={`${loss ? 'Loss' : 'Profit'} ${peso(Math.abs(v.profit as number))}`}>
+                    {fmt(v.profit as number)} <span style={{ fontWeight: 600, opacity: 0.85 }}>{pct(v.marginPercent as number)}</span>
                   </span>
                 )}
               </div>
@@ -109,9 +148,9 @@ export function TradingProfitBars({ rows, compact = false }: { rows: TradingProf
               </div>
 
               <div style={{ marginTop: '4px', fontSize: '10px', color: '#94a3b8' }}
-                title={`Purchased ${peso(r.spentPrs)} · Expenses ${peso(r.spentExpenses)}`}>
-                Cost {fmt(r.spent)}
-                {r.sellingPrice != null && r.sellingPrice > 0 ? ` · Price ${fmt(r.sellingPrice)}` : ''}
+                title={`Purchased ${peso(v.prs)} · Expenses ${peso(v.expenses)}`}>
+                Cost {fmt(v.cost)}
+                {v.price != null && v.price > 0 ? ` · Revenue ${fmt(v.price)}` : ''}
               </div>
             </div>
           );

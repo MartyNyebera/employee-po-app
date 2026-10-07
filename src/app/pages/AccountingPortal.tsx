@@ -21,6 +21,7 @@ import { WithdrawalTab } from '../components/WithdrawalTab';
 import { nextDeptFor } from '../lib/nextDept';
 import { TimesheetReview } from '../components/crm/TimesheetReview';
 import { TradingProfitBars } from '../components/TradingProfitBars';
+import { DualBasisProfit, type DualBasisRow, type BasisTotals } from '../components/DualBasisProfit';
 import { ExpensesHistory, type TargetOption } from '../components/ExpensesHistory';
 import { PayrollReview } from '../components/crm/PayrollReview';
 
@@ -67,7 +68,18 @@ interface Project {
   id: string; name: string; description?: string; status?: string; client?: string;
   location?: string; startDate?: string; endDate?: string; budgetAllocation?: number;
   contractPrice?: number | null; netProfitPercent?: number | null;
+  contractPriceVat?: VatBasis;
 }
+// How an entered price is to be read. Supplier and client prices arrive both ways, so the number
+// alone is ambiguous and each one carries its own tag. 'exempt' is VAT-free on both bases — it is
+// offered because purchase_orders.vat_type can already be 'non-vatable', so a VAT-free trade is
+// representable on the buy side and the sell side must be able to say the same.
+type VatBasis = 'inclusive' | 'exclusive' | 'exempt';
+const VAT_BASIS_OPTIONS: { value: VatBasis; label: string; hint: string }[] = [
+  { value: 'inclusive', label: 'VAT-inclusive', hint: 'The price already contains 12% VAT (the usual case — type it exactly as quoted or billed)' },
+  { value: 'exclusive', label: 'VAT-exclusive', hint: 'The price is net of VAT; 12% would be added on top' },
+  { value: 'exempt', label: 'VAT-exempt / zero-rated', hint: 'No VAT either way — both bases show this number unchanged' },
+];
 // Internal company facility (equipment/items used internally, not a client project). Simpler than a
 // Project — just a budget target; spend is tracked from the purchase requests charged to it.
 interface Facility {
@@ -82,13 +94,28 @@ interface Facility {
 interface Trading {
   id: string; name: string; client?: string | null; status?: string;
   sellingPrice?: number | null; salesOrderId?: string | null;
+  sellingPriceVat?: VatBasis;
 }
 // Spend is never summed in the browser. GET /api/projects/spend, /api/tradings/spend and
 // /api/facilities/spend are the one definition (PROJECT_SPEND_SQL and friends in server/index.js),
 // shared with the admin dashboard chart.
+// One basis's figures, computed server-side. revenue / profit / marginPercent are null until a
+// non-zero price is set, which is what keeps "not priced yet" distinct from a real zero.
+interface BasisFigures {
+  revenue: number | null; cost: number; costPrs: number; costExpenses: number;
+  profit: number | null; marginPercent: number | null;
+}
 interface ProjectSpend {
-  projectId: string; budget: number; spentPrs: number; spentExpenses: number;
+  projectId: string; name: string; budget: number; spentPrs: number; spentExpenses: number;
   spent: number; remaining: number; overBudget: number;
+  contractPrice: number | null; contractPriceVat: VatBasis;
+  exVat: BasisFigures; incVat: BasisFigures;
+}
+// GET /api/profit-rollup — totals across all PRICED rows, on both bases, summed in SQL.
+interface ProfitRollup {
+  vatRate: number;
+  projects: BasisTotals;
+  tradings: BasisTotals;
 }
 // margin (profit) and marginPercent both come from TRADING_SPEND_SQL already computed — this screen
 // never does money math. Both are null until a non-zero selling price exists, which is what makes
@@ -97,6 +124,8 @@ interface TradingSpend {
   tradingId: string; name: string; client?: string | null; status?: string;
   sellingPrice: number | null; spentPrs: number; spentExpenses: number; spent: number;
   margin: number | null; marginPercent: number | null;
+  sellingPriceVat: VatBasis;
+  exVat: BasisFigures; incVat: BasisFigures;
 }
 interface FacilitySpend { facilityId: string; spentPrs: number; spentExpenses: number; spent: number; }
 
@@ -496,6 +525,29 @@ function DetailModal({ pr, busy, onReview, onReject, onPrint, onClose }: {
   );
 }
 
+// The basis picker that sits beside every entered price. Deliberately a plain <select> rather than
+// a segmented toggle: three options with real consequences read better as a named list, and the
+// helper line below restates the chosen one in words so the basis can never be picked by accident.
+function VatBasisField({ value, onChange, idSuffix }: { value: VatBasis; onChange: (v: VatBasis) => void; idSuffix: string }) {
+  const chosen = VAT_BASIS_OPTIONS.find(o => o.value === value) ?? VAT_BASIS_OPTIONS[0];
+  return (
+    <div>
+      <label htmlFor={`vat-basis-${idSuffix}`} className="block text-sm font-medium text-gray-700 mb-1 leading-5 min-h-[2.5rem]">
+        Price is
+      </label>
+      <select
+        id={`vat-basis-${idSuffix}`}
+        value={value}
+        onChange={e => onChange(e.target.value as VatBasis)}
+        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+      >
+        {VAT_BASIS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+      <p className="mt-1 text-xs text-gray-400">{chosen.hint}</p>
+    </div>
+  );
+}
+
 // ============================================================================
 // Project modal — the full project record (mirrors the admin Projects tab)
 // ============================================================================
@@ -505,6 +557,9 @@ function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; 
     location: initial?.location || '',
     startDate: (initial?.startDate || '').slice(0, 10), endDate: (initial?.endDate || '').slice(0, 10),
     contractPrice: initial?.contractPrice != null ? String(initial.contractPrice) : '',
+    // Defaults to VAT-inclusive, the common case and the basis every pre-existing priced row was
+    // backfilled to. An existing project keeps whatever it already carries.
+    contractPriceVat: (initial?.contractPriceVat ?? 'inclusive') as VatBasis,
     netProfitPercent: initial?.netProfitPercent != null ? String(initial.netProfitPercent) : '',
     budgetAllocation: initial?.budgetAllocation != null ? String(initial.budgetAllocation) : '',
     // Which of the linked pair the user typed last, so re-typing Contract Price re-derives
@@ -562,6 +617,7 @@ function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; 
         startDate: f.startDate || null, endDate: f.endDate || null,
         budgetAllocation: f.budgetAllocation === '' ? null : Number(f.budgetAllocation),
         contractPrice: f.contractPrice === '' ? null : Number(f.contractPrice),
+        contractPriceVat: f.contractPriceVat,
         netProfitPercent: f.netProfitPercent === '' ? null : Number(f.netProfitPercent),
       };
       if (initial) await aFetch(`/projects/${initial.id}`, { method: 'PATCH', body: JSON.stringify(body) });
@@ -601,6 +657,7 @@ function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; 
               <label className={flabel}>Contract Price (₱)</label>
               <input type="number" min="0" step="0.01" value={f.contractPrice} onChange={e => setContract(e.target.value)} placeholder="0.00" className={input} />
             </div>
+            <VatBasisField value={f.contractPriceVat} idSuffix="project" onChange={v => setF(p => ({ ...p, contractPriceVat: v }))} />
             <div>
               <label className={flabel}>Net Profit %</label>
               <input type="number" min="0" max="100" step="0.01" value={f.netProfitPercent} onChange={e => setNetProfit(e.target.value)} placeholder="e.g. 30" className={input} />
@@ -1093,6 +1150,9 @@ function TradingModal({ trading, onClose, onSaved }: {
     sellingPrice: trading?.sellingPrice != null ? String(trading.sellingPrice) : '',
   });
   const [saving, setSaving] = useState(false);
+  // The basis of the selling price. Defaults to VAT-inclusive, which is both the common case and
+  // the basis every already-priced deal was backfilled to.
+  const [vat, setVat] = useState<VatBasis>(trading?.sellingPriceVat ?? 'inclusive');
   const set = (k: keyof typeof f, v: string) => setF(p => ({ ...p, [k]: v }));
 
   const save = async () => {
@@ -1104,6 +1164,7 @@ function TradingModal({ trading, onClose, onSaved }: {
       const body = JSON.stringify({
         name: f.name.trim(), client: f.client.trim() || null,
         status: f.status, sellingPrice: price === '' ? null : price,
+        sellingPriceVat: vat,
       });
       if (trading) await aFetch(`/tradings/${trading.id}`, { method: 'PATCH', body });
       else await aFetch('/tradings', { method: 'POST', body });
@@ -1141,10 +1202,15 @@ function TradingModal({ trading, onClose, onSaved }: {
               </select>
             </div>
           </div>
-          <div>
-            <label className={label}>Selling price (₱) <span className="text-gray-400 font-normal">(optional)</span></label>
-            <input inputMode="decimal" value={f.sellingPrice} onChange={e => set('sellingPrice', e.target.value)} placeholder="0.00" className={input} />
-            <p className="mt-1 text-xs text-gray-400">Only used to show margin (selling price − cost). Leave blank to just accumulate cost.</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
+            <div>
+              <label className={label}>Selling price (₱) <span className="text-gray-400 font-normal">(optional)</span></label>
+              <input inputMode="decimal" value={f.sellingPrice} onChange={e => set('sellingPrice', e.target.value)} placeholder="0.00" className={input} />
+              <p className="mt-1 text-xs text-gray-400">Type it exactly as quoted. Leave blank to just accumulate cost.</p>
+            </div>
+            {/* The basis is what makes the price mean something: the same 26,940 is two different
+                revenues depending on whether VAT is already in it. */}
+            <VatBasisField value={vat} idSuffix="trading" onChange={setVat} />
           </div>
         </div>
         <div className="flex justify-end gap-2 px-5 py-4 border-t border-gray-200">
@@ -1183,6 +1249,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   // Spend per project/trading/facility, straight from the server. null = couldn't load → shown as
   // "—", never as a misleading ₱0.00.
   const [projectSpend, setProjectSpend] = useState<Record<string, ProjectSpend> | null>(null);
+  const [rollup, setRollup] = useState<ProfitRollup | null>(null);
   const [tradingSpend, setTradingSpend] = useState<Record<string, TradingSpend> | null>(null);
   const [facilitySpend, setFacilitySpend] = useState<Record<string, FacilitySpend> | null>(null);
   // The Log Expense modal: { target } pre-selects the first split line, null = closed.
@@ -1195,7 +1262,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const loadAll = async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!silent) setLoading(true);
     try {
-      const [prs, pos, prj, fac, trd, sig, pSpend, fSpend, tSpend] = await Promise.all([
+      const [prs, pos, prj, fac, trd, sig, pSpend, fSpend, tSpend, roll] = await Promise.all([
         aFetch<PurchaseRequest[]>('/purchase-requests'),
         aFetch<PurchaseOrder[]>('/purchase-orders').catch(() => [] as PurchaseOrder[]),
         aFetch<Project[]>('/projects'),
@@ -1205,10 +1272,14 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
         aFetch<ProjectSpend[]>('/projects/spend').catch(() => null),
         aFetch<FacilitySpend[]>('/facilities/spend').catch(() => null),
         aFetch<TradingSpend[]>('/tradings/spend').catch(() => null),
+        // An older server without the roll-up just leaves the total row out rather than failing
+        // the page, the same tolerance /tradings/spend already gets here.
+        aFetch<ProfitRollup>('/profit-rollup').catch(() => null),
       ]);
       setProjectSpend(pSpend ? Object.fromEntries(pSpend.map(s => [s.projectId, s])) : null);
       setFacilitySpend(fSpend ? Object.fromEntries(fSpend.map(s => [s.facilityId, s])) : null);
       setTradingSpend(tSpend ? Object.fromEntries(tSpend.map(s => [s.tradingId, s])) : null);
+      setRollup(roll ?? null);
       setTradings(trd || []);
       setRequests(prs || []);
       // Only real purchase orders (the table is shared with Sales Orders, discriminated by
@@ -1272,6 +1343,51 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     try { await aFetch(`/projects/${p.id}`, { method: 'DELETE' }); toast.success('Project deleted'); }
     catch (e: any) { setProjects(prev); toast.error('Delete failed: ' + e.message); }
   };
+
+  // The two dual-basis tables. Built by mapping the server's own figures into the shared panel's
+  // shape — no arithmetic, just field selection, so the panel and the bars cannot disagree with the
+  // numbers the endpoints returned.
+  const tradingBasisRows: DualBasisRow[] = tradings.map(t => {
+    const s = tradingSpend?.[t.id] ?? null;
+    const zero: BasisFigures = { revenue: null, cost: 0, costPrs: 0, costExpenses: 0, profit: null, marginPercent: null };
+    return {
+      id: t.id, name: t.name, subtitle: t.client ?? null,
+      price: s ? s.sellingPrice : t.sellingPrice ?? null,
+      priceBasis: s ? s.sellingPriceVat : t.sellingPriceVat ?? 'inclusive',
+      exVat: s ? s.exVat : zero, incVat: s ? s.incVat : zero,
+    };
+  });
+  const projectBasisRows: DualBasisRow[] = projects.map(p => {
+    const s = projectSpend?.[p.id] ?? null;
+    const zero: BasisFigures = { revenue: null, cost: 0, costPrs: 0, costExpenses: 0, profit: null, marginPercent: null };
+    return {
+      id: p.id, name: p.name, subtitle: p.location ?? null,
+      price: s ? s.contractPrice : p.contractPrice ?? null,
+      priceBasis: s ? s.contractPriceVat : p.contractPriceVat ?? 'inclusive',
+      exVat: s ? s.exVat : zero, incVat: s ? s.incVat : zero,
+    };
+  });
+  // The bars read the same payload the panel does, one strip per basis.
+  const tradingBarRows = tradings.map(t => {
+    const s = tradingSpend?.[t.id] ?? null;
+    return {
+      id: t.id, tradingId: t.id, name: t.name, client: t.client, status: t.status,
+      spent: s ? s.spent : 0, spentPrs: s ? s.spentPrs : 0, spentExpenses: s ? s.spentExpenses : 0,
+      sellingPrice: s ? s.sellingPrice : t.sellingPrice ?? null,
+      margin: s ? s.margin : null, marginPercent: s ? s.marginPercent : null,
+      exVat: s ? s.exVat : undefined, incVat: s ? s.incVat : undefined,
+    };
+  });
+  const projectBarRows = projects.map(p => {
+    const s = projectSpend?.[p.id] ?? null;
+    return {
+      id: p.id, name: p.name, client: p.location, status: p.status,
+      spent: s ? s.spent : 0, spentPrs: s ? s.spentPrs : 0, spentExpenses: s ? s.spentExpenses : 0,
+      sellingPrice: s ? s.contractPrice : p.contractPrice ?? null,
+      margin: null, marginPercent: null,
+      exVat: s ? s.exVat : undefined, incVat: s ? s.incVat : undefined,
+    };
+  });
 
   // The stat strip above a target's expense list. Each target type measures itself differently: a
   // project against its budget, a trading against its selling price (margin), a facility against
@@ -1437,6 +1553,18 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                   <button onClick={() => { setEditingProject(null); setShowProjectModal(true); }} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium whitespace-nowrap bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Plus className="w-4 h-4" /> New Project</button>
                 </div>
               </div>
+              {/* PROFIT on both VAT bases, above the budget table: the budget answers "is this
+                  overrunning its allowance", this answers "did it make money", and they measure
+                  against different numbers. Same panel the Trading Deals tab renders. */}
+              {!loading && projects.length > 0 && (
+                <>
+                  <DualBasisProfit rows={projectBasisRows} totals={rollup?.projects ?? null} label="project" />
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <TradingProfitBars rows={projectBarRows} basis="exVat" title="Project profit" />
+                    <TradingProfitBars rows={projectBarRows} basis="incVat" title="Project profit" />
+                  </div>
+                </>
+              )}
               {loading ? <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading…</div>
                 : projects.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-48 text-gray-400"><Briefcase className="w-10 h-10 mb-3 text-gray-300" /><p className="font-medium text-gray-500">No projects yet</p></div>
@@ -1574,21 +1702,14 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                   <div className="flex flex-col items-center justify-center h-48 text-gray-400"><ArrowLeftRight className="w-10 h-10 mb-3 text-gray-300" /><p className="font-medium text-gray-500">No trading deals yet</p><p className="text-sm">Create one to start tracking what a trade cost.</p></div>
                 ) : (
                   <>
-                  {/* One profit bar per deal — the same component the admin dashboard renders, fed by
-                      the same endpoint, so the two views can never disagree. Above the table because
-                      profit is the headline; the table below is the detail. */}
-                  {tradingSpend && (
-                    <TradingProfitBars rows={tradings.map(t => {
-                      const sp = tradingSpend[t.id];
-                      // A trading with no spend row yet (just created) still deserves a line, shown
-                      // as unpriced rather than silently dropped.
-                      return sp ?? {
-                        tradingId: t.id, name: t.name, client: t.client, status: t.status,
-                        spent: 0, spentPrs: 0, spentExpenses: 0,
-                        sellingPrice: t.sellingPrice ?? null, margin: null, marginPercent: null,
-                      };
-                    })} />
-                  )}
+                  {/* PROFIT on both VAT bases — the headline, above the table. Identical panel and
+                      identical bars to the Project Allocation tab, from the same server figures, so
+                      the two tabs cannot describe the same arithmetic differently. */}
+                  <DualBasisProfit rows={tradingBasisRows} totals={rollup?.tradings ?? null} label="deal" />
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <TradingProfitBars rows={tradingBarRows} basis="exVat" />
+                    <TradingProfitBars rows={tradingBarRows} basis="incVat" />
+                  </div>
                   <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
@@ -1596,9 +1717,9 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                           <tr className="border-b border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-700 uppercase tracking-wide">
                             <th className="px-4 py-3">Trading</th>
                             <th className="px-4 py-3">Status</th>
-                            <th className="px-4 py-3 text-right">Cost</th>
+                            <th className="px-4 py-3 text-right" title="As recorded: purchase-request cost is VAT-exclusive, logged expenses are VAT-inclusive receipts. The profit panel above restates this on each basis.">Cost <span className="normal-case font-normal text-gray-400">(as recorded)</span></th>
                             <th className="px-4 py-3 text-right">Selling price</th>
-                            <th className="px-4 py-3 text-right">Profit</th>
+                            <th className="px-4 py-3 text-right" title="Selling price minus cost as recorded, i.e. the original mixed-basis figure. See the panel above for the like-for-like view.">Profit <span className="normal-case font-normal text-gray-400">(mixed basis)</span></th>
                             <th className="px-4 py-3 text-right">Actions</th>
                           </tr>
                         </thead>
@@ -1621,7 +1742,14 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                                 ) : <span className="text-gray-400">—</span>}
                               </td>
                               <td className="px-4 py-3 text-right whitespace-nowrap text-gray-900">
-                                {t.sellingPrice != null ? peso(t.sellingPrice) : <span className="text-gray-400">—</span>}
+                                {t.sellingPrice != null ? (
+                                  <>
+                                    <div>{peso(t.sellingPrice)}</div>
+                                    <div className="text-xs text-gray-400">
+                                      {(VAT_BASIS_OPTIONS.find(o => o.value === (sp?.sellingPriceVat ?? t.sellingPriceVat ?? 'inclusive')) ?? VAT_BASIS_OPTIONS[0]).label}
+                                    </div>
+                                  </>
+                                ) : <span className="text-gray-400">—</span>}
                               </td>
                               {/* Profit only means something once a selling price is recorded; without
                                   one this says so rather than implying a loss equal to the whole cost.
