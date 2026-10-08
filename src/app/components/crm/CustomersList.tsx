@@ -5,12 +5,27 @@ import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
 import { S, Modal, Field, TextInput, Select, TextArea, PrimaryBtn, GhostBtn, pill } from './crmKit';
 
+// The api is injected so this one screen serves BOTH the admin dashboard (default: client.ts's
+// fetchApi, which sends the admin token) and the Accounting portal (which passes its aFetch and
+// its own accounting_token). Same pattern as TimesheetReview/PayrollReview. Without this the
+// component would silently call /customers with whatever token the admin session happened to
+// have, which in the Accounting portal is none.
+type Api = <T = any>(path: string, init?: RequestInit) => Promise<T>;
+
 interface Customer {
   id: string; name: string; type?: string; contactPerson?: string; phone?: string; email?: string;
   location?: string; whatTheyBuy?: string; source?: string; status?: string; lastContact?: string; notes?: string;
+  // Billing-Invoice fields. A PH billing invoice must carry the buyer's registered name, address
+  // and TIN; `location` stays the sales shorthand ("Laguna") and billingAddress is the registered
+  // address as it must be printed. All optional — a client is entered before the papers arrive.
+  tin?: string | null; billingAddress?: string | null; defaultPaymentTerms?: string | null;
 }
 
 const TYPES = ['Contractor', 'Builder', 'Factory', 'Distributor', 'Maintenance', 'Other'];
+// Offered as a datalist, NOT an enum: these cover the usual cases, and anything else
+// ('50% DP, balance on delivery') can still be typed. This is only the client's usual terms —
+// the actual terms are set per invoice, since they follow whatever the client's PO says.
+const TERMS_PRESETS = ['COD', '7 days', '15 days', '30 days', '50% DP, 50% net 30'];
 const SOURCES = ['Referral', 'Facebook', 'Marketplace', 'Ad', 'Walk-in', 'Website', 'Existing contact'];
 const STATUSES = ['Lead', 'Active', 'Repeat', 'Inactive'];
 
@@ -22,7 +37,7 @@ const statusBadge = (s?: string) => {
   return <span style={{ color: '#8a8a8a' }}>—</span>;
 };
 
-export function CustomersList({ isAdmin }: { isAdmin: boolean }) {
+export function CustomersList({ isAdmin, api = fetchApi }: { isAdmin: boolean; api?: Api }) {
   const [rows, setRows] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -32,7 +47,7 @@ export function CustomersList({ isAdmin }: { isAdmin: boolean }) {
 
   const load = async () => {
     setLoading(true);
-    try { setRows(await fetchApi<Customer[]>('/customers')); }
+    try { setRows(await api<Customer[]>('/customers')); }
     catch { toast.error('Failed to load clients'); }
     finally { setLoading(false); }
   };
@@ -48,7 +63,7 @@ export function CustomersList({ isAdmin }: { isAdmin: boolean }) {
   const onDelete = async (c: Customer) => {
     if (!(await confirmDialog({ title: `Delete client "${c.name}"?`, message: 'This cannot be undone.', confirmLabel: 'Delete', tone: 'danger' }))) return;
     const prev = rows; setRows(rows.filter(r => r.id !== c.id));
-    try { await fetchApi(`/customers/${c.id}`, { method: 'DELETE' }); toast.success('Client deleted'); }
+    try { await api(`/customers/${c.id}`, { method: 'DELETE' }); toast.success('Client deleted'); }
     catch { setRows(prev); toast.error('Delete failed'); }
   };
 
@@ -80,17 +95,22 @@ export function CustomersList({ isAdmin }: { isAdmin: boolean }) {
         <table style={S.table}>
           <thead><tr>
             <th style={S.th}>Name</th><th style={S.th}>Type</th><th style={S.th}>Contact</th>
-            <th style={S.th}>Buys</th><th style={S.th}>Source</th><th style={S.th}>Status</th>
+            <th style={S.th}>TIN</th><th style={S.th}>Buys</th><th style={S.th}>Source</th><th style={S.th}>Status</th>
             {isAdmin && <th style={{ ...S.th, textAlign: 'right' }}>Actions</th>}
           </tr></thead>
           <tbody>
-            {loading ? <tr><td style={S.td} colSpan={7}>Loading…</td></tr>
-              : filtered.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={7}>No clients yet.</td></tr>
+            {loading ? <tr><td style={S.td} colSpan={8}>Loading…</td></tr>
+              : filtered.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={8}>No clients yet.</td></tr>
               : filtered.map(c => (
                 <tr key={c.id}>
                   <td style={{ ...S.td, fontWeight: 600, color: '#000000' }}>{c.name}</td>
                   <td style={S.td}>{c.type || '—'}</td>
                   <td style={S.td}>{c.contactPerson || '—'}{c.phone ? <div style={{ fontSize: '12px', color: '#8a8a8a' }}>{c.phone}</div> : null}</td>
+                  {/* A client with no TIN cannot be billed yet, so it is worth seeing without
+                      opening the row. Dimmed rather than hidden: "missing" is the useful signal. */}
+                  <td style={S.td}>{c.tin
+                    ? <span style={{ fontVariantNumeric: 'tabular-nums' }}>{c.tin}</span>
+                    : <span style={{ color: '#b91c1c', fontSize: '12px' }} title="No TIN on file — needed before a billing invoice can be issued">Missing</span>}</td>
                   <td style={{ ...S.td, maxWidth: '200px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.whatTheyBuy || '—'}</td>
                   <td style={S.td}>{c.source || '—'}</td>
                   <td style={S.td}>{statusBadge(c.status)}</td>
@@ -104,12 +124,12 @@ export function CustomersList({ isAdmin }: { isAdmin: boolean }) {
         </table>
       </div>
 
-      {showModal && <CustomerModal initial={editing} onClose={() => setShowModal(false)} onSaved={() => { setShowModal(false); load(); }} />}
+      {showModal && <CustomerModal api={api} initial={editing} onClose={() => setShowModal(false)} onSaved={() => { setShowModal(false); load(); }} />}
     </div>
   );
 }
 
-function CustomerModal({ initial, onClose, onSaved }: { initial: Customer | null; onClose: () => void; onSaved: () => void }) {
+function CustomerModal({ api, initial, onClose, onSaved }: { api: Api; initial: Customer | null; onClose: () => void; onSaved: () => void }) {
   const [f, setF] = useState<Customer>(initial || { id: '', name: '', status: 'Lead' });
   const [saving, setSaving] = useState(false);
   const set = (k: keyof Customer, v: any) => setF(p => ({ ...p, [k]: v }));
@@ -118,8 +138,8 @@ function CustomerModal({ initial, onClose, onSaved }: { initial: Customer | null
     if (!f.name?.trim()) { toast.error('Name is required'); return; }
     setSaving(true);
     try {
-      if (initial) await fetchApi(`/customers/${initial.id}`, { method: 'PATCH', body: JSON.stringify(f) });
-      else await fetchApi('/customers', { method: 'POST', body: JSON.stringify(f) });
+      if (initial) await api(`/customers/${initial.id}`, { method: 'PATCH', body: JSON.stringify(f) });
+      else await api('/customers', { method: 'POST', body: JSON.stringify(f) });
       toast.success(initial ? 'Client updated' : 'Client added');
       onSaved();
     } catch (e: any) { toast.error('Save failed: ' + e.message); } finally { setSaving(false); }
@@ -139,7 +159,19 @@ function CustomerModal({ initial, onClose, onSaved }: { initial: Customer | null
         <Field label="Source"><Select value={f.source || ''} onChange={v => set('source', v)} options={SOURCES} /></Field>
         <Field label="Status"><Select value={f.status || ''} onChange={v => set('status', v)} options={STATUSES} /></Field>
         <Field label="Last contact"><TextInput type="date" value={(f.lastContact || '').slice(0, 10)} onChange={e => set('lastContact', e.target.value)} /></Field>
+        <Field label="TIN"><TextInput value={f.tin || ''} onChange={e => set('tin', e.target.value)} placeholder="000-000-000-0000" /></Field>
+        {/* A text input backed by a datalist, not a <select>: the presets are suggestions and any
+            terms the client's PO states must still be typeable. */}
+        <Field label="Default payment terms">
+          <TextInput list="customer-terms-presets" value={f.defaultPaymentTerms || ''}
+            onChange={e => set('defaultPaymentTerms', e.target.value)} placeholder="e.g. 30 days" />
+          <datalist id="customer-terms-presets">{TERMS_PRESETS.map(t => <option key={t} value={t} />)}</datalist>
+        </Field>
       </div>
+      <Field label="Billing address (as it should appear on the invoice)">
+        <TextArea value={f.billingAddress || ''} onChange={e => set('billingAddress', e.target.value)}
+          placeholder="Registered address for the billing invoice — leave blank to fill in later" />
+      </Field>
       <Field label="Notes"><TextArea value={f.notes || ''} onChange={e => set('notes', e.target.value)} /></Field>
     </Modal>
   );

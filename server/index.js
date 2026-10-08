@@ -840,6 +840,27 @@ async function runMigrations() {
       console.log('✅ VAT basis ready (tradings.selling_price_vat, projects.contract_price_vat)');
     } catch (err) { console.log('ℹ️ VAT basis columns skipped:', err.message); }
 
+    // ============== CUSTOMERS: the fields a Billing Invoice needs ==============
+    // A BI issued in the Philippines has to carry the buyer's registered name, address and TIN.
+    // customers held the name and a general `location`, so an invoice could not be produced from a
+    // client record alone. All three are nullable ON PURPOSE: a salesperson meets a client before
+    // the paperwork arrives, and refusing to record them until the TIN is in hand would push the
+    // record into a notebook. The invoice itself is where a missing TIN should block, not the CRM.
+    //
+    // billing_address is SEPARATE from location rather than replacing it: location is "Laguna",
+    // the shorthand sales uses to recognise a client, while the invoice needs the registered
+    // address in full. Overwriting one with the other would lose whichever the typist cared about.
+    //
+    // default_payment_terms is a DEFAULT only. Real terms follow the client's PO and differ deal to
+    // deal, so the invoice will capture its own; this just saves retyping the usual case. Free text,
+    // not an enum — the UI offers presets but '50% DP, balance on delivery' has to be expressible.
+    try {
+      await query(`ALTER TABLE customers ADD COLUMN IF NOT EXISTS tin TEXT`);
+      await query(`ALTER TABLE customers ADD COLUMN IF NOT EXISTS billing_address TEXT`);
+      await query(`ALTER TABLE customers ADD COLUMN IF NOT EXISTS default_payment_terms TEXT`);
+      console.log('✅ customers invoice fields ready (tin, billing_address, default_payment_terms)');
+    } catch (err) { console.log('ℹ️ customers invoice fields skipped:', err.message); }
+
     // ============== EXPENSES + ALLOCATIONS (replaces project_expenses) ==============
     // One expense, many allocation lines. A ₱1,000 gas receipt can be split ₱600 to a project and
     // ₱400 to a trading; a single-target expense is simply one allocation line.
@@ -7871,6 +7892,11 @@ function mapCustomer(r) {
     id: r.id, name: r.name, type: r.type, contactPerson: r.contact_person, phone: r.phone,
     email: r.email, location: r.location, whatTheyBuy: r.what_they_buy, source: r.source,
     status: r.status, lastContact: r.last_contact, notes: r.notes,
+    // Billing-Invoice fields. `?? null` rather than a bare read so a row loaded before the
+    // migration (or a SELECT that predates it) reports "not set" instead of undefined, which
+    // would drop the key from the JSON entirely and make the form show a stale value.
+    tin: r.tin ?? null, billingAddress: r.billing_address ?? null,
+    defaultPaymentTerms: r.default_payment_terms ?? null,
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
@@ -8082,21 +8108,36 @@ app.get('/api/customers/:id', async (req, res) => {
     res.json(mapCustomer(r.rows[0]));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-app.post('/api/customers', requireRole(['owner','admin','sales']), async (req, res) => {
+// Accounting is added because it owns billing: the TIN and registered address usually reach the
+// accountant (on the client's own PO or BIR paperwork) rather than the salesperson, so whoever
+// holds the document must be able to file it. Sales and admin keep exactly the access they had.
+app.post('/api/customers', requireRole(['owner','admin','sales','accounting']), async (req, res) => {
   try {
     const b = req.body; const id = newId('CUS');
+    // Name is the only required field — everything else can arrive later. Trimmed so a
+    // space-only name cannot pass the UI check and land as a blank client.
+    if (!b || typeof b.name !== 'string' || !b.name.trim()) {
+      return res.status(400).json({ error: 'name is required' });
+    }
     const r = await query(
-      `INSERT INTO customers (id,name,type,contact_person,phone,email,location,what_they_buy,source,status,last_contact,notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-      [id, b.name, orNull(b.type), orNull(b.contactPerson), orNull(b.phone), orNull(b.email), orNull(b.location), orNull(b.whatTheyBuy), orNull(b.source), orNull(b.status), orNull(b.lastContact), orNull(b.notes)]
+      `INSERT INTO customers (id,name,type,contact_person,phone,email,location,what_they_buy,source,status,last_contact,notes,tin,billing_address,default_payment_terms)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+      [id, b.name.trim(), orNull(b.type), orNull(b.contactPerson), orNull(b.phone), orNull(b.email), orNull(b.location), orNull(b.whatTheyBuy), orNull(b.source), orNull(b.status), orNull(b.lastContact), orNull(b.notes),
+       orNull(b.tin), orNull(b.billingAddress), orNull(b.defaultPaymentTerms)]
     );
     res.status(201).json(mapCustomer(r.rows[0]));
   } catch (err) { console.error('customer create error:', err); res.status(500).json({ error: err.message }); }
 });
-app.patch('/api/customers/:id', requireRole(['owner','admin']), async (req, res) => {
+app.patch('/api/customers/:id', requireRole(['owner','admin','sales','accounting']), async (req, res) => {
   try {
     const b = req.body;
-    const cols = { name:b.name, type:b.type, contact_person:b.contactPerson, phone:b.phone, email:b.email, location:b.location, what_they_buy:b.whatTheyBuy, source:b.source, status:b.status, last_contact:b.lastContact, notes:b.notes };
+    // Only keys PRESENT in the body are written (the undefined filter below), so a form that
+    // posts a subset cannot blank the fields it does not show.
+    if (b && b.name !== undefined && !(typeof b.name === 'string' && b.name.trim())) {
+      return res.status(400).json({ error: 'name cannot be blank' });
+    }
+    const cols = { name:b.name, type:b.type, contact_person:b.contactPerson, phone:b.phone, email:b.email, location:b.location, what_they_buy:b.whatTheyBuy, source:b.source, status:b.status, last_contact:b.lastContact, notes:b.notes,
+                   tin:b.tin, billing_address:b.billingAddress, default_payment_terms:b.defaultPaymentTerms };
     const sets = []; const params = []; let i = 1;
     for (const [k, v] of Object.entries(cols)) { if (v !== undefined) { sets.push(`${k} = $${i++}`); params.push(orNull(v)); } }
     if (!sets.length) return res.status(400).json({ error: 'No fields to update' });

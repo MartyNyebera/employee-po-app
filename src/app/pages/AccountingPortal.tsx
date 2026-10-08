@@ -3,7 +3,7 @@ import {
   ClipboardList, PenTool, Menu, X, Search, Clock, Calendar, CheckCircle2,
   XCircle, Printer, LogOut, Upload, Eraser, Eye, Briefcase, Plus, Trash2, Pencil,
   PanelLeftClose, PanelLeftOpen, FileText, PackageMinus, CalendarCheck, Calculator, Building2, Receipt, Ban,
-  ArrowLeftRight, Split,
+  ArrowLeftRight, Split, Users,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { onBackdropDown, backdropClose } from '../lib/backdrop';
@@ -20,6 +20,9 @@ import { CreatePurchaseRequestForm } from '../components/CreatePurchaseRequestFo
 import { WithdrawalTab } from '../components/WithdrawalTab';
 import { nextDeptFor } from '../lib/nextDept';
 import { TimesheetReview } from '../components/crm/TimesheetReview';
+// The SAME screen the admin dashboard uses, handed this portal's accounting-token fetch. Shared
+// rather than reimplemented so a field added for billing appears in both places at once.
+import { CustomersList } from '../components/crm/CustomersList';
 import { TradingProfitBars } from '../components/TradingProfitBars';
 import { DualBasisProfit, type DualBasisRow, type BasisTotals } from '../components/DualBasisProfit';
 import { ExpensesHistory, type TargetOption } from '../components/ExpensesHistory';
@@ -38,7 +41,7 @@ import { PayrollReview } from '../components/crm/PayrollReview';
 // ============================================================================
 
 type PRStatus = 'pending' | 'reviewed' | 'verified' | 'ordered' | 'approved' | 'disapproved';
-type PortalView = 'new-pr' | 'requests' | 'orders' | 'projects' | 'tradings' | 'facilities' | 'expenses' | 'withdrawals' | 'timesheet' | 'payroll' | 'signature';
+type PortalView = 'new-pr' | 'requests' | 'orders' | 'projects' | 'tradings' | 'facilities' | 'expenses' | 'withdrawals' | 'clients' | 'timesheet' | 'payroll' | 'signature';
 
 // Section C — #12: Accounting is also the FIRST gate of the purchase-ORDER flow. Purchasing
 // raises an order ('pending'); Accounting reviews it here (→ 'accounting-approved', passing it
@@ -1464,6 +1467,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     { id: 'tradings', label: 'Trading Deals', icon: ArrowLeftRight },
     { id: 'facilities', label: 'Facilities', icon: Building2 },
     { id: 'expenses', label: 'Expenses History', icon: Receipt },
+    { id: 'clients', label: 'Clients', icon: Users },
     { id: 'withdrawals', label: 'Withdrawals Request', icon: PackageMinus },
     { id: 'timesheet', label: 'Attendance Sheet', icon: CalendarCheck },
     { id: 'payroll', label: 'Payroll', icon: Calculator },
@@ -1536,6 +1540,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
           {view === 'expenses' && <ExpensesHistory api={aFetch} targets={expenseTargets} />}
 
           {view === 'withdrawals' && <WithdrawalTab fetchFn={aFetch} />}
+
+          {view === 'clients' && <CustomersList isAdmin api={aFetch} />}
 
           {view === 'timesheet' && <TimesheetReview api={aFetch} role="accounting" />}
 

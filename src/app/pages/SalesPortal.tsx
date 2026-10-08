@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   FileText, PenTool, Menu, X, Search, Clock, Calendar, Printer, LogOut,
-  Upload, Eraser, Plus, Trash2, PanelLeftClose, PanelLeftOpen, PackageMinus, MessageSquare, Users, ArrowRight,
+  Upload, Eraser, Plus, Trash2, PanelLeftClose, PanelLeftOpen, PackageMinus, MessageSquare, Users, ArrowRight, Pencil,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { onBackdropDown, backdropClose } from '../lib/backdrop';
@@ -33,7 +33,18 @@ interface SalesOrder {
   paymentTerms?: string | null; termsAndConditions?: string | null;
   line?: string | null; source?: string | null;
 }
-interface Customer { id: string; name: string; type?: string | null; address?: string; location?: string | null; contactPerson?: string | null; phone?: string | null; email?: string | null; }
+interface Customer {
+  id: string; name: string; type?: string | null; address?: string; location?: string | null;
+  contactPerson?: string | null; phone?: string | null; email?: string | null;
+  // Billing-Invoice fields. A PH billing invoice must carry the buyer's registered name, address
+  // and TIN. `location` stays the shorthand sales recognises a client by; billingAddress is the
+  // registered address as it has to be printed. Optional: the client is entered when sales meets
+  // them, and the TIN often arrives later on their PO.
+  tin?: string | null; billingAddress?: string | null; defaultPaymentTerms?: string | null;
+}
+// Suggestions, not an enum — anything the client's PO actually says must still be typeable.
+// This is only the client's USUAL terms; the real terms are set per invoice.
+const CLIENT_TERMS_PRESETS = ['COD', '7 days', '15 days', '30 days', '50% DP, 50% net 30'];
 // A quotation is an `inquiries` row (the sales pipeline). Sales creates one, then converts a
 // won quotation into a sales order (#6).
 interface Quotation {
@@ -404,6 +415,9 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const [mobileOpen, setMobileOpen] = useState(false);
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  // The client being edited, or null. Separate from creatingClient so the same modal serves both
+  // without a flag that could get out of step with which row is loaded.
+  const [editingClient, setEditingClient] = useState<Customer | null>(null);
   const [quotations, setQuotations] = useState<Quotation[]>([]);
   const [signature, setSignature] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -577,13 +591,30 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                   <div className="space-y-2">
                     {customers.map(c => (
                       <div key={c.id} className="bg-white rounded-xl border border-gray-200 p-4">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h3 className="font-semibold text-gray-900 text-sm">{c.name}</h3>
-                          {c.type && <span className="text-xs text-gray-400">{c.type}</span>}
+                        <div className="flex items-start gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h3 className="font-semibold text-gray-900 text-sm">{c.name}</h3>
+                              {c.type && <span className="text-xs text-gray-400">{c.type}</span>}
+                            </div>
+                            <p className="text-xs text-gray-500 mt-0.5">
+                              {[c.contactPerson, c.phone, c.email, c.location].filter(Boolean).join(' · ') || 'No contact details'}
+                            </p>
+                            {/* The invoice-readiness line. A missing TIN is called out rather than
+                                left blank, because it is what stops a billing invoice being issued. */}
+                            <p className="text-xs mt-1">
+                              {c.tin
+                                ? <span className="text-gray-500">TIN <span className="text-gray-700 font-medium">{c.tin}</span></span>
+                                : <span className="text-red-600">No TIN on file</span>}
+                              {c.defaultPaymentTerms && <span className="text-gray-400"> · terms {c.defaultPaymentTerms}</span>}
+                            </p>
+                            {c.billingAddress && <p className="text-xs text-gray-400 mt-0.5 whitespace-pre-line">{c.billingAddress}</p>}
+                          </div>
+                          <button onClick={() => setEditingClient(c)} title="Edit client"
+                            className="flex-shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">
+                            <Pencil className="w-3.5 h-3.5" /> Edit
+                          </button>
                         </div>
-                        <p className="text-xs text-gray-500 mt-0.5">
-                          {[c.contactPerson, c.phone, c.email, c.location].filter(Boolean).join(' · ') || 'No contact details'}
-                        </p>
                       </div>
                     ))}
                   </div>
@@ -650,9 +681,10 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
         <CreateQuotationModal customers={customers} onClose={() => setCreatingQuote(false)}
           onCreated={() => { setCreatingQuote(false); loadAll(); }} />
       )}
-      {creatingClient && (
-        <CreateClientModal onClose={() => setCreatingClient(false)}
-          onCreated={() => { setCreatingClient(false); loadAll(); }} />
+      {(creatingClient || editingClient) && (
+        <ClientModal initial={editingClient}
+          onClose={() => { setCreatingClient(false); setEditingClient(null); }}
+          onSaved={() => { setCreatingClient(false); setEditingClient(null); loadAll(); }} />
       )}
     </div>
   );
@@ -747,69 +779,103 @@ function CreateQuotationModal({ customers, onClose, onCreated }: {
 // Create a client (#6). Posts to /api/customers (Sales is now permitted). The new client shows
 // up immediately in the sales-order and quotation pickers.
 // ============================================================================
-function CreateClientModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const [name, setName] = useState('');
-  const [type, setType] = useState('');
-  const [contactPerson, setContactPerson] = useState('');
-  const [phone, setPhone] = useState('');
-  const [email, setEmail] = useState('');
-  const [location, setLocation] = useState('');
+// Add AND edit. `initial` null means a new client; otherwise the same form PATCHes that row.
+// One component for both so a field can never exist on the add form and be missing from the edit
+// form — which is how a TIN entered once would quietly become uncorrectable.
+function ClientModal({ initial, onClose, onSaved }: { initial: Customer | null; onClose: () => void; onSaved: () => void }) {
+  const [f, setF] = useState<Customer>(initial || { id: '', name: '' });
   const [saving, setSaving] = useState(false);
+  const set = (k: keyof Customer, v: string) => setF(p => ({ ...p, [k]: v }));
+  // Trim, then collapse an empty string to null so a cleared field stores NULL rather than ''.
+  // Two spellings of "not set" in one column make every later "has a TIN?" check wrong.
+  const t = (v?: string | null) => { const x = (v || '').trim(); return x || null; };
 
   const submit = async () => {
-    if (!name.trim()) { toast.error('A client name is required'); return; }
+    if (!f.name?.trim()) { toast.error('A client name is required'); return; }
     setSaving(true);
     try {
-      await sFetch('/customers', { method: 'POST', body: JSON.stringify({
-        name: name.trim(), type: type.trim() || null, contactPerson: contactPerson.trim() || null,
-        phone: phone.trim() || null, email: email.trim() || null, location: location.trim() || null, status: 'Active',
-      }) });
-      toast.success('Client added');
-      onCreated();
+      const body = {
+        name: f.name.trim(), type: t(f.type), contactPerson: t(f.contactPerson),
+        phone: t(f.phone), email: t(f.email), location: t(f.location),
+        tin: t(f.tin), billingAddress: t(f.billingAddress), defaultPaymentTerms: t(f.defaultPaymentTerms),
+        // Only stamped on CREATE. Sending it on an edit would silently reactivate a client
+        // somebody had marked Inactive.
+        ...(initial ? {} : { status: 'Active' }),
+      };
+      if (initial) await sFetch(`/customers/${initial.id}`, { method: 'PATCH', body: JSON.stringify(body) });
+      else await sFetch('/customers', { method: 'POST', body: JSON.stringify(body) });
+      toast.success(initial ? 'Client updated' : 'Client added');
+      onSaved();
     } catch (e: any) { toast.error('Failed: ' + e.message); } finally { setSaving(false); }
   };
 
   const input = 'w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500';
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onMouseDown={onBackdropDown} onClick={backdropClose(onClose)}>
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden max-h-[90vh]" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg flex flex-col overflow-hidden max-h-[90vh]" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-5 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900">New client</h2>
+          <h2 className="text-lg font-semibold text-gray-900">{initial ? 'Edit client' : 'New client'}</h2>
           <button onClick={onClose} className="p-1.5 rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-600"><X className="w-5 h-5" /></button>
         </div>
         <div className="p-5 space-y-4 overflow-y-auto">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Client name <span className="text-red-500">*</span></label>
-            <input value={name} onChange={e => setName(e.target.value)} className={input} placeholder="Company or person" />
+            <input value={f.name || ''} onChange={e => set('name', e.target.value)} className={input} placeholder="Company or person" />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
-              <input value={type} onChange={e => setType(e.target.value)} className={input} placeholder="Contractor, distributor…" />
+              <input value={f.type || ''} onChange={e => set('type', e.target.value)} className={input} placeholder="Contractor, distributor…" />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Contact person</label>
-              <input value={contactPerson} onChange={e => setContactPerson(e.target.value)} className={input} />
+              <input value={f.contactPerson || ''} onChange={e => set('contactPerson', e.target.value)} className={input} />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
-              <input value={phone} onChange={e => setPhone(e.target.value)} className={input} />
+              <input value={f.phone || ''} onChange={e => set('phone', e.target.value)} className={input} />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-              <input value={email} onChange={e => setEmail(e.target.value)} className={input} />
+              <input value={f.email || ''} onChange={e => set('email', e.target.value)} className={input} />
             </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
-            <input value={location} onChange={e => setLocation(e.target.value)} className={input} placeholder="City / address" />
+            <input value={f.location || ''} onChange={e => set('location', e.target.value)} className={input} placeholder="City / address" />
+          </div>
+
+          {/* ---- Billing details. Separated and labelled as optional because none of it blocks
+                   recording a client: sales meets them first, the paperwork follows. ---- */}
+          <div className="pt-3 border-t border-gray-100">
+            <p className="text-xs font-semibold text-gray-700 uppercase tracking-wide">For billing invoices</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">All optional — fill these in when the client&rsquo;s papers arrive.</p>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">TIN</label>
+              <input value={f.tin || ''} onChange={e => set('tin', e.target.value)} className={input} placeholder="000-000-000-0000" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Default payment terms</label>
+              {/* datalist, not a select: the presets are the common cases, not the only ones. */}
+              <input list="sales-client-terms" value={f.defaultPaymentTerms || ''}
+                onChange={e => set('defaultPaymentTerms', e.target.value)} className={input} placeholder="e.g. 30 days" />
+              <datalist id="sales-client-terms">{CLIENT_TERMS_PRESETS.map(t2 => <option key={t2} value={t2} />)}</datalist>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Billing address</label>
+            <textarea value={f.billingAddress || ''} onChange={e => set('billingAddress', e.target.value)} rows={2}
+              className={input + ' resize-y'} placeholder="The registered address as it should appear on the invoice" />
+            <p className="text-[11px] text-gray-400 mt-1">Kept separate from Location above, which stays the general area.</p>
           </div>
         </div>
         <div className="flex items-center justify-end gap-2 p-5 border-t border-gray-200">
           <button onClick={onClose} className="px-4 py-2 text-sm font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">Cancel</button>
-          <button onClick={submit} disabled={saving} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-brand-gold text-gray-900 rounded-lg hover:opacity-90 disabled:opacity-50">{saving ? 'Saving…' : 'Add client'}</button>
+          <button onClick={submit} disabled={saving} className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-brand-gold text-gray-900 rounded-lg hover:opacity-90 disabled:opacity-50">{saving ? 'Saving…' : initial ? 'Save changes' : 'Add client'}</button>
         </div>
       </div>
     </div>
