@@ -6,6 +6,7 @@ import { Button } from './ui/button';
 import { LogOut, Home, FileText, Receipt, Menu, X, Check, XCircle, Clock, ShoppingCart, Package, User, UserCheck, MessageSquare, Users, Factory, UserCog, Briefcase, ClipboardCheck, PackageMinus, ChevronRight, ChevronDown, Warehouse, Activity, Calculator, Truck, PenTool, PanelLeftClose, PanelLeftOpen, IdCard, ScanLine, CalendarCheck, SlidersHorizontal, CalendarDays } from 'lucide-react';
 import { SuppliersList } from './crm/SuppliersList';
 import { CustomersList } from './crm/CustomersList';
+import { DeliveryReceipts } from './crm/DeliveryReceipts';
 import { InquiriesList } from './crm/InquiriesList';
 import { StaffAccountsList } from './crm/StaffAccountsList';
 import { EmployeeAccountsList } from './crm/EmployeeAccountsList';
@@ -47,7 +48,7 @@ interface AdminDashboardProps {
   onLogout: () => void;
 }
 
-type View = 'home' | 'orders' | 'transactions' | 'material-requests' | 'employee-accounts' | 'purchasing-accounts' | 'warehouse-accounts' | 'accounting-accounts' | 'sales-accounts' | 'logistics-accounts' | 'projects' | 'purchase-requests' | 'withdrawal-requests' | 'purchase-orders' | 'discrepancies' | 'inventory' | 'miscellaneous' | 'request-form' | 'suppliers' | 'customers' | 'inquiries' | 'staff' | 'signature' | 'roster' | 'stations' | 'timesheet' | 'payroll-settings' | 'holidays' | 'payroll';
+type View = 'home' | 'orders' | 'transactions' | 'material-requests' | 'employee-accounts' | 'purchasing-accounts' | 'warehouse-accounts' | 'accounting-accounts' | 'sales-accounts' | 'logistics-accounts' | 'projects' | 'purchase-requests' | 'withdrawal-requests' | 'purchase-orders' | 'discrepancies' | 'inventory' | 'miscellaneous' | 'request-form' | 'suppliers' | 'customers' | 'delivery-receipts' | 'inquiries' | 'staff' | 'signature' | 'roster' | 'stations' | 'timesheet' | 'payroll-settings' | 'holidays' | 'payroll';
 
 // Sidebar entries, in display order. An entry is either a leaf (navigates to a view) or a
 // group (a collapsible dropdown holding leaves). Visibility + write access come from MODULE_ACCESS.
@@ -80,6 +81,7 @@ const NAV_ENTRIES: NavEntry[] = [
   ] },
   { group: 'monitoring', label: 'Monitoring', icon: Activity, children: [
     { view: 'customers', label: 'Clients', icon: Users, module: 'customers' },
+    { view: 'delivery-receipts', label: 'Delivery Receipts', icon: Truck, module: 'delivery-receipts' },
     { view: 'suppliers', label: 'Suppliers', icon: Factory, module: 'suppliers' },
     { view: 'projects', label: 'Projects', icon: Briefcase, module: 'projects' },
     { view: 'inquiries', label: 'Quotation', icon: MessageSquare, module: 'inquiries' },
@@ -203,6 +205,8 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
     // New CRM / pipeline / planning modules
     if (currentView === 'suppliers') return <SuppliersList isAdmin={canManage(role, 'suppliers')} />;
     if (currentView === 'customers') return <CustomersList isAdmin={canManage(role, 'customers')} />;
+    // fetchApi (admin token) is the default this screen expects; the Accounting portal passes its own.
+    if (currentView === 'delivery-receipts') return <DeliveryReceipts api={fetchApi} />;
     if (currentView === 'inquiries') return <InquiriesList isAdmin={canManage(role, 'inquiries')} />;
     if (currentView === 'staff') return <StaffAccountsList />;
     if (currentView === 'signature') return <AdminSignature />;

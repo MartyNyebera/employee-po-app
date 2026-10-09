@@ -26,6 +26,10 @@ const BASE_ACCESS: Record<string, Partial<Record<Role, Access>>> = {
   discrepancies:    { owner: 'manage', admin: 'manage', bookkeeper: 'view',   purchasing: 'view'   },
   miscellaneous:    { owner: 'manage', admin: 'manage', bookkeeper: 'manage', purchasing: 'none'   },
   customers:        { owner: 'manage', admin: 'manage', bookkeeper: 'view',   purchasing: 'none'   },
+  // The client-facing BIR delivery receipt. Owner/admin here; Accounting reaches it through its
+  // own portal, which does not use this matrix. Bookkeeper gets 'view': a DR is a document the
+  // books refer to, but issuing one means writing a booklet number, which is Accounting's job.
+  'delivery-receipts': { owner: 'manage', admin: 'manage', bookkeeper: 'view',   purchasing: 'none'   },
   // Supply
   suppliers:        { owner: 'manage', admin: 'manage', bookkeeper: 'none',   purchasing: 'manage' },
   inquiries:        { owner: 'manage', admin: 'manage', bookkeeper: 'none',   purchasing: 'manage' },

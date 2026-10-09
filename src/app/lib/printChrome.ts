@@ -22,6 +22,23 @@ export const COMPANY = {
   contact: 'Tel: (043) - 741 - 2023  ·  Email: kimoel_leotagle@yahoo.com',
 };
 
+// The letterhead for BIR-registered documents (the delivery receipt, and the billing invoice to
+// come). SEPARATE from COMPANY above rather than replacing it, for two reasons:
+//   • A BIR document must show the VAT-registered TIN; the internal PO/PR prints never have.
+//   • The registered name on the booklet spells out "AND" where COMPANY.name uses "&". Changing
+//     COMPANY.name to match would silently restyle every existing PO, PR and receiving report.
+// So the two coexist and nothing that prints today moves.
+export const COMPANY_BIR = {
+  name: 'KIMOEL TRADING AND CONSTRUCTION INCORPORATED',
+  address: 'Lodlod, Lipa City, Batangas',
+  tin: 'VAT Reg. TIN 610-136-288-00000',
+  // Served from /public, referenced by URL rather than inlined as base64: the file is ~737 KB,
+  // which as a data URI would add about 1 MB to every print window. window.open inherits the
+  // opener's origin, so a root-relative path resolves. If it ever fails to load the <img> is
+  // hidden by its own onerror and the text letterhead still prints correctly.
+  logo: '/kimoel-logo.png',
+};
+
 // Minimal escaper — the chrome only interpolates a caller-supplied title, but escape it anyway
 // (a document title can carry a PO/PR number that is safe, but never assume).
 const esc = (v: unknown): string =>
@@ -59,6 +76,12 @@ export const PRINT_CHROME_CSS = `
   .document-title { text-align: center; font-size: 14pt; font-weight: bold; border: 2px solid black; padding: 6px 10px; margin: 0 auto; }
   .print-foot-inner { text-align: center; font-size: 8.5pt; color: #222; border-top: 1px solid #000; padding-top: 5px; }
   .print-foot-inner .addr { font-weight: bold; }
+  /* ---- BIR letterhead (delivery receipt / billing invoice). Only these documents use it. ---- */
+  .bir-head { display: flex; align-items: center; justify-content: center; gap: 14px; text-align: center; }
+  .bir-head img { width: 62px; height: 62px; object-fit: contain; }
+  .bir-name { font-size: 15pt; font-weight: bold; line-height: 1.15; }
+  .bir-addr { font-size: 10pt; }
+  .bir-tin { font-size: 10pt; font-weight: bold; }
 `;
 
 // An empty docTitle renders the company name ALONE (no bordered rectangle) — used when a
@@ -71,6 +94,19 @@ export function printHeaderHtml(docTitle: string): string {
   </div>`;
 }
 
+// The BIR letterhead: logo beside the registered name, address and VAT TIN. No bordered title
+// rectangle — a BIR document centres its own title in the body, under the letterhead.
+export function printBirHeaderHtml(): string {
+  return `<div class="print-header"><div class="bir-head">
+    <img src="${esc(COMPANY_BIR.logo)}" alt="" onerror="this.style.display='none'" />
+    <div>
+      <div class="bir-name">${esc(COMPANY_BIR.name)}</div>
+      <div class="bir-addr">${esc(COMPANY_BIR.address)}</div>
+      <div class="bir-tin">${esc(COMPANY_BIR.tin)}</div>
+    </div>
+  </div></div>`;
+}
+
 export function printFooterHtml(): string {
   return `<div class="print-foot"><div class="print-foot-inner">
     <div class="addr">${esc(COMPANY.address)}</div>
@@ -80,14 +116,17 @@ export function printFooterHtml(): string {
 
 // Assemble a complete printable document. `css` is the document's own content styles; `body`
 // is the inner HTML that flows between the repeating header and footer.
-export function renderPrintDocument(opts: { title: string; docTitle: string; css?: string; body: string }): string {
+// `headerHtml`/`footerHtml` are optional overrides. Omitted — which is every existing caller —
+// the document renders the standard KIMOEL letterhead and footer exactly as before; the BIR
+// documents pass their own so they can carry the logo and VAT TIN without a second chrome module.
+export function renderPrintDocument(opts: { title: string; docTitle: string; css?: string; body: string; headerHtml?: string; footerHtml?: string }): string {
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>${esc(opts.title)}</title>
 <style>${PRINT_CHROME_CSS}${opts.css || ''}</style></head>
 <body>
   <table class="print-page">
-    <thead><tr><td>${printHeaderHtml(opts.docTitle)}</td></tr></thead>
-    <tfoot><tr><td>${printFooterHtml()}</td></tr></tfoot>
+    <thead><tr><td>${opts.headerHtml ?? printHeaderHtml(opts.docTitle)}</td></tr></thead>
+    <tfoot><tr><td>${opts.footerHtml ?? printFooterHtml()}</td></tr></tfoot>
     <tbody><tr><td><div class="print-body">${opts.body}</div></td></tr></tbody>
   </table>
 </body></html>`;

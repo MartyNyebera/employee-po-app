@@ -861,6 +861,74 @@ async function runMigrations() {
       console.log('✅ customers invoice fields ready (tin, billing_address, default_payment_terms)');
     } catch (err) { console.log('ℹ️ customers invoice fields skipped:', err.message); }
 
+    // ======================= DELIVERY RECEIPTS (client-facing, BIR) =======================
+    // The document handed to the client with the goods. DISTINCT from the `deliveries` table,
+    // which is the internal logistics dispatch record hanging off sales_orders (0 rows, untouched
+    // by this). A DR here is issued against a trading deal or a project — the two things the
+    // business actually sells — and its line items are pulled from the PR(s) linked to that
+    // target so nobody retypes them.
+    //
+    // dr_number is the number PRE-PRINTED on the physical BIR booklet. It is typed in, never
+    // generated: the paper is the legal document and the system records which sheet was used.
+    // UNIQUE so the same sheet cannot be recorded twice — including against VOIDED rows, because
+    // a spoiled sheet is spent, not returned to the pad. serial_no is the separate internal
+    // reference (DR-YYYY-NNNN), mirroring expenses.serial_no.
+    //
+    // Exactly one of trading_id / project_id, enforced by CHECK rather than convention, so a DR
+    // can never be orphaned or double-charged. ON DELETE RESTRICT: a deal with an issued DR
+    // against it must not vanish underneath the paperwork.
+    //
+    // items is a SNAPSHOT taken at creation, not a live view of the PRs. What was delivered is a
+    // fact about that day; later edits to a PR must not rewrite a document the client has signed.
+    // Qty/unit/description only — a DR carries NO prices (that is the invoice's job, and printing
+    // costs on a delivery note would expose margin to the client).
+    //
+    // Cancelling is a VOID, never a DELETE: voided_* stamped and the row kept, same convention as
+    // expenses/project_expenses, with the same CHECK that a void must carry a reason.
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS delivery_receipts (
+          id BIGSERIAL PRIMARY KEY,
+          serial_no TEXT,
+          dr_number TEXT NOT NULL CHECK (btrim(dr_number) <> ''),
+          trading_id TEXT REFERENCES tradings(id) ON DELETE RESTRICT,
+          project_id TEXT REFERENCES projects(id) ON DELETE RESTRICT,
+          customer_id TEXT REFERENCES customers(id) ON DELETE SET NULL,
+          delivered_to TEXT NOT NULL CHECK (btrim(delivered_to) <> ''),
+          delivered_address TEXT,
+          delivered_tin TEXT,
+          dr_date DATE NOT NULL,
+          terms TEXT,
+          c_r_no TEXT,
+          ref_sales_invoice_no TEXT,
+          items JSONB NOT NULL DEFAULT '[]'::jsonb,
+          created_by TEXT,
+          created_by_id TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          voided_at TIMESTAMPTZ,
+          voided_by TEXT,
+          voided_by_id TEXT,
+          void_reason TEXT,
+          CONSTRAINT delivery_receipts_void_needs_reason
+            CHECK (voided_at IS NULL OR btrim(COALESCE(void_reason, '')) <> ''),
+          CONSTRAINT delivery_receipts_one_source
+            CHECK (num_nonnulls(trading_id, project_id) = 1)
+        )
+      `);
+      // The UNIQUE goes on separately and by name, so a restart never tries to add it twice and a
+      // table that already exists still gets it.
+      await query(`DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'delivery_receipts_dr_number_key') THEN
+          ALTER TABLE delivery_receipts ADD CONSTRAINT delivery_receipts_dr_number_key UNIQUE (dr_number);
+        END IF;
+      END $$`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_delivery_receipts_trading ON delivery_receipts(trading_id)`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_delivery_receipts_project ON delivery_receipts(project_id)`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_delivery_receipts_date ON delivery_receipts(dr_date DESC)`);
+      console.log('✅ delivery_receipts table ready (client-facing BIR DR)');
+    } catch (err) { console.log('ℹ️ delivery_receipts table skipped:', err.message); }
+
     // ============== EXPENSES + ALLOCATIONS (replaces project_expenses) ==============
     // One expense, many allocation lines. A ₱1,000 gas receipt can be split ₱600 to a project and
     // ₱400 to a trading; a single-target expense is simply one allocation line.
@@ -8086,6 +8154,199 @@ app.delete('/api/suppliers/:id', requireRole(['owner','admin','purchasing','offi
     if (!r.rowCount) return res.status(404).json({ error: 'Supplier not found' });
     res.json({ message: 'Supplier deleted', id: req.params.id });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ======================= DELIVERY RECEIPTS (client-facing BIR DR) =======================
+// Accounting + admin throughout: the accountant issues the DR off the booklet, and admin covers.
+const drRoles = ['owner', 'admin', 'accounting'];
+
+// Internal reference, separate from the booklet number. Same shape as nextExpenseSerial.
+async function nextDrSerial(client) {
+  const year = new Date().getFullYear();
+  const last = await client.query(
+    `SELECT serial_no FROM delivery_receipts WHERE serial_no LIKE $1 ORDER BY serial_no DESC LIMIT 1`,
+    [`CDR-${year}-%`]);
+  let counter = 1;
+  if (last.rows[0]) { const n = parseInt(last.rows[0].serial_no.split('-')[2], 10); if (!isNaN(n)) counter = n + 1; }
+  return `CDR-${year}-${String(counter).padStart(4, '0')}`;
+}
+
+function mapDeliveryReceipt(r) {
+  return r && {
+    id: Number(r.id), serialNo: r.serial_no, drNumber: r.dr_number,
+    tradingId: r.trading_id ?? null, projectId: r.project_id ?? null,
+    // Which thing this DR was issued against, resolved for display. One of the two is always set.
+    sourceKind: r.trading_id ? 'trading' : 'project',
+    sourceName: r.source_name ?? null,
+    customerId: r.customer_id ?? null,
+    deliveredTo: r.delivered_to, deliveredAddress: r.delivered_address ?? null,
+    deliveredTin: r.delivered_tin ?? null,
+    drDate: r.dr_date, terms: r.terms ?? null,
+    crNo: r.c_r_no ?? null, refSalesInvoiceNo: r.ref_sales_invoice_no ?? null,
+    items: Array.isArray(r.items) ? r.items : (r.items || []),
+    createdBy: r.created_by ?? null, createdAt: r.created_at,
+    // voidedAt doubles as the status flag — a DR is either live or voided, never deleted.
+    voidedAt: r.voided_at ?? null, voidedBy: r.voided_by ?? null, voidReason: r.void_reason ?? null,
+  };
+}
+
+const DR_SELECT = `
+  SELECT dr.*, COALESCE(t.name, p.name) AS source_name
+    FROM delivery_receipts dr
+    LEFT JOIN tradings t ON t.id = dr.trading_id
+    LEFT JOIN projects p ON p.id = dr.project_id`;
+
+// The PULL. Every line item on every PR linked to one trading deal or project, merged into a
+// single list in PR order — which is what stops anyone retyping a delivery note.
+//
+// Lines are NOT summed across PRs even when the description matches: two PRs for the same bar
+// were requested at different times and may well be delivered separately, and collapsing them
+// would hide that. sourcePr rides along per line so the form can show where each came from; it is
+// not printed. Prices are deliberately not selected at all.
+app.get('/api/delivery-receipts/source-items', requireRole(drRoles), async (req, res) => {
+  const { tradingId, projectId } = req.query;
+  const hasT = tradingId !== undefined && String(tradingId).trim() !== '';
+  const hasP = projectId !== undefined && String(projectId).trim() !== '';
+  if (hasT === hasP) return res.status(400).json({ error: 'Pass exactly one of tradingId or projectId' });
+  try {
+    const col = hasT ? 'trading_id' : 'project_id';
+    const r = await query(`
+      SELECT pr.pr_number,
+             btrim(COALESCE(it->>'description', ''))                    AS description,
+             COALESCE(NULLIF(btrim(COALESCE(it->>'unit', '')), ''), '')  AS unit,
+             COALESCE(NULLIF(btrim(COALESCE(it->>'quantity', '')), ''), '0') AS quantity
+        FROM purchase_requests pr, jsonb_array_elements(pr.items) it
+       WHERE pr.${col} = $1
+         AND btrim(COALESCE(it->>'description', '')) <> ''
+       ORDER BY pr.pr_number, COALESCE((it->>'no')::int, 0)`, [hasT ? tradingId : projectId]);
+    res.json(r.rows.map(x => ({
+      quantity: x.quantity, unit: x.unit, description: x.description, sourcePr: x.pr_number,
+    })));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/delivery-receipts', requireRole(drRoles), async (req, res) => {
+  try {
+    const r = await query(`${DR_SELECT} ORDER BY dr.dr_date DESC, dr.id DESC`);
+    res.json(r.rows.map(mapDeliveryReceipt));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/delivery-receipts/:id', requireRole(drRoles), async (req, res) => {
+  if (!/^\d+$/.test(String(req.params.id))) return res.status(404).json({ error: 'Delivery receipt not found' });
+  try {
+    const r = await query(`${DR_SELECT} WHERE dr.id = $1`, [req.params.id]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Delivery receipt not found' });
+    res.json(mapDeliveryReceipt(r.rows[0]));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Validate + normalise the line items. Qty/unit/description only; anything else the client sends
+// (a price, an inventoryId) is dropped rather than stored, so a DR row can never carry money.
+function normalizeDrItems(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) return { error: 'A delivery receipt needs at least one line item' };
+  if (raw.length > 100) return { error: 'Too many line items (100 max)' };
+  const items = [];
+  for (const it of raw) {
+    const description = String((it && it.description) ?? '').trim();
+    if (!description) return { error: 'Every line item needs a description' };
+    if (description.length > 300) return { error: 'A line item description is too long (300 characters max)' };
+    const qtyStr = String((it && it.quantity) ?? '').trim();
+    // Up to 2 decimals so a part-delivery (1.5 gallons) is expressible, and > 0 because a DR
+    // records goods that actually moved.
+    if (!/^\d+(\.\d{1,2})?$/.test(qtyStr) || !(Number(qtyStr) > 0)) {
+      return { error: `Quantity for "${description}" must be a number greater than zero` };
+    }
+    items.push({
+      quantity: Number(qtyStr),
+      unit: String((it && it.unit) ?? '').trim().slice(0, 30),
+      description,
+      sourcePr: (it && it.sourcePr) ? String(it.sourcePr).trim().slice(0, 40) : null,
+    });
+  }
+  return { items };
+}
+
+app.post('/api/delivery-receipts', requireRole(drRoles), async (req, res) => {
+  const b = req.body || {};
+  // The booklet number. Required and typed by hand — there is no generated fallback on purpose:
+  // a DR with an invented number would not match the paper it was printed on.
+  const drNumber = String(b.drNumber ?? '').trim();
+  if (!drNumber) return res.status(400).json({ error: 'The official DR number from the booklet is required' });
+  if (drNumber.length > 40) return res.status(400).json({ error: 'DR number is too long (40 characters max)' });
+
+  const tradingId = b.tradingId ? String(b.tradingId).trim() : null;
+  const projectId = b.projectId ? String(b.projectId).trim() : null;
+  if (!!tradingId === !!projectId) {
+    return res.status(400).json({ error: 'A delivery receipt must be for exactly one trading deal OR one project' });
+  }
+
+  const deliveredTo = String(b.deliveredTo ?? '').trim();
+  if (!deliveredTo) return res.status(400).json({ error: 'Delivered-to name is required' });
+
+  const drDate = String(b.drDate ?? '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(drDate)) return res.status(400).json({ error: 'A valid delivery date (YYYY-MM-DD) is required' });
+
+  const norm = normalizeDrItems(b.items);
+  if (norm.error) return res.status(400).json({ error: norm.error });
+
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    // Confirm the source exists before stamping a booklet number against it.
+    const srcTbl = tradingId ? 'tradings' : 'projects';
+    const src = await client.query(`SELECT id FROM ${srcTbl} WHERE id = $1`, [tradingId || projectId]);
+    if (!src.rows[0]) { await client.query('ROLLBACK'); return res.status(400).json({ error: `That ${tradingId ? 'trading deal' : 'project'} does not exist` }); }
+
+    const serial = await nextDrSerial(client);
+    const r = await client.query(
+      `INSERT INTO delivery_receipts
+         (serial_no, dr_number, trading_id, project_id, customer_id, delivered_to, delivered_address,
+          delivered_tin, dr_date, terms, c_r_no, ref_sales_invoice_no, items, created_by, created_by_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15) RETURNING *`,
+      [serial, drNumber, tradingId, projectId, orNull(b.customerId), deliveredTo,
+       orNull(b.deliveredAddress), orNull(b.deliveredTin), drDate, orNull(b.terms),
+       orNull(b.crNo), orNull(b.refSalesInvoiceNo), JSON.stringify(norm.items),
+       req.user?.name || null, req.user?.id != null ? String(req.user.id) : null]
+    );
+    await client.query('COMMIT');
+    const full = await query(`${DR_SELECT} WHERE dr.id = $1`, [r.rows[0].id]);
+    res.status(201).json(mapDeliveryReceipt(full.rows[0]));
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    // 23505 = unique violation. Surfaced as a plain sentence naming the number, because the
+    // person is holding the booklet and needs to know THAT sheet is already recorded.
+    if (err && err.code === '23505' && String(err.constraint || '').includes('dr_number')) {
+      return res.status(409).json({ error: `DR No. ${drNumber} has already been issued — check the booklet, each sheet is recorded once` });
+    }
+    res.status(500).json({ error: err.message });
+  } finally { client.release(); }
+});
+
+// VOID, never delete: the booklet sheet was used and spoiled, and that has to stay on the record.
+// The number is NOT freed for reuse — the physical sheet is gone.
+app.post('/api/delivery-receipts/:id/void', requireRole(drRoles), async (req, res) => {
+  const reason = String(req.body?.reason ?? '').trim();
+  if (!reason) return res.status(400).json({ error: 'A reason is required to void a delivery receipt' });
+  if (!/^\d+$/.test(String(req.params.id))) return res.status(404).json({ error: 'Delivery receipt not found' });
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const cur = await client.query('SELECT id, voided_at FROM delivery_receipts WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (!cur.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Delivery receipt not found' }); }
+    if (cur.rows[0].voided_at) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'This delivery receipt is already voided' }); }
+    await client.query(
+      `UPDATE delivery_receipts SET voided_at = NOW(), voided_by = $1, voided_by_id = $2, void_reason = $3, updated_at = NOW()
+        WHERE id = $4`,
+      [req.user?.name || null, req.user?.id != null ? String(req.user.id) : null, reason.slice(0, 500), req.params.id]
+    );
+    await client.query('COMMIT');
+    const full = await query(`${DR_SELECT} WHERE dr.id = $1`, [req.params.id]);
+    res.json(mapDeliveryReceipt(full.rows[0]));
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: err.message });
+  } finally { client.release(); }
 });
 
 // =========================== CUSTOMERS ===========================
