@@ -1,10 +1,12 @@
 // ============================================================================
-// Delivery Receipts — the CLIENT-FACING BIR delivery receipt.
+// Delivery Receipts — the client-facing delivery receipt, kept as an INTERNAL working copy.
 //
 // One DR is issued against one trading deal or one project, and its line items are PULLED from
 // the purchase request(s) linked to that target, so nobody retypes a delivery note. The number is
 // the one pre-printed on the physical BIR booklet and is typed in by hand: the paper is the legal
-// document, and this screen records which sheet was used for what.
+// document, and this screen records which sheet was used for what. The print is labelled a
+// working copy and carries no printer-accreditation / ATP details, because it is not the
+// official BIR receipt.
 //
 // Distinct from the internal logistics `deliveries` record (Logistics portal), which tracks a
 // dispatch against a sales order and is untouched by this.
@@ -159,7 +161,7 @@ export function DeliveryReceipts({ api }: { api: Api }) {
                       : pill('Issued', 'good')}
                   </td>
                   <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                    <button title="Print" style={S.rowBtn} onClick={() => onPrint(dr)}><Printer size={14} /></button>
+                    <button title="Print working copy" style={S.rowBtn} onClick={() => onPrint(dr)}><Printer size={14} /></button>
                     {!dr.voidedAt && (
                       <button title="Void (the record is kept)" style={{ ...S.rowBtn, color: '#b91c1c' }}
                         onClick={() => { setVoiding(dr); setVoidReason(''); }}><Ban size={14} /></button>

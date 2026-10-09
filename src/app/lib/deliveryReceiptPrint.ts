@@ -187,7 +187,13 @@ export function printBirDeliveryReceipt(dr: PrintableBirDr): { ok: boolean; erro
   .dr-sign .line { border-bottom: 1px solid #000; height: 1px; }
   .dr-sign .cap { font-size: 9.5pt; margin-top: 4px; }
   .dr-fine { margin-top: 18px; text-align: center; font-size: 9pt; font-weight: bold; letter-spacing: 0.5px; }
-  .dr-accred { margin-top: 6px; text-align: center; font-size: 7.5pt; color: #333; line-height: 1.35; }
+  /* This print is the system's INTERNAL working copy; the official client copy is the
+     pre-printed BIR booklet sheet. The label must be impossible to miss yet not shout over
+     the document, so: small boxed caps directly under the title, restated in the footer. */
+  .dr-copy { text-align: center; margin: 0 0 8px; }
+  .dr-copy span { display: inline-block; border: 1px solid #555; border-radius: 2px; padding: 1px 9px;
+                  font-size: 8pt; font-weight: bold; letter-spacing: 1.2px; text-transform: uppercase; color: #333; }
+  .dr-foot-note { margin-top: 6px; text-align: center; font-size: 7.5pt; color: #333; line-height: 1.35; }
   /* A voided DR must be unusable as paperwork the moment it is looked at. */
   .dr-void { position: fixed; top: 40%; left: 0; right: 0; text-align: center; font-size: 56pt;
              font-weight: bold; color: rgba(193,18,31,0.22); letter-spacing: 10px; transform: rotate(-18deg); }
@@ -196,6 +202,7 @@ export function printBirDeliveryReceipt(dr: PrintableBirDr): { ok: boolean; erro
   const body = `
   ${dr.voidedAt ? '<div class="dr-void">VOID</div>' : ''}
   <div class="dr-title">DELIVERY RECEIPT</div>
+  <div class="dr-copy"><span>Working copy &mdash; not an official BIR receipt</span></div>
   <div class="dr-topline">
     <div class="dr-no">No. <span class="num">${esc(dr.drNumber)}</span></div>
     <div class="dr-date"><b>Date:</b> <span class="val">${esc(dayFmt(dr.drDate))}</span></div>
@@ -225,13 +232,10 @@ export function printBirDeliveryReceipt(dr: PrintableBirDr): { ok: boolean; erro
   </div>
 
   <div class="dr-fine">THIS DOCUMENT IS NOT VALID FOR CLAIMING INPUT TAXES</div>
-  <div class="dr-accred">
+  <div class="dr-foot-note">
     ${esc(COMPANY_BIR.name)} &nbsp;·&nbsp; ${esc(COMPANY_BIR.tin)}<br>
-    <!-- The printer's BIR accreditation + ATP details are pre-printed on the physical booklet.
-         The area is reserved so a reprint keeps the booklet's proportions; the figures go in
-         here once Accounting supplies them from the pad. -->
-    Printer&#39;s Accreditation No.: ______________________ &nbsp; Date Issued: ____________<br>
-    ATP / Permit No.: ______________________ &nbsp; Valid Until: ____________
+    Internal working copy &mdash; the official receipt issued to the client is pre-printed BIR
+    booklet sheet No. ${esc(dr.drNumber)}.
   </div>`;
 
   const html = renderPrintDocument({
