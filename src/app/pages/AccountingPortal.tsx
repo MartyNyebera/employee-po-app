@@ -3,7 +3,7 @@ import {
   ClipboardList, PenTool, Menu, X, Search, Clock, Calendar, CheckCircle2,
   XCircle, Printer, LogOut, Upload, Eraser, Eye, Briefcase, Plus, Trash2, Pencil,
   PanelLeftClose, PanelLeftOpen, FileText, PackageMinus, CalendarCheck, Calculator, Building2, Receipt, Ban,
-  ArrowLeftRight, Split, Users, Truck,
+  ArrowLeftRight, Split, Users, Truck, ReceiptText, Coins,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { onBackdropDown, backdropClose } from '../lib/backdrop';
@@ -26,6 +26,7 @@ import { CustomersList } from '../components/crm/CustomersList';
 // The client-facing BIR delivery receipt. Handed this portal's accounting-token fetch, same
 // as the other shared crm screens.
 import { DeliveryReceipts } from '../components/crm/DeliveryReceipts';
+import { BillingInvoices, Receivables } from '../components/crm/BillingInvoices';
 import { TradingProfitBars } from '../components/TradingProfitBars';
 import { DualBasisProfit, type DualBasisRow, type BasisTotals } from '../components/DualBasisProfit';
 import { ExpensesHistory, type TargetOption } from '../components/ExpensesHistory';
@@ -44,7 +45,7 @@ import { PayrollReview } from '../components/crm/PayrollReview';
 // ============================================================================
 
 type PRStatus = 'pending' | 'reviewed' | 'verified' | 'ordered' | 'approved' | 'disapproved';
-type PortalView = 'new-pr' | 'requests' | 'orders' | 'projects' | 'tradings' | 'facilities' | 'expenses' | 'withdrawals' | 'clients' | 'delivery-receipts' | 'timesheet' | 'payroll' | 'signature';
+type PortalView = 'new-pr' | 'requests' | 'orders' | 'projects' | 'tradings' | 'facilities' | 'expenses' | 'withdrawals' | 'clients' | 'delivery-receipts' | 'billing-invoices' | 'receivables' | 'timesheet' | 'payroll' | 'signature';
 
 // Section C — #12: Accounting is also the FIRST gate of the purchase-ORDER flow. Purchasing
 // raises an order ('pending'); Accounting reviews it here (→ 'accounting-approved', passing it
@@ -1263,12 +1264,16 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const [logExpense, setLogExpense] = useState<{ target: TargetRef | null } | null>(null);
   const [expensesFor, setExpensesFor] = useState<TargetRef | null>(null);
   const [expensesReload, setExpensesReload] = useState(0);
+  // How many invoices are overdue (outstanding balance past their collection date). The server
+  // derives `overdue` per invoice from the payment rows, so this is a live count of real state —
+  // nothing is stored, and logging a payment clears it on the next load.
+  const [overdueInvoiceCount, setOverdueInvoiceCount] = useState(0);
 
   // silent: background poll — no spinner, no toast on a blip (see useLiveRefresh).
   const loadAll = async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!silent) setLoading(true);
     try {
-      const [prs, pos, prj, fac, trd, sig, pSpend, fSpend, tSpend, roll] = await Promise.all([
+      const [prs, pos, prj, fac, trd, sig, pSpend, fSpend, tSpend, roll, bis] = await Promise.all([
         aFetch<PurchaseRequest[]>('/purchase-requests'),
         aFetch<PurchaseOrder[]>('/purchase-orders').catch(() => [] as PurchaseOrder[]),
         aFetch<Project[]>('/projects'),
@@ -1281,6 +1286,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
         // An older server without the roll-up just leaves the total row out rather than failing
         // the page, the same tolerance /tradings/spend already gets here.
         aFetch<ProfitRollup>('/profit-rollup').catch(() => null),
+        aFetch<{ overdue?: boolean; voidedAt?: string | null }[]>('/billing-invoices').catch(() => []),
       ]);
       setProjectSpend(pSpend ? Object.fromEntries(pSpend.map(s => [s.projectId, s])) : null);
       setFacilitySpend(fSpend ? Object.fromEntries(fSpend.map(s => [s.facilityId, s])) : null);
@@ -1294,6 +1300,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
       setProjects(prj || []);
       setFacilities(fac || []);
       setSignature(sig?.signature || null);
+      setOverdueInvoiceCount((bis || []).filter(b => b.overdue && !b.voidedAt).length);
     } catch (e: any) {
       if (!silent) toast.error(e.message || 'Failed to load data');
     } finally { if (!silent) setLoading(false); }
@@ -1472,6 +1479,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     { id: 'expenses', label: 'Expenses History', icon: Receipt },
     { id: 'clients', label: 'Clients', icon: Users },
     { id: 'delivery-receipts', label: 'Delivery Receipts', icon: Truck },
+    { id: 'billing-invoices', label: 'Billing Invoices', icon: ReceiptText },
+    { id: 'receivables', label: 'Receivables', icon: Coins },
     { id: 'withdrawals', label: 'Withdrawals Request', icon: PackageMinus },
     { id: 'timesheet', label: 'Attendance Sheet', icon: CalendarCheck },
     { id: 'payroll', label: 'Payroll', icon: Calculator },
@@ -1527,6 +1536,9 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
       <AttentionCard items={[
         { label: 'Requests to review', count: pendingCount, onView: () => setView('requests') },
         { label: 'Orders to review', count: pendingOrderCount, onView: () => setView('orders') },
+        // Overdue receivables. A live count off the invoice rows (balance outstanding past its
+        // collection date), not a stored notification — so it clears the moment a payment is logged.
+        { label: 'Overdue invoices', count: overdueInvoiceCount, onView: () => setView('receivables') },
       ]} />
       <div className={`flex-shrink-0 w-64 z-30 lg:relative lg:flex lg:flex-col transition-all duration-200 ${collapsed ? 'lg:w-20' : 'lg:w-64'} ${mobileOpen ? 'fixed inset-y-0 left-0 flex flex-col' : 'hidden lg:flex lg:flex-col'}`}>{sidebar}</div>
 
@@ -1548,6 +1560,10 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
           {view === 'clients' && <CustomersList isAdmin api={aFetch} />}
 
           {view === 'delivery-receipts' && <DeliveryReceipts api={aFetch} />}
+
+          {view === 'billing-invoices' && <BillingInvoices api={aFetch} />}
+
+          {view === 'receivables' && <Receivables api={aFetch} />}
 
           {view === 'timesheet' && <TimesheetReview api={aFetch} role="accounting" />}
 

@@ -3,10 +3,11 @@ import { getStoredAuth, fetchApi } from '../api/client';
 import { useAutoLogout } from '../hooks/useAutoLogout';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { Button } from './ui/button';
-import { LogOut, Home, FileText, Receipt, Menu, X, Check, XCircle, Clock, ShoppingCart, Package, User, UserCheck, MessageSquare, Users, Factory, UserCog, Briefcase, ClipboardCheck, PackageMinus, ChevronRight, ChevronDown, Warehouse, Activity, Calculator, Truck, PenTool, PanelLeftClose, PanelLeftOpen, IdCard, ScanLine, CalendarCheck, SlidersHorizontal, CalendarDays } from 'lucide-react';
+import { LogOut, Home, FileText, Receipt, Menu, X, Check, XCircle, Clock, ShoppingCart, Package, User, UserCheck, MessageSquare, Users, Factory, UserCog, Briefcase, ClipboardCheck, PackageMinus, ChevronRight, ChevronDown, Warehouse, Activity, Calculator, Truck, PenTool, PanelLeftClose, PanelLeftOpen, IdCard, ScanLine, CalendarCheck, SlidersHorizontal, CalendarDays, ReceiptText, Coins } from 'lucide-react';
 import { SuppliersList } from './crm/SuppliersList';
 import { CustomersList } from './crm/CustomersList';
 import { DeliveryReceipts } from './crm/DeliveryReceipts';
+import { BillingInvoices, Receivables } from './crm/BillingInvoices';
 import { InquiriesList } from './crm/InquiriesList';
 import { StaffAccountsList } from './crm/StaffAccountsList';
 import { EmployeeAccountsList } from './crm/EmployeeAccountsList';
@@ -48,7 +49,7 @@ interface AdminDashboardProps {
   onLogout: () => void;
 }
 
-type View = 'home' | 'orders' | 'transactions' | 'material-requests' | 'employee-accounts' | 'purchasing-accounts' | 'warehouse-accounts' | 'accounting-accounts' | 'sales-accounts' | 'logistics-accounts' | 'projects' | 'purchase-requests' | 'withdrawal-requests' | 'purchase-orders' | 'discrepancies' | 'inventory' | 'miscellaneous' | 'request-form' | 'suppliers' | 'customers' | 'delivery-receipts' | 'inquiries' | 'staff' | 'signature' | 'roster' | 'stations' | 'timesheet' | 'payroll-settings' | 'holidays' | 'payroll';
+type View = 'home' | 'orders' | 'transactions' | 'material-requests' | 'employee-accounts' | 'purchasing-accounts' | 'warehouse-accounts' | 'accounting-accounts' | 'sales-accounts' | 'logistics-accounts' | 'projects' | 'purchase-requests' | 'withdrawal-requests' | 'purchase-orders' | 'discrepancies' | 'inventory' | 'miscellaneous' | 'request-form' | 'suppliers' | 'customers' | 'delivery-receipts' | 'billing-invoices' | 'receivables' | 'inquiries' | 'staff' | 'signature' | 'roster' | 'stations' | 'timesheet' | 'payroll-settings' | 'holidays' | 'payroll';
 
 // Sidebar entries, in display order. An entry is either a leaf (navigates to a view) or a
 // group (a collapsible dropdown holding leaves). Visibility + write access come from MODULE_ACCESS.
@@ -82,6 +83,8 @@ const NAV_ENTRIES: NavEntry[] = [
   { group: 'monitoring', label: 'Monitoring', icon: Activity, children: [
     { view: 'customers', label: 'Clients', icon: Users, module: 'customers' },
     { view: 'delivery-receipts', label: 'Delivery Receipts', icon: Truck, module: 'delivery-receipts' },
+    { view: 'billing-invoices', label: 'Billing Invoices', icon: ReceiptText, module: 'billing-invoices' },
+    { view: 'receivables', label: 'Receivables', icon: Coins, module: 'receivables' },
     { view: 'suppliers', label: 'Suppliers', icon: Factory, module: 'suppliers' },
     { view: 'projects', label: 'Projects', icon: Briefcase, module: 'projects' },
     { view: 'inquiries', label: 'Quotation', icon: MessageSquare, module: 'inquiries' },
@@ -164,9 +167,9 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
   // graceNotices rides along on the same endpoint: who the clock station has told this month that they
   // passed their 3 grace arrivals. Accountability only — no pay effect, nothing to approve.
   const [counts, setCounts] = useState<{
-    purchaseRequests: number; purchaseOrders: number; withdrawals: number;
+    purchaseRequests: number; purchaseOrders: number; withdrawals: number; overdueInvoices: number;
     graceNotices: { count: number; people: { name: string; work_date: string; uses: number }[] };
-  }>({ purchaseRequests: 0, purchaseOrders: 0, withdrawals: 0, graceNotices: { count: 0, people: [] } });
+  }>({ purchaseRequests: 0, purchaseOrders: 0, withdrawals: 0, overdueInvoices: 0, graceNotices: { count: 0, people: [] } });
   const loadCounts = async () => {
     // Merged rather than replaced so an older server that omits a key can't blank the card.
     try { const next = await fetchApi('/admin/queue-counts'); setCounts(c => ({ ...c, ...next })); }
@@ -207,6 +210,8 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
     if (currentView === 'customers') return <CustomersList isAdmin={canManage(role, 'customers')} />;
     // fetchApi (admin token) is the default this screen expects; the Accounting portal passes its own.
     if (currentView === 'delivery-receipts') return <DeliveryReceipts api={fetchApi} />;
+    if (currentView === 'billing-invoices') return <BillingInvoices api={fetchApi} />;
+    if (currentView === 'receivables') return <Receivables api={fetchApi} />;
     if (currentView === 'inquiries') return <InquiriesList isAdmin={canManage(role, 'inquiries')} />;
     if (currentView === 'staff') return <StaffAccountsList />;
     if (currentView === 'signature') return <AdminSignature />;
@@ -352,6 +357,7 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
         { label: 'Purchase requests to verify', count: counts.purchaseRequests, onView: () => setCurrentView('purchase-requests') },
         { label: 'Purchase orders to approve', count: counts.purchaseOrders, onView: () => setCurrentView('purchase-orders') },
         { label: 'Withdrawals to approve', count: counts.withdrawals, onView: () => setCurrentView('withdrawal-requests') },
+        { label: 'Overdue invoices', count: counts.overdueInvoices, onView: () => setCurrentView('receivables') },
         // No onView: there is deliberately no grace report to jump to. The names ARE the notification.
         {
           label: 'Grace allowance exceeded (late arrivals)',

@@ -929,6 +929,96 @@ async function runMigrations() {
       console.log('✅ delivery_receipts table ready (client-facing BIR DR)');
     } catch (err) { console.log('ℹ️ delivery_receipts table skipped:', err.message); }
 
+    // ============== BILLING INVOICES + RECEIVABLES (stage 2 of billing) ==============
+    // The billing invoice MIRRORS the client's purchase order. The system does not compute the
+    // bill: every tax, discount and withholding figure is TYPED by the accountant to match the
+    // PO, because the client's PO is the document that gets paid and ours has to agree with it
+    // to the centavo. The only arithmetic here is qty x unit_price per line and the line sum.
+    //
+    // A BI is always raised FROM a delivery receipt (goods moved, now bill for them), which is
+    // also what ties it to exactly one trading deal or project — the DR already carries that.
+    //
+    // bi_number is the pre-printed booklet number, typed by hand and UNIQUE, exactly like
+    // dr_number. Cancelling is a VOID, never a DELETE.
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS billing_invoices (
+          id BIGSERIAL PRIMARY KEY,
+          serial_no TEXT,
+          bi_number TEXT NOT NULL CHECK (btrim(bi_number) <> ''),
+          delivery_receipt_id BIGINT NOT NULL REFERENCES delivery_receipts(id) ON DELETE RESTRICT,
+          customer_id TEXT REFERENCES customers(id) ON DELETE SET NULL,
+          billed_to TEXT NOT NULL CHECK (btrim(billed_to) <> ''),
+          billed_address TEXT,
+          billed_tin TEXT,
+          sale_type TEXT NOT NULL DEFAULT 'charge' CHECK (sale_type IN ('cash', 'charge')),
+          bi_date DATE NOT NULL,
+          payment_terms TEXT,
+          due_date DATE,
+          due_date_2 DATE,
+          dp_percent NUMERIC(5,2) CHECK (dp_percent IS NULL OR (dp_percent > 0 AND dp_percent < 100)),
+          items JSONB NOT NULL DEFAULT '[]'::jsonb,
+          vatable_sales NUMERIC(14,2),
+          vat_exempt_sales NUMERIC(14,2),
+          zero_rated_sales NUMERIC(14,2),
+          vat_amount NUMERIC(14,2),
+          less_vat NUMERIC(14,2),
+          net_of_vat NUMERIC(14,2),
+          less_discount NUMERIC(14,2),
+          less_withholding NUMERIC(14,2),
+          total_amount_due NUMERIC(14,2) NOT NULL CHECK (total_amount_due >= 0),
+          created_by TEXT,
+          created_by_id TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          voided_at TIMESTAMPTZ,
+          voided_by TEXT,
+          voided_by_id TEXT,
+          void_reason TEXT,
+          CONSTRAINT billing_invoices_void_needs_reason
+            CHECK (voided_at IS NULL OR btrim(COALESCE(void_reason, '')) <> ''),
+          CONSTRAINT billing_invoices_second_due_needs_first
+            CHECK (due_date_2 IS NULL OR due_date IS NOT NULL)
+        )
+      `);
+      // Named + guarded so a restart never tries to add it twice, same as the DR's.
+      await query(`DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'billing_invoices_bi_number_key') THEN
+          ALTER TABLE billing_invoices ADD CONSTRAINT billing_invoices_bi_number_key UNIQUE (bi_number);
+        END IF;
+      END $$`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_billing_invoices_dr ON billing_invoices(delivery_receipt_id)`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_billing_invoices_date ON billing_invoices(bi_date DESC)`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_billing_invoices_due ON billing_invoices(due_date)`);
+
+      // RECEIVABLES. One row per collection against an invoice, so a 50/50 client is simply two
+      // rows. The balance and the paid/partial/unpaid status are DERIVED from these rows at read
+      // time and never stored — a stored status is one more thing that can disagree with the money.
+      await query(`
+        CREATE TABLE IF NOT EXISTS invoice_payments (
+          id BIGSERIAL PRIMARY KEY,
+          billing_invoice_id BIGINT NOT NULL REFERENCES billing_invoices(id) ON DELETE RESTRICT,
+          amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+          paid_on DATE NOT NULL,
+          or_number TEXT,
+          reference TEXT,
+          notes TEXT,
+          created_by TEXT,
+          created_by_id TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          voided_at TIMESTAMPTZ,
+          voided_by TEXT,
+          voided_by_id TEXT,
+          void_reason TEXT,
+          CONSTRAINT invoice_payments_void_needs_reason
+            CHECK (voided_at IS NULL OR btrim(COALESCE(void_reason, '')) <> '')
+        )
+      `);
+      await query(`CREATE INDEX IF NOT EXISTS idx_invoice_payments_bi ON invoice_payments(billing_invoice_id)`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_invoice_payments_paid_on ON invoice_payments(paid_on DESC)`);
+      console.log('✅ billing_invoices + invoice_payments tables ready (BI + receivables)');
+    } catch (err) { console.log('ℹ️ billing_invoices tables skipped:', err.message); }
+
     // ============== EXPENSES + ALLOCATIONS (replaces project_expenses) ==============
     // One expense, many allocation lines. A ₱1,000 gas receipt can be split ₱600 to a project and
     // ₱400 to a trading; a single-target expense is simply one allocation line.
@@ -2256,10 +2346,37 @@ app.get('/api/admin/queue-counts', requireAuth, requireRole(['admin']), async (r
         people: g.rows.map(x => ({ name: x.full_name, work_date: x.work_date, uses: x.uses_at_scan })),
       };
     } catch { /* leave it empty — the badges matter more than this card */ }
+    // Overdue receivables: an invoice with an outstanding balance where the amount that should
+    // have been collected BY TODAY has not been. For split terms only the down payment is due at
+    // the first date, so a client who paid their DP on time is not counted while the balance still
+    // has time to run. Derived from the payment rows — there is no stored status to go stale.
+    // Isolated like graceNotices above: the queue badges matter more than this card.
+    let overdueInvoices = 0;
+    try {
+      const o = await query(
+        `SELECT COUNT(*)::int AS n
+             FROM billing_invoices bi
+             LEFT JOIN (SELECT billing_invoice_id, SUM(amount) AS paid
+                          FROM invoice_payments WHERE voided_at IS NULL
+                         GROUP BY billing_invoice_id) p ON p.billing_invoice_id = bi.id
+            WHERE bi.voided_at IS NULL
+              AND bi.due_date IS NOT NULL
+              AND COALESCE(p.paid, 0) < bi.total_amount_due
+              AND COALESCE(p.paid, 0) < CASE
+                    WHEN bi.due_date_2 IS NOT NULL
+                         AND bi.due_date_2 <= (NOW() AT TIME ZONE 'Asia/Manila')::date THEN bi.total_amount_due
+                    WHEN bi.due_date <= (NOW() AT TIME ZONE 'Asia/Manila')::date
+                         AND bi.dp_percent IS NOT NULL AND bi.due_date_2 IS NOT NULL
+                         THEN ROUND(bi.total_amount_due * bi.dp_percent / 100, 2)
+                    WHEN bi.due_date <= (NOW() AT TIME ZONE 'Asia/Manila')::date THEN bi.total_amount_due
+                    ELSE 0 END`);
+      overdueInvoices = o.rows[0].n;
+    } catch { /* leave it at 0 — the badges matter more than this card */ }
     res.json({
       purchaseRequests: row.purchase_requests,
       purchaseOrders: row.purchase_orders,
       withdrawals: row.withdrawals,
+      overdueInvoices,
       graceNotices,
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -8343,6 +8460,422 @@ app.post('/api/delivery-receipts/:id/void', requireRole(drRoles), async (req, re
     await client.query('COMMIT');
     const full = await query(`${DR_SELECT} WHERE dr.id = $1`, [req.params.id]);
     res.json(mapDeliveryReceipt(full.rows[0]));
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: err.message });
+  } finally { client.release(); }
+});
+
+// ======================= BILLING INVOICES + RECEIVABLES =======================
+// Same family as the delivery receipt above, and deliberately the same shape: accounting+admin,
+// a hand-typed booklet number that is UNIQUE, void-never-delete, and a working-copy print.
+//
+// THE RULE: the invoice mirrors the client's purchase order. Every tax, discount and withholding
+// figure is TYPED. Nothing here computes VAT, and nothing derives the total from the lines — the
+// accountant copies the PO's own figures so the two documents agree to the centavo. The only
+// arithmetic is qty x unit_price on a line (and a line sum shown as a cross-check).
+const biRoles = ['owner', 'admin', 'accounting'];
+
+// Internal reference, distinct from the booklet number. CBI- to the DR's CDR-.
+async function nextBiSerial(client) {
+  const year = new Date().getFullYear();
+  const last = await client.query(
+    `SELECT serial_no FROM billing_invoices WHERE serial_no LIKE $1 ORDER BY serial_no DESC LIMIT 1`,
+    [`CBI-${year}-%`]);
+  let counter = 1;
+  if (last.rows[0]) { const n = parseInt(last.rows[0].serial_no.split('-')[2], 10); if (!isNaN(n)) counter = n + 1; }
+  return `CBI-${year}-${String(counter).padStart(4, '0')}`;
+}
+
+// A typed money figure, kept as a STRING so NUMERIC(14,2) stores exactly what was typed and no
+// float ever rounds it. Absent/blank means the field was not on the PO, which is a null, not a 0 —
+// a printed "0.00" on a VAT line says something different from a blank one.
+function moneyField(v, label) {
+  if (v === undefined || v === null || String(v).trim() === '') return { value: null };
+  const s = String(v).trim().replace(/,/g, '');
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) return { error: `${label} must be a number with at most 2 decimals` };
+  if (Number(s) > 99999999999.99) return { error: `${label} is too large` };
+  return { value: s };
+}
+
+const biRound2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+
+// Due date from the terms, only as a CONVENIENCE and only when the accountant did not type one.
+// Recognises COD and the net-N family; anything else (50/50, "upon completion", a date the client
+// dictated) returns null and is typed by hand, because guessing a collection date wrong is worse
+// than leaving it blank.
+function deriveDueDate(terms, biDate) {
+  const t = String(terms || '').trim().toLowerCase();
+  if (!t || !/^\d{4}-\d{2}-\d{2}$/.test(String(biDate || ''))) return null;
+  if (/\b(cod|cash on delivery|cash)\b/.test(t)) return biDate;
+  // "30 days", "net 30", "net-30", "30-day", "n/30"
+  const m = /(?:^|\b)(?:net\s*[-/ ]?\s*)?(\d{1,3})\s*(?:days?|day)?(?:$|\b)/.exec(t);
+  if (!m) return null;
+  const days = Number(m[1]);
+  if (!Number.isFinite(days) || days <= 0 || days > 365) return null;
+  // Split terms are not a single net-N; let the accountant set both dates.
+  if (/%|\bdp\b|down\s*payment|\bsplit\b/.test(t)) return null;
+  const d = new Date(`${biDate}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+// Line items. description/quantity/unit carry over from the DR; unit_price is typed; amount is
+// the one safe multiply (qty x unit_price), computed here rather than trusted from the client so
+// a printed line can never disagree with its own numbers.
+function normalizeBiItems(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) return { error: 'A billing invoice needs at least one line item' };
+  if (raw.length > 100) return { error: 'Too many line items (100 max)' };
+  const items = [];
+  for (const it of raw) {
+    const description = String((it && it.description) ?? '').trim();
+    if (!description) return { error: 'Every line item needs a description' };
+    if (description.length > 300) return { error: 'A line item description is too long (300 characters max)' };
+    const qtyStr = String((it && it.quantity) ?? '').trim();
+    if (!/^\d+(\.\d{1,3})?$/.test(qtyStr) || !(Number(qtyStr) > 0)) {
+      return { error: `Quantity for "${description}" must be a number greater than zero` };
+    }
+    const priceRaw = (it && (it.unit_price ?? it.unitPrice));
+    const price = moneyField(priceRaw, `Unit price for "${description}"`);
+    if (price.error) return { error: price.error };
+    if (price.value === null) return { error: `Unit price for "${description}" is required` };
+    items.push({
+      description,
+      quantity: Number(qtyStr),
+      unit: String((it && it.unit) ?? '').trim().slice(0, 30),
+      unit_price: Number(price.value),
+      amount: biRound2(Number(qtyStr) * Number(price.value)),
+    });
+  }
+  return { items };
+}
+
+// paid_total sums only the NON-voided payments, so voiding a mistyped collection restores the
+// balance with no second entry. `today` rides along from the server so "overdue" is decided on
+// Manila's calendar rather than the browser's.
+const BI_SELECT = `
+  SELECT bi.*,
+         to_char(bi.bi_date, 'YYYY-MM-DD')    AS bi_date_text,
+         to_char(bi.due_date, 'YYYY-MM-DD')   AS due_date_text,
+         to_char(bi.due_date_2, 'YYYY-MM-DD') AS due_date_2_text,
+         to_char((NOW() AT TIME ZONE 'Asia/Manila')::date, 'YYYY-MM-DD') AS today,
+         dr.dr_number, dr.trading_id, dr.project_id,
+         to_char(dr.dr_date, 'YYYY-MM-DD') AS dr_date_text,
+         COALESCE(t.name, p.name) AS source_name,
+         COALESCE(pay.paid, 0)    AS paid_total,
+         COALESCE(pay.n, 0)       AS payment_count
+    FROM billing_invoices bi
+    JOIN delivery_receipts dr ON dr.id = bi.delivery_receipt_id
+    LEFT JOIN tradings t ON t.id = dr.trading_id
+    LEFT JOIN projects p ON p.id = dr.project_id
+    LEFT JOIN (SELECT billing_invoice_id, SUM(amount) AS paid, COUNT(*) AS n
+                 FROM invoice_payments WHERE voided_at IS NULL
+                GROUP BY billing_invoice_id) pay ON pay.billing_invoice_id = bi.id`;
+
+function mapBillingInvoice(r) {
+  if (!r) return r;
+  const due = Number(r.total_amount_due ?? 0);
+  const paid = Number(r.paid_total ?? 0);
+  const balance = biRound2(due - paid);
+  const d1 = r.due_date_text || null, d2 = r.due_date_2_text || null, today = r.today;
+  const dpPercent = r.dp_percent === null || r.dp_percent === undefined ? null : Number(r.dp_percent);
+
+  // How much SHOULD have been collected by today. For split terms only the down payment is due at
+  // the first date, so a client who paid their 50% on time is not flagged while the balance still
+  // has a month to run.
+  let expectedByNow = 0;
+  if (d1 && d1 <= today) expectedByNow = (dpPercent !== null && d2) ? biRound2(due * dpPercent / 100) : due;
+  if (d2 && d2 <= today) expectedByNow = due;
+
+  // Status is DERIVED, never stored.
+  const status = r.voided_at ? 'voided'
+    : balance <= 0.004 ? 'paid'
+    : paid > 0.004 ? 'partial'
+    : 'unpaid';
+  const overdue = !r.voided_at && balance > 0.004 && paid + 0.004 < expectedByNow;
+
+  return {
+    id: Number(r.id), serialNo: r.serial_no, biNumber: r.bi_number,
+    deliveryReceiptId: Number(r.delivery_receipt_id), drNumber: r.dr_number ?? null,
+    drDate: r.dr_date_text ?? null,
+    sourceKind: r.trading_id ? 'trading' : 'project', sourceName: r.source_name ?? null,
+    customerId: r.customer_id ?? null,
+    billedTo: r.billed_to, billedAddress: r.billed_address ?? null, billedTin: r.billed_tin ?? null,
+    saleType: r.sale_type, biDate: r.bi_date_text, paymentTerms: r.payment_terms ?? null,
+    dueDate: d1, dueDate2: d2, dpPercent,
+    items: Array.isArray(r.items) ? r.items : (r.items || []),
+    // The typed figures, passed through exactly as stored. Nothing here is recomputed.
+    vatableSales: r.vatable_sales, vatExemptSales: r.vat_exempt_sales, zeroRatedSales: r.zero_rated_sales,
+    vatAmount: r.vat_amount, lessVat: r.less_vat, netOfVat: r.net_of_vat,
+    lessDiscount: r.less_discount, lessWithholding: r.less_withholding,
+    totalAmountDue: r.total_amount_due,
+    // Receivable position.
+    paidTotal: paid.toFixed(2), balance: balance.toFixed(2), paymentCount: Number(r.payment_count ?? 0),
+    status, overdue, amountOverdue: overdue ? biRound2(expectedByNow - paid).toFixed(2) : '0.00',
+    createdBy: r.created_by ?? null, createdAt: r.created_at,
+    voidedAt: r.voided_at ?? null, voidedBy: r.voided_by ?? null, voidReason: r.void_reason ?? null,
+  };
+}
+
+function mapInvoicePayment(r) {
+  return r && {
+    id: Number(r.id), billingInvoiceId: Number(r.billing_invoice_id),
+    amount: r.amount, paidOn: r.paid_on_text ?? null,
+    orNumber: r.or_number ?? null, reference: r.reference ?? null, notes: r.notes ?? null,
+    createdBy: r.created_by ?? null, createdAt: r.created_at,
+    voidedAt: r.voided_at ?? null, voidedBy: r.voided_by ?? null, voidReason: r.void_reason ?? null,
+  };
+}
+
+const PAYMENT_SELECT = `
+  SELECT ip.*, to_char(ip.paid_on, 'YYYY-MM-DD') AS paid_on_text
+    FROM invoice_payments ip`;
+
+// The PRE-FILL. Everything an invoice needs that is already a fact: what was delivered, and to
+// whom. Registered before /:id so Express does not read "source-dr" as an id.
+app.get('/api/billing-invoices/source-dr/:drId', requireRole(biRoles), async (req, res) => {
+  if (!/^\d+$/.test(String(req.params.drId))) return res.status(404).json({ error: 'Delivery receipt not found' });
+  try {
+    const r = await query(`
+      SELECT dr.*, to_char(dr.dr_date,'YYYY-MM-DD') AS dr_date_text,
+             COALESCE(t.name, p.name) AS source_name,
+             c.name AS customer_name, c.tin AS customer_tin,
+             c.billing_address AS customer_billing_address, c.default_payment_terms AS customer_terms
+        FROM delivery_receipts dr
+        LEFT JOIN tradings t ON t.id = dr.trading_id
+        LEFT JOIN projects p ON p.id = dr.project_id
+        LEFT JOIN customers c ON c.id = dr.customer_id
+       WHERE dr.id = $1`, [req.params.drId]);
+    const dr = r.rows[0];
+    if (!dr) return res.status(404).json({ error: 'Delivery receipt not found' });
+    // A voided DR records goods that did not go out as written; billing from it would carry the
+    // mistake onto an invoice.
+    if (dr.voided_at) return res.status(400).json({ error: `DR No. ${dr.dr_number} is voided — it cannot be billed` });
+
+    // Which invoices this DR already has. Not a block (a deal can be re-billed after a void), but
+    // the form says so out loud, because two live invoices for one delivery is almost always wrong.
+    const existing = await query(
+      `SELECT id, bi_number, voided_at FROM billing_invoices WHERE delivery_receipt_id = $1 ORDER BY id`,
+      [req.params.drId]);
+
+    const items = (Array.isArray(dr.items) ? dr.items : []).map(it => ({
+      description: String(it.description ?? ''),
+      quantity: it.quantity,
+      unit: it.unit ?? '',
+      // Typed by the accountant from the PO — never guessed, and the DR has no prices to guess from.
+      unit_price: '',
+      amount: '',
+    }));
+    res.json({
+      drId: Number(dr.id), drNumber: dr.dr_number, drDate: dr.dr_date_text,
+      sourceKind: dr.trading_id ? 'trading' : 'project', sourceName: dr.source_name ?? null,
+      customerId: dr.customer_id ?? null,
+      billedTo: dr.customer_name || dr.delivered_to || '',
+      billedAddress: dr.customer_billing_address || dr.delivered_address || '',
+      billedTin: dr.customer_tin || dr.delivered_tin || '',
+      paymentTerms: dr.terms || dr.customer_terms || '',
+      items,
+      existingInvoices: existing.rows.map(x => ({ id: Number(x.id), biNumber: x.bi_number, voidedAt: x.voided_at })),
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// The list doubles as the receivables ledger: every row carries its paid total, balance, derived
+// status and whether it is overdue, so the Receivables screen needs no second endpoint.
+app.get('/api/billing-invoices', requireRole(biRoles), async (req, res) => {
+  try {
+    const r = await query(`${BI_SELECT} ORDER BY bi.bi_date DESC, bi.id DESC`);
+    let rows = r.rows.map(mapBillingInvoice);
+    const status = String(req.query.status || '').trim().toLowerCase();
+    if (status === 'overdue') rows = rows.filter(x => x.overdue);
+    else if (['unpaid', 'partial', 'paid', 'voided'].includes(status)) rows = rows.filter(x => x.status === status);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/billing-invoices/:id', requireRole(biRoles), async (req, res) => {
+  if (!/^\d+$/.test(String(req.params.id))) return res.status(404).json({ error: 'Billing invoice not found' });
+  try {
+    const r = await query(`${BI_SELECT} WHERE bi.id = $1`, [req.params.id]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'Billing invoice not found' });
+    const pays = await query(`${PAYMENT_SELECT} WHERE ip.billing_invoice_id = $1 ORDER BY ip.paid_on, ip.id`, [req.params.id]);
+    res.json({ ...mapBillingInvoice(r.rows[0]), payments: pays.rows.map(mapInvoicePayment) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/billing-invoices', requireRole(biRoles), async (req, res) => {
+  const b = req.body || {};
+  const biNumber = String(b.biNumber ?? '').trim();
+  if (!biNumber) return res.status(400).json({ error: 'The official BI number from the booklet is required' });
+  if (biNumber.length > 40) return res.status(400).json({ error: 'BI number is too long (40 characters max)' });
+
+  const drId = String(b.deliveryReceiptId ?? '').trim();
+  if (!/^\d+$/.test(drId)) return res.status(400).json({ error: 'A billing invoice must be raised from a delivery receipt' });
+
+  const billedTo = String(b.billedTo ?? '').trim();
+  if (!billedTo) return res.status(400).json({ error: 'Billed-to name is required' });
+
+  const saleType = String(b.saleType ?? 'charge').trim().toLowerCase();
+  if (!['cash', 'charge'].includes(saleType)) return res.status(400).json({ error: "Sale type must be 'cash' or 'charge'" });
+
+  const biDate = String(b.biDate ?? '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(biDate)) return res.status(400).json({ error: 'A valid invoice date (YYYY-MM-DD) is required' });
+
+  const isDateOrBlank = (v) => v === null || v === undefined || String(v).trim() === '' || /^\d{4}-\d{2}-\d{2}$/.test(String(v).trim());
+  if (!isDateOrBlank(b.dueDate)) return res.status(400).json({ error: 'Due date must be YYYY-MM-DD' });
+  if (!isDateOrBlank(b.dueDate2)) return res.status(400).json({ error: 'The second due date must be YYYY-MM-DD' });
+
+  const norm = normalizeBiItems(b.items);
+  if (norm.error) return res.status(400).json({ error: norm.error });
+
+  // The typed totals. Stored exactly as given; the server does not recompute or cross-check them,
+  // because the PO is the authority and an invoice that "corrects" the PO cannot be collected.
+  const FIELDS = [
+    ['vatableSales', 'vatable_sales', 'VATable sales'],
+    ['vatExemptSales', 'vat_exempt_sales', 'VAT-exempt sales'],
+    ['zeroRatedSales', 'zero_rated_sales', 'Zero-rated sales'],
+    ['vatAmount', 'vat_amount', 'VAT amount'],
+    ['lessVat', 'less_vat', 'Less VAT'],
+    ['netOfVat', 'net_of_vat', 'Net of VAT'],
+    ['lessDiscount', 'less_discount', 'Less discount'],
+    ['lessWithholding', 'less_withholding', 'Less withholding'],
+  ];
+  const totals = {};
+  for (const [key, col, label] of FIELDS) {
+    const f = moneyField(b[key], label);
+    if (f.error) return res.status(400).json({ error: f.error });
+    totals[col] = f.value;
+  }
+  const totalDue = moneyField(b.totalAmountDue, 'Total amount due');
+  if (totalDue.error) return res.status(400).json({ error: totalDue.error });
+  if (totalDue.value === null) return res.status(400).json({ error: 'Total amount due is required — copy it from the client PO' });
+
+  let dpPercent = null;
+  if (b.dpPercent !== undefined && b.dpPercent !== null && String(b.dpPercent).trim() !== '') {
+    const p = Number(String(b.dpPercent).trim());
+    if (!Number.isFinite(p) || p <= 0 || p >= 100) return res.status(400).json({ error: 'Down-payment percent must be between 0 and 100' });
+    dpPercent = p.toFixed(2);
+  }
+
+  const terms = orNull(b.paymentTerms ? String(b.paymentTerms).trim() : null);
+  const typedDue = b.dueDate && String(b.dueDate).trim() ? String(b.dueDate).trim() : null;
+  const dueDate = typedDue || deriveDueDate(terms, biDate);
+  const dueDate2 = b.dueDate2 && String(b.dueDate2).trim() ? String(b.dueDate2).trim() : null;
+  if (dueDate2 && !dueDate) return res.status(400).json({ error: 'A second due date needs a first due date' });
+  if (dueDate2 && dueDate2 < dueDate) return res.status(400).json({ error: 'The second due date cannot fall before the first' });
+
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const dr = await client.query('SELECT id, dr_number, voided_at FROM delivery_receipts WHERE id = $1', [drId]);
+    if (!dr.rows[0]) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'That delivery receipt does not exist' }); }
+    if (dr.rows[0].voided_at) { await client.query('ROLLBACK'); return res.status(400).json({ error: `DR No. ${dr.rows[0].dr_number} is voided — it cannot be billed` }); }
+
+    const serial = await nextBiSerial(client);
+    const r = await client.query(
+      `INSERT INTO billing_invoices
+         (serial_no, bi_number, delivery_receipt_id, customer_id, billed_to, billed_address, billed_tin,
+          sale_type, bi_date, payment_terms, due_date, due_date_2, dp_percent, items,
+          vatable_sales, vat_exempt_sales, zero_rated_sales, vat_amount, less_vat, net_of_vat,
+          less_discount, less_withholding, total_amount_due, created_by, created_by_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,
+               $15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+       RETURNING id`,
+      [serial, biNumber, drId, orNull(b.customerId), billedTo, orNull(b.billedAddress), orNull(b.billedTin),
+       saleType, biDate, terms, dueDate, dueDate2, dpPercent, JSON.stringify(norm.items),
+       totals.vatable_sales, totals.vat_exempt_sales, totals.zero_rated_sales, totals.vat_amount,
+       totals.less_vat, totals.net_of_vat, totals.less_discount, totals.less_withholding,
+       totalDue.value, req.user?.name || null, req.user?.id != null ? String(req.user.id) : null]
+    );
+    await client.query('COMMIT');
+    const full = await query(`${BI_SELECT} WHERE bi.id = $1`, [r.rows[0].id]);
+    res.status(201).json(mapBillingInvoice(full.rows[0]));
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (err && err.code === '23505' && String(err.constraint || '').includes('bi_number')) {
+      return res.status(409).json({ error: `BI No. ${biNumber} has already been issued — check the booklet, each sheet is recorded once` });
+    }
+    res.status(500).json({ error: err.message });
+  } finally { client.release(); }
+});
+
+// VOID, never delete. The booklet sheet is spent either way and the number is not freed.
+app.post('/api/billing-invoices/:id/void', requireRole(biRoles), async (req, res) => {
+  const reason = String(req.body?.reason ?? '').trim();
+  if (!reason) return res.status(400).json({ error: 'A reason is required to void a billing invoice' });
+  if (!/^\d+$/.test(String(req.params.id))) return res.status(404).json({ error: 'Billing invoice not found' });
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const cur = await client.query('SELECT id, voided_at FROM billing_invoices WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (!cur.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Billing invoice not found' }); }
+    if (cur.rows[0].voided_at) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'This billing invoice is already voided' }); }
+    await client.query(
+      `UPDATE billing_invoices SET voided_at = NOW(), voided_by = $1, voided_by_id = $2, void_reason = $3, updated_at = NOW()
+        WHERE id = $4`,
+      [req.user?.name || null, req.user?.id != null ? String(req.user.id) : null, reason.slice(0, 500), req.params.id]);
+    await client.query('COMMIT');
+    const full = await query(`${BI_SELECT} WHERE bi.id = $1`, [req.params.id]);
+    res.json(mapBillingInvoice(full.rows[0]));
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: err.message });
+  } finally { client.release(); }
+});
+
+// ---- RECEIVABLES: log a collection against an invoice. Partial payments are the normal case.
+app.post('/api/billing-invoices/:id/payments', requireRole(biRoles), async (req, res) => {
+  if (!/^\d+$/.test(String(req.params.id))) return res.status(404).json({ error: 'Billing invoice not found' });
+  const b = req.body || {};
+  const amount = moneyField(b.amount, 'Amount');
+  if (amount.error) return res.status(400).json({ error: amount.error });
+  if (amount.value === null || !(Number(amount.value) > 0)) return res.status(400).json({ error: 'A payment amount greater than zero is required' });
+  const paidOn = String(b.paidOn ?? '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(paidOn)) return res.status(400).json({ error: 'A valid payment date (YYYY-MM-DD) is required' });
+
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const bi = await client.query('SELECT id, bi_number, voided_at FROM billing_invoices WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (!bi.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Billing invoice not found' }); }
+    if (bi.rows[0].voided_at) { await client.query('ROLLBACK'); return res.status(409).json({ error: `BI No. ${bi.rows[0].bi_number} is voided — no payment can be logged against it` }); }
+    const r = await client.query(
+      `INSERT INTO invoice_payments
+         (billing_invoice_id, amount, paid_on, or_number, reference, notes, created_by, created_by_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+      [req.params.id, amount.value, paidOn, orNull(b.orNumber), orNull(b.reference), orNull(b.notes),
+       req.user?.name || null, req.user?.id != null ? String(req.user.id) : null]);
+    await client.query('COMMIT');
+    const full = await query(`${BI_SELECT} WHERE bi.id = $1`, [req.params.id]);
+    const pays = await query(`${PAYMENT_SELECT} WHERE ip.billing_invoice_id = $1 ORDER BY ip.paid_on, ip.id`, [req.params.id]);
+    res.status(201).json({ ...mapBillingInvoice(full.rows[0]), payments: pays.rows.map(mapInvoicePayment), paymentId: Number(r.rows[0].id) });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: err.message });
+  } finally { client.release(); }
+});
+
+// Voiding a payment restores the balance by excluding it from the sum — the row stays, because a
+// collection that was recorded and then reversed is part of the account's history.
+app.post('/api/invoice-payments/:id/void', requireRole(biRoles), async (req, res) => {
+  const reason = String(req.body?.reason ?? '').trim();
+  if (!reason) return res.status(400).json({ error: 'A reason is required to void a payment' });
+  if (!/^\d+$/.test(String(req.params.id))) return res.status(404).json({ error: 'Payment not found' });
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const cur = await client.query('SELECT id, billing_invoice_id, voided_at FROM invoice_payments WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (!cur.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Payment not found' }); }
+    if (cur.rows[0].voided_at) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'This payment is already voided' }); }
+    await client.query(
+      `UPDATE invoice_payments SET voided_at = NOW(), voided_by = $1, voided_by_id = $2, void_reason = $3
+        WHERE id = $4`,
+      [req.user?.name || null, req.user?.id != null ? String(req.user.id) : null, reason.slice(0, 500), req.params.id]);
+    await client.query('COMMIT');
+    const biId = cur.rows[0].billing_invoice_id;
+    const full = await query(`${BI_SELECT} WHERE bi.id = $1`, [biId]);
+    const pays = await query(`${PAYMENT_SELECT} WHERE ip.billing_invoice_id = $1 ORDER BY ip.paid_on, ip.id`, [biId]);
+    res.json({ ...mapBillingInvoice(full.rows[0]), payments: pays.rows.map(mapInvoicePayment) });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     res.status(500).json({ error: err.message });
