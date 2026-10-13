@@ -209,9 +209,9 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
     if (currentView === 'suppliers') return <SuppliersList isAdmin={canManage(role, 'suppliers')} />;
     if (currentView === 'customers') return <CustomersList isAdmin={canManage(role, 'customers')} />;
     // fetchApi (admin token) is the default this screen expects; the Accounting portal passes its own.
-    if (currentView === 'delivery-receipts') return <DeliveryReceipts api={fetchApi} />;
-    if (currentView === 'billing-invoices') return <BillingInvoices api={fetchApi} />;
-    if (currentView === 'receivables') return <Receivables api={fetchApi} />;
+    if (currentView === 'delivery-receipts') return <DeliveryReceipts api={fetchApi} isAdmin={canManage(role, 'delivery-receipts')} />;
+    if (currentView === 'billing-invoices') return <BillingInvoices api={fetchApi} isAdmin={canManage(role, 'billing-invoices')} />;
+    if (currentView === 'receivables') return <Receivables api={fetchApi} isAdmin={canManage(role, 'receivables')} />;
     if (currentView === 'inquiries') return <InquiriesList isAdmin={canManage(role, 'inquiries')} />;
     if (currentView === 'staff') return <StaffAccountsList />;
     if (currentView === 'signature') return <AdminSignature />;

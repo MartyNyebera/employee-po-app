@@ -1559,11 +1559,11 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 
           {view === 'clients' && <CustomersList isAdmin api={aFetch} />}
 
-          {view === 'delivery-receipts' && <DeliveryReceipts api={aFetch} />}
+          {view === 'delivery-receipts' && <DeliveryReceipts api={aFetch} isAdmin />}
 
-          {view === 'billing-invoices' && <BillingInvoices api={aFetch} />}
+          {view === 'billing-invoices' && <BillingInvoices api={aFetch} isAdmin />}
 
-          {view === 'receivables' && <Receivables api={aFetch} />}
+          {view === 'receivables' && <Receivables api={aFetch} isAdmin />}
 
           {view === 'timesheet' && <TimesheetReview api={aFetch} role="accounting" />}
 

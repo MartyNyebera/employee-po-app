@@ -118,7 +118,9 @@ const BI_TERMS_PRESETS = ['COD', '7 days', '15 days', '30 days', '60 days', '50%
 // ============================================================================
 // 1. THE DOCUMENT LIST
 // ============================================================================
-export function BillingInvoices({ api }: { api: Api }) {
+// `isAdmin` — see the note on DeliveryReceipts: the caller derives it from the permission
+// matrix, view-only keeps the list and the print, and the server stays the real gate.
+export function BillingInvoices({ api, isAdmin }: { api: Api; isAdmin: boolean }) {
   const [rows, setRows] = useState<Bi[]>([]);
   const [drs, setDrs] = useState<DrOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -185,9 +187,11 @@ export function BillingInvoices({ api }: { api: Api }) {
           <h1 style={S.h1}>Billing Invoices</h1>
           <p style={S.sub}>Raised from a delivery receipt. The figures mirror the client&rsquo;s purchase order; the number comes from the booklet.</p>
         </div>
-        <button style={{ ...S.addBtn, color: '#000000' }} onClick={() => setCreating(true)}>
-          <Plus size={16} style={{ marginRight: '6px' }} /> New Billing Invoice
-        </button>
+        {isAdmin && (
+          <button style={{ ...S.addBtn, color: '#000000' }} onClick={() => setCreating(true)}>
+            <Plus size={16} style={{ marginRight: '6px' }} /> New Billing Invoice
+          </button>
+        )}
       </div>
 
       <div style={{ position: 'relative', maxWidth: '340px', marginBottom: '20px' }}>
@@ -231,7 +235,7 @@ export function BillingInvoices({ api }: { api: Api }) {
                   </td>
                   <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                     <button title="Print working copy" style={S.rowBtn} onClick={() => onPrint(bi)}><Printer size={14} /></button>
-                    {!bi.voidedAt && (
+                    {isAdmin && !bi.voidedAt && (
                       <button title="Void (the record is kept)" style={{ ...S.rowBtn, color: '#b91c1c' }}
                         onClick={() => { setVoiding(bi); setVoidReason(''); }}><Ban size={14} /></button>
                     )}
@@ -547,7 +551,11 @@ const FILTERS = [
   { id: 'overpaid', label: 'Overpaid' },
 ] as const;
 
-export function Receivables({ api }: { api: Api }) {
+// `isAdmin` — as above. A view-only caller still gets the whole ledger, the per-invoice detail
+// and the payment history; it just cannot log or reverse a collection.
+export function Receivables({ api, isAdmin }: { api: Api; isAdmin: boolean }) {
+  // The Actions column only exists for a manage caller, so every colSpan follows it.
+  const COLS = isAdmin ? 10 : 9;
   const [rows, setRows] = useState<Bi[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<typeof FILTERS[number]['id']>('all');
@@ -643,12 +651,12 @@ export function Receivables({ api }: { api: Api }) {
             <th style={{ ...S.th, textAlign: 'right' }}>Paid</th>
             <th style={{ ...S.th, textAlign: 'right' }}>Balance</th>
             <th style={S.th}>Due date</th><th style={S.th}>Status</th>
-            <th style={{ ...S.th, textAlign: 'right' }}>Actions</th>
+            {isAdmin && <th style={{ ...S.th, textAlign: 'right' }}>Actions</th>}
           </tr></thead>
           <tbody>
-            {loading ? <tr><td style={S.td} colSpan={10}>Loading…</td></tr>
+            {loading ? <tr><td style={S.td} colSpan={COLS}>Loading…</td></tr>
               : filtered.length === 0 ? (
-                <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={10}>
+                <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={COLS}>
                   {live.length === 0 ? 'No invoices yet — nothing outstanding.' : 'Nothing matches that filter.'}
                 </td></tr>
               ) : filtered.map(bi => {
@@ -680,17 +688,19 @@ export function Receivables({ api }: { api: Api }) {
                           ? <span title={`${peso(num(bi.amountOverdue))} overdue`}>{pill('Overdue', 'bad')}</span>
                           : statusBadge(bi)}
                       </td>
-                      <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        {num(bi.balance) > 0 && (
-                          <button title="Record a payment" style={S.rowBtn} onClick={() => setPaying(bi)}>
-                            <Coins size={14} />
-                          </button>
-                        )}
-                      </td>
+                      {isAdmin && (
+                        <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          {num(bi.balance) > 0 && (
+                            <button title="Record a payment" style={S.rowBtn} onClick={() => setPaying(bi)}>
+                              <Coins size={14} />
+                            </button>
+                          )}
+                        </td>
+                      )}
                     </tr>
                     {isOpen && (
                       <tr>
-                        <td style={{ ...S.td, background: '#fafafa' }} colSpan={10}>
+                        <td style={{ ...S.td, background: '#fafafa' }} colSpan={COLS}>
                           {!detail ? <span style={{ color: '#8a8a8a', fontSize: '13px' }}>Loading the payment history…</span> : (
                             <div>
                               <div style={{ fontSize: '12px', color: '#5a5a5a', marginBottom: '8px' }}>
@@ -725,15 +735,17 @@ export function Receivables({ api }: { api: Api }) {
                                           <td style={{ ...S.td, textAlign: 'right' }}>
                                             {p.voidedAt
                                               ? <span title={p.voidReason || ''} style={{ fontSize: '11px', color: '#b91c1c' }}>voided</span>
-                                              : <button title="Void this payment" style={{ ...S.rowBtn, color: '#b91c1c' }}
-                                                  onClick={() => { setVoidPay(p); setVoidReason(''); }}><Ban size={13} /></button>}
+                                              : isAdmin
+                                                ? <button title="Void this payment" style={{ ...S.rowBtn, color: '#b91c1c' }}
+                                                    onClick={() => { setVoidPay(p); setVoidReason(''); }}><Ban size={13} /></button>
+                                                : null}
                                           </td>
                                         </tr>
                                       ))}
                                     </tbody>
                                   </table>
                                 )}
-                              {num(detail.balance) > 0 && (
+                              {isAdmin && num(detail.balance) > 0 && (
                                 <button style={{ ...S.rowBtn, marginTop: '8px' }} onClick={() => setPaying(detail)}>
                                   <Coins size={13} style={{ marginRight: '4px', verticalAlign: '-2px' }} /> Record a payment
                                 </button>

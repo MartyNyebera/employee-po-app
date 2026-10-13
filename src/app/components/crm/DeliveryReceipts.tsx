@@ -48,7 +48,11 @@ const todayLocal = () => {
 };
 const dayOnly = (v?: string | null) => (v ? String(v).slice(0, 10) : '');
 
-export function DeliveryReceipts({ api }: { api: Api }) {
+// `isAdmin` is the caller's answer to "may this person manage delivery receipts" — derived from
+// the permission matrix by whoever renders the screen, never from a role name in here. View-only
+// callers keep the list, the detail and PRINT; only the write actions go away. The server's
+// requireRole is still the real gate.
+export function DeliveryReceipts({ api, isAdmin }: { api: Api; isAdmin: boolean }) {
   const [rows, setRows] = useState<Dr[]>([]);
   const [tradings, setTradings] = useState<Target[]>([]);
   const [projects, setProjects] = useState<Target[]>([]);
@@ -116,9 +120,11 @@ export function DeliveryReceipts({ api }: { api: Api }) {
           <h1 style={S.h1}>Delivery Receipts</h1>
           <p style={S.sub}>Issued against a trading deal or project. Line items come from its purchase requests; the number comes from the booklet.</p>
         </div>
-        <button style={{ ...S.addBtn, color: '#000000' }} onClick={() => setCreating(true)}>
-          <Plus size={16} style={{ marginRight: '6px' }} /> New Delivery Receipt
-        </button>
+        {isAdmin && (
+          <button style={{ ...S.addBtn, color: '#000000' }} onClick={() => setCreating(true)}>
+            <Plus size={16} style={{ marginRight: '6px' }} /> New Delivery Receipt
+          </button>
+        )}
       </div>
 
       <div style={{ position: 'relative', maxWidth: '340px', marginBottom: '20px' }}>
@@ -162,7 +168,7 @@ export function DeliveryReceipts({ api }: { api: Api }) {
                   </td>
                   <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                     <button title="Print working copy" style={S.rowBtn} onClick={() => onPrint(dr)}><Printer size={14} /></button>
-                    {!dr.voidedAt && (
+                    {isAdmin && !dr.voidedAt && (
                       <button title="Void (the record is kept)" style={{ ...S.rowBtn, color: '#b91c1c' }}
                         onClick={() => { setVoiding(dr); setVoidReason(''); }}><Ban size={14} /></button>
                     )}
