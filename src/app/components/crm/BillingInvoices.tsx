@@ -56,8 +56,8 @@ export interface Bi {
   totalAmountDue: string;
   // Derived server-side, never stored.
   paidTotal: string; balance: string; paymentCount: number;
-  status: 'unpaid' | 'partial' | 'paid' | 'voided' | string;
-  overdue: boolean; amountOverdue: string;
+  status: 'unpaid' | 'partial' | 'paid' | 'overpaid' | 'voided' | string;
+  overdue: boolean; amountOverdue: string; overpaidAmount?: string;
   createdBy?: string | null; createdAt?: string | null;
   voidedAt?: string | null; voidedBy?: string | null; voidReason?: string | null;
   payments?: Payment[];
@@ -91,6 +91,26 @@ const money2 = (n: number) => (Math.round((n + Number.EPSILON) * 100) / 100).toF
 const STATUS_TONE: Record<string, 'good' | 'pending' | 'bad'> = {
   paid: 'good', partial: 'pending', unpaid: 'pending', voided: 'bad',
 };
+
+// Overpaid gets its own amber badge rather than a tone from crmKit, which has no warning
+// tone — and it must not look like a clean settlement. It says the amount, because "overpaid"
+// alone does not tell the accountant whether it is a centavo of rounding or a misplaced digit.
+const overpaidBadge = (amount: string | undefined) => (
+  <span style={{
+    padding: '3px 10px', borderRadius: '999px', fontSize: '12px', fontWeight: 600,
+    color: '#b45309', backgroundColor: '#fffbeb', border: '1px solid #fcd34d', whiteSpace: 'nowrap',
+  }}>
+    {`Overpaid \u2212${peso(num(amount ?? 0))}`}
+  </span>
+);
+
+// The one place either screen decides what badge an invoice wears.
+function statusBadge(bi: Bi) {
+  if (bi.voidedAt) return <span title={bi.voidReason ? `Reason: ${bi.voidReason}` : undefined}>{pill('Voided', 'bad')}</span>;
+  if (bi.status === 'overpaid') return overpaidBadge(bi.overpaidAmount);
+  if (bi.status === 'paid') return pill('Paid', 'good');
+  return pill(bi.status === 'partial' ? 'Partly paid' : 'Unpaid', STATUS_TONE[bi.status] || 'pending');
+}
 
 // Terms the accountant reaches for most. The field stays free text — terms vary per PO.
 const BI_TERMS_PRESETS = ['COD', '7 days', '15 days', '30 days', '60 days', '50% DP, 50% net 30'];
@@ -207,9 +227,7 @@ export function BillingInvoices({ api }: { api: Api }) {
                   <td style={{ ...S.td, textTransform: 'capitalize' }}>{bi.saleType}</td>
                   <td style={{ ...S.td, textAlign: 'right', fontWeight: 600 }}>{peso(num(bi.totalAmountDue))}</td>
                   <td style={S.td}>
-                    {bi.voidedAt
-                      ? <span title={bi.voidReason ? `Reason: ${bi.voidReason}` : undefined}>{pill('Voided', 'bad')}</span>
-                      : pill(bi.status === 'paid' ? 'Paid' : bi.status === 'partial' ? 'Partly paid' : 'Unpaid', STATUS_TONE[bi.status] || 'pending')}
+                    {statusBadge(bi)}
                   </td>
                   <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                     <button title="Print working copy" style={S.rowBtn} onClick={() => onPrint(bi)}><Printer size={14} /></button>
@@ -526,6 +544,7 @@ const FILTERS = [
   { id: 'unpaid', label: 'Unpaid' },
   { id: 'partial', label: 'Partly paid' },
   { id: 'paid', label: 'Paid' },
+  { id: 'overpaid', label: 'Overpaid' },
 ] as const;
 
 export function Receivables({ api }: { api: Api }) {
@@ -581,8 +600,11 @@ export function Receivables({ api }: { api: Api }) {
   const totals = useMemo(() => ({
     due: live.reduce((n, r) => n + num(r.totalAmountDue), 0),
     paid: live.reduce((n, r) => n + num(r.paidTotal), 0),
-    balance: live.reduce((n, r) => n + num(r.balance), 0),
+    // Only POSITIVE balances: an overpaid invoice owes nothing, and letting its negative
+    // balance net off someone else's debt would hide both.
+    balance: live.reduce((n, r) => n + Math.max(num(r.balance), 0), 0),
     overdue: live.filter(r => r.overdue).length,
+    overpaid: live.filter(r => r.status === 'overpaid').length,
   }), [live]);
 
   return (
@@ -594,10 +616,11 @@ export function Receivables({ api }: { api: Api }) {
 
       <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '16px' }}>
         {[['Invoiced', peso(totals.due)], ['Collected', peso(totals.paid)], ['Outstanding', peso(totals.balance)],
-          ['Overdue', String(totals.overdue)]].map(([k, v]) => (
+          ['Overdue', String(totals.overdue)],
+          ...(totals.overpaid > 0 ? [['Overpaid', String(totals.overpaid)]] : [])].map(([k, v]) => (
           <div key={k} style={{ ...S.card, padding: '10px 14px', minWidth: '140px' }}>
             <div style={{ fontSize: '11px', color: '#8a8a8a', textTransform: 'uppercase', letterSpacing: '0.4px' }}>{k}</div>
-            <div style={{ fontSize: '17px', fontWeight: 700, color: k === 'Overdue' && totals.overdue > 0 ? '#b91c1c' : '#000' }}>{v}</div>
+            <div style={{ fontSize: '17px', fontWeight: 700, color: k === 'Overdue' && totals.overdue > 0 ? '#b91c1c' : k === 'Overpaid' ? '#b45309' : '#000' }}>{v}</div>
           </div>
         ))}
       </div>
@@ -647,7 +670,7 @@ export function Receivables({ api }: { api: Api }) {
                       <td style={S.td}>{dayOnly(bi.biDate)}</td>
                       <td style={{ ...S.td, textAlign: 'right' }}>{peso(num(bi.totalAmountDue))}</td>
                       <td style={{ ...S.td, textAlign: 'right', color: num(bi.paidTotal) > 0 ? '#15803d' : '#8a8a8a' }}>{peso(num(bi.paidTotal))}</td>
-                      <td style={{ ...S.td, textAlign: 'right', fontWeight: 700, color: bi.overdue ? '#b91c1c' : '#000' }}>{peso(num(bi.balance))}</td>
+                      <td style={{ ...S.td, textAlign: 'right', fontWeight: 700, color: bi.overdue ? '#b91c1c' : bi.status === 'overpaid' ? '#b45309' : '#000' }}>{peso(num(bi.balance))}</td>
                       <td style={{ ...S.td, color: bi.overdue ? '#b91c1c' : undefined }}>
                         {bi.dueDate || '—'}
                         {bi.dueDate2 ? <div style={{ fontSize: '11px', color: '#8a8a8a' }}>then {bi.dueDate2}{bi.dpPercent ? ` (${bi.dpPercent}% DP)` : ''}</div> : null}
@@ -655,7 +678,7 @@ export function Receivables({ api }: { api: Api }) {
                       <td style={S.td}>
                         {bi.overdue
                           ? <span title={`${peso(num(bi.amountOverdue))} overdue`}>{pill('Overdue', 'bad')}</span>
-                          : pill(bi.status === 'paid' ? 'Paid' : bi.status === 'partial' ? 'Partly paid' : 'Unpaid', STATUS_TONE[bi.status] || 'pending')}
+                          : statusBadge(bi)}
                       </td>
                       <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                         {num(bi.balance) > 0 && (
@@ -674,6 +697,11 @@ export function Receivables({ api }: { api: Api }) {
                                 DR {detail.drNumber} · {detail.sourceKind} · {detail.sourceName || '—'}
                                 {detail.paymentTerms ? ` · terms: ${detail.paymentTerms}` : ''}
                                 {detail.overdue ? ` · ${peso(num(detail.amountOverdue))} overdue` : ''}
+                                {detail.status === 'overpaid' ? ' · ' : ''}
+                                {detail.status === 'overpaid' ? overpaidBadge(detail.overpaidAmount) : null}
+                                {detail.status === 'overpaid'
+                                  ? <span style={{ color: '#b45309' }}> &mdash; collected more than invoiced; check the payment rows below</span>
+                                  : null}
                               </div>
                               {(detail.payments || []).length === 0
                                 ? <div style={{ fontSize: '13px', color: '#8a8a8a' }}>No payments logged yet.</div>

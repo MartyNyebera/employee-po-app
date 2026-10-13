@@ -8587,8 +8587,12 @@ function mapBillingInvoice(r) {
   if (d1 && d1 <= today) expectedByNow = (dpPercent !== null && d2) ? biRound2(due * dpPercent / 100) : due;
   if (d2 && d2 <= today) expectedByNow = due;
 
-  // Status is DERIVED, never stored.
+  // Status is DERIVED, never stored. 'overpaid' is split out from 'paid': nothing is owed
+  // either way, but a negative balance means more came in than was invoiced, which is almost
+  // always a keying slip and must not read as a clean settlement. The payment itself is never
+  // refused or capped — the collection happened, and the record says so.
   const status = r.voided_at ? 'voided'
+    : balance < -0.004 ? 'overpaid'
     : balance <= 0.004 ? 'paid'
     : paid > 0.004 ? 'partial'
     : 'unpaid';
@@ -8612,6 +8616,9 @@ function mapBillingInvoice(r) {
     // Receivable position.
     paidTotal: paid.toFixed(2), balance: balance.toFixed(2), paymentCount: Number(r.payment_count ?? 0),
     status, overdue, amountOverdue: overdue ? biRound2(expectedByNow - paid).toFixed(2) : '0.00',
+    // How much MORE than the invoice was collected. Positive only when status is 'overpaid',
+    // so the screens can label it without re-deriving the sign.
+    overpaidAmount: balance < -0.004 ? biRound2(-balance).toFixed(2) : '0.00',
     createdBy: r.created_by ?? null, createdAt: r.created_at,
     voidedAt: r.voided_at ?? null, voidedBy: r.voided_by ?? null, voidReason: r.void_reason ?? null,
   };
@@ -8688,7 +8695,7 @@ app.get('/api/billing-invoices', requireRole(biRoles), async (req, res) => {
     let rows = r.rows.map(mapBillingInvoice);
     const status = String(req.query.status || '').trim().toLowerCase();
     if (status === 'overdue') rows = rows.filter(x => x.overdue);
-    else if (['unpaid', 'partial', 'paid', 'voided'].includes(status)) rows = rows.filter(x => x.status === status);
+    else if (['unpaid', 'partial', 'paid', 'overpaid', 'voided'].includes(status)) rows = rows.filter(x => x.status === status);
     res.json(rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
