@@ -4,9 +4,9 @@
 // from a physical BIR booklet, void-never-delete, Accounting + admin.
 //
 // THE RULE THIS SCREEN ENFORCES BY DESIGN: the invoice mirrors the client's purchase order. The
-// accountant types every tax, discount and withholding figure from the PO. This form computes
-// nothing official — it shows a running line sum purely as a cross-check, visibly labelled as
-// such, and the figures that print are the typed ones.
+// totals block is filled in from the item lines (lib/biTotals.ts) as a starting point, and every box
+// stays editable so the accountant can match the PO exactly. What is stored and printed is what the
+// boxes show when she saves; the server recomputes nothing but the line amounts.
 //
 // A BI is always raised from a DR, which is what ties it to one trading deal or project and means
 // the line descriptions never get retyped.
@@ -16,9 +16,10 @@
 // ============================================================================
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { Plus, Printer, Ban, FileText, Search, Coins, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
+import { Plus, Printer, Ban, FileText, Search, Coins, ChevronDown, ChevronRight, AlertTriangle, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import { printBillingInvoice } from '../../lib/billingInvoicePrint';
+import { computeBiTotals, type BiBox, type VatTreatment, type Withholding } from '../../lib/biTotals';
 import { S, Modal, Field, TextInput, TextArea, PrimaryBtn, GhostBtn, pill, peso, TableScroll, tightTh, tightTd, stickyTh, stickyTd, shortDate, oneLine } from './crmKit';
 
 type Api = <T = any>(path: string, init?: RequestInit) => Promise<T>;
@@ -303,13 +304,16 @@ function CreateBiModal({ api, drs, onClose, onCreated }: {
   const [dpPercent, setDpPercent] = useState('');
   const [saving, setSaving] = useState(false);
 
-  // The typed totals block. Strings, not numbers: a blank field means "not on the PO", which is
-  // a different fact from zero, and the server stores it as NULL.
-  const [t, setT] = useState({
-    vatableSales: '', vatExemptSales: '', zeroRatedSales: '', vatAmount: '',
-    lessVat: '', netOfVat: '', lessDiscount: '', lessWithholding: '', totalAmountDue: '',
-  });
+  // The discount is the one totals figure that is only ever typed. Strings, not numbers: a blank
+  // field means "not on the PO", which is a different fact from zero, and the server stores it as NULL.
+  const [t, setT] = useState({ lessDiscount: '' });
   const setTot = (k: keyof typeof t, v: string) => setT(p => ({ ...p, [k]: v }));
+  // How the other totals boxes are computed from the lines, and the boxes she has typed over.
+  const [treatment, setTreatment] = useState<VatTreatment>('vatable');
+  const [pricesIncludeVat, setPricesIncludeVat] = useState(true);
+  const [withholding, setWithholding] = useState<Withholding>('none');
+  const [customWht, setCustomWht] = useState('');
+  const [ovr, setOvr] = useState<Partial<Record<BiBox, string>>>({});
 
   // Pull the delivery's lines and client header as soon as a DR is chosen.
   useEffect(() => {
@@ -339,9 +343,16 @@ function CreateBiModal({ api, drs, onClose, onCreated }: {
   const addLine = () => setItems(list => [...list, { description: '', quantity: '', unit: '', unit_price: '' }]);
 
   // The line sum — shown ONLY as a cross-check against the PO. It is never sent as the total.
+  // Each line is rounded to the centavo first, as the server rounds it, so the sum matches what is stored.
   const lineSum = useMemo(
-    () => items.reduce((n, it) => n + num(it.quantity) * num(it.unit_price), 0),
+    () => items.reduce((n, it) => n + Math.round((num(it.quantity) * num(it.unit_price) + Number.EPSILON) * 100) / 100, 0),
     [items]);
+
+  // The totals block: computed from the lines, an edited box wins, the total follows the boxes shown.
+  const totals = useMemo(
+    () => computeBiTotals({ lineSum, treatment, pricesIncludeVat, withholding, customWithholding: customWht, discount: t.lessDiscount }, ovr),
+    [lineSum, treatment, pricesIncludeVat, withholding, customWht, t.lessDiscount, ovr]);
+  const shown = totals.shown;
 
   // A granular project DR can be a dozen material lines the client never asked to see itemised;
   // their PO says "fabrication of X". This collapses them into one service line at the same money.
@@ -361,7 +372,7 @@ function CreateBiModal({ api, drs, onClose, onCreated }: {
     if (!biDate) { toast.error('An invoice date is required'); return; }
     if (items.length === 0) { toast.error('A billing invoice needs at least one line item'); return; }
     if (items.some(it => String(it.unit_price ?? '').trim() === '')) { toast.error('Every line needs a unit price — copy it from the PO'); return; }
-    if (!t.totalAmountDue.trim()) { toast.error('Total amount due is required — copy it from the client PO'); return; }
+    if (!shown.totalAmountDue.trim()) { toast.error('Total amount due is required — enter the prices so it can be computed, or type it from the client PO'); return; }
     setSaving(true);
     try {
       await api('/billing-invoices', { method: 'POST', body: JSON.stringify({
@@ -378,7 +389,8 @@ function CreateBiModal({ api, drs, onClose, onCreated }: {
           description: String(it.description || '').trim(),
           quantity: it.quantity, unit: it.unit || '', unit_price: it.unit_price,
         })),
-        ...t,
+        ...shown,
+        lessDiscount: t.lessDiscount,
       }) });
       toast.success(`BI No. ${biNumber.trim()} recorded`);
       onCreated();
@@ -389,11 +401,29 @@ function CreateBiModal({ api, drs, onClose, onCreated }: {
 
   const liveBi = (src?.existingInvoices || []).filter(x => !x.voidedAt);
 
-  const totalField = (k: keyof typeof t, label: string) => (
-    <Field label={label}>
-      <TextInput value={t[k]} onChange={e => setTot(k, e.target.value)} placeholder="—" inputMode="decimal" />
-    </Field>
-  );
+  // A computed box. Typing over it marks it "edited" and it then stays as typed through further line
+  // edits until the reset icon puts the computed value back.
+  const box = (k: BiBox, label: string, required = false) => {
+    const edited = k in ovr;
+    return (
+      <div style={{ marginBottom: '14px' }}>
+        <label style={S.label}>
+          {label}
+          {edited && (
+            <span style={{ marginLeft: '6px', fontWeight: 600, fontSize: '10px', color: '#92400e', background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: '999px', padding: '1px 6px', whiteSpace: 'nowrap' }}>
+              edited
+              <button type="button" title="Reset to the computed value" onClick={() => setOvr(p => { const n = { ...p }; delete n[k]; return n; })}
+                style={{ marginLeft: '4px', border: 'none', background: 'none', cursor: 'pointer', padding: 0, color: '#92400e', verticalAlign: 'middle' }}>
+                <RotateCcw size={11} />
+              </button>
+            </span>
+          )}
+        </label>
+        <TextInput value={shown[k]} onChange={e => setOvr(p => ({ ...p, [k]: e.target.value }))}
+          placeholder={required ? '0.00' : '—'} inputMode="decimal" />
+      </div>
+    );
+  };
 
   return (
     <Modal title="New Billing Invoice" onClose={onClose} wide
@@ -467,7 +497,7 @@ function CreateBiModal({ api, drs, onClose, onCreated }: {
           </div>
         )}
         <p style={{ fontSize: '11px', color: '#8a8a8a', marginTop: '6px' }}>
-          The sum of the lines is a cross-check only — the official figures are the ones you type below, from the PO.
+          The totals below are computed from these lines; adjust any box to match the client&rsquo;s PO.
         </p>
       </div>
 
@@ -482,21 +512,54 @@ function CreateBiModal({ api, drs, onClose, onCreated }: {
       <div style={{ border: '1px solid #e5e5e5', borderRadius: '8px', padding: '12px 14px 2px', margin: '6px 0 14px' }}>
         <div style={{ fontSize: '12px', fontWeight: 600, color: '#000', marginBottom: '2px' }}>Copied from the client&rsquo;s purchase order</div>
         <p style={{ fontSize: '11px', color: '#8a8a8a', margin: '0 0 10px' }}>
-          Type these exactly as the PO states them. Nothing here is calculated — leave a box blank if the PO has no such line.
+          These figures are computed from the items above and can be adjusted to match the PO. Type over any box to set it
+          yourself (it is marked &ldquo;edited&rdquo; and the reset icon brings the computed value back); the total follows the boxes as shown.
         </p>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 14px' }}>
-          {totalField('vatableSales', 'VATable sales')}
-          {totalField('vatExemptSales', 'VAT-exempt sales')}
-          {totalField('zeroRatedSales', 'Zero-rated sales')}
-          {totalField('lessVat', 'Less: VAT')}
-          {totalField('netOfVat', 'Net of VAT')}
-          {totalField('vatAmount', 'Add: VAT')}
-          {totalField('lessDiscount', 'Less: discount')}
-          {totalField('lessWithholding', 'Less: withholding')}
-          <Field label="TOTAL AMOUNT DUE *">
-            <TextInput value={t.totalAmountDue} onChange={e => setTot('totalAmountDue', e.target.value)} placeholder="0.00" inputMode="decimal" />
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 14px', marginBottom: '10px' }}>
+          <Field label="VAT treatment">
+            <select value={treatment} onChange={e => setTreatment(e.target.value as VatTreatment)} style={{ ...S.input, appearance: 'none', cursor: 'pointer' }}>
+              <option value="vatable">VATable</option>
+              <option value="exempt">VAT-exempt</option>
+              <option value="zero">Zero-rated</option>
+            </select>
+          </Field>
+          <Field label="Prices include VAT">
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '13px', paddingTop: '6px', opacity: treatment === 'vatable' ? 1 : 0.5 }}>
+              <input type="checkbox" checked={pricesIncludeVat} disabled={treatment !== 'vatable'} onChange={e => setPricesIncludeVat(e.target.checked)} />
+              {pricesIncludeVat ? 'Yes — VAT-inclusive prices' : 'No — VAT added on top'}
+            </label>
+          </Field>
+          <Field label="Withholding">
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <select value={withholding} onChange={e => setWithholding(e.target.value as Withholding)} style={{ ...S.input, appearance: 'none', cursor: 'pointer' }}>
+                <option value="none">None</option>
+                <option value="1">1%</option>
+                <option value="2">2%</option>
+                <option value="custom">Custom amount</option>
+              </select>
+              {withholding === 'custom' && <TextInput value={customWht} onChange={e => setCustomWht(e.target.value)} placeholder="0.00" inputMode="decimal" />}
+            </div>
           </Field>
         </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 14px' }}>
+          {box('vatableSales', 'VATable sales')}
+          {box('vatExemptSales', 'VAT-exempt sales')}
+          {box('zeroRatedSales', 'Zero-rated sales')}
+          {box('lessVat', 'Less: VAT')}
+          {box('netOfVat', 'Net of VAT')}
+          {box('vatAmount', 'Add: VAT')}
+          <Field label="Less: discount">
+            <TextInput value={t.lessDiscount} onChange={e => setTot('lessDiscount', e.target.value)} placeholder="—" inputMode="decimal" />
+          </Field>
+          {box('lessWithholding', 'Less: withholding')}
+          {box('totalAmountDue', 'TOTAL AMOUNT DUE *', true)}
+        </div>
+        {totals.warnings.length > 0 && (
+          <div style={{ fontSize: '12px', color: '#92400e', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '8px 10px', margin: '0 0 12px', display: 'flex', gap: '6px' }}>
+            <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: '1px' }} />
+            <div>{totals.warnings.map(w => <div key={w}>{w}</div>)}<div style={{ color: '#a16207' }}>The figures are saved as shown — this is only a heads-up.</div></div>
+          </div>
+        )}
       </div>
 
       {/* 5 — terms, collection dates and the booklet */}
