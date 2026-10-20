@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ClipboardList, PenTool, Menu, X, Search, Clock, Calendar, CheckCircle2,
-  XCircle, Printer, LogOut, Upload, Eraser, Eye, Briefcase, Plus, Trash2, Pencil,
-  PanelLeftClose, PanelLeftOpen, FileText, PackageMinus, CalendarCheck, Calculator, Building2, Receipt, Ban,
-  ArrowLeftRight, Split, Users, Truck, ReceiptText, Coins,
+  ClipboardList, PenTool, Menu, X, Search, Clock, Calendar, CheckCircle2, XCircle, Printer, LogOut,
+  Upload, Eraser, Eye, Briefcase, Plus, Trash2, Pencil, PanelLeftClose, PanelLeftOpen, FileText,
+  Building2, Receipt, Ban, ArrowLeftRight, Split,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { onBackdropDown, backdropClose } from '../lib/backdrop';
@@ -14,7 +13,10 @@ import { confirmDialog } from '../lib/confirm';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { esc, printPurchaseOrder } from '../lib/orderPrint';
 import { renderPrintDocument } from '../lib/printChrome';
-import { NavBadge } from '../components/NavBadge';
+import {
+  AccountingNav, loadNavPrefs, saveNavPrefs, toggleGroup as toggleGroupPrefs, revealGroupFor, setMinimized,
+  type AccountingView, type NavPrefs,
+} from '../components/AccountingSidebarNav';
 import { AttentionCard } from '../components/AttentionCard';
 import { CreatePurchaseRequestForm } from '../components/CreatePurchaseRequestForm';
 import { WithdrawalTab } from '../components/WithdrawalTab';
@@ -45,7 +47,7 @@ import { PayrollReview } from '../components/crm/PayrollReview';
 // ============================================================================
 
 type PRStatus = 'pending' | 'reviewed' | 'verified' | 'ordered' | 'approved' | 'disapproved';
-type PortalView = 'new-pr' | 'requests' | 'orders' | 'projects' | 'tradings' | 'facilities' | 'expenses' | 'withdrawals' | 'clients' | 'delivery-receipts' | 'billing-invoices' | 'receivables' | 'timesheet' | 'payroll' | 'signature';
+type PortalView = AccountingView;
 
 // Section C — #12: Accounting is also the FIRST gate of the purchase-ORDER flow. Purchasing
 // raises an order ('pending'); Accounting reviews it here (→ 'accounting-approved', passing it
@@ -1234,7 +1236,11 @@ function TradingModal({ trading, onClose, onSaved }: {
 // ============================================================================
 function Portal({ session, onSignOut }: { session: Session; onSignOut: () => void }) {
   const [view, setView] = useState<PortalView>('requests');
-  const [collapsed, setCollapsed] = useState(false);
+  // Sidebar preferences (minimized strip + which groups are open), remembered per browser. Loading
+  // and saving are wrapped, so the menu works with storage unavailable — it just forgets.
+  const [navPrefs, setNavPrefs] = useState<NavPrefs>(() => loadNavPrefs());
+  const collapsed = navPrefs.minimized;
+  const setCollapsed = (v: boolean) => setNavPrefs(p => setMinimized(p, v));
   const [mobileOpen, setMobileOpen] = useState(false);
   const [requests, setRequests] = useState<PurchaseRequest[]>([]);
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
@@ -1469,63 +1475,47 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
     ...facilities.map(f => ({ kind: 'facility' as const, id: f.id, name: f.name })),
   ], [projects, tradings, facilities]);
 
-  const NAV: { id: PortalView; label: string; icon: any }[] = [
-    { id: 'new-pr', label: 'New Purchase Request', icon: FileText },
-    { id: 'requests', label: 'Purchase Requests', icon: ClipboardList },
-    { id: 'orders', label: 'Purchase Orders', icon: FileText },
-    { id: 'projects', label: 'Project Allocation', icon: Briefcase },
-    { id: 'tradings', label: 'Trading Deals', icon: ArrowLeftRight },
-    { id: 'facilities', label: 'Facilities', icon: Building2 },
-    { id: 'expenses', label: 'Expenses History', icon: Receipt },
-    { id: 'clients', label: 'Clients', icon: Users },
-    { id: 'delivery-receipts', label: 'Delivery Receipts', icon: Truck },
-    { id: 'billing-invoices', label: 'Billing Invoices', icon: ReceiptText },
-    { id: 'receivables', label: 'Receivables', icon: Coins },
-    { id: 'withdrawals', label: 'Withdrawals Request', icon: PackageMinus },
-    { id: 'timesheet', label: 'Attendance Sheet', icon: CalendarCheck },
-    { id: 'payroll', label: 'Payroll', icon: Calculator },
-    { id: 'signature', label: 'My Signature', icon: PenTool },
-  ];
+  // ---- Sidebar. The grouped nav is AccountingSidebarNav; this is only its state.
+  // The mobile drawer is never icon-only: a 'minimized' saved on a desktop must not turn the phone
+  // menu into a column of bare icons.
+  const mini = collapsed && !mobileOpen;
+  const toggleGroup = (groupId: string) => setNavPrefs(p => toggleGroupPrefs(p, groupId, view));
+  // Landing in a screen (a click, or the attention card jumping to Receivables) opens its group, so
+  // the active screen is never hidden inside a collapsed one.
+  useEffect(() => { setNavPrefs(p => revealGroupFor(p, view)); }, [view]);
+  useEffect(() => { saveNavPrefs(navPrefs); }, [navPrefs]);
 
   const sidebar = (
     <div className="bg-white flex flex-col h-full border-r border-gray-200">
       <div className="border-b border-gray-200">
-        <div className={`flex items-center gap-2 px-3 py-3 ${collapsed ? 'justify-center' : ''}`}>
-          <button onClick={() => setCollapsed(!collapsed)} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        <div className={`flex items-center gap-2 px-3 py-3 ${mini ? 'justify-center' : ''}`}>
+          <button onClick={() => setCollapsed(!collapsed)} title={collapsed ? 'Expand sidebar' : 'Minimize sidebar'}
             className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 transition-colors flex-shrink-0">
             {collapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
           </button>
-          {!collapsed && <span className="text-sm font-semibold tracking-wide text-gray-500">Accounting</span>}
+          {!mini && <span className="text-sm font-semibold tracking-wide text-gray-500">Accounting</span>}
         </div>
-        <div className={`flex justify-center ${collapsed ? 'px-2 pt-2 pb-3' : 'px-5 pt-4 pb-4'}`}>
-          <img src="/kimoel-logo.png" alt="Logo" className={`${collapsed ? 'h-10' : 'h-32'} w-auto object-contain transition-all duration-200`} />
+        <div className={`flex justify-center ${mini ? 'px-2 pt-2 pb-3' : 'px-5 pt-4 pb-4'}`}>
+          <img src="/kimoel-logo.png" alt="Logo" className={`${mini ? 'h-10' : 'h-32'} w-auto object-contain transition-all duration-200`} />
         </div>
       </div>
-      <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-0.5">
-        {NAV.map(({ id, label, icon: Icon }) => {
-          const active = view === id;
-          return (
-            <button key={id} title={label} onClick={() => { setView(id); setMobileOpen(false); }}
-              className={`relative w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${collapsed ? 'justify-center' : ''} ${active ? 'bg-blue-600 text-white hover:bg-blue-700' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'}`}>
-              <Icon className="w-4 h-4 flex-shrink-0" />{!collapsed && <span className="whitespace-nowrap">{label}</span>}
-              {id === 'requests' && <NavBadge count={pendingCount} collapsed={collapsed} />}
-              {id === 'orders' && <NavBadge count={pendingOrderCount} collapsed={collapsed} />}
-            </button>
-          );
-        })}
-      </nav>
+      <AccountingNav
+        activeView={view} minimized={mini} prefs={navPrefs}
+        badges={{ requests: pendingCount, orders: pendingOrderCount, receivables: overdueInvoiceCount }}
+        onNavigate={(v) => { setView(v); setMobileOpen(false); }}
+        onToggleGroup={toggleGroup} />
       <div className="border-t border-gray-200 px-3 py-3 space-y-1">
-        <div className={`flex items-center gap-3 px-3 py-2 ${collapsed ? 'justify-center' : ''}`}>
+        <div className={`flex items-center gap-3 px-3 py-2 ${mini ? 'justify-center' : ''}`}>
           <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center flex-shrink-0"><span className="text-white text-xs font-bold">{(session.full_name || '?').charAt(0).toUpperCase()}</span></div>
-          {!collapsed && (
+          {!mini && (
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-gray-900 truncate">{session.full_name}</p>
               <p className="text-xs text-gray-400 truncate">{session.email}</p>
             </div>
           )}
         </div>
-        <button onClick={onSignOut} title="Sign out" className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-red-50 hover:text-red-600 ${collapsed ? 'justify-center' : ''}`}>
-          <LogOut className="w-4 h-4 flex-shrink-0" />{!collapsed && <span>Sign out</span>}
+        <button onClick={onSignOut} title="Sign out" className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-red-50 hover:text-red-600 ${mini ? 'justify-center' : ''}`}>
+          <LogOut className="w-4 h-4 flex-shrink-0" />{!mini && <span>Sign out</span>}
         </button>
       </div>
     </div>
@@ -1540,7 +1530,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
         // collection date), not a stored notification — so it clears the moment a payment is logged.
         { label: 'Overdue invoices', count: overdueInvoiceCount, onView: () => setView('receivables') },
       ]} />
-      <div className={`flex-shrink-0 w-64 z-30 lg:relative lg:flex lg:flex-col transition-all duration-200 ${collapsed ? 'lg:w-20' : 'lg:w-64'} ${mobileOpen ? 'fixed inset-y-0 left-0 flex flex-col' : 'hidden lg:flex lg:flex-col'}`}>{sidebar}</div>
+      <div className={`flex-shrink-0 w-72 z-30 lg:relative lg:flex lg:flex-col transition-all duration-200 ${collapsed ? 'lg:w-20' : 'lg:w-72'} ${mobileOpen ? 'fixed inset-y-0 left-0 flex flex-col' : 'hidden lg:flex lg:flex-col'}`}>{sidebar}</div>
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <header className="flex-shrink-0 flex items-center justify-between bg-white border-b border-gray-200 px-4 lg:px-6 h-14">
