@@ -8,9 +8,10 @@ import { CreatePurchaseOrderModal } from './CreatePurchaseOrderModal';
 import { printPurchaseOrder } from '../lib/orderPrint';
 import { nextDeptFor } from '../lib/nextDept';
 import { SummaryStats } from './SummaryStats';
-import { S, peso, toneText } from './crm/crmKit';
+import { S, peso, toneText, TableScroll, stickyTh, stickyTd } from './crm/crmKit';
+import { AllocationTag, AllocationFilter, matchesAllocation, type Allocated } from './AllocationTag';
 
-interface PurchaseOrder {
+interface PurchaseOrder extends Allocated {
   id: string;
   poNumber: string;
   client: string;
@@ -49,6 +50,7 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
   const [approvingId, setApprovingId] = useState('');
   const [filter, setFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [allocFilter, setAllocFilter] = useState('');
   const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({
@@ -103,6 +105,11 @@ export function PurchaseOrderList({ isAdmin }: PurchaseOrderListProps) {
         prNumber: po.prNumber ?? po.pr_number ?? null,
         approvedBy: po.approvedBy ?? po.approved_by ?? null,
         approvedAt: po.approvedAt ?? po.approved_at ?? null,
+        // What the order was bought for (server-resolved from its purchase request); also printed.
+        allocationType: po.allocationType ?? null,
+        allocationName: po.allocationName ?? null,
+        allocationId: po.allocationId ?? null,
+        allocationKey: po.allocationKey ?? null,
       }));
       
       console.log('Transformed data:', transformedData);
@@ -395,7 +402,7 @@ Terms & Conditions: ${editForm.termsAndConditions || 'Standard terms apply'}`;
     const matchesSearch = searchTerm === '' || 
       po.poNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
       po.client.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesFilter && matchesSearch;
+    return matchesFilter && matchesSearch && matchesAllocation(po, allocFilter);
   });
 
   const pendingCount = purchaseOrders.filter(po => po.status === 'pending').length;
@@ -464,6 +471,8 @@ Terms & Conditions: ${editForm.termsAndConditions || 'Standard terms apply'}`;
           <h1 style={S.h1}>Purchase Orders</h1>
           <p style={S.sub}>Vendor & supplier orders — Accounting reviews, then an admin approves.</p>
         </div>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+        <AllocationFilter rows={purchaseOrders} value={allocFilter} onChange={setAllocFilter} style={{ ...S.input, width: 'auto', maxWidth: '240px', cursor: 'pointer' }} />
         <select value={filter} onChange={e => setFilter(e.target.value)} style={{ ...S.input, width: 'auto', cursor: 'pointer' }}>
           <option value="all">All statuses</option>
           <option value="pending">Pending (accounting)</option>
@@ -475,6 +484,7 @@ Terms & Conditions: ${editForm.termsAndConditions || 'Standard terms apply'}`;
           <option value="rejected">Rejected</option>
           <option value="cancelled">Cancelled</option>
         </select>
+        </div>
       </div>
 
       <SummaryStats items={[
@@ -485,30 +495,32 @@ Terms & Conditions: ${editForm.termsAndConditions || 'Standard terms apply'}`;
         { label: 'Received', value: receivedCount },
       ]} />
 
-      <div style={S.card}>
+      <TableScroll>
         <table style={S.table}>
           <thead><tr>
             <th style={S.th}>PO #</th>
             <th style={S.th}>Supplier</th>
             <th style={S.th}>PR #</th>
+            <th style={S.th}>Allocated to</th>
             <th style={{ ...S.th, textAlign: 'right' }}>Amount</th>
             <th style={S.th}>Status</th>
-            <th style={{ ...S.th, textAlign: 'right' }}>Actions</th>
+            <th style={stickyTh}>Actions</th>
           </tr></thead>
           <tbody>
             {filteredPOs.length === 0 ? (
-              <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={6}>No purchase orders.</td></tr>
+              <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={7}>No purchase orders.</td></tr>
             ) : filteredPOs.map(po => (
               <tr key={po.id}>
                 <td style={{ ...S.td, fontWeight: 600, color: '#000000' }}>{po.poNumber}</td>
                 <td style={S.td}>{po.client}</td>
                 <td style={S.td}>{po.prNumber || '—'}</td>
+                <td style={{ ...S.td, maxWidth: '240px' }}><AllocationTag a={po} maxWidth={170} /></td>
                 <td style={{ ...S.td, textAlign: 'right', fontWeight: 600, color: '#000000' }}>{peso(po.amount)}</td>
                 <td style={S.td}>
                   <span style={{ color: toneText(po.status), fontSize: '12px', fontWeight: 600, whiteSpace: 'nowrap' }}>{statusLabel(po.status)}</span>
                   {nextDeptFor(po.status, 'po') && <div style={{ fontSize: '11px', color: '#8a8a8a', marginTop: '2px' }}>{nextDeptFor(po.status, 'po')}</div>}
                 </td>
-                <td style={S.td}>
+                <td style={stickyTd()}>
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px', flexWrap: 'wrap' }}>
                     <button className="crm-row-btn" title="Print" style={{ ...S.rowBtn, marginLeft: 0 }} onClick={() => handlePrintPO(po)}><Printer size={13} /></button>
                     {isAdmin && po.status === 'accounting-approved' && (
@@ -531,7 +543,7 @@ Terms & Conditions: ${editForm.termsAndConditions || 'Standard terms apply'}`;
             ))}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
 
       {/* Create PO Modal */}
       {showCreateModal && (

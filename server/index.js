@@ -2555,10 +2555,12 @@ app.get('/api/purchase-orders', requireAuth, async (req, res) => {
               pr.employee_name AS pr_employee_name, pr.created_at AS pr_created_at,
               pr.checked_by AS pr_checked_by, pr.checked_at AS pr_checked_at,
               pr.verified_by AS pr_verified_by, pr.verified_at AS pr_verified_at,
-              s.tin AS supplier_tin
+              s.tin AS supplier_tin,
+              ${PO_ALLOC_COLS}
        FROM purchase_orders po
        LEFT JOIN purchase_requests pr ON pr.id = po.purchase_request_id
        LEFT JOIN suppliers s ON s.id = po.supplier_id
+       ${PO_ALLOC_JOINS}
        -- created_at (the real insert TIMESTAMPTZ), not created_date: created_date is a DATE, so
        -- every order raised on the same day tied and Postgres returned them in arbitrary order —
        -- the newest was NOT reliably on top. po_number is the deterministic final tiebreaker.
@@ -2596,6 +2598,7 @@ app.get('/api/purchase-orders', requireAuth, async (req, res) => {
       // A rejected PO stays 'pending' (its CHECK has no 'disapproved') — the rejection lives on
       // the request. Without prStatus a consumer cannot tell "awaiting admin" from "rejected".
       prStatus: row.pr_status ?? null,
+      ...mapPoAllocation(row),
       // Section C — #12: the printed order now has THREE signees, in the order they act:
       //   Prepared By — purchasing (processedBy/processedAt)
       //   Reviewed By — accounting (poReviewedBy/poReviewedAt)
@@ -8460,6 +8463,33 @@ function mapFacility(r) {
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
+// What a purchase order was bought FOR, read off its purchase request -- the same COALESCE the PR
+// screens use (project / facility name / project_label), extended with the trading deal's name.
+// Derived on every read, nothing stored. Types: project | trading | facility | trading-general (the
+// 'Trading' label with no specific deal) | personal (no allocation on the PR). A PO with no PR at all
+// (hand-raised) has no allocation: type and name are null, which the screens show as a dash.
+// allocationKey is what the list filter matches on: '<type>:<id>' for a named target, else the type.
+const PO_ALLOC_COLS = `
+         COALESCE(al_p.name, al_f.name, al_t.name, pr.project_label) AS alloc_name,
+         CASE WHEN al_p.id IS NOT NULL THEN 'project'
+              WHEN al_f.id IS NOT NULL THEN 'facility'
+              WHEN al_t.id IS NOT NULL THEN 'trading'
+              WHEN LOWER(TRIM(COALESCE(pr.project_label, ''))) = 'trading' THEN 'trading-general'
+              WHEN pr.id IS NOT NULL THEN 'personal' END AS alloc_type,
+         COALESCE(al_p.id, al_f.id, al_t.id) AS alloc_id`;
+const PO_ALLOC_JOINS = `
+    LEFT JOIN projects al_p ON al_p.id = pr.project_id
+    LEFT JOIN facilities al_f ON al_f.id = pr.facility_id
+    LEFT JOIN tradings al_t ON al_t.id = pr.trading_id`;
+function mapPoAllocation(r) {
+  const type = r.alloc_type ?? null;
+  return {
+    allocationType: type,
+    allocationName: type === null ? null : type === 'personal' ? (r.alloc_name || 'Personal use') : type === 'trading-general' ? 'Trading' : r.alloc_name,
+    allocationId: r.alloc_id ?? null,
+    allocationKey: type === null ? null : r.alloc_id ? `${type}:${r.alloc_id}` : type,
+  };
+}
 function mapPurchaseRequest(r) {
   if (!r) return r;
   return {
@@ -10176,8 +10206,11 @@ const PAYABLE_SELECT = `
          to_char(COALESCE(po.doc_date, po.created_date), 'YYYY-MM-DD')      AS po_date,
          to_char(po.received_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD')   AS received_date,
          to_char((NOW() AT TIME ZONE 'Asia/Manila')::date, 'YYYY-MM-DD')    AS today,
-         COALESCE(paid.paid, 0) AS paid_total, COALESCE(paid.n, 0) AS payment_count
+         COALESCE(paid.paid, 0) AS paid_total, COALESCE(paid.n, 0) AS payment_count,
+         ${PO_ALLOC_COLS}
     FROM purchase_orders po
+    LEFT JOIN purchase_requests pr ON pr.id = po.purchase_request_id
+    ${PO_ALLOC_JOINS}
     LEFT JOIN suppliers s ON s.id = po.supplier_id
     LEFT JOIN (SELECT vp.purchase_order_id, SUM(vp.amount) AS paid, COUNT(*) AS n
                  FROM voucher_po_payments vp
@@ -10209,6 +10242,7 @@ function mapPayable(r) {
     paidTotal: paid.toFixed(2), balance: balance.toFixed(2),
     overpaidAmount: balance < -0.004 ? biRound2(-balance).toFixed(2) : '0.00',
     paymentCount: Number(r.payment_count ?? 0),
+    ...mapPoAllocation(r),
     status, overdue, dueDate,
     amountOverdue: overdue ? balance.toFixed(2) : '0.00',
     payments: [],

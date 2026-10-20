@@ -69,6 +69,9 @@ export interface PrintablePO {
   termsAndConditions?: string | null;
   prNumber?: string | null;
   prStatus?: string | null;
+  // What the order was bought for (project / trading deal / facility), resolved by the server from
+  // its purchase request. Absent for an order with no request behind it -- the line is then omitted.
+  allocationName?: string | null;
 }
 
 // Fetched on demand at print time — never carried on the list payload (~20KB each). Section C:
@@ -364,7 +367,8 @@ export async function printPurchaseOrder(
       <div class="info-content">
         <strong>PO Date:</strong> ${esc(fmtDate(po.docDate || po.createdDate))}<br>
         <strong>PO Number:</strong> ${esc(po.poNumber)}<br>
-        ${po.prNumber ? `<strong>PR Number:</strong> ${esc(po.prNumber)}<br>` : ''}
+        ${po.prNumber ? `<strong>PR Number:</strong> ${esc(po.prNumber)}<br>` : ''}${po.allocationName ? `
+        <strong>Allocated to:</strong> ${esc(po.allocationName)}<br>` : ''}
         <strong>Type:</strong> ${esc(poType)}<br>
         <strong>Delivery Date:</strong> ${esc(fmtDate(po.deliveryDate))}<br>
         <strong>Mode of Payment:</strong> ${esc(paymentMode)}<br>

@@ -17,6 +17,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Search, ChevronDown, ChevronRight, Coins, AlertTriangle, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { AllocationTag, AllocationFilter, matchesAllocation, type AllocType } from './AllocationTag';
 
 type Api = <T = any>(path: string, options?: RequestInit) => Promise<T>;
 
@@ -31,6 +32,8 @@ export interface PayableRow {
   paymentTerms: string | null; poTotal: string; paidTotal: string; balance: string; overpaidAmount: string;
   paymentCount: number; status: 'unpaid' | 'partial' | 'paid' | 'overpaid' | string;
   overdue: boolean; dueDate: string | null; amountOverdue: string; payments: PayablePayment[];
+  // What the order was bought for, resolved server-side from its purchase request.
+  allocationType?: AllocType | null; allocationName?: string | null; allocationId?: string | null; allocationKey?: string | null;
 }
 
 interface Summary {
@@ -82,6 +85,7 @@ export function PayableReport({ api, isAdmin, onPay, reloadKey = 0 }: {
   const [filter, setFilter] = useState<FilterId>('all');
   const [supplierId, setSupplierId] = useState('');
   const [search, setSearch] = useState('');
+  const [alloc, setAlloc] = useState('');
   const [open, setOpen] = useState<string | null>(null);
   // Suppliers for the dropdown come from the UNFILTERED set, so choosing one doesn't empty the list.
   const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
@@ -111,8 +115,10 @@ export function PayableReport({ api, isAdmin, onPay, reloadKey = 0 }: {
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return q ? rows.filter(r => `${r.poNumber} ${r.supplier || ''}`.toLowerCase().includes(q)) : rows;
-  }, [rows, search]);
+    return rows
+      .filter(r => matchesAllocation(r, alloc))
+      .filter(r => !q || `${r.poNumber} ${r.supplier || ''} ${r.allocationName || ''}`.toLowerCase().includes(q));
+  }, [rows, search, alloc]);
 
 
   return (
@@ -130,7 +136,7 @@ export function PayableReport({ api, isAdmin, onPay, reloadKey = 0 }: {
       <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-          <input type="text" placeholder="Search PO no. or supplier…" value={search} onChange={e => setSearch(e.target.value)}
+          <input type="text" placeholder="Search PO no., supplier or project…" value={search} onChange={e => setSearch(e.target.value)}
             className="w-full pl-9 pr-4 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
         </div>
         <label className="flex flex-col gap-1">
@@ -141,8 +147,13 @@ export function PayableReport({ api, isAdmin, onPay, reloadKey = 0 }: {
             {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </label>
-        {(supplierId || filter !== 'all') && (
-          <button onClick={() => { setSupplierId(''); setFilter('all'); }}
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] font-medium text-gray-500">Allocated to</span>
+          <AllocationFilter rows={rows} value={alloc} onChange={setAlloc}
+            className="px-3 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[220px]" />
+        </label>
+        {(supplierId || filter !== 'all' || alloc) && (
+          <button onClick={() => { setSupplierId(''); setFilter('all'); setAlloc(''); }}
             className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">
             <X className="w-3.5 h-3.5" /> Clear filters
           </button>
@@ -161,7 +172,7 @@ export function PayableReport({ api, isAdmin, onPay, reloadKey = 0 }: {
       {loading ? <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading…</div> : (
         <PayableTable rows={visible} isAdmin={isAdmin} openId={open} onPay={onPay}
           onToggle={id => setOpen(open === id ? null : id)}
-          emptyText={rows.length > 0 ? 'Nothing matches that search.' : filter !== 'all' || supplierId ? 'No purchase orders match these filters.' : 'No purchase orders yet.'} />
+          emptyText={rows.length > 0 ? 'Nothing matches that search.' : filter !== 'all' || supplierId || alloc ? 'No purchase orders match these filters.' : 'No purchase orders yet.'} />
       )}
     </div>
   );
@@ -195,7 +206,7 @@ export function PayableTable({ rows, isAdmin, openId, onToggle, onPay, emptyText
   onToggle: (id: string) => void; onPay?: (poId: string) => void; emptyText: string;
 }) {
   // The Actions column only exists for a manage caller, so every colSpan follows it.
-  const COLS = isAdmin ? 10 : 9;
+  const COLS = isAdmin ? 11 : 10;
   return (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           <div className="overflow-x-scroll max-w-full">
@@ -205,6 +216,7 @@ export function PayableTable({ rows, isAdmin, openId, onToggle, onPay, emptyText
                   <th className="px-3 py-3 w-8"></th>
                   <th className="px-3 py-3 text-left">PO No.</th>
                   <th className="px-3 py-3 text-left">Supplier</th>
+                  <th className="px-3 py-3 text-left">Allocated to</th>
                   <th className="px-3 py-3 text-left">PO date</th>
                   <th className="px-3 py-3 text-right">PO total</th>
                   <th className="px-3 py-3 text-right">Paid</th>
@@ -234,6 +246,7 @@ export function PayableTable({ rows, isAdmin, openId, onToggle, onPay, emptyText
                           {r.unpayable && <span className="ml-1.5 text-[10px] font-semibold uppercase text-gray-500 border border-gray-300 rounded px-1">{r.poStatus}</span>}
                         </td>
                         <td className="px-3 py-3 max-w-[170px]"><div className="truncate text-gray-900" title={r.supplier || ''}>{r.supplier || '—'}</div></td>
+                        <td className="px-3 py-3 max-w-[190px]"><AllocationTag a={r} maxWidth={150} stacked /></td>
                         <td className="px-3 py-3 whitespace-nowrap text-gray-600">{r.poDate}</td>
                         <td className="px-3 py-3 text-right whitespace-nowrap">{peso(r.poTotal)}</td>
                         <td className={`px-3 py-3 text-right whitespace-nowrap ${num(r.paidTotal) > 0 ? 'text-emerald-700' : 'text-gray-400'}`}>{peso(r.paidTotal)}</td>

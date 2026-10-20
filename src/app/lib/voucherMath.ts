@@ -114,6 +114,8 @@ export function totalFromLines(d: VoucherDraft): string {
 export interface PayableLite {
   id: string; poNumber: string; supplier: string | null; balance: string; poTotal: string;
   status: string; overdue: boolean; unpayable?: boolean;
+  // What the order was bought for (resolved server-side); shown in the picker and searchable.
+  allocationName?: string | null; allocationType?: string | null;
 }
 
 /**
@@ -127,7 +129,7 @@ export function filterPayables(list: PayableLite[], query: string, excludeIds: s
   const rank = (p: PayableLite) => (p.overdue ? 0 : Number(p.balance) > 0 ? 1 : 2);
   return list
     .filter(p => !p.unpayable && !taken.has(p.id))
-    .filter(p => !q || `${p.poNumber} ${p.supplier || ''}`.toLowerCase().includes(q))
+    .filter(p => !q || `${p.poNumber} ${p.supplier || ''} ${p.allocationName || ''}`.toLowerCase().includes(q))
     .sort((a, b) => rank(a) - rank(b) || a.poNumber.localeCompare(b.poNumber))
     .slice(0, limit);
 }

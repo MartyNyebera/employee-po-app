@@ -12,6 +12,7 @@ import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { confirmDialog } from '../lib/confirm';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { esc, printPurchaseOrder } from '../lib/orderPrint';
+import { AllocationTag, AllocationFilter, matchesAllocation, type AllocType } from '../components/AllocationTag';
 import { renderPrintDocument } from '../lib/printChrome';
 import {
   AccountingNav, loadNavPrefs, saveNavPrefs, toggleGroup as toggleGroupPrefs, revealGroupFor, setMinimized,
@@ -62,6 +63,8 @@ interface PurchaseOrder {
   supplierAddress?: string | null; supplierContact?: string | null; supplierTin?: string | null;
   paymentTerms?: string | null; termsAndConditions?: string | null;
   poReviewedBy?: string | null; poReviewedAt?: string | null; approvedBy?: string | null; approvedAt?: string | null;
+  // What the order was bought for -- resolved by the server from its purchase request.
+  allocationType?: AllocType | null; allocationName?: string | null; allocationId?: string | null; allocationKey?: string | null;
 }
 
 interface PRItem { no?: number; description: string; quantity: number; unit: string; unitCost: number; amount: number; }
@@ -1058,6 +1061,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const [statusFilter, setStatusFilter] = useState<'all' | PRStatus>('all');
   const [search, setSearch] = useState('');
   const [busyId, setBusyId] = useState('');
+  const [poAlloc, setPoAlloc] = useState('');
   const [viewing, setViewing] = useState<PurchaseRequest | null>(null);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [showProjectModal, setShowProjectModal] = useState(false);
@@ -1273,6 +1277,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 
   const pendingCount = requests.filter(r => r.status === 'pending').length;
   const pendingOrderCount = orders.filter(o => o.status === 'pending').length;
+  const shownOrders = useMemo(() => orders.filter(o => matchesAllocation(o, poAlloc)), [orders, poAlloc]);
 
   // Everything an expense can be charged to, for the history view's "Charged to" filter. Built from
   // the lists already loaded rather than a fresh fetch, so the picker and the rest of the portal
@@ -1702,7 +1707,15 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                   <div className="flex flex-col items-center justify-center h-48 text-gray-400"><FileText className="w-10 h-10 mb-3 text-gray-300" /><p className="font-medium text-gray-500">No purchase orders</p><p className="text-xs mt-1">Purchasing raises these against verified requests.</p></div>
                 ) : (
                   <div className="space-y-3">
-                    {orders.map(po => (
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className="text-xs font-medium text-gray-500">Allocated to</span>
+                      <AllocationFilter rows={orders} value={poAlloc} onChange={setPoAlloc}
+                        className="px-3 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[260px]" />
+                      {poAlloc && <button onClick={() => setPoAlloc('')} className="text-xs font-medium text-blue-600 hover:underline">Clear</button>}
+                      {poAlloc && <span className="text-xs text-gray-400">{shownOrders.length} of {orders.length} orders</span>}
+                    </div>
+                    {shownOrders.length === 0 && <p className="text-sm text-gray-400 py-6 text-center">No purchase orders match that allocation.</p>}
+                    {shownOrders.map(po => (
                       <div key={po.id} className="bg-white rounded-xl border border-gray-200 p-4">
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex-1 min-w-0">
@@ -1711,6 +1724,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                               {po.prNumber && <span className="text-xs text-gray-400">· for {po.prNumber}</span>}
                             </div>
                             <p className="text-xs text-gray-400 mt-0.5">Supplier <span className="text-gray-600 font-medium">{po.client || '—'}</span></p>
+                            <p className="text-xs text-gray-400 mt-1 flex items-center gap-1.5 min-w-0">Allocated to <span className="text-gray-700 font-medium min-w-0"><AllocationTag a={po} maxWidth={320} /></span></p>
                             <p className="text-xs text-gray-400 mt-1">Prepared by <span className="text-gray-600 font-medium">{po.processedBy || '—'}</span>{po.poReviewedBy && <> · Reviewed by <span className="text-gray-600 font-medium">{po.poReviewedBy}</span></>}</p>
                           </div>
                           <div className="flex-shrink-0 text-right">
