@@ -36,6 +36,28 @@ export const S = {
   rowBtn: { padding: '6px 10px', borderRadius: '6px', border: '1px solid #d6d6d6', backgroundColor: '#fff', color: '#262626', cursor: 'pointer', fontSize: '12px', fontWeight: 600, marginLeft: '6px', fontFamily: 'inherit' } as React.CSSProperties,
 };
 
+// Wide-table helpers. S.card clips (overflow:hidden) so a table wider than the content area just
+// lost its right-hand columns -- the Actions button became unreachable. TableScroll keeps the
+// rounded card but scrolls the table sideways inside it, with the scrollbar always showing, so the
+// page itself never scrolls sideways. Used with tight cells (tightTh/tightTd) and a pinned Actions
+// column (stickyTh/stickyTd) so the one button people need stays in view however narrow the window.
+export function TableScroll({ children }: { children: ReactNode }) {
+  return <div style={{ ...S.card, overflowX: 'scroll', overflowY: 'hidden', maxWidth: '100%' }}>{children}</div>;
+}
+export const tightTh = { ...S.th, padding: '12px 8px', whiteSpace: 'nowrap' } as React.CSSProperties;
+export const tightTd = { ...S.td, padding: '12px 8px', fontSize: '13px' } as React.CSSProperties;
+const pinned = { position: 'sticky', right: 0, boxShadow: '-6px 0 6px -6px rgba(0,0,0,0.25)' } as const;
+export const stickyTh = { ...tightTh, ...pinned, textAlign: 'right', zIndex: 2 } as React.CSSProperties;
+export const stickyTd = (bg = '#fff') => ({ ...tightTd, ...pinned, textAlign: 'right', whiteSpace: 'nowrap', backgroundColor: bg, zIndex: 1 }) as React.CSSProperties;
+// "2026-09-28" -> "Sep 28, 2026". Parsed by hand: new Date('2026-09-28') is UTC midnight and can
+// land on the previous day in a negative-offset browser.
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+export const shortDate = (v?: string | null) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v ?? ''));
+  return m ? `${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}, ${m[1]}` : (v ? String(v) : '');
+};
+export const oneLine = { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } as React.CSSProperties;
+
 export function badge(text: string, color: string, bg: string) {
   return (
     <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '12px', fontWeight: 600, color, backgroundColor: bg, whiteSpace: 'nowrap' }}>

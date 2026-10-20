@@ -19,7 +19,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Plus, Printer, Ban, FileText, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { printBirDeliveryReceipt } from '../../lib/deliveryReceiptPrint';
-import { S, Modal, Field, TextInput, TextArea, PrimaryBtn, GhostBtn, pill } from './crmKit';
+import { S, Modal, Field, TextInput, TextArea, PrimaryBtn, GhostBtn, pill, TableScroll, tightTh, tightTd, stickyTh, stickyTd, shortDate, oneLine } from './crmKit';
 
 type Api = <T = any>(path: string, init?: RequestInit) => Promise<T>;
 
@@ -132,12 +132,12 @@ export function DeliveryReceipts({ api, isAdmin }: { api: Api; isAdmin: boolean 
         <input placeholder="Search DR no., client, deal…" value={search} onChange={e => setSearch(e.target.value)} style={{ ...S.input, paddingLeft: '36px' }} />
       </div>
 
-      <div style={S.card}>
+      <TableScroll>
         <table style={S.table}>
           <thead><tr>
-            <th style={S.th}>DR No.</th><th style={S.th}>Date</th><th style={S.th}>Delivered to</th>
-            <th style={S.th}>For</th><th style={S.th}>Items</th><th style={S.th}>Status</th>
-            <th style={{ ...S.th, textAlign: 'right' }}>Actions</th>
+            <th style={tightTh}>DR No.</th><th style={tightTh}>Date</th><th style={tightTh}>Delivered to</th>
+            <th style={tightTh}>For</th><th style={tightTh}>Items</th><th style={tightTh}>Status</th>
+            <th style={stickyTh}>Actions</th>
           </tr></thead>
           <tbody>
             {loading ? <tr><td style={S.td} colSpan={7}>Loading…</td></tr>
@@ -147,26 +147,26 @@ export function DeliveryReceipts({ api, isAdmin }: { api: Api; isAdmin: boolean 
                 </td></tr>
               ) : filtered.map(dr => (
                 <tr key={dr.id} style={dr.voidedAt ? { opacity: 0.6 } : undefined}>
-                  <td style={{ ...S.td, fontWeight: 600, color: '#000000' }}>
+                  <td style={{ ...tightTd, fontWeight: 600, color: '#000000', whiteSpace: 'nowrap' }}>
                     {dr.drNumber}
                     {dr.serialNo ? <div style={{ fontSize: '11px', color: '#8a8a8a', fontWeight: 400 }}>{dr.serialNo}</div> : null}
                   </td>
-                  <td style={S.td}>{dayOnly(dr.drDate) || '—'}</td>
-                  <td style={S.td}>
-                    {dr.deliveredTo}
-                    {dr.deliveredTin ? <div style={{ fontSize: '11px', color: '#8a8a8a' }}>TIN {dr.deliveredTin}</div> : null}
+                  <td style={{ ...tightTd, whiteSpace: 'nowrap' }}>{shortDate(dr.drDate) || '—'}</td>
+                  <td style={{ ...tightTd, maxWidth: '220px' }}>
+                    <div style={oneLine} title={dr.deliveredTo}>{dr.deliveredTo}</div>
+                    {dr.deliveredTin ? <div style={{ fontSize: '11px', color: '#8a8a8a', whiteSpace: 'nowrap' }}>TIN {dr.deliveredTin}</div> : null}
                   </td>
-                  <td style={{ ...S.td, maxWidth: '230px' }}>
+                  <td style={{ ...tightTd, maxWidth: '230px' }}>
                     <span style={{ fontSize: '11px', color: '#8a8a8a', textTransform: 'uppercase' }}>{dr.sourceKind}</span>
-                    <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{dr.sourceName || '—'}</div>
+                    <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={dr.sourceName || undefined}>{dr.sourceName || '—'}</div>
                   </td>
-                  <td style={S.td}>{(dr.items || []).length}</td>
-                  <td style={S.td}>
+                  <td style={tightTd}>{(dr.items || []).length}</td>
+                  <td style={{ ...tightTd, whiteSpace: 'nowrap' }}>
                     {dr.voidedAt
                       ? <span title={dr.voidReason ? `Reason: ${dr.voidReason}` : undefined}>{pill('Voided', 'bad')}</span>
                       : pill('Issued', 'good')}
                   </td>
-                  <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  <td style={stickyTd()}>
                     <button title="Print working copy" style={S.rowBtn} onClick={() => onPrint(dr)}><Printer size={14} /></button>
                     {isAdmin && !dr.voidedAt && (
                       <button title="Void (the record is kept)" style={{ ...S.rowBtn, color: '#b91c1c' }}
@@ -177,7 +177,7 @@ export function DeliveryReceipts({ api, isAdmin }: { api: Api; isAdmin: boolean 
               ))}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
 
       {creating && (
         <CreateDrModal api={api} tradings={tradings} projects={projects} customers={customers}

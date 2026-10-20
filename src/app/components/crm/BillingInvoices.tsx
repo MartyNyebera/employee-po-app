@@ -19,7 +19,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Plus, Printer, Ban, FileText, Search, Coins, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { printBillingInvoice } from '../../lib/billingInvoicePrint';
-import { S, Modal, Field, TextInput, TextArea, PrimaryBtn, GhostBtn, pill, peso } from './crmKit';
+import { S, Modal, Field, TextInput, TextArea, PrimaryBtn, GhostBtn, pill, peso, TableScroll, tightTh, tightTd, stickyTh, stickyTd, shortDate, oneLine } from './crmKit';
 
 type Api = <T = any>(path: string, init?: RequestInit) => Promise<T>;
 
@@ -199,13 +199,13 @@ export function BillingInvoices({ api, isAdmin }: { api: Api; isAdmin: boolean }
         <input placeholder="Search BI no., client, DR no.…" value={search} onChange={e => setSearch(e.target.value)} style={{ ...S.input, paddingLeft: '36px' }} />
       </div>
 
-      <div style={S.card}>
+      <TableScroll>
         <table style={S.table}>
           <thead><tr>
-            <th style={S.th}>BI No.</th><th style={S.th}>Date</th><th style={S.th}>Billed to</th>
-            <th style={S.th}>From DR</th><th style={S.th}>Sale</th>
-            <th style={{ ...S.th, textAlign: 'right' }}>Total due</th>
-            <th style={S.th}>Status</th><th style={{ ...S.th, textAlign: 'right' }}>Actions</th>
+            <th style={tightTh}>BI No.</th><th style={tightTh}>Date</th><th style={tightTh}>Billed to</th>
+            <th style={tightTh}>From DR</th><th style={tightTh}>Sale</th>
+            <th style={{ ...tightTh, textAlign: 'right' }}>Total due</th>
+            <th style={tightTh}>Status</th><th style={stickyTh}>Actions</th>
           </tr></thead>
           <tbody>
             {loading ? <tr><td style={S.td} colSpan={8}>Loading…</td></tr>
@@ -215,25 +215,25 @@ export function BillingInvoices({ api, isAdmin }: { api: Api; isAdmin: boolean }
                 </td></tr>
               ) : filtered.map(bi => (
                 <tr key={bi.id} style={bi.voidedAt ? { opacity: 0.6 } : undefined}>
-                  <td style={{ ...S.td, fontWeight: 600, color: '#000000' }}>
+                  <td style={{ ...tightTd, fontWeight: 600, color: '#000000', whiteSpace: 'nowrap' }}>
                     {bi.biNumber}
                     {bi.serialNo ? <div style={{ fontSize: '11px', color: '#8a8a8a', fontWeight: 400 }}>{bi.serialNo}</div> : null}
                   </td>
-                  <td style={S.td}>{dayOnly(bi.biDate) || '—'}</td>
-                  <td style={S.td}>
-                    {bi.billedTo}
-                    {bi.billedTin ? <div style={{ fontSize: '11px', color: '#8a8a8a' }}>TIN {bi.billedTin}</div> : null}
+                  <td style={{ ...tightTd, whiteSpace: 'nowrap' }}>{shortDate(bi.biDate) || '—'}</td>
+                  <td style={{ ...tightTd, maxWidth: '220px' }}>
+                    <div style={oneLine} title={bi.billedTo}>{bi.billedTo}</div>
+                    {bi.billedTin ? <div style={{ fontSize: '11px', color: '#8a8a8a', whiteSpace: 'nowrap' }}>TIN {bi.billedTin}</div> : null}
                   </td>
-                  <td style={{ ...S.td, maxWidth: '200px' }}>
-                    <div>{bi.drNumber || '—'}</div>
-                    <div style={{ fontSize: '11px', color: '#8a8a8a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{bi.sourceName || ''}</div>
+                  <td style={{ ...tightTd, maxWidth: '200px' }}>
+                    <div style={{ whiteSpace: 'nowrap' }}>{bi.drNumber || '—'}</div>
+                    <div style={{ fontSize: '11px', color: '#8a8a8a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={bi.sourceName || undefined}>{bi.sourceName || ''}</div>
                   </td>
-                  <td style={{ ...S.td, textTransform: 'capitalize' }}>{bi.saleType}</td>
-                  <td style={{ ...S.td, textAlign: 'right', fontWeight: 600 }}>{peso(num(bi.totalAmountDue))}</td>
-                  <td style={S.td}>
+                  <td style={{ ...tightTd, textTransform: 'capitalize', whiteSpace: 'nowrap' }}>{bi.saleType}</td>
+                  <td style={{ ...tightTd, textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600 }}>{peso(num(bi.totalAmountDue))}</td>
+                  <td style={{ ...tightTd, whiteSpace: 'nowrap' }}>
                     {statusBadge(bi)}
                   </td>
-                  <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  <td style={stickyTd()}>
                     <button title="Print working copy" style={S.rowBtn} onClick={() => onPrint(bi)}><Printer size={14} /></button>
                     {isAdmin && !bi.voidedAt && (
                       <button title="Void (the record is kept)" style={{ ...S.rowBtn, color: '#b91c1c' }}
@@ -244,7 +244,7 @@ export function BillingInvoices({ api, isAdmin }: { api: Api; isAdmin: boolean }
               ))}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
 
       {creating && (
         <CreateBiModal api={api} drs={drs}
@@ -642,16 +642,16 @@ export function Receivables({ api, isAdmin }: { api: Api; isAdmin: boolean }) {
         ))}
       </div>
 
-      <div style={S.card}>
+      <TableScroll>
         <table style={S.table}>
           <thead><tr>
-            <th style={{ ...S.th, width: '28px' }}></th>
-            <th style={S.th}>Client</th><th style={S.th}>BI No.</th><th style={S.th}>Date</th>
-            <th style={{ ...S.th, textAlign: 'right' }}>Total due</th>
-            <th style={{ ...S.th, textAlign: 'right' }}>Paid</th>
-            <th style={{ ...S.th, textAlign: 'right' }}>Balance</th>
-            <th style={S.th}>Due date</th><th style={S.th}>Status</th>
-            {isAdmin && <th style={{ ...S.th, textAlign: 'right' }}>Actions</th>}
+            <th style={{ ...tightTh, width: '28px' }}></th>
+            <th style={tightTh}>Client</th><th style={tightTh}>BI No.</th><th style={tightTh}>Date</th>
+            <th style={{ ...tightTh, textAlign: 'right' }}>Total due</th>
+            <th style={{ ...tightTh, textAlign: 'right' }}>Paid</th>
+            <th style={{ ...tightTh, textAlign: 'right' }}>Balance</th>
+            <th style={tightTh}>Due date</th><th style={tightTh}>Status</th>
+            {isAdmin && <th style={stickyTh}>Actions</th>}
           </tr></thead>
           <tbody>
             {loading ? <tr><td style={S.td} colSpan={COLS}>Loading…</td></tr>
@@ -667,29 +667,34 @@ export function Receivables({ api, isAdmin }: { api: Api; isAdmin: boolean }) {
                 return (
                   <Fragment key={bi.id}>
                     <tr style={rowStyle}>
-                      <td style={{ ...S.td, cursor: 'pointer' }} onClick={() => openRow(bi)}>
+                      <td style={{ ...tightTd, cursor: 'pointer' }} onClick={() => openRow(bi)}>
                         {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                       </td>
-                      <td style={{ ...S.td, fontWeight: 600, color: '#000' }}>{bi.billedTo}</td>
-                      <td style={S.td}>
-                        {bi.biNumber}
-                        <div style={{ fontSize: '11px', color: '#8a8a8a' }}>{bi.sourceName || ''}</div>
+                      <td style={{ ...tightTd, fontWeight: 600, color: '#000', maxWidth: '140px' }}>
+                        <div style={oneLine} title={bi.billedTo}>{bi.billedTo}</div>
                       </td>
-                      <td style={S.td}>{dayOnly(bi.biDate)}</td>
-                      <td style={{ ...S.td, textAlign: 'right' }}>{peso(num(bi.totalAmountDue))}</td>
-                      <td style={{ ...S.td, textAlign: 'right', color: num(bi.paidTotal) > 0 ? '#15803d' : '#8a8a8a' }}>{peso(num(bi.paidTotal))}</td>
-                      <td style={{ ...S.td, textAlign: 'right', fontWeight: 700, color: bi.overdue ? '#b91c1c' : bi.status === 'overpaid' ? '#b45309' : '#000' }}>{peso(num(bi.balance))}</td>
-                      <td style={{ ...S.td, color: bi.overdue ? '#b91c1c' : undefined }}>
-                        {bi.dueDate || '—'}
-                        {bi.dueDate2 ? <div style={{ fontSize: '11px', color: '#8a8a8a' }}>then {bi.dueDate2}{bi.dpPercent ? ` (${bi.dpPercent}% DP)` : ''}</div> : null}
+                      <td style={{ ...tightTd, maxWidth: '150px' }}>
+                        <div style={{ whiteSpace: 'nowrap' }}>{bi.biNumber}</div>
+                        {bi.sourceName ? <div style={{ ...oneLine, fontSize: '11px', color: '#8a8a8a' }} title={bi.sourceName}>{bi.sourceName}</div> : null}
                       </td>
-                      <td style={S.td}>
+                      <td style={{ ...tightTd, whiteSpace: 'nowrap' }}>{shortDate(bi.biDate)}</td>
+                      <td style={{ ...tightTd, textAlign: 'right', whiteSpace: 'nowrap' }}>{peso(num(bi.totalAmountDue))}</td>
+                      <td style={{ ...tightTd, textAlign: 'right', whiteSpace: 'nowrap', color: num(bi.paidTotal) > 0 ? '#15803d' : '#8a8a8a' }}>{peso(num(bi.paidTotal))}</td>
+                      <td style={{ ...tightTd, textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 700, color: bi.overdue ? '#b91c1c' : bi.status === 'overpaid' ? '#b45309' : '#000' }}>{peso(num(bi.balance))}</td>
+                      <td style={{ ...tightTd, whiteSpace: 'nowrap', color: bi.overdue ? '#b91c1c' : undefined }}>
+                        {shortDate(bi.dueDate) || '—'}
+                        {bi.dueDate2 ? (() => {
+                          const then = `then ${shortDate(bi.dueDate2)}${bi.dpPercent ? ` (${bi.dpPercent}% DP)` : ''}`;
+                          return <div style={{ ...oneLine, fontSize: '11px', color: '#8a8a8a', maxWidth: '92px' }} title={then}>{then}</div>;
+                        })() : null}
+                      </td>
+                      <td style={{ ...tightTd, whiteSpace: 'nowrap' }}>
                         {bi.overdue
                           ? <span title={`${peso(num(bi.amountOverdue))} overdue`}>{pill('Overdue', 'bad')}</span>
                           : statusBadge(bi)}
                       </td>
                       {isAdmin && (
-                        <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        <td style={stickyTd(bi.overdue ? '#fef2f2' : '#fff')}>
                           {num(bi.balance) > 0 && (
                             <button title="Record a payment" style={S.rowBtn} onClick={() => setPaying(bi)}>
                               <Coins size={14} />
@@ -760,7 +765,7 @@ export function Receivables({ api, isAdmin }: { api: Api; isAdmin: boolean }) {
               })}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
 
       {paying && (
         <RecordPaymentModal api={api} bi={paying}

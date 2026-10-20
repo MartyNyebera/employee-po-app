@@ -198,20 +198,20 @@ export function PayableTable({ rows, isAdmin, openId, onToggle, onPay, emptyText
   const COLS = isAdmin ? 10 : 9;
   return (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div className="overflow-x-auto">
+          <div className="overflow-x-scroll max-w-full">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wide">
                 <tr>
                   <th className="px-3 py-3 w-8"></th>
-                  <th className="px-4 py-3 text-left">PO No.</th>
-                  <th className="px-4 py-3 text-left">Supplier</th>
-                  <th className="px-4 py-3 text-left">PO date</th>
-                  <th className="px-4 py-3 text-right">PO total</th>
-                  <th className="px-4 py-3 text-right">Paid</th>
-                  <th className="px-4 py-3 text-right">Balance</th>
-                  <th className="px-4 py-3 text-left">Due date</th>
-                  <th className="px-4 py-3 text-left">Status</th>
-                  {isAdmin && <th className="px-4 py-3 text-right">Actions</th>}
+                  <th className="px-3 py-3 text-left">PO No.</th>
+                  <th className="px-3 py-3 text-left">Supplier</th>
+                  <th className="px-3 py-3 text-left">PO date</th>
+                  <th className="px-3 py-3 text-right">PO total</th>
+                  <th className="px-3 py-3 text-right">Paid</th>
+                  <th className="px-3 py-3 text-right">Balance</th>
+                  <th className="px-3 py-3 text-left">Due date</th>
+                  <th className="px-3 py-3 text-left">Status</th>
+                  {isAdmin && <th className="px-3 py-3 text-right sticky right-0 z-[2] bg-gray-50 shadow-[-6px_0_6px_-6px_rgba(0,0,0,0.25)]">Actions</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -229,22 +229,22 @@ export function PayableTable({ rows, isAdmin, openId, onToggle, onPay, emptyText
                         <td className="px-3 py-3 cursor-pointer text-gray-400" onClick={() => onToggle(r.id)}>
                           {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                         </td>
-                        <td className="px-4 py-3 whitespace-nowrap">
+                        <td className="px-3 py-3 whitespace-nowrap">
                           <span className="font-mono text-xs font-semibold text-gray-900">{r.poNumber}</span>
                           {r.unpayable && <span className="ml-1.5 text-[10px] font-semibold uppercase text-gray-500 border border-gray-300 rounded px-1">{r.poStatus}</span>}
                         </td>
-                        <td className="px-4 py-3 max-w-[220px]"><div className="truncate text-gray-900" title={r.supplier || ''}>{r.supplier || '—'}</div></td>
-                        <td className="px-4 py-3 whitespace-nowrap text-gray-600">{r.poDate}</td>
-                        <td className="px-4 py-3 text-right whitespace-nowrap">{peso(r.poTotal)}</td>
-                        <td className={`px-4 py-3 text-right whitespace-nowrap ${num(r.paidTotal) > 0 ? 'text-emerald-700' : 'text-gray-400'}`}>{peso(r.paidTotal)}</td>
-                        <td className={`px-4 py-3 text-right whitespace-nowrap font-semibold ${r.overdue ? 'text-red-600' : bal < 0 ? 'text-amber-700' : 'text-gray-900'}`}>{peso(r.balance)}</td>
-                        <td className={`px-4 py-3 whitespace-nowrap ${r.overdue ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
+                        <td className="px-3 py-3 max-w-[170px]"><div className="truncate text-gray-900" title={r.supplier || ''}>{r.supplier || '—'}</div></td>
+                        <td className="px-3 py-3 whitespace-nowrap text-gray-600">{r.poDate}</td>
+                        <td className="px-3 py-3 text-right whitespace-nowrap">{peso(r.poTotal)}</td>
+                        <td className={`px-3 py-3 text-right whitespace-nowrap ${num(r.paidTotal) > 0 ? 'text-emerald-700' : 'text-gray-400'}`}>{peso(r.paidTotal)}</td>
+                        <td className={`px-3 py-3 text-right whitespace-nowrap font-semibold ${r.overdue ? 'text-red-600' : bal < 0 ? 'text-amber-700' : 'text-gray-900'}`}>{peso(r.balance)}</td>
+                        <td className={`px-3 py-3 whitespace-nowrap ${r.overdue ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
                           {r.dueDate || '—'}
                           {!r.dueDate && r.paymentTerms && <div className="text-[11px] text-gray-400 max-w-[170px] truncate" title={r.paymentTerms}>{r.paymentTerms}</div>}
                         </td>
-                        <td className="px-4 py-3">{payableBadge(r)}</td>
+                        <td className="px-3 py-3">{payableBadge(r)}</td>
                         {isAdmin && (
-                          <td className="px-4 py-3 text-right whitespace-nowrap">
+                          <td className={`px-3 py-3 text-right whitespace-nowrap sticky right-0 z-[1] shadow-[-6px_0_6px_-6px_rgba(0,0,0,0.25)] ${r.overdue ? 'bg-red-50' : r.status === 'overpaid' ? 'bg-amber-50' : 'bg-white'}`}>
                             {!r.unpayable && onPay && (
                               <button onClick={() => onPay(r.id)} title="Pay this PO with a disbursement voucher"
                                 className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">

@@ -350,7 +350,7 @@ export function ExpensesHistory({ api, targets, isAdmin, onNewVoucher, reloadKey
 export function VoucherTable({ rows, onOpen }: { rows: ExpenseHistoryRow[]; onOpen: (r: ExpenseHistoryRow) => void }) {
   return (
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            <div className="overflow-x-auto">
+            <div className="overflow-x-scroll max-w-full">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wide">
                   <tr>
