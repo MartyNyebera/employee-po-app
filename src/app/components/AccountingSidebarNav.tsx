@@ -17,7 +17,7 @@ import type { ReactNode } from 'react';
 import {
   LayoutDashboard, ChevronDown, ChevronRight, ClipboardList, FileText, Plus, PackageMinus, PenTool,
   Briefcase, ArrowLeftRight, Truck, ReceiptText, Users, Building2, CalendarCheck, Calculator, IdCard,
-  HandCoins, Coins, ShoppingCart, CreditCard, FileOutput, Wallet, Receipt,
+  HandCoins, Coins, ShoppingCart, CreditCard, FileOutput, Wallet,
 } from 'lucide-react';
 import { NavBadge } from './NavBadge';
 
@@ -25,7 +25,7 @@ import { NavBadge } from './NavBadge';
 export type AccountingView =
   | 'new-pr' | 'requests' | 'orders' | 'projects' | 'tradings' | 'facilities' | 'expenses'
   | 'withdrawals' | 'clients' | 'delivery-receipts' | 'billing-invoices' | 'receivables'
-  | 'timesheet' | 'payroll' | 'signature';
+  | 'timesheet' | 'payroll' | 'signature' | 'payables';
 
 // Which live count an item wears. The portal supplies the numbers; this file only places them.
 export type BadgeKey = 'requests' | 'orders' | 'receivables';
@@ -84,10 +84,11 @@ export const NAV_GROUPS: NavGroup[] = [
       { id: 'receivable-report', label: 'RECEIVABLE REPORT', icon: Coins, view: 'receivables',
         hover: 'Billing invoice − collection', badge: 'receivables' },
       { id: 'purchases', label: 'PURCHASES', icon: ShoppingCart, hover: 'Summary of PO requests' },
-      { id: 'payable-report', label: 'PAYABLE REPORT', icon: CreditCard, hover: 'Purchases − payments' },
-      { id: 'disbursement-report', label: 'DISBURSEMENT REPORT', icon: FileOutput, hover: 'Manual voucher' },
+      { id: 'payable-report', label: 'PAYABLE REPORT', icon: CreditCard, view: 'payables', hover: 'Purchases − payments' },
+      // The voucher list IS the old Expenses History screen, extended: a voucher is the same record,
+      // and now can also pay POs. One screen for everything that went out, so no second nav entry.
+      { id: 'disbursement-report', label: 'DISBURSEMENT REPORT', icon: FileOutput, view: 'expenses', hover: 'Manual voucher' },
       { id: 'pcf', label: 'PCF', icon: Wallet },
-      { id: 'expenses-history', label: 'EXPENSES HISTORY', icon: Receipt, view: 'expenses' },
     ],
   },
 ];

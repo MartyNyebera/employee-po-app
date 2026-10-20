@@ -32,6 +32,8 @@ import { BillingInvoices, Receivables } from '../components/crm/BillingInvoices'
 import { TradingProfitBars } from '../components/TradingProfitBars';
 import { DualBasisProfit, type DualBasisRow, type BasisTotals } from '../components/DualBasisProfit';
 import { ExpensesHistory, type TargetOption } from '../components/ExpensesHistory';
+import { DisbursementVoucherModal } from '../components/DisbursementVoucher';
+import { PayableReport } from '../components/PayableReport';
 import { PayrollReview } from '../components/crm/PayrollReview';
 
 // ============================================================================
@@ -152,12 +154,13 @@ interface ExpenseAllocation {
   allocationId: number; expenseId: number; serialNo?: string | null;
   projectId?: string | null; tradingId?: string | null; facilityId?: string | null;
   amount: number; expenseTotal: number; isSplit: boolean; allocationCount: number;
+  // How many purchase orders the same voucher also pays. Voiding from here voids the whole voucher.
+  poPaymentCount?: number;
   targets?: string | null;
   description: string; expenseDate: string;
   payee?: string | null; referenceNo?: string | null; createdBy?: string | null; createdAt?: string;
   voidedAt?: string | null; voidedBy?: string | null; voidReason?: string | null;
 }
-const manilaToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
 interface Session { id: number; full_name: string; email: string; phone?: string; }
 
 const TOKEN_KEY = 'accounting_token';
@@ -760,207 +763,6 @@ function FacilityModal({ initial, onClose, onSaved }: { initial: Facility | null
 }
 
 // ============================================================================
-// Log Expense — a direct cost (gas, Lalamove, meals, a one-off payment) that never went through a
-// purchase request. Entered straight in, no approval step. Who logged it is taken from the login on
-// the server, never from this form.
-//
-// ONE receipt, SPLIT across one or more allocation lines. Each line charges exactly one target —
-// a project, a trading deal or a facility — and the lines must add up to the receipt total to the
-// centavo. A plain single-target expense is just one line, so the simple case stays simple.
-//
-// Balance is computed in CENTAVOS as integers, never by summing floats: adding 0.1-style values and
-// comparing against a total is exactly how a split silently ends up a centavo out.
-// ============================================================================
-const toCentavos = (v: string) => {
-  const t = String(v ?? '').replace(/,/g, '').trim();
-  return /^\d+(\.\d{1,2})?$/.test(t) ? Math.round(Number(t) * 100) : null;
-};
-interface AllocDraft { key: number; target: string; amount: string }
-// The <select> value encodes both kind and id ("project:PRJ-123") so one dropdown can offer all
-// three target types without a second "what kind is it" control.
-const encodeTarget = (kind: TargetKind, id: string) => `${kind}:${id}`;
-const decodeTarget = (v: string): { kind: TargetKind; id: string } | null => {
-  const i = v.indexOf(':');
-  if (i < 0) return null;
-  const kind = v.slice(0, i) as TargetKind;
-  const id = v.slice(i + 1);
-  return id && (kind === 'project' || kind === 'trading' || kind === 'facility') ? { kind, id } : null;
-};
-
-function LogExpenseModal({ projects, tradings, facilities, initialTarget, onClose, onSaved }: {
-  projects: Project[]; tradings: Trading[]; facilities: Facility[];
-  initialTarget: TargetRef | null; onClose: () => void; onSaved: () => void;
-}) {
-  const today = manilaToday();
-  const [f, setF] = useState({ amount: '', expenseDate: today, description: '', payee: '', referenceNo: '' });
-  const [rows, setRows] = useState<AllocDraft[]>([
-    { key: 1, target: initialTarget ? encodeTarget(initialTarget.kind, initialTarget.id) : '', amount: '' },
-  ]);
-  const [saving, setSaving] = useState(false);
-  const nextKey = useRef(2);
-  const set = (k: keyof typeof f, v: string) => setF(p => ({ ...p, [k]: v }));
-
-  // Live entries first; a Completed project/trading stays pickable because receipts often arrive
-  // after the job is done.
-  const byStatus = <T extends { name: string; status?: string | null }>(xs: T[]) => [...xs].sort((a, b) =>
-    Number(a.status === 'Completed') - Number(b.status === 'Completed') || a.name.localeCompare(b.name));
-  const groups = useMemo(() => [
-    { label: 'Projects', kind: 'project' as TargetKind, items: byStatus(projects) },
-    { label: 'Trading deals', kind: 'trading' as TargetKind, items: byStatus(tradings) },
-    { label: 'Facilities', kind: 'facility' as TargetKind, items: byStatus(facilities) },
-  ].filter(g => g.items.length > 0), [projects, tradings, facilities]);
-
-  const totalCentavos = toCentavos(f.amount);
-  const allocCentavos = rows.reduce((t, r) => t + (toCentavos(r.amount) ?? 0), 0);
-  const balanced = totalCentavos !== null && totalCentavos > 0 && allocCentavos === totalCentavos;
-  const remaining = (totalCentavos ?? 0) - allocCentavos;
-
-  const addRow = () => setRows(p => [...p, { key: nextKey.current++, target: '', amount: '' }]);
-  const delRow = (key: number) => setRows(p => (p.length === 1 ? p : p.filter(r => r.key !== key)));
-  const setRow = (key: number, k: 'target' | 'amount', v: string) =>
-    setRows(p => p.map(r => (r.key === key ? { ...r, [k]: v } : r)));
-  // Fill the last unallocated amount in one click — the common case for a two-way split.
-  const fillRest = (key: number) => {
-    const others = rows.filter(r => r.key !== key).reduce((t, r) => t + (toCentavos(r.amount) ?? 0), 0);
-    const rest = (totalCentavos ?? 0) - others;
-    if (rest > 0) setRow(key, 'amount', (rest / 100).toFixed(2));
-  };
-
-  const save = async () => {
-    const amount = f.amount.replace(/,/g, '').trim();
-    if (totalCentavos === null || totalCentavos <= 0) { toast.error('Enter the amount paid, e.g. 1250.50'); return; }
-    if (!f.description.trim()) { toast.error('Description is required'); return; }
-    if (!f.expenseDate) { toast.error('Choose the expense date'); return; }
-    const allocations: Record<string, string>[] = [];
-    for (const [i, r] of rows.entries()) {
-      const t = decodeTarget(r.target);
-      if (!t) { toast.error(`Line ${i + 1}: choose what to charge`); return; }
-      if (toCentavos(r.amount) === null || toCentavos(r.amount)! <= 0) { toast.error(`Line ${i + 1}: enter an amount`); return; }
-      allocations.push({ [`${t.kind}Id`]: t.id, amount: r.amount.replace(/,/g, '').trim() });
-    }
-    // Guard here as well as on the server and in the DB: three layers, because an unbalanced
-    // expense is money that silently belongs to nobody.
-    if (!balanced) {
-      toast.error(`Allocated ${peso(allocCentavos / 100)} of ${peso(totalCentavos / 100)} — they must match exactly`);
-      return;
-    }
-    setSaving(true);
-    try {
-      await aFetch('/expenses', {
-        method: 'POST',
-        body: JSON.stringify({
-          amount, expenseDate: f.expenseDate, description: f.description.trim(),
-          payee: f.payee.trim(), referenceNo: f.referenceNo.trim(), allocations,
-        }),
-      });
-      toast.success(`Expense of ${peso(Number(amount))} logged across ${allocations.length} target${allocations.length === 1 ? '' : 's'}`);
-      onSaved();
-    } catch (e: any) { toast.error('Log failed: ' + e.message); } finally { setSaving(false); }
-  };
-
-  const input = 'w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500';
-  const label = 'block text-sm font-medium text-gray-700 mb-1';
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onMouseDown={onBackdropDown} onClick={backdropClose(onClose)}>
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
-          <h3 className="font-bold text-gray-900">Log Expense</h3>
-          <button onClick={onClose} className="p-1 rounded-md text-gray-400 hover:bg-gray-100"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="p-5 overflow-y-auto space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className={label}>Amount paid (₱) <span className="text-red-500">*</span></label>
-              <input inputMode="decimal" value={f.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00" className={input} />
-            </div>
-            <div>
-              <label className={label}>Date <span className="text-red-500">*</span></label>
-              <input type="date" max={today} value={f.expenseDate} onChange={e => set('expenseDate', e.target.value)} className={input} />
-            </div>
-          </div>
-          <p className="-mt-2 text-xs text-gray-400">The full amount on the receipt, VAT included.</p>
-          <div>
-            <label className={label}>Description <span className="text-red-500">*</span></label>
-            <textarea value={f.description} onChange={e => set('description', e.target.value)} rows={2} maxLength={500}
-              placeholder="e.g. Lalamove — steel delivery to site" className={`${input} resize-none`} />
-          </div>
-
-          {/* ---- the split table ---- */}
-          <div className="border border-gray-200 rounded-xl overflow-hidden">
-            <div className="flex items-center justify-between gap-3 px-3 py-2.5 bg-gray-50 border-b border-gray-200">
-              <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-700"><Split className="w-4 h-4 text-gray-500" /> Charge to</div>
-              <button onClick={addRow} className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50"><Plus className="w-3.5 h-3.5" /> Add split</button>
-            </div>
-            <div className="divide-y divide-gray-100">
-              {rows.map((r, i) => (
-                <div key={r.key} className="p-3 flex flex-col sm:flex-row sm:items-end gap-2">
-                  <div className="flex-1 min-w-0">
-                    {i === 0 && <label className="block text-xs font-medium text-gray-500 mb-1">Target</label>}
-                    <select value={r.target} onChange={e => setRow(r.key, 'target', e.target.value)} className={`${input} bg-white`}>
-                      <option value="">Choose a project, trading or facility…</option>
-                      {groups.map(g => (
-                        <optgroup key={g.kind} label={g.label}>
-                          {g.items.map(x => (
-                            <option key={x.id} value={encodeTarget(g.kind, x.id)}>
-                              {x.name}{x.status === 'Completed' ? ' (completed)' : ''}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="w-full sm:w-36">
-                    {i === 0 && <label className="block text-xs font-medium text-gray-500 mb-1">Amount (₱)</label>}
-                    <input inputMode="decimal" value={r.amount} onChange={e => setRow(r.key, 'amount', e.target.value)}
-                      placeholder="0.00" className={`${input} text-right`} />
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => fillRest(r.key)} title="Fill the remaining amount"
-                      className="px-2 py-2 text-xs font-medium border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 whitespace-nowrap">Rest</button>
-                    <button onClick={() => delRow(r.key)} disabled={rows.length === 1} title="Remove this line"
-                      className="p-2 text-gray-400 rounded-lg hover:bg-gray-50 hover:text-gray-600 disabled:opacity-30"><Trash2 className="w-4 h-4" /></button>
-                  </div>
-                </div>
-              ))}
-            </div>
-            {/* The running balance. Save stays disabled until this reads exactly balanced. */}
-            <div className={`px-3 py-2.5 border-t text-sm flex flex-wrap items-center justify-between gap-2 ${
-              balanced ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                       : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
-              <span className="font-medium">
-                Allocated {peso(allocCentavos / 100)} of {totalCentavos === null ? '—' : peso(totalCentavos / 100)}
-              </span>
-              <span className="font-semibold whitespace-nowrap">
-                {totalCentavos === null ? 'Enter the receipt amount first'
-                  : balanced ? 'Balanced ✓'
-                  : remaining > 0 ? `${peso(remaining / 100)} left to allocate`
-                  : `${peso(-remaining / 100)} over-allocated`}
-              </span>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className={label}>Paid to <span className="text-gray-400 font-normal">(optional)</span></label>
-              <input value={f.payee} onChange={e => set('payee', e.target.value)} maxLength={200} className={input} />
-            </div>
-            <div>
-              <label className={label}>OR / receipt no. <span className="text-gray-400 font-normal">(optional)</span></label>
-              <input value={f.referenceNo} onChange={e => set('referenceNo', e.target.value)} maxLength={100} className={input} />
-            </div>
-          </div>
-        </div>
-        <div className="flex justify-end gap-2 px-5 py-4 border-t border-gray-200">
-          <button onClick={onClose} className="px-4 py-2 text-sm font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">Cancel</button>
-          <button onClick={save} disabled={saving || !balanced} title={balanced ? '' : 'The split must add up to the receipt total'}
-            className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">{saving ? 'Saving…' : 'Log Expense'}</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================================
 // A target's expenses — the spend summary (from the server), every allocation line charged to it,
 // and Void. Works for a project, a trading deal or a facility; only the stat strip differs, because
 // a project has a budget to measure against and a trading has a selling price.
@@ -1045,7 +847,7 @@ function ExpensesModal({ target, stats, reloadKey, onClose, onLog, onChanged }: 
         <div className="p-5 overflow-y-auto">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm text-gray-500">{rows ? `${rows.length} record${rows.length === 1 ? '' : 's'}` : 'Loading…'}</span>
-            <button onClick={onLog} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Plus className="w-3.5 h-3.5" /> Log Expense</button>
+            <button onClick={onLog} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Plus className="w-3.5 h-3.5" /> New Voucher</button>
           </div>
           {rows && rows.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-10 text-gray-400"><Receipt className="w-9 h-9 mb-2 text-gray-300" /><p className="text-sm">No expenses logged for this {KIND_LABEL[target.kind]} yet.</p></div>
@@ -1127,6 +929,11 @@ function ExpensesModal({ target, stats, reloadKey, onClose, onLog, onChanged }: 
                 <div className="flex items-start gap-2 p-3 mb-1 text-xs rounded-lg bg-amber-50 border border-amber-200 text-amber-800">
                   <Split className="w-4 h-4 flex-shrink-0 mt-0.5" />
                   <span>This receipt is split {voiding.allocationCount} ways{voiding.targets ? ` (${voiding.targets})` : ''}. Voiding it removes the money from <strong>all</strong> of them, not just this one.</span>
+                </div>
+              )}
+              {(voiding.poPaymentCount ?? 0) > 0 && (
+                <div className="flex items-start gap-2 p-3 mb-1 text-xs rounded-lg bg-amber-50 border border-amber-200 text-amber-800">
+                  <span>This voucher also pays {voiding.poPaymentCount} purchase order{voiding.poPaymentCount === 1 ? '' : 's'}. Voiding it reverses those payments too — each PO goes back to <strong>owing</strong> what was paid.</span>
                 </div>
               )}
               <label className="block text-sm font-medium text-gray-700">Reason <span className="text-red-500">*</span></label>
@@ -1265,9 +1072,10 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const [rollup, setRollup] = useState<ProfitRollup | null>(null);
   const [tradingSpend, setTradingSpend] = useState<Record<string, TradingSpend> | null>(null);
   const [facilitySpend, setFacilitySpend] = useState<Record<string, FacilitySpend> | null>(null);
-  // The Log Expense modal: { target } pre-selects the first split line, null = closed.
   // `target: null` inside the object means "open, nothing pre-selected".
-  const [logExpense, setLogExpense] = useState<{ target: TargetRef | null } | null>(null);
+  // The Disbursement Voucher form (it replaced Log Expense). `target` pre-points the first expense line
+  // (opened from a project/trading/facility); `poId` pre-loads a PO line (opened from the Payable Report).
+  const [logExpense, setLogExpense] = useState<{ target: TargetRef | null; poId?: string } | null>(null);
   const [expensesFor, setExpensesFor] = useState<TargetRef | null>(null);
   const [expensesReload, setExpensesReload] = useState(0);
   // How many invoices are overdue (outstanding balance past their collection date). The server
@@ -1543,7 +1351,16 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
         <main className="flex-1 overflow-y-auto p-4 lg:p-6">
           {view === 'signature' && <SignaturePad initial={signature} onSaved={setSignature} />}
 
-          {view === 'expenses' && <ExpensesHistory api={aFetch} targets={expenseTargets} />}
+          {view === 'expenses' && (
+            <ExpensesHistory api={aFetch} targets={expenseTargets} isAdmin reloadKey={expensesReload}
+              onNewVoucher={() => setLogExpense({ target: null })}
+              onChanged={() => loadAll({ silent: true })} />
+          )}
+
+          {view === 'payables' && (
+            <PayableReport api={aFetch} isAdmin reloadKey={expensesReload}
+              onPay={(poId) => setLogExpense({ target: null, poId })} />
+          )}
 
           {view === 'withdrawals' && <WithdrawalTab fetchFn={aFetch} />}
 
@@ -1567,7 +1384,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                   <p className="text-sm text-gray-500">Project master data — these appear in the employee's "For (Project)" picker. Spent is approved &amp; ordered purchase requests plus the direct expenses logged here.</p>
                 </div>
                 <div className="flex flex-wrap gap-2 flex-shrink-0">
-                  <button onClick={() => setLogExpense({ target: null })} disabled={projects.length === 0 && tradings.length === 0 && facilities.length === 0} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium whitespace-nowrap border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"><Receipt className="w-4 h-4" /> Log Expense</button>
+                  <button onClick={() => setLogExpense({ target: null })} disabled={projects.length === 0 && tradings.length === 0 && facilities.length === 0} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium whitespace-nowrap border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"><Receipt className="w-4 h-4" /> New Voucher</button>
                   <button onClick={() => { setEditingProject(null); setShowProjectModal(true); }} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium whitespace-nowrap bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Plus className="w-4 h-4" /> New Project</button>
                 </div>
               </div>
@@ -1711,7 +1528,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                   <p className="text-sm text-gray-500">Each trading deal is its own cost centre, like a project — purchase requests and expenses charged to it add up here. Cost is the total of its purchase requests plus its share of any expense. Set a selling price to see profit and margin; there is no budget. Margin updates as costs are logged, so it tightens until the deal is done.</p>
                 </div>
                 <div className="flex flex-col sm:flex-row gap-2 sm:flex-shrink-0">
-                  <button onClick={() => setLogExpense({ target: null })} disabled={projects.length === 0 && tradings.length === 0 && facilities.length === 0} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium whitespace-nowrap border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"><Receipt className="w-4 h-4" /> Log Expense</button>
+                  <button onClick={() => setLogExpense({ target: null })} disabled={projects.length === 0 && tradings.length === 0 && facilities.length === 0} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium whitespace-nowrap border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"><Receipt className="w-4 h-4" /> New Voucher</button>
                   <button onClick={() => { setEditingTrading(null); setShowTradingModal(true); }} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium whitespace-nowrap bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Plus className="w-4 h-4" /> New Trading</button>
                 </div>
               </div>
@@ -1943,7 +1760,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
         <TradingModal trading={editingTrading} onClose={() => { setShowTradingModal(false); setEditingTrading(null); }}
           onSaved={() => { setShowTradingModal(false); setEditingTrading(null); loadAll(); }} />
       )}
-      {/* Expenses list first, Log Expense after it: opened from inside the list, the log form is the
+      {/* Expenses list first, voucher form after it: opened from inside the list, the voucher form is the
           later sibling and so sits on top of it. */}
       {expensesFor && (
         <ExpensesModal target={expensesFor} reloadKey={expensesReload}
@@ -1952,7 +1769,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
           onChanged={() => loadAll({ silent: true })} />
       )}
       {logExpense && (
-        <LogExpenseModal projects={projects} tradings={tradings} facilities={facilities} initialTarget={logExpense.target}
+        <DisbursementVoucherModal api={aFetch} projects={projects} tradings={tradings} facilities={facilities}
+          initialTarget={logExpense.target} initialPoId={logExpense.poId ?? null}
           onClose={() => setLogExpense(null)}
           onSaved={() => { setLogExpense(null); setExpensesReload(n => n + 1); loadAll({ silent: true }); }} />
       )}

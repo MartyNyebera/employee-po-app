@@ -1092,6 +1092,57 @@ async function runMigrations() {
       console.log('✅ expenses + expense_allocations tables ready');
     } catch (err) { console.log('ℹ️ expenses/expense_allocations skipped:', err.message); }
 
+
+    // ============== DISBURSEMENT VOUCHERS: PO payments + payment details ==============
+    // A voucher IS the existing `expenses` row (EXP-YYYY-NNNN) — Kimoel's single cash-out document.
+    // It already pays EXPENSES through expense_allocations above. It now also pays SUPPLIER INVOICES:
+    // voucher_po_payments is a second kind of line, against a purchase order. Existing vouchers are
+    // simply vouchers with expense lines only: no migration of their rows, no renumbering.
+    //
+    // THE RULE THAT MATTERS: a PO payment is NOT spend. A PO's cost already counts toward its
+    // project / trading / facility through its purchase request (prSpendCte), so counting the cash that
+    // later settles that PO as well would charge the same peso twice. That is enforced structurally,
+    // not by convention: PO payments live in their OWN table, and every spend CTE reads
+    // expense_allocations only. Nothing here touches allocSpendCte, prSpendCte or the /spend endpoints.
+    //
+    // What a voucher still must do is balance: its total is the sum of BOTH kinds of line, checked by
+    // the same deferred trigger below, in whole centavos.
+    //
+    // What is owed per PO is DERIVED on read (PO amount - non-voided payments), never stored.
+    // There is no void column here: a payment line is voided by voiding its voucher, which is what
+    // makes "void the voucher" reverse its payables and its spend in the one write.
+    try {
+      await query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS payment_mode TEXT`);
+      await query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS check_no TEXT`);
+      await query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS bank TEXT`);
+      await query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS check_date DATE`);
+      // Existing rows are all NULL here, so both constraints validate trivially.
+      await query(`DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'expenses_payment_mode_check') THEN
+          ALTER TABLE expenses ADD CONSTRAINT expenses_payment_mode_check
+            CHECK (payment_mode IS NULL OR payment_mode IN ('cash', 'check', 'bank_transfer'));
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'expenses_check_details_need_check') THEN
+          ALTER TABLE expenses ADD CONSTRAINT expenses_check_details_need_check
+            CHECK (payment_mode = 'check' OR (check_no IS NULL AND bank IS NULL AND check_date IS NULL));
+        END IF;
+      END $$`);
+      await query(`
+        CREATE TABLE IF NOT EXISTS voucher_po_payments (
+          id BIGSERIAL PRIMARY KEY,
+          expense_id BIGINT NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+          -- RESTRICT: a purchase order that has been paid against cannot be deleted out from under
+          -- the payments. purchase_orders.id is TEXT, hence TEXT here.
+          purchase_order_id TEXT NOT NULL REFERENCES purchase_orders(id) ON DELETE RESTRICT,
+          amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await query(`CREATE INDEX IF NOT EXISTS idx_voucher_po_payments_expense ON voucher_po_payments(expense_id)`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_voucher_po_payments_po ON voucher_po_payments(purchase_order_id)`);
+      console.log('✅ disbursement vouchers ready (payment details + voucher_po_payments)');
+    } catch (err) { console.log('ℹ️ disbursement voucher tables skipped:', err.message); }
+
     // DB-LEVEL balance guard: allocations must sum to the parent's amount. A plain CHECK cannot see
     // across rows, so this is a CONSTRAINT TRIGGER — and DEFERRABLE INITIALLY DEFERRED, which is
     // what makes it usable: the write transaction inserts the parent and its lines one statement at
@@ -1099,9 +1150,10 @@ async function runMigrations() {
     // checks the sum before writing; this is the backstop that makes an unbalanced expense
     // impossible even from psql or a future endpoint that forgets.
     try {
+      const hasPo = (await query(`SELECT to_regclass('voucher_po_payments') AS t`)).rows[0].t !== null;
       await query(`
         CREATE OR REPLACE FUNCTION expense_balance_check() RETURNS trigger AS $fn$
-        DECLARE eid BIGINT; total NUMERIC(14,2); alloc NUMERIC(14,2);
+        DECLARE eid BIGINT; total NUMERIC(14,2); alloc NUMERIC(14,2); po_paid NUMERIC(14,2);
         BEGIN
           IF TG_TABLE_NAME = 'expenses' THEN
             IF TG_OP = 'DELETE' THEN eid := OLD.id; ELSE eid := NEW.id; END IF;
@@ -1112,8 +1164,15 @@ async function runMigrations() {
           -- Parent already gone (ON DELETE CASCADE removed its lines): nothing left to balance.
           IF total IS NULL THEN RETURN NULL; END IF;
           SELECT COALESCE(SUM(amount), 0) INTO alloc FROM expense_allocations WHERE expense_id = eid;
-          IF alloc <> total THEN
-            RAISE EXCEPTION 'expense % is %, but its allocations total % — they must be equal', eid, total, alloc
+          -- A voucher's total is its expense lines PLUS its PO-payment lines.
+          ${hasPo
+            ? 'SELECT COALESCE(SUM(amount), 0) INTO po_paid FROM voucher_po_payments WHERE expense_id = eid;'
+            : 'po_paid := 0;'}
+          -- Compared in whole centavos, as the API does, so no NUMERIC subtlety can pass a voucher a
+          -- centavo out. A voucher with expense lines only has po_paid = 0 and is checked exactly as before.
+          IF ROUND(alloc * 100)::bigint + ROUND(po_paid * 100)::bigint <> ROUND(total * 100)::bigint THEN
+            RAISE EXCEPTION 'voucher % is %, but its lines total % (expenses %, PO payments %) — they must be equal',
+                            eid, total, alloc + po_paid, alloc, po_paid
               USING ERRCODE = 'check_violation';
           END IF;
           RETURN NULL;
@@ -1122,6 +1181,7 @@ async function runMigrations() {
       for (const [name, tbl, ev] of [
         ['trg_expense_alloc_balance', 'expense_allocations', 'INSERT OR UPDATE OR DELETE'],
         ['trg_expense_amount_balance', 'expenses', 'INSERT OR UPDATE'],
+        ...(hasPo ? [['trg_voucher_po_balance', 'voucher_po_payments', 'INSERT OR UPDATE OR DELETE']] : []),
       ]) {
         await query(`DO $$ BEGIN
           IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = '${name}') THEN
@@ -4143,6 +4203,13 @@ app.delete('/api/purchase-orders/:id', requireRole(['admin','purchasing','office
   try {
     console.log(`🗑️  Deleting purchase order ${req.params.id}`);
     
+    // voucher_po_payments is ON DELETE RESTRICT, so the database would refuse this anyway; say why
+    // in words rather than returning a foreign-key error. Voided vouchers count too: their payment
+    // lines remain on the record.
+    const paidAgainst = await query('SELECT COUNT(*)::int AS n FROM voucher_po_payments WHERE purchase_order_id = $1', [req.params.id]);
+    if (paidAgainst.rows[0].n > 0) {
+      return res.status(409).json({ error: `This purchase order has ${paidAgainst.rows[0].n} payment line(s) on disbursement vouchers, so it can no longer be deleted` });
+    }
     const result = await query('DELETE FROM purchase_orders WHERE id = $1', [req.params.id]);
     
     if (result.rowCount === 0) {
@@ -9276,6 +9343,8 @@ function mapAllocation(r) {
     projectId: r.project_id, tradingId: r.trading_id, facilityId: r.facility_id,
     amount: money2(r.amount), expenseTotal: money2(r.expense_total),
     isSplit: Number(r.alloc_count) > 1, allocationCount: Number(r.alloc_count),
+    // How many purchase orders this voucher also pays — voiding it from a target's list reverses those too.
+    poPaymentCount: Number(r.po_payment_count ?? 0),
     targets: r.targets || null,
     description: r.description, expenseDate: r.expense_date, payee: r.payee, referenceNo: r.reference_no,
     createdBy: r.created_by, createdAt: r.created_at,
@@ -9303,6 +9372,7 @@ const ALLOCATION_SELECT = `
          e.payee, e.reference_no, e.created_by, e.created_at,
          e.voided_at, e.voided_by, e.void_reason,
          (SELECT COUNT(*) FROM expense_allocations a2 WHERE a2.expense_id = e.id) AS alloc_count,
+         (SELECT COUNT(*) FROM voucher_po_payments v2 WHERE v2.expense_id = e.id) AS po_payment_count,
 ${ALLOC_TARGETS_SUMMARY}
     FROM expense_allocations ea
     JOIN expenses e ON e.id = ea.expense_id`;
@@ -9374,8 +9444,10 @@ function validateExpenseParent(b) {
 // Normalises the allocation lines and proves they balance. Money is compared in CENTAVOS as integers
 // — summing 0.1-style floats and comparing to a total is exactly how a split silently fails to add
 // up by a centavo.
-function validateAllocations(raw, totalStr) {
-  if (!Array.isArray(raw) || raw.length === 0) return { error: 'At least one allocation line is required' };
+// The per-line half of the split validation: shape, amount and exactly-one-target for each line.
+// Split out of validateAllocations so a voucher that mixes expense lines with PO payments reads its
+// expense lines through the SAME code, not a copy that could drift.
+function parseAllocationLines(raw) {
   if (raw.length > 50) return { error: 'Too many allocation lines (50 max)' };
   const lines = [];
   let centavos = 0;
@@ -9393,11 +9465,116 @@ function validateAllocations(raw, totalStr) {
     lines.push({ kind: picked[0], targetId: String(a[`${picked[0]}Id`]).trim(), amountStr: amtStr });
     centavos += Math.round(Number(amtStr) * 100);
   }
+  return { lines, centavos };
+}
+
+function validateAllocations(raw, totalStr) {
+  if (!Array.isArray(raw) || raw.length === 0) return { error: 'At least one allocation line is required' };
+  const parsed = parseAllocationLines(raw);
+  if (parsed.error) return parsed;
   const totalCentavos = Math.round(Number(totalStr) * 100);
-  if (centavos !== totalCentavos) {
-    return { error: `Allocations total ${(centavos / 100).toFixed(2)} but the expense is ${(totalCentavos / 100).toFixed(2)} — they must be equal` };
+  if (parsed.centavos !== totalCentavos) {
+    return { error: `Allocations total ${(parsed.centavos / 100).toFixed(2)} but the expense is ${(totalCentavos / 100).toFixed(2)} — they must be equal` };
   }
-  return { lines };
+  return { lines: parsed.lines };
+}
+
+// ---------------------------------------------------------------------------------------------------
+// DISBURSEMENT VOUCHER additions. A voucher is the expense above; these validate the two things it
+// gained — payment details on the header, and PO-payment lines beside the expense lines.
+// ---------------------------------------------------------------------------------------------------
+const PAYMENT_MODES = ['cash', 'check', 'bank_transfer'];
+
+// Payment details. All optional (an expense-only voucher is valid exactly as it always was), but
+// they hang together: a check number only means something on a check payment, and a check payment
+// without its number is not a record anyone can reconcile against the bank.
+function validateVoucherHeader(b) {
+  const optional = (v, max) => { const s = String(v ?? '').trim(); return s ? s.slice(0, max) : null; };
+  const paymentMode = optional(b.paymentMode, 20);
+  if (paymentMode && !PAYMENT_MODES.includes(paymentMode)) {
+    return { error: "Payment mode must be 'cash', 'check' or 'bank_transfer'" };
+  }
+  const checkNo = optional(b.checkNo, 50);
+  const bank = optional(b.bank, 100);
+  const checkDateRaw = String(b.checkDate ?? '').trim();
+  let checkDate = null;
+  if (checkDateRaw) {
+    const d = /^\d{4}-\d{2}-\d{2}$/.test(checkDateRaw) ? new Date(`${checkDateRaw}T00:00:00Z`) : null;
+    // A check date MAY be in the future: post-dated checks are ordinary. Only a real calendar date is required.
+    if (!d || isNaN(d) || d.toISOString().slice(0, 10) !== checkDateRaw) return { error: 'Check date must be a valid date (YYYY-MM-DD)' };
+    checkDate = checkDateRaw;
+  }
+  if (paymentMode !== 'check' && (checkNo || bank || checkDate)) {
+    return { error: 'Check number, bank and check date only apply to a check payment' };
+  }
+  if (paymentMode === 'check' && !checkNo) return { error: 'A check payment needs the check number' };
+  return { paymentMode, checkNo, bank, checkDate };
+}
+
+// The lines of a voucher: expense lines, PO-payment lines, or both, and at least one. With NO PO
+// lines this is the original validation untouched, so an expense-only voucher is checked exactly as
+// before. With PO lines, the two kinds together must equal the voucher total — in integer centavos,
+// for the same reason the expense split always has been.
+function validateVoucherLines(b, totalStr) {
+  const rawP = b.poPayments;
+  if (rawP !== undefined && rawP !== null && !Array.isArray(rawP)) return { error: 'poPayments must be a list' };
+  if (!Array.isArray(rawP) || rawP.length === 0) {
+    const r = validateAllocations(b.allocations, totalStr);
+    return r.error ? r : { lines: r.lines, poLines: [] };
+  }
+  if (rawP.length > 50) return { error: 'Too many PO payment lines (50 max)' };
+
+  const poLines = [];
+  const seen = new Set();
+  let poCentavos = 0;
+  for (const [i, p] of rawP.entries()) {
+    const n = i + 1;
+    const id = String(p?.purchaseOrderId ?? '').trim();
+    if (!id) return { error: `PO line ${n}: choose a purchase order` };
+    // The same PO twice on one voucher is a slip, not a split: one voucher, one amount per PO.
+    if (seen.has(id)) return { error: `PO line ${n}: that purchase order is already on this voucher — combine them into one line` };
+    seen.add(id);
+    const amtStr = String(p?.amount ?? '').trim();
+    if (!/^\d+(\.\d{1,2})?$/.test(amtStr)) return { error: `PO line ${n}: amount must be a peso amount with up to 2 decimals` };
+    if (!(Number(amtStr) > 0)) return { error: `PO line ${n}: amount must be greater than zero` };
+    poLines.push({ purchaseOrderId: id, amountStr: amtStr });
+    poCentavos += Math.round(Number(amtStr) * 100);
+  }
+
+  const rawA = b.allocations;
+  if (rawA !== undefined && rawA !== null && !Array.isArray(rawA)) return { error: 'allocations must be a list' };
+  let lines = [], allocCentavos = 0;
+  if (Array.isArray(rawA) && rawA.length > 0) {
+    const parsed = parseAllocationLines(rawA);
+    if (parsed.error) return parsed;
+    lines = parsed.lines; allocCentavos = parsed.centavos;
+  }
+  const totalCentavos = Math.round(Number(totalStr) * 100);
+  if (poCentavos + allocCentavos !== totalCentavos) {
+    return { error: `The lines total ${((poCentavos + allocCentavos) / 100).toFixed(2)} (PO payments ${(poCentavos / 100).toFixed(2)}, expenses ${(allocCentavos / 100).toFixed(2)}) but the voucher is ${(totalCentavos / 100).toFixed(2)} — they must be equal` };
+  }
+  return { lines, poLines };
+}
+
+// Statuses a purchase order can no longer be paid against. 'rejected' is the existing rule for a
+// PO that does not count (prSpendCte). 'cancelled' is added here: a cancelled order owes the
+// supplier nothing, so a NEW payment against it is refused and it drops out of the picker.
+const UNPAYABLE_PO_STATUSES = ['rejected', 'cancelled'];
+
+const PO_PAYMENT_SELECT = `
+  SELECT vp.id, vp.expense_id, vp.purchase_order_id, vp.amount,
+         po.po_number, po.status AS po_status, po.amount AS po_total,
+         COALESCE(s.name, po.client) AS supplier
+    FROM voucher_po_payments vp
+    JOIN purchase_orders po ON po.id = vp.purchase_order_id
+    LEFT JOIN suppliers s ON s.id = po.supplier_id`;
+
+function mapPoPayment(r) {
+  return r && {
+    id: Number(r.id), expenseId: Number(r.expense_id), purchaseOrderId: r.purchase_order_id,
+    poNumber: r.po_number, supplier: r.supplier ?? null,
+    poTotal: money2(r.po_total), amount: money2(r.amount), poStatus: r.po_status,
+  };
 }
 
 // Direct entry, no approval step (Accounting + Admin/owner). Who logged it comes from the login,
@@ -9409,7 +9586,9 @@ app.post('/api/expenses', requireRole(['owner', 'admin', 'accounting']), async (
   const b = req.body || {};
   const v = validateExpenseParent(b);
   if (v.error) return res.status(400).json({ error: v.error });
-  const a = validateAllocations(b.allocations, v.amountStr);
+  const h = validateVoucherHeader(b);
+  if (h.error) return res.status(400).json({ error: h.error });
+  const a = validateVoucherLines(b, v.amountStr);
   if (a.error) return res.status(400).json({ error: a.error });
 
   const client = await getClient();
@@ -9420,6 +9599,20 @@ app.post('/api/expenses', requireRole(['owner', 'admin', 'accounting']), async (
     for (const l of a.lines) {
       const t = await client.query(`SELECT id FROM ${TARGET_TABLE[l.kind]} WHERE id = $1`, [l.targetId]);
       if (!t.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: `${l.kind} not found: ${l.targetId}` }); }
+    }
+    // Every PO being paid must exist and be one a payment can still be made against. Overpaying is
+    // NOT checked here on purpose: it is allowed, and shown as 'overpaid' on the payable instead.
+    for (const l of a.poLines) {
+      const po = await client.query(
+        `SELECT id, po_number, status, COALESCE(order_type, 'purchase') AS order_type FROM purchase_orders WHERE id = $1`,
+        [l.purchaseOrderId]);
+      const row = po.rows[0];
+      if (!row) { await client.query('ROLLBACK'); return res.status(404).json({ error: `purchase order not found: ${l.purchaseOrderId}` }); }
+      if (row.order_type === 'sales') { await client.query('ROLLBACK'); return res.status(400).json({ error: `${row.po_number} is a sales order, not a purchase order` }); }
+      if (UNPAYABLE_PO_STATUSES.includes(row.status)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `${row.po_number} is ${row.status} — nothing is payable against it` });
+      }
     }
     // The voucher number, retried on collision. The read-then-increment recipe is inherently racy
     // and expenses_serial_no_key is what catches it — but here the insert is inside a transaction
@@ -9434,10 +9627,12 @@ app.post('/api/expenses', requireRole(['owner', 'admin', 'accounting']), async (
       await client.query('SAVEPOINT serial_try');
       try {
         const parent = await client.query(
-          `INSERT INTO expenses (serial_no, description, amount, expense_date, payee, reference_no, created_by, created_by_id)
-           VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8) RETURNING id`,
+          `INSERT INTO expenses (serial_no, description, amount, expense_date, payee, reference_no, created_by, created_by_id,
+                                 payment_mode, check_no, bank, check_date)
+           VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8, $9, $10, $11, $12::date) RETURNING id`,
           [serialNo, v.description, v.amountStr, v.expenseDate, v.payee, v.referenceNo,
-           req.user?.name || null, req.user?.id != null ? String(req.user.id) : null]
+           req.user?.name || null, req.user?.id != null ? String(req.user.id) : null,
+           h.paymentMode, h.checkNo, h.bank, h.checkDate]
         );
         expenseId = parent.rows[0].id;
         await client.query('RELEASE SAVEPOINT serial_try');
@@ -9459,11 +9654,19 @@ app.post('/api/expenses', requireRole(['owner', 'admin', 'accounting']), async (
          l.kind === 'facility' ? l.targetId : null, l.amountStr]
       );
     }
+    for (const l of a.poLines) {
+      await client.query(
+        `INSERT INTO voucher_po_payments (expense_id, purchase_order_id, amount) VALUES ($1, $2, $3)`,
+        [expenseId, l.purchaseOrderId, l.amountStr]);
+    }
     await client.query('COMMIT');
     const r = await query(`${ALLOCATION_SELECT} WHERE ea.expense_id = $1 ORDER BY ea.id ASC`, [expenseId]);
-    res.status(201).json({ expenseId: Number(expenseId), serialNo, allocations: r.rows.map(mapAllocation) });
+    const pp = await query(`${PO_PAYMENT_SELECT} WHERE vp.expense_id = $1 ORDER BY vp.id ASC`, [expenseId]);
+    res.status(201).json({ expenseId: Number(expenseId), serialNo, allocations: r.rows.map(mapAllocation), poPayments: pp.rows.map(mapPoPayment) });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
+    // A purchase order deleted between the check above and the insert.
+    if (err.code === '23503') return res.status(409).json({ error: 'A purchase order on this voucher no longer exists — reload and try again' });
     // The deferred balance trigger and the one-target CHECK both surface as 23514.
     if (err.code === '23514') return res.status(400).json({ error: err.message });
     console.error('expense create error:', err);
@@ -9491,7 +9694,8 @@ app.post('/api/expenses/:id/void', requireRole(['owner', 'admin', 'accounting'])
     );
     await client.query('COMMIT');
     const r = await query(`${ALLOCATION_SELECT} WHERE ea.expense_id = $1 ORDER BY ea.id ASC`, [req.params.id]);
-    res.json({ expenseId: Number(req.params.id), allocations: r.rows.map(mapAllocation) });
+    const pp = await query(`${PO_PAYMENT_SELECT} WHERE vp.expense_id = $1 ORDER BY vp.id ASC`, [req.params.id]);
+    res.json({ expenseId: Number(req.params.id), allocations: r.rows.map(mapAllocation), poPayments: pp.rows.map(mapPoPayment) });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     res.status(500).json({ error: err.message });
@@ -9571,6 +9775,7 @@ app.get('/api/expenses', requireRole(['owner', 'admin', 'accounting']), async (r
     const rows = await query(`
       SELECT e.id, e.serial_no, to_char(e.expense_date, 'YYYY-MM-DD') AS expense_date,
              e.description, e.amount, e.payee, e.reference_no,
+             e.payment_mode, e.check_no, e.bank, to_char(e.check_date, 'YYYY-MM-DD') AS check_date,
              e.created_by, e.created_at, e.voided_at, e.voided_by, e.void_reason,
              (SELECT COUNT(*) FROM expense_allocations a2 WHERE a2.expense_id = e.id) AS alloc_count,
       ${ALLOC_TARGETS_SUMMARY},
@@ -9584,7 +9789,14 @@ app.get('/api/expenses', requireRole(['owner', 'admin', 'accounting']), async (r
                 LEFT JOIN projects   p3 ON p3.id = a3.project_id
                 LEFT JOIN tradings   t3 ON t3.id = a3.trading_id
                 LEFT JOIN facilities f3 ON f3.id = a3.facility_id
-               WHERE a3.expense_id = e.id) AS allocations
+               WHERE a3.expense_id = e.id) AS allocations,
+             (SELECT json_agg(json_build_object(
+                        'id', v3.id, 'purchaseOrderId', v3.purchase_order_id, 'poNumber', po3.po_number,
+                        'supplier', COALESCE(s3.name, po3.client), 'poTotal', po3.amount, 'amount', v3.amount) ORDER BY v3.id)
+                FROM voucher_po_payments v3
+                JOIN purchase_orders po3 ON po3.id = v3.purchase_order_id
+                LEFT JOIN suppliers s3 ON s3.id = po3.supplier_id
+               WHERE v3.expense_id = e.id) AS po_payments
              ${targetCol ? ', h.amt AS allocated_here' : ''}
         FROM expenses e${hereJoin}
        ${whereSql}
@@ -9602,6 +9814,11 @@ app.get('/api/expenses', requireRole(['owner', 'admin', 'accounting']), async (r
         allocationCount: Number(r.alloc_count), isSplit: Number(r.alloc_count) > 1,
         targets: r.targets || null,
         allocations: (r.allocations || []).map(a => ({ ...a, amount: money2(a.amount) })),
+        // Payment details and the PO-payment lines. Absent on an expense-only voucher, so those rows
+        // read exactly as they always did, plus null/empty for the new fields.
+        paymentMode: r.payment_mode ?? null, checkNo: r.check_no ?? null, bank: r.bank ?? null, checkDate: r.check_date ?? null,
+        poPayments: (r.po_payments || []).map(p => ({ ...p, poTotal: money2(p.poTotal), amount: money2(p.amount) })),
+        poPaymentCount: (r.po_payments || []).length,
         payee: r.payee, referenceNo: r.reference_no,
         createdBy: r.created_by, createdAt: r.created_at,
         status: r.voided_at ? 'voided' : 'active',
@@ -9616,6 +9833,159 @@ app.get('/api/expenses', requireRole(['owner', 'admin', 'accounting']), async (r
     });
   } catch (err) {
     console.error('expense history error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================== PAYABLES (derived on read) ==============================
+// What Kimoel still owes each supplier, per purchase order. NOTHING here is stored: the amount owed
+// is the PO's own amount, the paid figure is the sum of its non-voided voucher payments, and the
+// balance and status fall out of those two on every read — so a voided voucher puts the balance
+// back with no second write and nothing to drift.
+//
+// THE AMOUNT OWED is purchase_orders.amount. Reconciled against all 23 real POs, it is the
+// VAT-INCLUSIVE grand total as printed on the PO: it equals the purchase request's ex-VAT
+// final_total x 1.12 to the centavo on every one (KTCI-2026-0021: 9,200.00 ex -> 10,304.00). That
+// is the right basis for "what the supplier will actually be paid", and deliberately NOT the
+// ex-VAT figure the spend views use for cost.
+//
+// Same statuses and the same +/-0.004 tolerance as billing receivables, so the two read alike:
+// unpaid, partial, paid, and 'overpaid' (more paid than owed — allowed, never refused, but shown so
+// a keying slip is noticed).
+const payablesRoles = ['owner', 'admin', 'accounting'];
+
+// A due date, only when the terms genuinely state one. Anything else is null, because a guessed
+// date would flag a payable overdue on no evidence.
+//
+// WHERE THE CLOCK STARTS matters. 21 of the 23 real POs say "30 days from receipt/acceptance":
+// net 30 counted from when the goods were received, not from the PO date. Counting from the PO date
+// would put the due date before the goods arrived and show an on-time payable as overdue. So when
+// the terms name receipt/delivery/acceptance the clock starts at the received date (null if not yet
+// received — nothing is due yet), and otherwise at the PO date.
+function derivePoDueDate(terms, poDate, receivedDate) {
+  const t = String(terms || '').trim().toLowerCase();
+  if (!t) return null;
+  const isDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d || ''));
+  // Split or milestone terms ("50% downpayment, 50% balance upon completion") have no single due date.
+  if (/%|\bdp\b|down\s*-?\s*payment|split|milestone|progress|upon\s+completion|balance/.test(t)) return null;
+  const fromReceipt = /\b(from|after|upon|on)\b[^,;]*\b(receipt|receiving|received|delivery|acceptance|invoice)\b/.test(t);
+  if (/\b(cod|cash on delivery)\b/.test(t)) return isDate(receivedDate) ? receivedDate : null;
+  const m = /\b(\d{1,3})\s*(?:calendar\s+)?days?\b/.exec(t) || /\bnet\s*[-/ ]?\s*(\d{1,3})\b/.exec(t);
+  if (!m) return null;
+  const days = Number(m[1]);
+  if (!Number.isFinite(days) || days <= 0 || days > 365) return null;
+  const anchor = fromReceipt ? receivedDate : poDate;
+  if (!isDate(anchor)) return null;
+  const d = new Date(`${anchor}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+const PAYABLE_SELECT = `
+  SELECT po.id, po.po_number, po.status AS po_status, po.payment_terms, po.supplier_id,
+         COALESCE(s.name, po.client) AS supplier,
+         po.amount AS po_total,
+         to_char(COALESCE(po.doc_date, po.created_date), 'YYYY-MM-DD')      AS po_date,
+         to_char(po.received_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD')   AS received_date,
+         to_char((NOW() AT TIME ZONE 'Asia/Manila')::date, 'YYYY-MM-DD')    AS today,
+         COALESCE(paid.paid, 0) AS paid_total, COALESCE(paid.n, 0) AS payment_count
+    FROM purchase_orders po
+    LEFT JOIN suppliers s ON s.id = po.supplier_id
+    LEFT JOIN (SELECT vp.purchase_order_id, SUM(vp.amount) AS paid, COUNT(*) AS n
+                 FROM voucher_po_payments vp
+                 JOIN expenses e ON e.id = vp.expense_id
+                WHERE e.voided_at IS NULL
+                GROUP BY vp.purchase_order_id) paid ON paid.purchase_order_id = po.id
+   WHERE COALESCE(po.order_type, 'purchase') <> 'sales'`;
+
+function mapPayable(r) {
+  // A rejected or cancelled order owes nothing. If money has nevertheless gone out against it, the
+  // 0 owed makes that read as an overpayment — which is exactly what it is.
+  const unpayable = UNPAYABLE_PO_STATUSES.includes(r.po_status);
+  const owed = unpayable ? 0 : Number(r.po_total ?? 0);
+  const paid = Number(r.paid_total ?? 0);
+  const balance = biRound2(owed - paid);
+  const status = balance < -0.004 ? 'overpaid'
+    : balance <= 0.004 ? 'paid'
+    : paid > 0.004 ? 'partial'
+    : 'unpaid';
+  const dueDate = unpayable ? null : derivePoDueDate(r.payment_terms, r.po_date, r.received_date);
+  const overdue = !unpayable && balance > 0.004 && !!dueDate && dueDate < r.today;
+  return {
+    id: r.id, poNumber: r.po_number, supplier: r.supplier ?? null, supplierId: r.supplier_id ?? null,
+    poDate: r.po_date, receivedDate: r.received_date ?? null, poStatus: r.po_status, unpayable,
+    paymentTerms: r.payment_terms ?? null,
+    // The PO's own printed total, always. For a rejected/cancelled order the AMOUNT OWED is 0 (so the
+    // balance reads as an overpayment if money went out) but the document still has its total.
+    poTotal: Number(r.po_total ?? 0).toFixed(2),
+    paidTotal: paid.toFixed(2), balance: balance.toFixed(2),
+    overpaidAmount: balance < -0.004 ? biRound2(-balance).toFixed(2) : '0.00',
+    paymentCount: Number(r.payment_count ?? 0),
+    status, overdue, dueDate,
+    amountOverdue: overdue ? balance.toFixed(2) : '0.00',
+    payments: [],
+  };
+}
+
+app.get('/api/payables', requireRole(payablesRoles), async (req, res) => {
+  try {
+    const r = await query(`${PAYABLE_SELECT} ORDER BY COALESCE(po.doc_date, po.created_date) DESC, po.po_number DESC`);
+    // An order that cannot be paid is listed only if money has already gone out against it, so a
+    // payment to a cancelled order is never invisible.
+    let rows = r.rows.map(mapPayable).filter(x => !x.unpayable || x.paymentCount > 0);
+
+    const supplierId = String(req.query.supplierId || '').trim();
+    if (supplierId) rows = rows.filter(x => x.supplierId === supplierId);
+    const q = String(req.query.q || '').trim().toLowerCase();
+    if (q) rows = rows.filter(x => `${x.poNumber} ${x.supplier || ''}`.toLowerCase().includes(q));
+    // The voucher form's picker: only orders a NEW payment may be made against.
+    if (String(req.query.payable || '') === '1') rows = rows.filter(x => !x.unpayable);
+
+    // The summary describes the set BEFORE the status filter, so the totals and the filter chips
+    // stay put while someone narrows the table. Outstanding sums POSITIVE balances only: an overpaid
+    // order owes nothing, and letting its negative balance net off another supplier's debt would
+    // hide both.
+    const sum = (xs, f) => xs.reduce((n, x) => n + f(x), 0);
+    const summary = {
+      count: rows.length,
+      outstanding: sum(rows, x => Math.max(Number(x.balance), 0)).toFixed(2),
+      overdueCount: rows.filter(x => x.overdue).length,
+      overdueAmount: sum(rows.filter(x => x.overdue), x => Number(x.balance)).toFixed(2),
+      overpaidCount: rows.filter(x => x.status === 'overpaid').length,
+      overpaidAmount: sum(rows, x => Number(x.overpaidAmount)).toFixed(2),
+      unpaidCount: rows.filter(x => x.status === 'unpaid').length,
+      partialCount: rows.filter(x => x.status === 'partial').length,
+      paidCount: rows.filter(x => x.status === 'paid').length,
+    };
+
+    const status = String(req.query.status || '').trim().toLowerCase();
+    if (status === 'overdue') rows = rows.filter(x => x.overdue);
+    else if (['unpaid', 'partial', 'paid', 'overpaid'].includes(status)) rows = rows.filter(x => x.status === status);
+
+    // Which vouchers paid each order — every line, voided ones included and flagged, so the history
+    // shows a reversed payment instead of quietly omitting it.
+    if (rows.length) {
+      const pays = await query(
+        `SELECT vp.purchase_order_id, vp.id AS payment_id, vp.amount, e.id AS voucher_id, e.serial_no,
+                to_char(e.expense_date, 'YYYY-MM-DD') AS paid_on, e.payment_mode, e.check_no,
+                e.voided_at, e.void_reason
+           FROM voucher_po_payments vp JOIN expenses e ON e.id = vp.expense_id
+          WHERE vp.purchase_order_id = ANY($1)
+          ORDER BY e.expense_date, vp.id`, [rows.map(x => x.id)]);
+      const by = new Map();
+      for (const p of pays.rows) {
+        if (!by.has(p.purchase_order_id)) by.set(p.purchase_order_id, []);
+        by.get(p.purchase_order_id).push({
+          paymentId: Number(p.payment_id), voucherId: Number(p.voucher_id), serialNo: p.serial_no,
+          paidOn: p.paid_on, amount: Number(p.amount).toFixed(2), paymentMode: p.payment_mode ?? null,
+          checkNo: p.check_no ?? null, voidedAt: p.voided_at ?? null, voidReason: p.void_reason ?? null,
+        });
+      }
+      for (const x of rows) x.payments = by.get(x.id) || [];
+    }
+    res.json({ payables: rows, summary });
+  } catch (err) {
+    console.error('payables error:', err);
     res.status(500).json({ error: err.message });
   }
 });
