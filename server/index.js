@@ -1909,6 +1909,23 @@ async function runMigrations() {
       console.log('✅ attendance_days table ready');
     } catch (err) { console.log('ℹ️ attendance_days table skipped:', err.message); }
 
+    // ===== Missed-scan fixes. Additive columns only. =====
+    // MANUAL PUNCHES live in attendance_punches beside the scanner's rows, marked source = 'manual'
+    // with who/why (created_at is the "when"). A scanner row is never edited; a manual one is never
+    // deleted either -- it is VOIDED (voided_at set), and every reader skips voided rows.
+    // break_excused is the per-day twin of late_excused: admin-set, not punch-derived, so the rebuild
+    // leaves it alone. It waives the personal-break DEDUCTION only; the punches and the recorded
+    // break stay exactly as they were.
+    try {
+      await query(`ALTER TABLE attendance_punches ADD COLUMN IF NOT EXISTS created_by TEXT`);
+      await query(`ALTER TABLE attendance_punches ADD COLUMN IF NOT EXISTS reason TEXT`);
+      await query(`ALTER TABLE attendance_punches ADD COLUMN IF NOT EXISTS voided_at TIMESTAMPTZ`);
+      await query(`ALTER TABLE attendance_punches ADD COLUMN IF NOT EXISTS voided_by TEXT`);
+      await query(`ALTER TABLE attendance_punches ADD COLUMN IF NOT EXISTS void_reason TEXT`);
+      await query(`ALTER TABLE attendance_days ADD COLUMN IF NOT EXISTS break_excused BOOLEAN NOT NULL DEFAULT false`);
+      console.log('✅ manual punch + break_excused columns ready');
+    } catch (err) { console.log('ℹ️ manual punch columns skipped:', err.message); }
+
     // ===== Attendance module — Phase 3 (review + lock). Additive, new tables only. =====
     // pay_periods: semi-monthly windows (1–15, 16–end). Locking a period freezes its days.
     // attendance_adjustments: an append-only audit log of every manual correction to a day
@@ -2374,6 +2391,57 @@ app.post('/api/auth/login', async (req, res) => {
 // requireAuth is explicit because this route is registered BEFORE the global
 // app.use('/api', requireAuth) further down — without it, req.user would be undefined and
 // requireRole would 403 every caller (including a valid admin).
+// Scheduled working days (Mon-Sat, not a holiday) whose punches look incomplete: exactly one punch, an
+// odd number of them, or a first punch after 12:00. Read straight from attendance_punches (VOIDED rows
+// ignored) because day rows only exist once someone clicks Rebuild -- an alert that waited for the
+// roll-up would not exist on the day it is meant to catch. Left out: days in a LOCKED period, and days
+// already dealt with by hand (any pinned IN/OUT/status, or a WFH day). A day fixed with "Add missed scan"
+// simply stops matching, so nothing needs clearing. TODAY is special: an odd count is normal while
+// someone is still working, so it only counts once it is past 20:00 Manila; a first punch after noon
+// counts straight away (that is the "scanned once on the way out" case). Looks back 31 days.
+const MISSED_SCAN_TODAY_AFTER = '20:00';
+async function missedScanAlerts() {
+  const r = await query(
+    `SELECT g.person_id, pe.full_name, to_char(g.d,'YYYY-MM-DD') AS work_date, g.n,
+            to_char(g.first_local,'HH24:MI') AS first_time, g.first_type,
+            (g.first_local::time > TIME '12:00') AS late_first,
+            COUNT(*) OVER()::int AS total
+       FROM (
+         SELECT person_id, (punched_at AT TIME ZONE 'Asia/Manila')::date AS d, COUNT(*)::int AS n,
+                MIN(punched_at AT TIME ZONE 'Asia/Manila') AS first_local,
+                (ARRAY_AGG(punch_type ORDER BY punched_at, id))[1] AS first_type
+           FROM attendance_punches
+          WHERE voided_at IS NULL
+            AND (punched_at AT TIME ZONE 'Asia/Manila')::date >= (NOW() AT TIME ZONE 'Asia/Manila')::date - 31
+          GROUP BY person_id, (punched_at AT TIME ZONE 'Asia/Manila')::date
+       ) g
+       JOIN persons pe ON pe.id = g.person_id
+      WHERE EXTRACT(DOW FROM g.d) <> 0
+        AND NOT EXISTS (SELECT 1 FROM holidays h WHERE h.holiday_date = g.d)
+        AND (pe.hired_on IS NULL OR g.d >= pe.hired_on)
+        AND (pe.last_day IS NULL OR g.d <= pe.last_day)
+        AND NOT EXISTS (SELECT 1 FROM attendance_days ad
+                         WHERE ad.person_id = g.person_id AND ad.work_date = g.d
+                           AND (ad.is_locked OR cardinality(ad.adjusted_fields) > 0 OR ad.is_wfh))
+        AND NOT EXISTS (SELECT 1 FROM pay_periods pp
+                         WHERE pp.status = 'locked' AND g.d BETWEEN pp.start_date AND pp.end_date)
+        AND ( g.first_local::time > TIME '12:00'
+              OR ( g.n % 2 = 1
+                   AND ( g.d < (NOW() AT TIME ZONE 'Asia/Manila')::date
+                         OR (NOW() AT TIME ZONE 'Asia/Manila')::time >= TIME '${MISSED_SCAN_TODAY_AFTER}' ) ) )
+      ORDER BY g.d DESC, pe.full_name
+      LIMIT 50`);
+  const items = r.rows.map(x => {
+    const why = [];
+    if (x.n === 1) why.push(`only one punch (${x.first_time}, logged as ${String(x.first_type || '').toUpperCase()})`);
+    else if (x.n % 2 === 1) why.push(`${x.n} punches — an IN or OUT is missing`);
+    if (x.late_first && x.n !== 1) why.push(`first punch after 12:00 (${x.first_time})`);
+    else if (x.late_first) why.push('after 12:00');
+    return { person_id: x.person_id, name: x.full_name, work_date: x.work_date, punches: x.n, why: why.join('; ') };
+  });
+  return { count: r.rows.length ? r.rows[0].total : 0, items };
+}
+
 app.get('/api/admin/queue-counts', requireAuth, requireRole(['admin']), async (req, res) => {
   try {
     const r = await query(
@@ -2432,12 +2500,17 @@ app.get('/api/admin/queue-counts', requireAuth, requireRole(['admin']), async (r
                     ELSE 0 END`);
       overdueInvoices = o.rows[0].n;
     } catch { /* leave it at 0 — the badges matter more than this card */ }
+    // Days that look like a scan was missed -- derived from the raw punches on every read, nothing
+    // stored. Isolated like the cards above.
+    let missedScans = { count: 0, items: [] };
+    try { missedScans = await missedScanAlerts(); } catch (e) { console.error('[missed-scans] skipped:', e.message); }
     res.json({
       purchaseRequests: row.purchase_requests,
       purchaseOrders: row.purchase_orders,
       withdrawals: row.withdrawals,
       overdueInvoices,
       graceNotices,
+      missedScans,
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -6013,7 +6086,7 @@ async function computePayroll(periodId) {
   // eligibility) through the period end. Manila minute-of-day for IN/OUT precomputed in SQL.
   const attMap = {};
   (await query(
-    `SELECT person_id, to_char(work_date,'YYYY-MM-DD') AS d, worked_minutes, ot_approved, early_ot_approved, late_excused, break_minutes,
+    `SELECT person_id, to_char(work_date,'YYYY-MM-DD') AS d, worked_minutes, ot_approved, early_ot_approved, late_excused, break_minutes, break_excused,
             CASE WHEN first_in IS NULL THEN NULL ELSE EXTRACT(EPOCH FROM ((first_in AT TIME ZONE 'Asia/Manila')::time)) / 60 END AS in_min,
             CASE WHEN last_out IS NULL THEN NULL ELSE EXTRACT(EPOCH FROM ((last_out AT TIME ZONE 'Asia/Manila')::time)) / 60 END AS out_min
        FROM attendance_days
@@ -6132,7 +6205,11 @@ async function computePayroll(periodId) {
             undertimeMin += ut;
             // Unpaid personal-business break minutes for the day (precomputed at rebuild from the
             // middle OUT→IN taps; a normal 2-tap day is 0). Docked via the deduction bucket below.
-            const brk = row && row.break_minutes != null ? Math.max(0, Math.round(Number(row.break_minutes))) : 0;
+            const brkRecorded = row && row.break_minutes != null ? Math.max(0, Math.round(Number(row.break_minutes))) : 0;
+            // "Excuse Break" (admin, per day) waives the DEDUCTION only -- the recorded break stays on
+            // the day. Like Excuse Late it is a forgiveness: undertime, OT and the rest are untouched.
+            const brkExcused = !!(row && row.break_excused) && brkRecorded > 0;
+            const brk = brkExcused ? 0 : brkRecorded;
             breakMin += brk;
             // LATE OT (after shift): only past the buffer — must stay ≥ shift end + ot_grace_hours,
             // then ALL time past shift end counts (not just past the buffer). Gated SOLELY by that
@@ -6151,6 +6228,9 @@ async function computePayroll(periodId) {
             earlyOtHours += earlyOt; lateOtHours += lateOt; otHours += oth;
             Object.assign(day, { kind: 'work', late_min: rawLate, counted_late_min: countedForDed, late_excused: excused, excused_late_min: excused ? counted : 0, undertime_min: ut, break_min: brk,
               ot_hours: round2(oth), early_ot_hours: round2(earlyOt), late_ot_hours: round2(lateOt) });
+            // Only an excused day carries the extra keys, so every other day's breakdown is
+            // byte-for-byte what it was before this feature.
+            if (brkExcused) Object.assign(day, { break_excused: true, excused_break_min: brkRecorded });
           }
         } else if (kind === 'absent') {
           absentDays++;
@@ -6601,6 +6681,7 @@ app.post('/api/attendance/scan', requireRole(['station']), async (req, res) => {
       `SELECT punch_type, punched_at, EXTRACT(EPOCH FROM (NOW() - punched_at)) AS age_sec
          FROM attendance_punches
         WHERE person_id = $1
+          AND voided_at IS NULL
           AND (punched_at AT TIME ZONE 'Asia/Manila')::date = (NOW() AT TIME ZONE 'Asia/Manila')::date
         ORDER BY punched_at DESC
         LIMIT 1`,
@@ -6723,7 +6804,8 @@ async function rebuildAttendanceDays(startDate, endDate) {
          MIN(punched_at) FILTER (WHERE punch_type = 'in')  AS first_in,
          MAX(punched_at) FILTER (WHERE punch_type = 'out') AS last_out
        FROM attendance_punches
-       WHERE (punched_at AT TIME ZONE 'Asia/Manila')::date BETWEEN $1 AND $2
+       WHERE voided_at IS NULL
+         AND (punched_at AT TIME ZONE 'Asia/Manila')::date BETWEEN $1 AND $2
        GROUP BY person_id, (punched_at AT TIME ZONE 'Asia/Manila')::date
      ) agg
      ON CONFLICT (person_id, work_date) DO UPDATE SET
@@ -6758,7 +6840,8 @@ async function rebuildAttendanceDays(startDate, endDate) {
             punch_type,
             EXTRACT(EPOCH FROM ((punched_at AT TIME ZONE 'Asia/Manila')::time)) / 60 AS min
        FROM attendance_punches
-      WHERE (punched_at AT TIME ZONE 'Asia/Manila')::date BETWEEN $1 AND $2
+      WHERE voided_at IS NULL
+        AND (punched_at AT TIME ZONE 'Asia/Manila')::date BETWEEN $1 AND $2
       ORDER BY person_id, punched_at ASC`,
     [startDate, endDate]
   );
@@ -7014,7 +7097,10 @@ app.get('/api/attendance/periods/:id/sheet', requireRole(attendanceReviewRoles),
       `SELECT ad.id, ad.person_id, to_char(ad.work_date,'YYYY-MM-DD') AS work_date,
               ad.first_in, ad.last_out, ad.worked_minutes, ad.break_minutes, ad.status, ad.flags,
               ad.pay_period_id, ad.is_locked, ad.is_adjusted, ad.ot_approved, ad.early_ot_approved, ad.late_excused,
-              ad.is_wfh,
+              ad.is_wfh, ad.break_excused,
+              (SELECT COUNT(*)::int FROM attendance_punches mp
+                WHERE mp.person_id = ad.person_id AND mp.source = 'manual' AND mp.voided_at IS NULL
+                  AND (mp.punched_at AT TIME ZONE 'Asia/Manila')::date = ad.work_date) AS manual_punch_count,
               p.full_name, p.department, p.position, p.ot_eligible
          FROM attendance_days ad
          JOIN persons p ON p.id = ad.person_id
@@ -7031,7 +7117,8 @@ app.get('/api/attendance/periods/:id/sheet', requireRole(attendanceReviewRoles),
               punch_type,
               to_char(punched_at AT TIME ZONE 'Asia/Manila', 'HH24:MI') AS t
          FROM attendance_punches
-        WHERE (punched_at AT TIME ZONE 'Asia/Manila')::date BETWEEN $1 AND $2
+        WHERE voided_at IS NULL
+          AND (punched_at AT TIME ZONE 'Asia/Manila')::date BETWEEN $1 AND $2
         ORDER BY person_id, punched_at ASC`,
       [period.start_date, period.end_date]
     );
@@ -7129,23 +7216,28 @@ app.get('/api/attendance/periods/:id/sheet', requireRole(attendanceReviewRoles),
 app.get('/api/attendance/days/:id/punches', requireRole(['admin']), async (req, res) => {
   try {
     const dr = await query(
-      `SELECT person_id, to_char(work_date,'YYYY-MM-DD') AS work_date, break_minutes FROM attendance_days WHERE id = $1`,
+      `SELECT person_id, to_char(work_date,'YYYY-MM-DD') AS work_date, break_minutes, break_excused, is_locked, adjusted_fields
+         FROM attendance_days WHERE id = $1`,
       [req.params.id]
     );
     const day = dr.rows[0];
     if (!day) return res.status(404).json({ error: 'Day not found' });
-    // All of that person's punches on the day's LOCAL (Manila) calendar date, in scan order.
+    // All of that person's punches on the day's LOCAL (Manila) calendar date, in scan order. VOIDED
+    // manual punches are listed too (flagged), so the log shows what was added and then taken back.
     const punches = await query(
       `SELECT id, punch_type, punched_at,
-              to_char(punched_at AT TIME ZONE 'Asia/Manila', 'HH24:MI') AS local_time, source
+              to_char(punched_at AT TIME ZONE 'Asia/Manila', 'HH24:MI') AS local_time, source,
+              created_at, created_by, reason, voided_at, voided_by, void_reason
          FROM attendance_punches
         WHERE person_id = $1
           AND (punched_at AT TIME ZONE 'Asia/Manila')::date = $2
-        ORDER BY punched_at ASC`,
+        ORDER BY punched_at ASC, id ASC`,
       [day.person_id, day.work_date]
     );
+    const locked = day.is_locked || await isDateInLockedPeriod(day.work_date);
     res.json({ day_id: Number(req.params.id), person_id: day.person_id, work_date: day.work_date,
-      break_minutes: day.break_minutes, punches: punches.rows });
+      break_minutes: day.break_minutes, break_excused: !!day.break_excused, locked,
+      pinned_fields: day.adjusted_fields || [], punches: punches.rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -7402,6 +7494,202 @@ app.post('/api/attendance/days/:id/excuse-late', requireRole(['admin']), async (
     );
     await client.query('COMMIT');
     res.json({ id: day.id, late_excused: excused });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Toggle a day's "Excuse Break" flag -- waives that day's personal-break DEDUCTION. ADMIN ONLY. The
+// twin of Excuse Late with one deliberate difference: it is refused on a locked day (frozen pay is
+// not changed behind a lock; unlock, set it, recompute). The punches, the break minutes and the
+// break shown on the sheet stay exactly as recorded -- payroll just does not charge for them.
+app.post('/api/attendance/days/:id/excuse-break', requireRole(['admin']), async (req, res) => {
+  const excused = !!(req.body && req.body.excused);
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const dr = await client.query(
+      `SELECT ad.id, ad.break_excused, ad.is_locked, to_char(ad.work_date,'YYYY-MM-DD') AS d
+         FROM attendance_days ad WHERE ad.id = $1 FOR UPDATE`, [req.params.id]);
+    const day = dr.rows[0];
+    if (!day) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Day not found' }); }
+    if (day.is_locked || await isDateInLockedPeriod(day.d)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'This day is in a locked pay period — unlock it first.' });
+    }
+    const oldVal = day.break_excused ? 'true' : 'false';
+    await client.query('UPDATE attendance_days SET break_excused = $1, updated_at = NOW() WHERE id = $2', [excused, day.id]);
+    await client.query(
+      `INSERT INTO attendance_adjustments (day_id, field, old_value, new_value, reason, adjusted_by)
+       VALUES ($1, 'break_excused', $2, $3, 'Excuse Break toggle', $4)`,
+      [day.id, oldVal, excused ? 'true' : 'false', req.user.id]
+    );
+    await client.query('COMMIT');
+    res.json({ id: day.id, break_excused: excused });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// True when a (Manila) calendar date falls inside any LOCKED pay period.
+async function isDateInLockedPeriod(ymd) {
+  const r = await query(
+    `SELECT 1 FROM pay_periods WHERE status = 'locked' AND $1::date BETWEEN start_date AND end_date LIMIT 1`, [ymd]);
+  return r.rowCount > 0;
+}
+
+// ADD A MISSED SCAN. ADMIN ONLY. Inserts a punch marked source = 'manual' (who/when/why) into the
+// SAME attendance_punches log the scanner writes to, then rebuilds that one day. Because the rebuild
+// reads scanner + manual punches together, the normal break / OT / late rules apply to the result --
+// the alternative (overwriting first_in/last_out) pins the day and forces break = 0.
+//
+// DIRECTION: the rebuild never GUESSES IN vs OUT. The alternate-tap guess happens exactly once, in the
+// scan endpoint at the moment a card is tapped, and the answer is STORED in punch_type. Everything
+// after reads that stored value (first_in = earliest 'in', last_out = latest 'out', a break = an 'out'
+// immediately followed by an 'in'). A manual punch carries the admin's explicit direction in that same
+// column, so it wins by construction. The response reports whether the day's sequence still alternates.
+//
+// A day whose IN/OUT are PINNED (hand-overwritten earlier) ignores punches for those fields, so the
+// request is refused (409 code 'pinned') unless release_pins is sent -- which clears the pins first,
+// logged, exactly as the Re-sync button does. Refused outright on a locked day or a future time.
+app.post('/api/attendance/punches/manual', requireRole(['admin']), async (req, res) => {
+  const b = req.body || {};
+  const personId = Number(b.person_id);
+  const workDate = String(b.work_date || '').trim();
+  const time = String(b.time || '').trim();
+  const punchType = String(b.punch_type || '').toLowerCase();
+  const reason = String(b.reason || '').trim();
+  if (!Number.isInteger(personId) || personId <= 0) return res.status(400).json({ error: 'person_id is required' });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(workDate)) return res.status(400).json({ error: 'work_date must be YYYY-MM-DD' });
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return res.status(400).json({ error: 'time must be HH:MM (24-hour, Manila)' });
+  if (!['in', 'out'].includes(punchType)) return res.status(400).json({ error: "punch_type must be 'in' or 'out'" });
+  if (!reason) return res.status(400).json({ error: 'A reason is required for a manual punch' });
+
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const pr = await client.query('SELECT id FROM persons WHERE id = $1', [personId]);
+    if (!pr.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Person not found' }); }
+    const dr = await client.query(
+      `SELECT id, is_locked, adjusted_fields FROM attendance_days WHERE person_id = $1 AND work_date = $2 FOR UPDATE`,
+      [personId, workDate]);
+    const day = dr.rows[0];
+    if ((day && day.is_locked) || await isDateInLockedPeriod(workDate)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'This day is in a locked pay period — unlock it first.' });
+    }
+    const chk = (await client.query(
+      `SELECT (($1::date + $2::time) AT TIME ZONE 'Asia/Manila') > NOW() AS future,
+              EXISTS (SELECT 1 FROM attendance_punches
+                       WHERE person_id = $3 AND voided_at IS NULL AND punch_type = $4
+                         AND punched_at = (($1::date + $2::time) AT TIME ZONE 'Asia/Manila')) AS dup`,
+      [workDate, time, personId, punchType])).rows[0];
+    if (chk.future) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'That time is in the future.' }); }
+    if (chk.dup) { await client.query('ROLLBACK'); return res.status(409).json({ error: `There is already an ${punchType.toUpperCase()} punch at ${time}.` }); }
+
+    const pins = day && Array.isArray(day.adjusted_fields) ? day.adjusted_fields : [];
+    if (pins.length && !b.release_pins) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ code: 'pinned', pinned_fields: pins,
+        error: `This day's ${pins.join(' / ')} was set by hand, and a hand-set time overrides punches (and forces break to 0). Release those pins to let the punches count.` });
+    }
+    if (pins.length) {
+      await client.query(
+        `INSERT INTO attendance_adjustments (day_id, field, old_value, new_value, reason, adjusted_by)
+         VALUES ($1, 'resync', $2, NULL, $3, $4)`,
+        [day.id, pins.join(','), `Pins released to add a missed scan: ${reason}`, req.user.id]);
+      await client.query(`UPDATE attendance_days SET adjusted_fields = '{}', is_adjusted = false WHERE id = $1`, [day.id]);
+    }
+    const ins = (await client.query(
+      `INSERT INTO attendance_punches (person_id, punch_type, punched_at, source, created_by, reason)
+       VALUES ($1, $2, (($3::date + $4::time) AT TIME ZONE 'Asia/Manila'), 'manual', $5, $6)
+       RETURNING id`,
+      [personId, punchType, workDate, time, String(req.user.id), reason])).rows[0];
+    if (day) {
+      await client.query(
+        `INSERT INTO attendance_adjustments (day_id, field, old_value, new_value, reason, adjusted_by)
+         VALUES ($1, 'manual_punch', NULL, $2, $3, $4)`,
+        [day.id, `${punchType} ${time}`, reason, req.user.id]);
+    }
+    await client.query('COMMIT');
+    await rebuildAttendanceDays(workDate, workDate);
+    res.json(await manualPunchResult(personId, workDate, ins.id));
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// The day row + whether its live punch sequence still alternates IN/OUT, for the response to a manual
+// punch add/void. A broken alternation is allowed (the admin is explicit) but never silent.
+async function manualPunchResult(personId, workDate, punchId) {
+  const d = (await query(
+    `SELECT ad.id, to_char(ad.work_date,'YYYY-MM-DD') AS work_date, ad.first_in, ad.last_out, ad.worked_minutes,
+            ad.break_minutes, ad.status, ad.is_adjusted, ad.break_excused
+       FROM attendance_days ad WHERE ad.person_id = $1 AND ad.work_date = $2`, [personId, workDate])).rows[0] || null;
+  const seq = (await query(
+    `SELECT punch_type FROM attendance_punches
+      WHERE person_id = $1 AND voided_at IS NULL AND (punched_at AT TIME ZONE 'Asia/Manila')::date = $2
+      ORDER BY punched_at ASC, id ASC`, [personId, workDate])).rows.map(r => r.punch_type);
+  let alternates = true;
+  for (let i = 0; i < seq.length; i++) if (seq[i] !== (i % 2 === 0 ? 'in' : 'out')) alternates = false;
+  return { ok: true, punch_id: punchId, day: d, sequence: seq, sequence_ok: alternates && seq.length % 2 === 0 };
+}
+
+// VOID a manual punch (never delete). ADMIN ONLY. Scanner punches are immutable and refuse this. The
+// punch stays in the log, flagged voided with who/when/why, and every reader skips it from then on.
+app.post('/api/attendance/punches/:id/void', requireRole(['admin']), async (req, res) => {
+  const reason = String((req.body && req.body.reason) || '').trim();
+  if (!reason) return res.status(400).json({ error: 'A reason is required to void a manual punch' });
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const pr = await client.query(
+      `SELECT id, person_id, punch_type, source, voided_at,
+              to_char(punched_at AT TIME ZONE 'Asia/Manila','YYYY-MM-DD') AS d,
+              to_char(punched_at AT TIME ZONE 'Asia/Manila','HH24:MI') AS t
+         FROM attendance_punches WHERE id = $1 FOR UPDATE`, [req.params.id]);
+    const p = pr.rows[0];
+    if (!p) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Punch not found' }); }
+    if (p.source !== 'manual') { await client.query('ROLLBACK'); return res.status(403).json({ error: 'Scanner punches are never changed — only a manual punch can be voided.' }); }
+    if (p.voided_at) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'That punch is already voided.' }); }
+    const dr = await client.query(`SELECT id, is_locked FROM attendance_days WHERE person_id = $1 AND work_date = $2 FOR UPDATE`, [p.person_id, p.d]);
+    const day = dr.rows[0];
+    if ((day && day.is_locked) || await isDateInLockedPeriod(p.d)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'This day is in a locked pay period — unlock it first.' });
+    }
+    await client.query(`UPDATE attendance_punches SET voided_at = NOW(), voided_by = $2, void_reason = $3 WHERE id = $1`,
+      [p.id, String(req.user.id), reason]);
+    if (day) {
+      await client.query(
+        `INSERT INTO attendance_adjustments (day_id, field, old_value, new_value, reason, adjusted_by)
+         VALUES ($1, 'manual_punch', $2, NULL, $3, $4)`,
+        [day.id, `${p.punch_type} ${p.t}`, `Voided: ${reason}`, req.user.id]);
+    }
+    await client.query('COMMIT');
+    await rebuildAttendanceDays(p.d, p.d);
+    // The rebuild only visits days that still have a punch. If voiding emptied the day, blank the
+    // un-pinned roll-up so it does not keep reporting a time that no punch supports any more.
+    const left = await query(
+      `SELECT 1 FROM attendance_punches WHERE person_id = $1 AND voided_at IS NULL
+          AND (punched_at AT TIME ZONE 'Asia/Manila')::date = $2 LIMIT 1`, [p.person_id, p.d]);
+    if (!left.rowCount) {
+      await query(
+        `UPDATE attendance_days SET first_in = NULL, last_out = NULL, worked_minutes = NULL, status = 'incomplete',
+                flags = '["missing_in"]'::jsonb, break_minutes = 0, updated_at = NOW()
+          WHERE person_id = $1 AND work_date = $2 AND is_locked = false AND cardinality(adjusted_fields) = 0`,
+        [p.person_id, p.d]);
+    }
+    res.json(await manualPunchResult(p.person_id, p.d, p.id));
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
     res.status(500).json({ error: err.message });

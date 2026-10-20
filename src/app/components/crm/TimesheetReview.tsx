@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { RefreshCw, Lock, Unlock, Plus, Search, Pencil, History, ShieldCheck, Home } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { RefreshCw, Lock, Unlock, Plus, Search, Pencil, History, ShieldCheck, Home, Fingerprint } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { S, Modal, Field, TextInput, TextArea, PrimaryBtn, GhostBtn, pill, peso } from './crmKit';
@@ -33,6 +33,10 @@ interface Day {
   status: string | null; flags: string[]; pay_period_id: number | null;
   is_locked: boolean; is_adjusted: boolean; ot_approved: boolean; early_ot_approved: boolean; late_excused: boolean;
   is_wfh?: boolean;
+  // Admin waived this day's personal-break DEDUCTION (the break itself stays as recorded).
+  break_excused?: boolean;
+  // Live (non-voided) manual punches on this day, so the row can say a person added one.
+  manual_punch_count?: number;
   full_name: string; department?: string | null; position?: string | null; ot_eligible?: boolean;
 }
 interface Adjustment {
@@ -88,13 +92,16 @@ const lunchNetMinutes = (d: Day): number | null => {
   return Math.max(0, d.worked_minutes - overlap);
 };
 const breakOf = (d: Day): number => Math.max(0, Number(d.break_minutes) || 0);
+// What payroll actually CHARGES for the break: the recorded break, unless the admin excused it. The
+// break itself (and its label) stay as recorded either way; only the deduction is waived.
+const dockedOf = (d: Day): number => d.break_excused ? 0 : breakOf(d);
 // Paid minutes for display = lunch-netted MINUS the day's unpaid personal-business break. This is
 // display only and mirrors what payroll already docks (break_minutes × per-minute rate) — no pay is
 // computed here. On a no-worked-minutes day (no OUT) this is null and no break is shown.
 const paidMinutes = (d: Day): number | null => {
   const ln = lunchNetMinutes(d);
   if (ln === null) return null;
-  return Math.max(0, ln - breakOf(d));
+  return Math.max(0, ln - dockedOf(d));
 };
 const FLAG_LABEL: Record<string, string> = { missing_out: 'Missing OUT', missing_in: 'Missing IN' };
 
@@ -114,7 +121,10 @@ function statusPill(status: string | null) {
   return pill(status || '—', 'pending');
 }
 
-export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'accounting' }) {
+// `focus` (the admin dashboard's missed-scan card) asks the sheet to open on one person's day: pick the pay
+// period that contains the date, make sure the day row exists, then scroll to it and highlight it.
+export interface SheetFocus { personId: number; date: string; nonce: number }
+export function TimesheetReview({ api, role, focus }: { api: Api; role: 'admin' | 'accounting'; focus?: SheetFocus | null }) {
   const [periods, setPeriods] = useState<Period[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [sheet, setSheet] = useState<Sheet | null>(null);
@@ -126,6 +136,10 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
   const [wfhFor, setWfhFor] = useState<string | null>(null); // date to seed the WFH modal with, '' = none picked
   const [editing, setEditing] = useState<Day | null>(null);
   const [historyOf, setHistoryOf] = useState<Day | null>(null);
+  const [punchesOf, setPunchesOf] = useState<Day | null>(null);
+  // The day a missed-scan link pointed at (highlighted until the admin moves on).
+  const [highlightId, setHighlightId] = useState<number | null>(null);
+  const pendingFocus = useRef<SheetFocus | null>(null);
   // person_id -> BALE amount (string, for the input). Populated from the sheet on load.
   const [baleMap, setBaleMap] = useState<Record<number, string>>({});
   // person_id -> who last set that BALE and when, for the row's tooltip. Separate from baleMap
@@ -136,10 +150,24 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
     try {
       const rows = await api<Period[]>('/attendance/periods');
       setPeriods(rows);
-      if (rows.length && selectedId === null) setSelectedId(rows[0].id);
+      if (rows.length && selectedId === null) {
+        const f = pendingFocus.current;
+        const hit = f ? rows.find(p => f.date >= p.start_date && f.date <= p.end_date) : null;
+        setSelectedId((hit || rows[0]).id);
+      }
     } catch { toast.error('Failed to load pay periods'); }
   };
   useEffect(() => { loadPeriods(); }, []);
+
+  // Follow a missed-scan link: remember the target, jump to the period that holds the date, and let
+  // loadSheet finish the job (a day row only exists once it has been rebuilt).
+  useEffect(() => {
+    if (!focus) return;
+    pendingFocus.current = focus;
+    const hit = periods.find(p => focus.date >= p.start_date && focus.date <= p.end_date);
+    if (!hit) { if (periods.length) toast.error('No pay period covers that date yet — create one to fix it here.'); return; }
+    if (hit.id === selectedId) loadSheet(hit.id); else setSelectedId(hit.id);
+  }, [focus?.nonce, periods.length]);
 
   const loadSheet = async (id: number) => {
     setLoading(true);
@@ -154,6 +182,26 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
       });
       setBaleMap(bm);
       setBaleMeta(meta);
+      // Finish a pending missed-scan jump. If that day has no row yet, rebuild just that date (an
+      // idempotent roll-up of the raw punches, the same thing the Rebuild button does) and reload once.
+      const f = pendingFocus.current;
+      if (f && f.date >= s.period.start_date && f.date <= s.period.end_date) {
+        let row = s.rows.find(r => r.person_id === f.personId && r.work_date === f.date);
+        if (!row && role === 'admin' && s.period.status === 'open') {
+          try {
+            await api('/attendance/rebuild-days', { method: 'POST', body: JSON.stringify({ start: f.date, end: f.date }) });
+            const s2 = await api<Sheet>(`/attendance/periods/${id}/sheet`);
+            setSheet(s2);
+            row = s2.rows.find(r => r.person_id === f.personId && r.work_date === f.date);
+          } catch { /* the sheet still loaded; the day just will not be highlighted */ }
+        }
+        pendingFocus.current = null;
+        if (row) {
+          const rid = row.id;
+          setHighlightId(rid);
+          setTimeout(() => document.getElementById(`ts-day-${rid}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 150);
+        }
+      }
     } catch { toast.error('Failed to load the review sheet'); }
     finally { setLoading(false); }
   };
@@ -198,7 +246,7 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
       const g = map.get(d.person_id)!;
       g.days.push(d);
       g.totalMin += paidMinutes(d) || 0;
-      if (lunchNetMinutes(d) !== null) g.breakMin += breakOf(d);
+      if (lunchNetMinutes(d) !== null) g.breakMin += dockedOf(d);
     }
     return Array.from(map.values());
   }, [filtered]);
@@ -262,6 +310,15 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
       await api(`/attendance/days/${day.id}/excuse-late`, { method: 'POST', body: JSON.stringify({ excused }) });
       setSheet(s => s ? { ...s, rows: s.rows.map(r => r.id === day.id ? { ...r, late_excused: excused } : r) } : s);
     } catch (e: any) { toast.error(e.message || 'Could not update Excuse Late'); }
+  };
+
+  // Toggle a day's "Excuse Break" flag (admin-only, unlocked days only -- the server refuses a locked
+  // one). Waives that day's personal-break deduction; the punches and the break display are unchanged.
+  const toggleExcuseBreak = async (day: Day, excused: boolean) => {
+    try {
+      await api(`/attendance/days/${day.id}/excuse-break`, { method: 'POST', body: JSON.stringify({ excused }) });
+      setSheet(s => s ? { ...s, rows: s.rows.map(r => r.id === day.id ? { ...r, break_excused: excused } : r) } : s);
+    } catch (e: any) { toast.error(e.message || 'Could not update Excuse Break'); }
   };
 
   // Save a person's BALE for the selected period (admin or accounting). Blank clears it. The
@@ -354,15 +411,17 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
             <th style={S.th} title="Pre-shift-start OT (no buffer)">Early OT</th>
             <th style={S.th} title="After-shift OT (needs the 1h buffer)">Late OT</th>
             <th style={S.th} title="Authorized late start — waives this day's late penalty (full rate still paid)">Excuse Late</th>
+            <th style={S.th} title="Waives this day's personal-break deduction (the break itself stays recorded)">Excuse Break</th>
             <th style={{ ...S.th, textAlign: 'right' }}>Actions</th>
           </tr></thead>
           <tbody>
-            {loading ? <tr><td style={S.td} colSpan={10}>Loading…</td></tr>
-              : !period ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={10}>Create or select a pay period to begin.</td></tr>
-              : groups.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={10}>No punched days in this period yet. Click <strong>Rebuild from punches</strong>.</td></tr>
+            {loading ? <tr><td style={S.td} colSpan={11}>Loading…</td></tr>
+              : !period ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={11}>Create or select a pay period to begin.</td></tr>
+              : groups.length === 0 ? <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={11}>No punched days in this period yet. Click <strong>Rebuild from punches</strong>.</td></tr>
               : groups.map(g => (
                 <PersonGroup key={g.person.person_id} group={g} role={role} canEditRow={canEditRow}
-                  onEdit={setEditing} onHistory={setHistoryOf} onToggleOt={toggleOt} onToggleExcuseLate={toggleExcuseLate}
+                  onEdit={setEditing} onHistory={setHistoryOf} onToggleOt={toggleOt} onToggleExcuseLate={toggleExcuseLate} onToggleExcuseBreak={toggleExcuseBreak}
+                  onPunches={setPunchesOf} highlightId={highlightId}
                   bale={baleMap[g.person.person_id] ?? ''} onSaveBale={saveBale} periodLocked={locked}
                   canSetBale={canSetBale} baleMeta={baleMeta[g.person.person_id]}
                   classification={classByPerson.get(g.person.person_id)} />
@@ -377,6 +436,8 @@ export function TimesheetReview({ api, role }: { api: Api; role: 'admin' | 'acco
         setSheet(s => s ? { ...s, rows: s.rows.map(r => r.id === d.id ? d : r) } : s);
       }} />}
       {historyOf && <HistoryModal api={api} day={historyOf} onClose={() => setHistoryOf(null)} />}
+      {punchesOf && <PunchesModal api={api} day={punchesOf} onClose={() => setPunchesOf(null)}
+        onChanged={async () => { if (selectedId !== null) await loadSheet(selectedId); }} />}
       {wfhFor !== null && period && (
         <WfhModal api={api} period={period} seedDate={wfhFor} onClose={() => setWfhFor(null)}
           onSaved={async () => { setWfhFor(null); if (selectedId !== null) await loadSheet(selectedId); }} />
@@ -414,6 +475,22 @@ function excuseLateCell(d: Day, role: 'admin' | 'accounting', onToggle: (d: Day,
   );
 }
 
+// "Excuse Break" cell: read-only Yes/No for Finance; a toggle for admin. Only meaningful where there is
+// a docked break, so a day with none shows a dash. Locked days cannot be toggled (the server refuses too).
+function excuseBreakCell(d: Day, role: 'admin' | 'accounting', onToggle: (d: Day, excused: boolean) => void) {
+  const on = !!d.break_excused;
+  const hasDock = breakOf(d) > 0;
+  if (!hasDock && !on) return <span style={{ color: '#c0c0c0' }}>—</span>;
+  if (role !== 'admin' || d.is_locked) return on ? pill('Yes', 'good') : <span style={{ fontSize: '12px', color: '#8a8a8a' }}>No</span>;
+  return (
+    <button onClick={() => onToggle(d, !on)} title="Toggle Excuse Break — waives this day's personal-break deduction (the break stays recorded)"
+      style={{ padding: '3px 14px', borderRadius: '999px', cursor: 'pointer', fontSize: '12px', fontWeight: 600, fontFamily: 'inherit',
+        border: '1px solid', ...(on ? { background: '#ececec', borderColor: '#e3ca63', color: '#7a6a0c' } : { background: '#fff', borderColor: '#d6d6d6', color: '#8a8a8a' }) }}>
+      {on ? 'Yes' : 'No'}
+    </button>
+  );
+}
+
 // BALE input — editable for admin AND accounting (saves on blur/Enter), read-only peso text for
 // any other viewer. `editable` is decided by the caller; this component only renders.
 function BaleInput({ personId, value, onSave, editable }: { personId: number; value: string; onSave: (id: number, v: string) => void; editable: boolean }) {
@@ -429,12 +506,15 @@ function BaleInput({ personId, value, onSave, editable }: { personId: number; va
   );
 }
 
-function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, onToggleExcuseLate, bale, onSaveBale, canSetBale, baleMeta, classification }: {
+function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, onToggleExcuseLate, onToggleExcuseBreak, onPunches, highlightId, bale, onSaveBale, canSetBale, baleMeta, classification }: {
   group: { person: Day; days: Day[]; totalMin: number; breakMin: number };
   role: 'admin' | 'accounting';
   canEditRow: (d: Day) => boolean; onEdit: (d: Day) => void; onHistory: (d: Day) => void;
   onToggleOt: (d: Day, kind: 'early' | 'late', approved: boolean) => void;
   onToggleExcuseLate: (d: Day, excused: boolean) => void;
+  onToggleExcuseBreak: (d: Day, excused: boolean) => void;
+  onPunches: (d: Day) => void;
+  highlightId: number | null;
   bale: string; onSaveBale: (personId: number, amount: string) => void;
   canSetBale: boolean; baleMeta?: { by: string | null; at: string | null };
   periodLocked: boolean;
@@ -445,7 +525,7 @@ function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, o
   return (
     <>
       <tr>
-        <td colSpan={10} style={{ padding: '12px 16px', background: '#f7f7f7', borderBottom: '1px solid #e6e6e6', borderTop: '1px solid #e6e6e6' }}>
+        <td colSpan={11} style={{ padding: '12px 16px', background: '#f7f7f7', borderBottom: '1px solid #e6e6e6', borderTop: '1px solid #e6e6e6' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
             <div>
               <span style={{ fontWeight: 700, color: '#000' }}>{person.full_name}</span>
@@ -505,7 +585,7 @@ function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, o
           : brks.length > 1 ? `${brks.length} breaks`
           : 'manual';
         return (
-          <tr key={d.id}>
+          <tr key={d.id} id={`ts-day-${d.id}`} style={d.id === highlightId ? { background: '#fffbeb', outline: '2px solid #e3ca63', outlineOffset: '-2px' } : undefined}>
             <td style={S.td}>
               {fmtDay(d.work_date)}
               {d.is_locked ? <Lock size={11} style={{ marginLeft: '6px', verticalAlign: '-1px', color: '#8a8a8a' }} /> : null}
@@ -516,6 +596,7 @@ function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, o
               {hasBreak
                 ? <span style={{ fontSize: '12.5px', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', color: brk > 0 ? '#7a6a0c' : '#6b7280' }}>
                     {breakLabel} · {brk > 0 ? fmtBreakMin(brk) : <span style={{ fontStyle: 'italic' }}>free</span>}
+                    {d.break_excused && brk > 0 ? <span title="Admin excused this break — it is recorded but not deducted" style={{ marginLeft: '6px', fontSize: '11px', fontWeight: 700, color: '#0c7a3a' }}>excused</span> : null}
                   </span>
                 : <span style={{ color: '#c0c0c0' }}>—</span>}
             </td>
@@ -527,12 +608,15 @@ function PersonGroup({ group, role, canEditRow, onEdit, onHistory, onToggleOt, o
               {d.is_wfh ? <span title="Work from home — recorded by an admin, not a station scan" style={{ marginLeft: '6px', fontSize: '11px', color: '#1d4ed8', fontWeight: 700 }}>· WFH</span> : null}
               {(d.flags || []).map(f => <span key={f} style={{ marginLeft: '6px', fontSize: '12px', color: '#b91c1c' }}>{FLAG_LABEL[f] || f}</span>)}
               {d.is_adjusted ? <span style={{ marginLeft: '6px', fontSize: '11px', color: '#7a6a0c', fontWeight: 600 }}>· edited</span> : null}
+              {(d.manual_punch_count || 0) > 0 ? <span title="An admin added a missed scan on this day — open Punches to see who and why" style={{ marginLeft: '6px', fontSize: '11px', color: '#1d4ed8', fontWeight: 700 }}>· manual punch</span> : null}
             </td>
             <td style={S.td}>{otCell(d, 'early', role, onToggleOt)}</td>
             <td style={S.td}>{otCell(d, 'late', role, onToggleOt)}</td>
             <td style={S.td}>{excuseLateCell(d, role, onToggleExcuseLate)}</td>
+            <td style={S.td}>{excuseBreakCell(d, role, onToggleExcuseBreak)}</td>
             <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
-              {d.is_adjusted ? <button title="Correction history" style={S.rowBtn} onClick={() => onHistory(d)}><History size={13} /></button> : null}
+              {role === 'admin' ? <button title="Punches — see every scan and add a missed one" style={S.rowBtn} onClick={() => onPunches(d)}><Fingerprint size={13} /></button> : null}
+              {d.is_adjusted || (d.manual_punch_count || 0) > 0 ? <button title="Correction history" style={S.rowBtn} onClick={() => onHistory(d)}><History size={13} /></button> : null}
               {canEditRow(d) ? <button title="Correct this day" style={S.rowBtn} onClick={() => onEdit(d)}><Pencil size={13} /></button> : null}
             </td>
           </tr>
@@ -691,13 +775,153 @@ function WfhModal({ api, period, seedDate, onClose, onSaved }:
   );
 }
 
+// Every punch on one day -- the scanner's and any an admin added -- plus the "Add missed scan" form.
+// A manual punch is stamped MANUAL with who/when/why wherever it appears; scanner rows are never
+// editable, and a manual one is only ever voided (kept in the log, struck through), never deleted.
+// The server rebuilds the day after each change, so break and OT come out of the normal rules.
+interface PunchRow {
+  id: number; punch_type: string; punched_at: string; local_time: string; source: string;
+  created_at?: string | null; created_by?: string | null; reason?: string | null;
+  voided_at?: string | null; voided_by?: string | null; void_reason?: string | null;
+}
+interface PunchesPayload {
+  day_id: number; work_date: string; break_minutes: number; break_excused: boolean; locked: boolean;
+  pinned_fields: string[]; punches: PunchRow[];
+}
+const fmtStamp = (iso?: string | null) => iso ? new Date(iso).toLocaleString('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+
+function PunchesModal({ api, day, onClose, onChanged }: { api: Api; day: Day; onClose: () => void; onChanged: () => Promise<void> | void }) {
+  const [data, setData] = useState<PunchesPayload | null>(null);
+  const [time, setTime] = useState('');
+  const [type, setType] = useState<'in' | 'out'>('in');
+  const [reason, setReason] = useState('');
+  const [release, setRelease] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [voidId, setVoidId] = useState<number | null>(null);
+  const [voidReason, setVoidReason] = useState('');
+
+  const load = async () => {
+    try { setData(await api<PunchesPayload>(`/attendance/days/${day.id}/punches`)); }
+    catch { toast.error('Could not load the punches'); }
+  };
+  useEffect(() => { load(); }, [day.id]);
+
+  const pinned = (data?.pinned_fields || []).length > 0;
+  const blocked = !!data?.locked;
+
+  const add = async () => {
+    if (!/^\d{2}:\d{2}$/.test(time)) { toast.error('Enter the time of the missed scan'); return; }
+    if (!reason.trim()) { toast.error('A reason is required'); return; }
+    if (pinned && !release) { toast.error('Tick the box to release the hand-set times first'); return; }
+    setSaving(true);
+    try {
+      const r = await api<{ sequence_ok: boolean }>('/attendance/punches/manual', { method: 'POST', body: JSON.stringify({
+        person_id: day.person_id, work_date: day.work_date, time, punch_type: type, reason: reason.trim(), release_pins: pinned && release }) });
+      toast.success(`Manual ${type.toUpperCase()} added at ${time}`);
+      if (!r.sequence_ok) toast.warning('The punches for this day no longer alternate IN / OUT — check the list.');
+      setTime(''); setReason(''); setRelease(false);
+      await load(); await onChanged();
+    } catch (e: any) { toast.error(e.message || 'Could not add the punch'); } finally { setSaving(false); }
+  };
+
+  const doVoid = async () => {
+    if (voidId === null) return;
+    if (!voidReason.trim()) { toast.error('A reason is required to void a punch'); return; }
+    setSaving(true);
+    try {
+      await api(`/attendance/punches/${voidId}/void`, { method: 'POST', body: JSON.stringify({ reason: voidReason.trim() }) });
+      toast.success('Manual punch voided');
+      setVoidId(null); setVoidReason('');
+      await load(); await onChanged();
+    } catch (e: any) { toast.error(e.message || 'Could not void the punch'); } finally { setSaving(false); }
+  };
+
+  return (
+    <Modal title={`Punches — ${day.full_name}, ${fmtDay(day.work_date)}`} onClose={onClose} footer={<GhostBtn onClick={onClose}>Close</GhostBtn>}>
+      {data === null ? <p style={{ color: '#8a8a8a' }}>Loading…</p> : (
+        <>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+            {data.punches.length === 0 ? <p style={{ color: '#8a8a8a', margin: 0 }}>No punches on this day.</p> : data.punches.map(p => {
+              const manual = p.source === 'manual';
+              const voided = !!p.voided_at;
+              return (
+                <div key={p.id} style={{ padding: '8px 12px', border: '1px solid #e6e6e6', borderRadius: '8px', background: manual ? '#f4f7ff' : '#fff', opacity: voided ? 0.65 : 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                    <strong style={{ fontVariantNumeric: 'tabular-nums', textDecoration: voided ? 'line-through' : 'none' }}>{fmtTime(p.punched_at)}</strong>
+                    {pill(p.punch_type.toUpperCase(), p.punch_type === 'in' ? 'good' : 'pending')}
+                    {manual
+                      ? <span style={{ fontSize: '11px', fontWeight: 700, color: '#1d4ed8' }}>MANUAL</span>
+                      : <span style={{ fontSize: '11px', color: '#8a8a8a' }}>scanner</span>}
+                    {voided ? <span style={{ fontSize: '11px', fontWeight: 700, color: '#b91c1c' }}>VOIDED</span> : null}
+                    {manual && !voided && !blocked
+                      ? <button style={{ ...S.rowBtn, marginLeft: 'auto' }} onClick={() => { setVoidId(p.id); setVoidReason(''); }}>Void</button> : null}
+                  </div>
+                  {manual ? (
+                    <div style={{ fontSize: '12px', color: '#5a5a5a', marginTop: '4px' }}>
+                      Added by {p.created_by || 'admin'} · {fmtStamp(p.created_at)}{p.reason ? ` — “${p.reason}”` : ''}
+                      {voided ? <div style={{ color: '#b91c1c' }}>Voided by {p.voided_by || 'admin'} · {fmtStamp(p.voided_at)}{p.void_reason ? ` — “${p.void_reason}”` : ''}</div> : null}
+                    </div>
+                  ) : null}
+                  {voidId === p.id ? (
+                    <div style={{ marginTop: '8px' }}>
+                      <TextArea value={voidReason} onChange={e => setVoidReason(e.target.value)} placeholder="Why is this punch being voided?" />
+                      <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+                        <PrimaryBtn onClick={doVoid} disabled={saving}>Void punch</PrimaryBtn>
+                        <GhostBtn onClick={() => setVoidId(null)}>Cancel</GhostBtn>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+
+          <div style={{ fontSize: '12px', color: '#5a5a5a', marginBottom: '14px' }}>
+            Recorded break: <strong>{data.break_minutes > 0 ? fmtBreakMin(data.break_minutes) : 'none'}</strong>
+            {data.break_excused ? <span style={{ color: '#0c7a3a', fontWeight: 700 }}> · excused (not deducted)</span> : null}
+          </div>
+
+          <div style={{ borderTop: '1px solid #e6e6e6', paddingTop: '14px' }}>
+            <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#7a6a0c', marginBottom: '8px' }}>Add missed scan</div>
+            {blocked ? <p style={{ fontSize: '13px', color: '#b91c1c', margin: 0 }}>This day is in a locked pay period — unlock it first.</p> : (
+              <>
+                <p style={{ fontSize: '12px', color: '#8a8a8a', marginTop: 0 }}>
+                  Adds a punch to the log, marked manual with your name and reason. Scanner punches are left untouched; the day is
+                  rebuilt from scanner + manual punches together, so break and OT follow the normal rules. Times are Manila local.
+                </p>
+                {pinned ? (
+                  <label style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '12.5px', color: '#78350f', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '8px 10px', marginBottom: '10px' }}>
+                    <input type="checkbox" checked={release} onChange={e => setRelease(e.target.checked)} style={{ marginTop: '2px' }} />
+                    <span>This day's {data.pinned_fields.join(' / ')} was set by hand, which overrides punches and forces break to 0. Release it so the punches count (logged).</span>
+                  </label>
+                ) : null}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <Field label="Time *"><TextInput type="time" value={time} onChange={e => setTime(e.target.value)} /></Field>
+                  <Field label="Direction *">
+                    <select value={type} onChange={e => setType(e.target.value as 'in' | 'out')} style={{ ...S.input, appearance: 'none', cursor: 'pointer' }}>
+                      <option value="in">IN</option>
+                      <option value="out">OUT</option>
+                    </select>
+                  </Field>
+                </div>
+                <Field label="Reason *"><TextArea value={reason} onChange={e => setReason(e.target.value)} placeholder="e.g. Left at 4:23 PM for an errand and forgot to tap OUT — confirmed with supervisor" /></Field>
+                <PrimaryBtn onClick={add} disabled={saving}>{saving ? 'Saving…' : 'Add missed scan'}</PrimaryBtn>
+              </>
+            )}
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
 function HistoryModal({ api, day, onClose }: { api: Api; day: Day; onClose: () => void }) {
   const [rows, setRows] = useState<Adjustment[] | null>(null);
   useEffect(() => {
     api<Adjustment[]>(`/attendance/days/${day.id}/adjustments`).then(setRows).catch(() => setRows([]));
   }, [day.id]);
-  const fieldLabel: Record<string, string> = { first_in: 'Time In', last_out: 'Time Out', status: 'Status' };
-  const showVal = (field: string, v: string | null) => v === null || v === '' ? '—' : (field === 'status' ? v : fmtTime(v));
+  const fieldLabel: Record<string, string> = { first_in: 'Time In', last_out: 'Time Out', status: 'Status', manual_punch: 'Manual punch', break_excused: 'Excuse Break', late_excused: 'Excuse Late', resync: 'Pins released' };
+  const showVal = (field: string, v: string | null) => v === null || v === '' ? '—' : (['first_in', 'last_out'].includes(field) ? fmtTime(v) : v);
   return (
     <Modal title={`Correction history — ${day.full_name}, ${fmtDay(day.work_date)}`} onClose={onClose}
       footer={<GhostBtn onClick={onClose}>Close</GhostBtn>}>

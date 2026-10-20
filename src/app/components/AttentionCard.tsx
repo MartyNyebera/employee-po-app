@@ -12,7 +12,10 @@ import { Bell, X } from 'lucide-react';
 // `detail` is an optional second line for items where the count alone says nothing useful (e.g. WHICH
 // employees passed their grace allowance). `onView` is optional: an item with nowhere to jump to
 // renders as plain text instead of a button, rather than offering a click that does nothing.
-export interface AttentionItem { label: string; count: number; onView?: () => void; detail?: string }
+// `links` are per-record jumps (e.g. one per flagged day) rendered as small buttons under the row; a
+// row that has them is not itself a button, so a click always has exactly one meaning.
+export interface AttentionLink { label: string; title?: string; onClick: () => void }
+export interface AttentionItem { label: string; count: number; onView?: () => void; detail?: string; links?: AttentionLink[] }
 
 export function AttentionCard({ items }: { items: AttentionItem[] }) {
   const active = items.filter(i => i.count > 0);
@@ -46,6 +49,20 @@ export function AttentionCard({ items }: { items: AttentionItem[] }) {
               </span>
             </>
           );
+          if (it.links && it.links.length) {
+            return (
+              <li key={i} className="px-4 py-2.5">
+                <div className="flex items-start justify-between gap-3">{body}</div>
+                <ul className="mt-1.5 max-h-48 overflow-y-auto space-y-0.5">
+                  {it.links.map((l, k) => (
+                    <li key={k}>
+                      <button onClick={l.onClick} title={l.title} className="w-full text-left text-xs text-blue-700 hover:bg-blue-50 rounded px-1.5 py-1 break-words">{l.label}</button>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            );
+          }
           return (
             <li key={i}>
               {it.onView

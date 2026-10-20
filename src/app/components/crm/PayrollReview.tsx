@@ -41,7 +41,7 @@ interface Warnings { no_pay_rate?: Array<{ person_id: number; full_name: string 
 interface DayDetail {
   date: string; dow: number; sunday: boolean; holiday: string | null; present: boolean;
   in_min: number | null; out_min: number | null; kind: string;
-  late_min?: number; counted_late_min?: number; late_excused?: boolean; excused_late_min?: number; undertime_min?: number; break_min?: number; ot_hours?: number; early_ot_hours?: number; late_ot_hours?: number;
+  late_min?: number; counted_late_min?: number; late_excused?: boolean; excused_late_min?: number; undertime_min?: number; break_min?: number; break_excused?: boolean; excused_break_min?: number; ot_hours?: number; early_ot_hours?: number; late_ot_hours?: number;
   net_hours?: number; mult?: number; amount?: number; half_basis?: number; eligible?: boolean; prior_working_day?: string | null; note?: string;
 }
 interface Breakdown {
@@ -474,7 +474,7 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
                     {red > 0 ? <div style={{ fontSize: '11px', color: '#b45309', fontWeight: 400 }}>− {peso(red)} late/UT</div> : null}
                     {dayOtPay(d) > 0 ? <div style={{ fontSize: '11px', color: '#0c7a3a', fontWeight: 400 }}>+ {peso(dayOtPay(d))} OT</div> : null}
                   </td>
-                  <td style={{ ...td, color: '#8a8a8a', whiteSpace: 'normal' }}>{d.kind === 'holiday_not_worked' ? (d.eligible ? `eligible (prior ${d.prior_working_day})` : 'not eligible') : (d.break_min ? `break ${d.break_min}m docked` : (d.note || ''))}</td>
+                  <td style={{ ...td, color: '#8a8a8a', whiteSpace: 'normal' }}>{d.kind === 'holiday_not_worked' ? (d.eligible ? `eligible (prior ${d.prior_working_day})` : 'not eligible') : (d.break_min ? `break ${d.break_min}m docked` : (d.break_excused ? `break ${d.excused_break_min}m excused (not docked)` : (d.note || '')))}</td>
                 </tr>
               );
             })}

@@ -169,7 +169,12 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
   const [counts, setCounts] = useState<{
     purchaseRequests: number; purchaseOrders: number; withdrawals: number; overdueInvoices: number;
     graceNotices: { count: number; people: { name: string; work_date: string; uses: number }[] };
-  }>({ purchaseRequests: 0, purchaseOrders: 0, withdrawals: 0, overdueInvoices: 0, graceNotices: { count: 0, people: [] } });
+    // Scheduled days whose punches look incomplete (one scan, an odd number, or a first scan after noon).
+    missedScans: { count: number; items: { person_id: number; name: string; work_date: string; punches: number; why: string }[] };
+  }>({ purchaseRequests: 0, purchaseOrders: 0, withdrawals: 0, overdueInvoices: 0, graceNotices: { count: 0, people: [] }, missedScans: { count: 0, items: [] } });
+  // Which day the Attendance Sheet should open on when the admin follows a missed-scan link. The nonce
+  // makes a second click on the same day act again.
+  const [sheetFocus, setSheetFocus] = useState<{ personId: number; date: string; nonce: number } | null>(null);
   const loadCounts = async () => {
     // Merged rather than replaced so an older server that omits a key can't blank the card.
     try { const next = await fetchApi('/admin/queue-counts'); setCounts(c => ({ ...c, ...next })); }
@@ -288,7 +293,7 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
     }
 
     if (currentView === 'timesheet') {
-      return <TimesheetReview api={fetchApi} role="admin" />;
+      return <TimesheetReview api={fetchApi} role="admin" focus={sheetFocus} />;
     }
 
     if (currentView === 'holidays') {
@@ -358,6 +363,16 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
         { label: 'Purchase orders to approve', count: counts.purchaseOrders, onView: () => setCurrentView('purchase-orders') },
         { label: 'Withdrawals to approve', count: counts.withdrawals, onView: () => setCurrentView('withdrawal-requests') },
         { label: 'Overdue invoices', count: counts.overdueInvoices, onView: () => setCurrentView('receivables') },
+        // One link per flagged day, straight to that day on the Attendance Sheet.
+        {
+          label: 'Possible missed scans',
+          count: counts.missedScans?.count ?? 0,
+          links: (counts.missedScans?.items ?? []).map(m => ({
+            label: `${m.name} — ${new Date(`${m.work_date}T00:00:00`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}: ${m.why}`,
+            title: 'Open this day on the Attendance Sheet',
+            onClick: () => { setSheetFocus({ personId: m.person_id, date: m.work_date, nonce: Date.now() }); setCurrentView('timesheet'); },
+          })),
+        },
         // No onView: there is deliberately no grace report to jump to. The names ARE the notification.
         {
           label: 'Grace allowance exceeded (late arrivals)',
