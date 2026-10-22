@@ -14,6 +14,7 @@ import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { esc, printPurchaseOrder } from '../lib/orderPrint';
 import { AllocationTag, AllocationFilter, matchesAllocation, type AllocType } from '../components/AllocationTag';
 import { CollectionsReport } from '../components/CollectionsReport';
+import { PurchasesReport } from '../components/PurchasesReport';
 import { renderPrintDocument } from '../lib/printChrome';
 import {
   AccountingNav, loadNavPrefs, saveNavPrefs, toggleGroup as toggleGroupPrefs, revealGroupFor, setMinimized,
@@ -1065,6 +1066,13 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const [poAlloc, setPoAlloc] = useState('');
   // The invoice the Collections Report sent us to (opened inside Receivables); cleared on any menu click.
   const [receivablesFocus, setReceivablesFocus] = useState<number | null>(null);
+  // The PO the Purchases report sent us to (highlighted in the PO list); cleared on any menu click.
+  const [poFocus, setPoFocus] = useState<string | null>(null);
+  useEffect(() => {
+    if (view !== 'orders' || !poFocus || loading) return;
+    const t = setTimeout(() => document.getElementById(`po-card-${poFocus}`)?.scrollIntoView({ block: 'center' }), 60);
+    return () => clearTimeout(t);
+  }, [view, poFocus, loading]);
   const [viewing, setViewing] = useState<PurchaseRequest | null>(null);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [showProjectModal, setShowProjectModal] = useState(false);
@@ -1318,7 +1326,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
       <AccountingNav
         activeView={view} minimized={mini} prefs={navPrefs}
         badges={{ requests: pendingCount, orders: pendingOrderCount, receivables: overdueInvoiceCount }}
-        onNavigate={(v) => { setReceivablesFocus(null); setView(v); setMobileOpen(false); }}
+        onNavigate={(v) => { setReceivablesFocus(null); setPoFocus(null); setView(v); setMobileOpen(false); }}
         onToggleGroup={toggleGroup} />
       <div className="border-t border-gray-200 px-3 py-3 space-y-1">
         <div className={`flex items-center gap-3 px-3 py-2 ${mini ? 'justify-center' : ''}`}>
@@ -1379,6 +1387,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
           {view === 'billing-invoices' && <BillingInvoices api={aFetch} isAdmin />}
 
           {view === 'receivables' && <Receivables key={receivablesFocus ?? 'all'} api={aFetch} isAdmin focusId={receivablesFocus} />}
+
+          {view === 'purchases' && <PurchasesReport api={aFetch} isAdmin onOpenPo={(id) => { setPoFocus(id); setPoAlloc(''); setView('orders'); }} />}
 
           {view === 'collections' && <CollectionsReport api={aFetch} isAdmin onOpenInvoice={(id) => { setReceivablesFocus(id); setView('receivables'); }} />}
 
@@ -1721,7 +1731,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                     </div>
                     {shownOrders.length === 0 && <p className="text-sm text-gray-400 py-6 text-center">No purchase orders match that allocation.</p>}
                     {shownOrders.map(po => (
-                      <div key={po.id} className="bg-white rounded-xl border border-gray-200 p-4">
+                      <div key={po.id} id={`po-card-${po.id}`} className={`bg-white rounded-xl border p-4 ${poFocus === po.id ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'}`}>
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">

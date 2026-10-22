@@ -6726,6 +6726,90 @@ app.get('/api/reports/collections/export', requireRole(reportRoles), async (req,
   } catch (err) { console.error('collections export error:', err); res.status(500).json({ error: err.message }); }
 });
 
+// ---- PURCHASES: every valid PO, paid or not -- the Payable Report's own rows, read as a purchases summary.
+// "Valid" is exactly the Payable Report's rule (it runs the same PAYABLE_SELECT + mapPayable): not a
+// sales order, and not a rejected/cancelled order unless money has already gone out against it. The
+// payment status therefore cannot disagree with that report. Net/VAT are split here, in whole centavos,
+// from each PO's own vat_type: vatable (anything but 'non-vatable', the way a PO is normalised when it is
+// raised) -> Net = Total / 1.12 and VAT = Total - Net; non-vatable -> Net = Total, VAT = 0. Net + VAT = Total
+// on every row by construction, and the footer / supplier summary add the same centavo figures.
+async function purchasesData(qs) {
+  const raw = (await query(`${PAYABLE_SELECT} ORDER BY COALESCE(po.doc_date, po.created_date) DESC, po.po_number DESC`)).rows;
+  const split = (r, p) => {
+    const total = Math.round(Number(p.poTotal) * 100);
+    const net = r.vat_type === 'non-vatable' ? total : Math.round(total / 1.12);
+    return { total, net, vat: total - net };
+  };
+  const valid = raw.map((r) => { const p = mapPayable(r); return { p, c: split(r, p) }; }).filter((x) => !x.p.unpayable || x.p.paymentCount > 0);
+
+  const from = ymdOrNull(qs.from), to = ymdOrNull(qs.to);
+  const inRange = valid.filter((x) => (!from || x.p.poDate >= from) && (!to || x.p.poDate <= to));
+  // Pickers list whatever exists in the chosen dates, whatever supplier / allocation / status is applied.
+  const suppliers = [...new Map(inRange.filter((x) => x.p.supplierId && x.p.supplier).map((x) => [x.p.supplierId, x.p.supplier]))]
+    .map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  const allocations = [...new Map(inRange.filter((x) => x.p.allocationKey).map((x) => [x.p.allocationKey, {
+    allocationKey: x.p.allocationKey, allocationId: x.p.allocationId, allocationType: x.p.allocationType, allocationName: x.p.allocationName,
+  }]))].map(([, v]) => v);
+
+  const supplierId = String(qs.supplierId || '').trim();
+  const alloc = String(qs.alloc || '').trim();
+  const status = String(qs.status || '').trim().toLowerCase();
+  const q = String(qs.q || '').trim().toLowerCase();
+  const kept = inRange.filter((x) =>
+    (!supplierId || x.p.supplierId === supplierId)
+    && (!alloc || (alloc.startsWith('type:') ? x.p.allocationType === alloc.slice(5) : x.p.allocationKey === alloc))
+    && (!['unpaid', 'partial', 'paid', 'overpaid'].includes(status) || x.p.status === status)
+    && (!q || `${x.p.poNumber} ${x.p.supplier || ''} ${x.p.allocationName || ''}`.toLowerCase().includes(q)));
+
+  const sum = (xs, k) => xs.reduce((n, x) => n + x.c[k], 0);
+  const c2 = (cents) => (cents / 100).toFixed(2);
+  const by = new Map();
+  for (const x of kept) {
+    const key = x.p.supplierId || `name:${x.p.supplier || ''}`;
+    if (!by.has(key)) by.set(key, { supplier: x.p.supplier || '—', items: [] });
+    by.get(key).items.push(x);
+  }
+  return {
+    rows: kept.map((x) => ({
+      id: x.p.id, poDate: x.p.poDate, poNumber: x.p.poNumber, supplier: x.p.supplier, supplierId: x.p.supplierId,
+      allocationType: x.p.allocationType, allocationName: x.p.allocationName, allocationId: x.p.allocationId, allocationKey: x.p.allocationKey,
+      net: c2(x.c.net), vat: c2(x.c.vat), total: c2(x.c.total), status: x.p.status, poStatus: x.p.poStatus,
+    })),
+    count: kept.length, net: c2(sum(kept, 'net')), vat: c2(sum(kept, 'vat')), total: c2(sum(kept, 'total')),
+    summary: [...by.values()].map((g) => ({ supplier: g.supplier, count: g.items.length, net: c2(sum(g.items, 'net')), vat: c2(sum(g.items, 'vat')), total: c2(sum(g.items, 'total')) }))
+      .sort((a, b) => a.supplier.localeCompare(b.supplier)),
+    suppliers, allocations,
+  };
+}
+
+app.get('/api/reports/purchases', requireRole(reportRoles), async (req, res) => {
+  try { res.json(await purchasesData(req.query)); }
+  catch (err) { console.error('purchases report error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/reports/purchases/export', requireRole(reportRoles), async (req, res) => {
+  try {
+    const d = await purchasesData(req.query);
+    const by = String(req.query.summary || '') === '1';
+    const range = `${ymdOrNull(req.query.from) || 'start'} to ${ymdOrNull(req.query.to) || 'today'}`;
+    const filt = [String(req.query.supplierId || '') && 'one supplier', String(req.query.alloc || '') && 'one allocation', String(req.query.status || '') && `status ${req.query.status}`, String(req.query.q || '').trim() && `search "${String(req.query.q).trim()}"`].filter(Boolean);
+    const subtitle = `${by ? 'Purchases summary by supplier' : 'Purchases'} · PO dates ${range}${filt.length ? ` · ${filt.join(', ')}` : ''}`;
+    const tag = range.replace(/ to /, '_to_');
+    res.json(by
+      ? reportWorkbook({
+          title: 'Purchases — summary by supplier', subtitle, sheetName: 'Purchases by supplier', filename: `purchases-by-supplier-${tag}.xlsx`,
+          heads: ['Supplier', 'POs', 'Net of VAT', 'VAT', 'Total'], kinds: ['text', 'int', 'money', 'money', 'money'], widths: [40, 8, 18, 16, 18],
+          rows: d.summary.map((s) => [s.supplier, s.count, s.net, s.vat, s.total]),
+          totals: [`TOTAL (${d.summary.length} supplier${d.summary.length === 1 ? '' : 's'})`, d.count, d.net, d.vat, d.total], user: req.user })
+      : reportWorkbook({
+          title: 'Purchases', subtitle, sheetName: 'Purchases', filename: `purchases-${tag}.xlsx`,
+          heads: ['PO Date', 'PO No.', 'Supplier', 'Allocated to', 'Type', 'Net of VAT', 'VAT', 'Total', 'Payment status'],
+          kinds: ['text', 'text', 'text', 'text', 'text', 'money', 'money', 'money', 'text'], widths: [13, 16, 34, 32, 16, 16, 14, 16, 15],
+          rows: d.rows.map((r) => [r.poDate, r.poNumber, r.supplier ?? '', r.allocationName ?? '', r.allocationType ?? '', r.net, r.vat, r.total, r.status]),
+          totals: [`TOTAL (${d.count} PO${d.count === 1 ? '' : 's'})`, '', '', '', '', d.net, d.vat, d.total, ''], user: req.user }));
+  } catch (err) { console.error('purchases export error:', err); res.status(500).json({ error: err.message }); }
+});
+
 // ============================================================================
 // Attendance module — Phase 1: time stations + clock scans.
 // Station admin routes are admin-only; scan/today are station-only (a station JWT
@@ -10311,7 +10395,7 @@ function derivePoDueDate(terms, poDate, receivedDate) {
 }
 
 const PAYABLE_SELECT = `
-  SELECT po.id, po.po_number, po.status AS po_status, po.payment_terms, po.supplier_id,
+  SELECT po.id, po.po_number, po.status AS po_status, po.payment_terms, po.supplier_id, po.vat_type,
          COALESCE(s.name, po.client) AS supplier,
          po.amount AS po_total,
          to_char(COALESCE(po.doc_date, po.created_date), 'YYYY-MM-DD')      AS po_date,

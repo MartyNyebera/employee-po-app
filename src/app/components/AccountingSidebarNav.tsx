@@ -25,7 +25,7 @@ import { NavBadge } from './NavBadge';
 export type AccountingView =
   | 'new-pr' | 'requests' | 'orders' | 'projects' | 'tradings' | 'facilities' | 'expenses'
   | 'withdrawals' | 'clients' | 'delivery-receipts' | 'billing-invoices' | 'receivables'
-  | 'timesheet' | 'payroll' | 'signature' | 'payables' | 'collections';
+  | 'timesheet' | 'payroll' | 'signature' | 'payables' | 'collections' | 'purchases';
 
 // Which live count an item wears. The portal supplies the numbers; this file only places them.
 export type BadgeKey = 'requests' | 'orders' | 'receivables';
@@ -83,7 +83,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { id: 'collections-report', label: 'COLLECTIONS REPORT', icon: HandCoins, view: 'collections', hover: 'Payments received on billing invoices' },
       { id: 'receivable-report', label: 'RECEIVABLE REPORT', icon: Coins, view: 'receivables',
         hover: 'Billing invoice − collection', badge: 'receivables' },
-      { id: 'purchases', label: 'PURCHASES', icon: ShoppingCart, hover: 'Summary of PO requests' },
+      { id: 'purchases', label: 'PURCHASES', icon: ShoppingCart, view: 'purchases', hover: 'Summary of PO requests' },
       { id: 'payable-report', label: 'PAYABLE REPORT', icon: CreditCard, view: 'payables', hover: 'Purchases − payments' },
       // The voucher list IS the old Expenses History screen, extended: a voucher is the same record,
       // and now can also pay POs. One screen for everything that went out, so no second nav entry.
