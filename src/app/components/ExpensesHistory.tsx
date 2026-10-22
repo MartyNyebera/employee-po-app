@@ -228,7 +228,7 @@ export function ExpensesHistory({ api, targets, isAdmin, onNewVoucher, reloadKey
       <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-          <input type="text" placeholder="Search voucher no., payee, PO no., supplier…" value={search} onChange={e => setSearch(e.target.value)}
+          <input type="text" placeholder="Search voucher no., payee, description, PO no., supplier…" value={search} onChange={e => setSearch(e.target.value)}
             className="w-full pl-9 pr-4 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
         </div>
         <label className="flex flex-col gap-1">
@@ -356,7 +356,8 @@ export function VoucherTable({ rows, onOpen }: { rows: ExpenseHistoryRow[]; onOp
                   <tr>
                     <th className="px-4 py-3 text-left">Voucher No.</th>
                     <th className="px-4 py-3 text-left">Date</th>
-                    <th className="px-4 py-3 text-left">Payee / description</th>
+                    <th className="px-4 py-3 text-left">Payee</th>
+                    <th className="px-4 py-3 text-left">Description</th>
                     <th className="px-4 py-3 text-left">Paid for</th>
                     <th className="px-4 py-3 text-left">Mode</th>
                     <th className="px-4 py-3 text-right">Total</th>
@@ -376,9 +377,11 @@ export function VoucherTable({ rows, onOpen }: { rows: ExpenseHistoryRow[]; onOp
                           </span>
                         </td>
                         <td className={`px-4 py-3 whitespace-nowrap ${voided ? 'text-gray-400' : 'text-gray-600'}`}>{prettyDate(r.expenseDate)}</td>
-                        <td className="px-4 py-3 max-w-[260px]">
-                          <div className={`truncate ${voided ? 'text-gray-400 line-through' : 'text-gray-900'}`} title={r.description}>{r.description}</div>
-                          {r.payee && <div className="text-xs text-gray-400 truncate">{r.payee}</div>}
+                        <td className="px-4 py-3 max-w-[180px]">
+                          <div className={`truncate ${voided ? 'text-gray-400 line-through' : 'text-gray-900'}`} title={r.payee || undefined}>{r.payee || '—'}</div>
+                        </td>
+                        <td className="px-4 py-3 max-w-[240px]">
+                          <div className={`truncate ${voided ? 'text-gray-400 line-through' : 'text-gray-700'}`} title={r.description}>{r.description}</div>
                         </td>
                         <td className="px-4 py-3 max-w-[300px]">
                           <div className="flex items-start gap-1.5">
