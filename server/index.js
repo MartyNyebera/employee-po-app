@@ -56,7 +56,7 @@ import { hashPassword, comparePassword, signToken, requireAuth, requireAdmin, re
 import { buildXlsx, STYLE, colName } from './xlsx.js';
 // The SAME module src/app/lib/payslipPrint.ts reads, so the exported breakdown and the printed
 // payslip cannot disagree. Plain .js outside src/ precisely so both sides can import it.
-import { payrollBand, payslipEarnings, payslipDeductions } from '../shared/payrollLines.js';
+import { payrollBand, payslipEarnings, payslipDeductions, adjustmentsOf } from '../shared/payrollLines.js';
 import { createSalesOrder, createPurchaseOrder } from './order-service.js';
 import { sendEmailToAdminsNewRequest, sendEmailToApplicant } from './email.js';
 
@@ -2252,6 +2252,45 @@ async function runMigrations() {
       `);
       console.log('✅ payroll_lines table ready');
     } catch (err) { console.log('ℹ️ payroll_lines table skipped:', err.message); }
+
+    // ===== Payroll adjustment lines (additive, new tables only). See the PAYROLL ADJUSTMENT LINES block. =====
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS payroll_adjustments (
+          id BIGSERIAL PRIMARY KEY,
+          period_id INTEGER NOT NULL REFERENCES pay_periods(id),
+          person_id INTEGER NOT NULL REFERENCES persons(id),
+          kind TEXT NOT NULL CHECK (kind IN ('earning', 'deduction')),
+          label TEXT NOT NULL CHECK (btrim(label) <> ''),
+          amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+          reason TEXT NOT NULL CHECK (btrim(reason) <> ''),
+          created_by TEXT,
+          created_by_id TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          voided_at TIMESTAMPTZ,
+          voided_by TEXT,
+          voided_by_id TEXT,
+          void_reason TEXT,
+          CONSTRAINT payroll_adjustments_void_needs_reason
+            CHECK (voided_at IS NULL OR btrim(COALESCE(void_reason, '')) <> '')
+        )
+      `);
+      await query(`CREATE INDEX IF NOT EXISTS idx_payroll_adjustments_period ON payroll_adjustments(period_id, person_id)`);
+      // Append-only trail, written in the same transaction as each add / void. Never updated or deleted.
+      await query(`
+        CREATE TABLE IF NOT EXISTS payroll_adjustment_log (
+          id BIGSERIAL PRIMARY KEY,
+          adjustment_id BIGINT NOT NULL,
+          period_id INTEGER NOT NULL,
+          person_id INTEGER NOT NULL,
+          action TEXT NOT NULL CHECK (action IN ('add', 'void')),
+          kind TEXT, label TEXT, amount NUMERIC(14,2), reason TEXT,
+          changed_by TEXT,
+          changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      console.log('✅ payroll_adjustments (+ log) tables ready');
+    } catch (err) { console.log('ℹ️ payroll_adjustments tables skipped:', err.message); }
 
     console.log('✅ All migrations complete');
   } catch (err) {
@@ -6134,6 +6173,28 @@ async function computePayroll(periodId) {
       WHERE (last_day IS NULL OR last_day >= $1) AND (hired_on IS NULL OR hired_on <= $2)
       ORDER BY full_name ASC`, [start, end])).rows;
 
+  // ADJUSTMENT LINES (see the PAYROLL ADJUSTMENT LINES block): one-off earnings / deductions kept in their
+  // own table so this recompute can never lose them. A person with an adjustment but no employment in
+  // the period (a resigned employee's final 13th month) still gets a line: they are added here, flagged
+  // adjOnly, and paid ONLY the adjustment - no base pay, no attendance, no statutory deductions.
+  const adjMap = {};
+  const adjRows = (await query(
+    `SELECT id, person_id, kind, label, amount FROM payroll_adjustments WHERE period_id = $1 AND voided_at IS NULL ORDER BY id`, [periodId])).rows;
+  for (const a of adjRows) {
+    const e = adjMap[a.person_id] || (adjMap[a.person_id] = { earnings: [], deductions: [], earnC: 0, dedC: 0 });
+    const item = { id: Number(a.id), label: a.label, amount: Number(a.amount) };
+    const c = Math.round(Number(a.amount) * 100);
+    if (a.kind === 'earning') { e.earnings.push(item); e.earnC += c; } else { e.deductions.push(item); e.dedC += c; }
+  }
+  const inWindow = new Set(persons.map(p => p.id));
+  const extraIds = Object.keys(adjMap).map(Number).filter(id => !inWindow.has(id));
+  if (extraIds.length) {
+    (await query(
+      `SELECT id, full_name, employment_type, pay_rate, sss_ee, philhealth_ee, pagibig_ee, withholding, ot_eligible, sss_enrolled,
+              to_char(hired_on,'YYYY-MM-DD') AS hired_on, to_char(last_day,'YYYY-MM-DD') AS last_day
+         FROM persons WHERE id = ANY($1::int[])`, [extraIds])).rows.forEach(p => persons.push({ ...p, adjOnly: true }));
+  }
+
   // Attendance from 14 days before the period (to resolve the "prior working day" for holiday
   // eligibility) through the period end. Manila minute-of-day for IN/OUT precomputed in SQL.
   const attMap = {};
@@ -6160,7 +6221,7 @@ async function computePayroll(periodId) {
   for (const person of persons) {
     // L1: a blank pay_rate means no rate has been set — never silently pay ₱0. Skip the person from
     // payroll_lines and surface them in the compute warnings so Admin can set a rate and recompute.
-    if (person.pay_rate === null || person.pay_rate === undefined || person.pay_rate === '') {
+    if (!person.adjOnly && (person.pay_rate === null || person.pay_rate === undefined || person.pay_rate === '')) {
       noPayRate.push({ person_id: person.id, full_name: person.full_name });
       continue;
     }
@@ -6172,7 +6233,7 @@ async function computePayroll(periodId) {
     const employed = (d) => (!person.hired_on || d >= person.hired_on) && (!person.last_day || d <= person.last_day);
     const hourly = paidHours > 0 ? dailyBasis / paidHours : 0;
     const perMin = hourly / 60;
-    const pAtt = attMap[person.id] || {};
+    const pAtt = person.adjOnly ? {} : (attMap[person.id] || {});
 
     let daysPresent = 0, halfDays = 0, absentDays = 0, otHours = 0, sundayPay = 0, holidayPay = 0;
     let earlyOtHours = 0, lateOtHours = 0; // the two OT buckets that sum into otHours
@@ -6302,7 +6363,7 @@ async function computePayroll(periodId) {
     // absence), and its late is deducted the same way.
     // M1: floor base at 0 — heavy absences (or a monthly with many unworked days) can never make
     // base go negative.
-    const basePay = Math.max(0, type === 'daily'
+    const basePay = person.adjOnly ? 0 : Math.max(0, type === 'daily'
       ? rate * (daysPresent + 0.5 * halfDays)
       : (rate / 2) - (dailyBasis * absentDays) - (dailyBasis * 0.5 * halfDays));
     const lateUndertimeDed = (countedLate + undertimeMin) * perMin;
@@ -6316,15 +6377,19 @@ async function computePayroll(periodId) {
     const sss = sssEnrolled ? round2(gross * 0.045) : 0;
     // PhilHealth & Pag-IBIG stay fixed roster values, but are deducted in the FIRST cutoff (1–15)
     // ONLY; the second cutoff (16–end) zeroes them (they still print ₱0.00 on the payslip).
-    const phic = firstCutoff ? (Number(person.philhealth_ee) || 0) : 0;
-    const pgib = firstCutoff ? (Number(person.pagibig_ee) || 0) : 0;
-    const wtax = Number(person.withholding) || 0;
+    const phic = !person.adjOnly && firstCutoff ? (Number(person.philhealth_ee) || 0) : 0;
+    const pgib = !person.adjOnly && firstCutoff ? (Number(person.pagibig_ee) || 0) : 0;
+    const wtax = person.adjOnly ? 0 : (Number(person.withholding) || 0);
     const bale = baleMap[person.id] || 0;
     const deductions = lateUndertimeDed + breakDed + sss + phic + pgib + wtax + bale;
     // L3: net can't go negative — if deductions (typically a large BALE) exceed gross, floor net at
     // 0 and record the shortfall so Admin knows the remainder wasn't collected and needs handling
     // (e.g. carry the unpaid BALE to the next period).
-    const rawNet = gross - deductions;
+    // Adjustments come AFTER the statutory deductions above (which were worked out on attendance pay only).
+    // With none, adjEarn = adjDed = 0 and this is exactly gross - deductions as it always was.
+    const adj = adjMap[person.id] || null;
+    const adjEarn = adj ? round2(adj.earnC / 100) : 0, adjDed = adj ? round2(adj.dedC / 100) : 0;
+    const rawNet = (gross + adjEarn) - (deductions + adjDed);
     const net = Math.max(0, rawNet);
     const deductionShortfall = rawNet < 0 ? round2(-rawNet) : 0;
     if (deductionShortfall > 0) deductionExceedsPay.push({ person_id: person.id, full_name: person.full_name, shortfall: deductionShortfall });
@@ -6347,8 +6412,9 @@ async function computePayroll(periodId) {
         // separately for the Verify screen. Same ×1.25 rate for both.
         undertime_minutes: undertimeMin, break_minutes: breakMin, ot_hours: round2(otHours), early_ot_hours: round2(earlyOtHours), late_ot_hours: round2(lateOtHours),
       },
-      deductions: { late_undertime: round2(lateUndertimeDed), break: round2(breakDed), sss_ee: round2(sss), philhealth_ee: round2(phic), pagibig_ee: round2(pgib), withholding: round2(wtax), bale: round2(bale), total: round2(deductions) },
-      pay: { base: round2(basePay), ot: round2(otPay), sunday: round2(sundayPay), holiday: round2(holidayPay), gross: round2(gross), net: round2(net), net_raw: round2(rawNet), deduction_shortfall: deductionShortfall },
+      deductions: { late_undertime: round2(lateUndertimeDed), break: round2(breakDed), sss_ee: round2(sss), philhealth_ee: round2(phic), pagibig_ee: round2(pgib), withholding: round2(wtax), bale: round2(bale), ...(adj ? { other: round2(adjDed) } : {}), total: round2(deductions + adjDed) },
+      pay: { base: round2(basePay), ot: round2(otPay), sunday: round2(sundayPay), holiday: round2(holidayPay), gross: round2(gross), ...(adj ? { other_earnings: round2(adjEarn) } : {}), net: round2(net), net_raw: round2(rawNet), deduction_shortfall: deductionShortfall },
+      ...(adj ? { adjustments: { earnings: adj.earnings, deductions: adj.deductions, earnings_total: adjEarn, deductions_total: adjDed } } : {}),
       days: perDay,
     };
 
@@ -6488,10 +6554,126 @@ app.get('/api/payroll/periods/:id/lines', requireRole(['admin', 'accounting']), 
       [req.params.id, period.start_date, period.end_date])).rows[0] : null;
     const staleAttendance = !!(staleChk && staleChk.computed_at && staleChk.attendance_updated_at
       && new Date(staleChk.attendance_updated_at) > new Date(staleChk.computed_at));
-    res.json({ period: { ...period, stale_attendance: staleAttendance }, lines: rows.rows });
+    // Same idea for adjustments: one added or voided after the lines were computed is not in them yet.
+    const adjChk = (recomputable && rows.rows.length) ? (await query(
+      `SELECT MAX(GREATEST(created_at, COALESCE(voided_at, created_at))) AS changed_at FROM payroll_adjustments WHERE period_id = $1`, [req.params.id])).rows[0] : null;
+    const staleAdjustments = !!(adjChk && adjChk.changed_at && staleChk && staleChk.computed_at && new Date(adjChk.changed_at) > new Date(staleChk.computed_at));
+    res.json({ period: { ...period, stale_attendance: staleAttendance, stale_adjustments: staleAdjustments }, lines: rows.rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ============================================================================
+// PAYROLL ADJUSTMENT LINES -- one-off earnings (13th month, back pay, bonus) and deductions added to a
+// person's pay for a period. They live in their OWN table so a recompute (which rewrites payroll_lines)
+// can never lose them; computePayroll reads them and applies them AFTER the statutory deductions:
+// SSS, PhilHealth, Pag-IBIG and withholding are still worked out on attendance pay only, and
+// net = (existing net before flooring) + earnings - deductions, then the existing floor-at-0 rule.
+// Void, never delete. Every add and void is written to payroll_adjustment_log in the SAME transaction
+// (the way a BALE change is). Allowed on open and locked periods; a FINALIZED period refuses (409) -
+// un-finalize first. Adding or voiding does not recompute anything by itself: the period shows as
+// needing a recompute (stale_adjustments on GET .../lines) until someone presses Compute.
+// ============================================================================
+const adjCents = (v) => { const s = String(v ?? '').trim().replace(/,/g, ''); return /^\d+(\.\d{1,2})?$/.test(s) ? Math.round(Number(s) * 100) : null; };
+const ADJ_KINDS = ['earning', 'deduction'];
+
+function mapAdjustment(r) {
+  return {
+    id: Number(r.id), periodId: Number(r.period_id), personId: Number(r.person_id), personName: r.full_name ?? null,
+    kind: r.kind, label: r.label, amount: Number(r.amount).toFixed(2), reason: r.reason,
+    createdBy: r.created_by ?? null, createdAt: r.created_at,
+    voidedAt: r.voided_at ?? null, voidedBy: r.voided_by ?? null, voidReason: r.void_reason ?? null,
+  };
+}
+
+async function periodAdjustments(periodId) {
+  const rows = (await query(
+    `SELECT a.*, p.full_name FROM payroll_adjustments a JOIN persons p ON p.id = a.person_id
+      WHERE a.period_id = $1 ORDER BY a.voided_at IS NOT NULL, a.id`, [periodId])).rows;
+  return rows.map(mapAdjustment);
+}
+
+app.get('/api/payroll/periods/:id/adjustments', requireRole(['admin', 'accounting']), async (req, res) => {
+  try {
+    if (!/^\d+$/.test(String(req.params.id))) return res.status(404).json({ error: 'Pay period not found' });
+    const pr = (await query(`SELECT id, status, payroll_finalized FROM pay_periods WHERE id = $1`, [req.params.id])).rows[0];
+    if (!pr) return res.status(404).json({ error: 'Pay period not found' });
+    // Everyone on the roster, resigned included: a final 13th month goes to someone who has left.
+    const people = (await query(`SELECT id, full_name, to_char(last_day,'YYYY-MM-DD') AS last_day FROM persons ORDER BY full_name`)).rows
+      .map((p) => ({ id: Number(p.id), fullName: p.full_name, lastDay: p.last_day }));
+    res.json({ finalized: pr.payroll_finalized === true, adjustments: await periodAdjustments(req.params.id), people });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/payroll/periods/:id/adjustments', requireRole(['admin', 'accounting']), async (req, res) => {
+  const client = await getClient();
+  try {
+    if (!/^\d+$/.test(String(req.params.id))) return res.status(404).json({ error: 'Pay period not found' });
+    const b = req.body || {};
+    const kind = String(b.kind ?? '').trim();
+    const label = String(b.label ?? '').trim();
+    const reason = String(b.reason ?? '').trim();
+    const cents = adjCents(b.amount);
+    const personId = /^\d+$/.test(String(b.personId ?? '')) ? Number(b.personId) : null;
+    if (!ADJ_KINDS.includes(kind)) return res.status(400).json({ error: "Kind must be 'earning' or 'deduction'" });
+    if (!label) return res.status(400).json({ error: 'A label is required (e.g. 13th Month Pay)' });
+    if (label.length > 100) return res.status(400).json({ error: 'The label is too long (100 characters max)' });
+    if (cents === null || cents <= 0) return res.status(400).json({ error: 'Amount must be more than 0, with at most 2 decimals' });
+    if (cents >= 1e11) return res.status(400).json({ error: 'Amount is too large' });
+    if (!reason) return res.status(400).json({ error: 'A reason is required' });
+    if (reason.length > 500) return res.status(400).json({ error: 'The reason is too long (500 characters max)' });
+    if (personId === null) return res.status(400).json({ error: 'Pick the employee' });
+    await client.query('BEGIN');
+    // The period row is locked so a finalize cannot land between this check and the insert.
+    const pr = (await client.query(`SELECT id, payroll_finalized FROM pay_periods WHERE id = $1 FOR UPDATE`, [req.params.id])).rows[0];
+    if (!pr) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Pay period not found' }); }
+    if (pr.payroll_finalized === true) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'This payroll is finalized. Un-finalize it before adding an adjustment.' }); }
+    const person = (await client.query(`SELECT id FROM persons WHERE id = $1`, [personId])).rows[0];
+    if (!person) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Employee not found' }); }
+    const by = req.user?.name || null, byId = req.user?.id != null ? String(req.user.id) : null;
+    const ins = (await client.query(
+      `INSERT INTO payroll_adjustments (period_id, person_id, kind, label, amount, reason, created_by, created_by_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+      [req.params.id, personId, kind, label, (cents / 100).toFixed(2), reason, by, byId])).rows[0];
+    await client.query(
+      `INSERT INTO payroll_adjustment_log (adjustment_id, period_id, person_id, action, kind, label, amount, reason, changed_by)
+       VALUES ($1,$2,$3,'add',$4,$5,$6,$7,$8)`,
+      [ins.id, req.params.id, personId, kind, label, (cents / 100).toFixed(2), reason, by]);
+    await client.query('COMMIT');
+    res.status(201).json({ id: Number(ins.id), adjustments: await periodAdjustments(req.params.id) });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('payroll adjustment add error:', err);
+    res.status(500).json({ error: err.message });
+  } finally { client.release(); }
+});
+
+app.post('/api/payroll/adjustments/:id/void', requireRole(['admin', 'accounting']), async (req, res) => {
+  const client = await getClient();
+  try {
+    if (!/^\d+$/.test(String(req.params.id))) return res.status(404).json({ error: 'Adjustment not found' });
+    const reason = String(req.body?.reason ?? '').trim().slice(0, 500);
+    if (!reason) return res.status(400).json({ error: 'A reason is required to void an adjustment' });
+    await client.query('BEGIN');
+    const cur = (await client.query(`SELECT * FROM payroll_adjustments WHERE id = $1 FOR UPDATE`, [req.params.id])).rows[0];
+    if (!cur) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Adjustment not found' }); }
+    if (cur.voided_at) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'This adjustment is already voided' }); }
+    const pr = (await client.query(`SELECT payroll_finalized FROM pay_periods WHERE id = $1 FOR UPDATE`, [cur.period_id])).rows[0];
+    if (pr && pr.payroll_finalized === true) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'This payroll is finalized. Un-finalize it before voiding an adjustment.' }); }
+    const by = req.user?.name || null, byId = req.user?.id != null ? String(req.user.id) : null;
+    await client.query(`UPDATE payroll_adjustments SET voided_at = NOW(), voided_by = $1, voided_by_id = $2, void_reason = $3 WHERE id = $4`, [by, byId, reason, req.params.id]);
+    await client.query(
+      `INSERT INTO payroll_adjustment_log (adjustment_id, period_id, person_id, action, kind, label, amount, reason, changed_by)
+       VALUES ($1,$2,$3,'void',$4,$5,$6,$7,$8)`,
+      [cur.id, cur.period_id, cur.person_id, cur.kind, cur.label, cur.amount, reason, by]);
+    await client.query('COMMIT');
+    res.json({ adjustments: await periodAdjustments(cur.period_id) });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('payroll adjustment void error:', err);
+    res.status(500).json({ error: err.message });
+  } finally { client.release(); }
 });
 
 // Excel (.xlsx) export of the payroll summary — the SAME per-employee rows the review table
@@ -6573,17 +6755,21 @@ app.get('/api/payroll/periods/:id/export', requireRole(['admin', 'accounting']),
       'Spec. Hol. Hrs', 'Spec. Hol. Rate', 'Special Hol.',
       'Hol. Days (not worked)', 'Holiday pay',
       'Rounding (earnings)',
+      'Other earnings',
       'GROSS',
       'SSS - EE', 'Philhealth - EE', 'Pagibig - EE', 'Withholding', 'Undertime', 'Personal break', 'BALE',
+      'Other deductions',
       'Rounding (deductions)', 'Total Deduction',
       'NET PAY',
+      'Adjustments (labels)',
     ];
     // The slip labels both residual rows plainly "Rounding", one in each grid. Two columns of that
     // name in one sheet would be ambiguous, so they are qualified here — the mapping to the slip
     // is still one row to one column.
     // Which columns hold money, which hold an additive quantity, and which hold a rate. The TOTAL
     // row sums the first two and leaves the rates blank — a column of rates has no meaningful sum.
-    const MONEY_COLS = [4, 7, 10, 13, 16, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30];
+    const MONEY_COLS = [4, 7, 10, 13, 16, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32];
+    const LABELS_COL = 33;
     const QTY_COLS = [2, 5, 8, 11, 14, 17];
     const out = [
       [{ v: 'KIMOEL TRADING & CONSTRUCTION INCORPORATED', s: T.TITLE }],
@@ -6596,7 +6782,7 @@ app.get('/api/payroll/periods/:id/export', requireRole(['admin', 'accounting']),
       [],
       // A light band naming the two halves. Unmerged on purpose — the label simply spills over the
       // empty cells beside it, and the writer stays a single-sheet, no-merge format.
-      (() => { const g = HEADS.map(() => ({ v: '', s: T.TEXT })); g[3] = { v: '— EARNINGS —', s: T.MUTED }; g[21] = { v: '— DEDUCTIONS —', s: T.MUTED }; return g; })(),
+      (() => { const g = HEADS.map(() => ({ v: '', s: T.TEXT })); g[3] = { v: '— EARNINGS —', s: T.MUTED }; g[22] = { v: '— DEDUCTIONS —', s: T.MUTED }; return g; })(),
       HEADS.map(h => ({ v: h, s: T.HEADER })),
     ];
     // Totals accumulate in whole centavos so a long column cannot drift by a float hair, and so
@@ -6618,16 +6804,21 @@ app.get('/api/payroll/periods/:id/export', requireRole(['admin', 'accounting']),
         money(e.specHolHours), money(e.specHolRate), money(e.specHolAmount),
         e.holOffDays, money(e.holOffAmount),
         e.adjustment,
+        e.otherTotal,
         band.gross,
         by('sss'), by('philhealth'), by('pagibig'), by('withholding'), by('undertime'), by('break'), by('bale'),
+        d.items.filter(x => String(x.key).startsWith('adj:')).reduce((n, x) => n + cent(x.amount), 0) / 100,
         d.adjustment, d.total,
         band.net,
+        // Every adjustment by name, e.g. "13th Month Pay +5,000.00; Loan −500.00" -- the labels are the
+        // one thing the numeric columns cannot say.
+        [...e.otherItems.map(a => `${a.label} +${a.amount.toFixed(2)}`), ...adjustmentsOf(r).deductions.map(a => `${a.label} −${a.amount.toFixed(2)}`)].join('; '),
       ];
       for (const i of MONEY_COLS) tot[i] += cent(cells[i]);
       for (const i of QTY_COLS) tot[i] += cent(cells[i]);
       out.push(cells.map((v, i) => ({
         v,
-        s: i < 2 ? T.TEXT : (MONEY_COLS.includes(i) ? T.MONEY : T.NUMBER),
+        s: (i < 2 || i === LABELS_COL) ? T.TEXT : (MONEY_COLS.includes(i) ? T.MONEY : T.NUMBER),
       })));
     }
     // A head count and every additive column's total, so she can check the file against her own
@@ -6647,7 +6838,7 @@ app.get('/api/payroll/periods/:id/export', requireRole(['admin', 'accounting']),
     const buf = buildXlsx({
       rows: out,
       sheetName: `Period ${period.id}`,
-      widths: [26, 9, 7, 11, 12, 8, 10, 11, 11, 12, 11, 13, 14, 11, 14, 15, 12, 20, 12, 18, 13, 11, 14, 12, 12, 11, 13, 11, 20, 14, 13],
+      widths: [26, 9, 7, 11, 12, 8, 10, 11, 11, 12, 11, 13, 14, 11, 14, 15, 12, 20, 12, 18, 14, 13, 11, 14, 12, 12, 11, 13, 11, 16, 20, 14, 13, 46],
       freezeRows: headerRow,
       autoFilter: `A${headerRow}:${lastCol}${headerRow + rows.length}`,
     });

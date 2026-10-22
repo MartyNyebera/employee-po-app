@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Calculator, Search, FileSearch, Lock, Unlock, Printer, AlertTriangle, FileSpreadsheet } from 'lucide-react';
+import { Calculator, Search, FileSearch, Lock, Unlock, Printer, AlertTriangle, FileSpreadsheet, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { S, Modal, TextInput, GhostBtn, pill, peso } from './crmKit';
 import { printPayslip, printPayslips } from '../../lib/payslipPrint';
 import { payrollBand } from '../../lib/payrollBand';
+import { PayrollAdjustmentsModal } from './PayrollAdjustments';
 
 // ============================================================================
 // Payroll Review (Phase 4b) — shared by the Admin dashboard and the Accounting portal. Shows the
@@ -27,7 +28,9 @@ interface Period { id: number; start_date: string; end_date: string; status: 'op
   // OT/late-excuse toggle) AFTER the LAST compute -- compute snapshots attendance into payroll_lines
   // once and never re-reads it, so the lines below can silently go stale. Only ever true on a period
   // that's actually locked and not finalized (recompute is blocked on a finalized one regardless).
-  stale_attendance?: boolean; }
+  stale_attendance?: boolean;
+  // True when a payroll adjustment was added or voided after the lines were last computed.
+  stale_adjustments?: boolean; }
 // Short label for the cutoff badge, e.g. "1st cutoff · Sep" / "2nd cutoff".
 const cutoffLabel = (p?: Period | null) => {
   if (!p || !p.cutoff_half) return '';
@@ -79,6 +82,8 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
   const [detail, setDetail] = useState<Line | null>(null);
   const [warnings, setWarnings] = useState<Warnings | null>(null);
   const [exporting, setExporting] = useState(false);
+  // The adjustments modal: null = closed; personId = pre-selected employee (null = the whole period).
+  const [adjFor, setAdjFor] = useState<{ personId: number | null } | null>(null);
 
   // Compute is available to BOTH roles now. The REAL gate is requireRole(['admin','accounting'])
   // on POST .../compute; this only decides whether the button is drawn. Written as an explicit
@@ -218,6 +223,12 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
               {exporting ? 'Exporting…' : 'Export to Excel'}{search && filtered.length !== lines.length ? ` (${filtered.length})` : ''}
             </button>
           )}
+          {period && (
+            <button style={{ ...S.rowBtn, padding: '9px 14px', fontWeight: 600 }} onClick={() => setAdjFor({ personId: null })}
+              title="One-off earnings (13th month, back pay, bonus) and deductions for this period">
+              <Plus size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />Adjustments
+            </button>
+          )}
           {canCompute && (
             <button style={{ ...S.addBtn, opacity: (!locked || busy || finalized) ? 0.55 : 1, cursor: (!locked || busy || finalized) ? 'default' : 'pointer' }}
               onClick={compute} disabled={!locked || busy || finalized}
@@ -267,6 +278,12 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
       {period?.stale_attendance && (
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', marginBottom: '16px', borderRadius: '8px', background: '#fff8e6', border: '1px solid #e8cf8a', fontSize: '13px', color: '#7a5c0c' }}>
           <AlertTriangle size={15} /> Attendance for this period changed after it was last computed — days, hours, OT and deductions below may be out of date. Recompute to refresh them before printing or finalizing.
+        </div>
+      )}
+
+      {period?.stale_adjustments && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', marginBottom: '16px', borderRadius: '8px', background: '#fff8e6', border: '1px solid #e8cf8a', fontSize: '13px', color: '#7a5c0c' }}>
+          <AlertTriangle size={15} /> A payroll adjustment was added or voided after this period was last computed — recompute to apply it before printing or finalizing.
         </div>
       )}
 
@@ -331,6 +348,9 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
                     <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                       <button title="Print payslip" style={S.rowBtn} onClick={() => printOne(l)}><Printer size={14} /></button>
                       <button title="Line-by-line breakdown" style={{ ...S.rowBtn, marginLeft: '6px' }} onClick={() => setDetail(l)}><FileSearch size={14} /></button>
+                      {canCompute && !finalized && (
+                        <button title="Add an adjustment (13th month, back pay, bonus, deduction)" style={{ ...S.rowBtn, marginLeft: '6px' }} onClick={() => setAdjFor({ personId: l.person_id })}><Plus size={14} /></button>
+                      )}
                     </td>
                   </tr>
                 );
@@ -349,6 +369,10 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
       </div>
 
       {detail && <BreakdownModal line={detail} onClose={() => setDetail(null)} />}
+      {adjFor && period && (
+        <PayrollAdjustmentsModal api={api} periodId={period.id} finalized={finalized} canEdit={canCompute}
+          presetPersonId={adjFor.personId} onClose={() => setAdjFor(null)} onChanged={() => selectedId !== null && loadLines(selectedId)} />
+      )}
     </div>
   );
 }
@@ -396,7 +420,14 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
   const sumDays = round2(days.reduce((a, d) => a + (dayAmount(d) || 0), 0)); // each day's amount now includes its OT
   const dBreak = round2(ded.break), dSss = round2(ded.sss_ee), dPhic = round2(ded.philhealth_ee);
   const dPgib = round2(ded.pagibig_ee), dWtax = round2(ded.withholding), dBale = round2(ded.bale);
-  const reconNet = round2(sumDays - dBreak - dSss - dPhic - dPgib - dWtax - dBale);
+  // One-off adjustment lines (payroll_adjustments), applied after the statutory deductions. They sit in
+  // the reconciliation as their own rows so it still ties to Net to the centavo.
+  const adjB = (b as any).adjustments || {};
+  const adjEarn: Array<{ id: number; label: string; amount: number }> = adjB.earnings || [];
+  const adjDedL: Array<{ id: number; label: string; amount: number }> = adjB.deductions || [];
+  const adjEarnTot = round2(adjEarn.reduce((n, a) => n + (Number(a.amount) || 0), 0));
+  const adjDedTot = round2(adjDedL.reduce((n, a) => n + (Number(a.amount) || 0), 0));
+  const reconNet = round2(sumDays + adjEarnTot - adjDedTot - dBreak - dSss - dPhic - dPgib - dWtax - dBale);
   const residual = round2((Number(pay.net) || 0) - reconNet);
   const isMonthly = ref.employment_type === 'monthly';
 
@@ -491,6 +522,8 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
       <div style={{ marginBottom: '18px', padding: '12px 16px', background: '#fafafa', border: '1px solid #ececec', borderRadius: '8px' }}>
         <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#7a6a0c', marginBottom: '8px' }}>Reconciliation</div>
         <Row k="Σ Day amounts (incl. OT, net of late/UT)" v={peso(sumDays)} />
+        {adjEarn.map(a => <Row key={'e' + a.id} k={'+ ' + a.label} v={peso(a.amount)} />)}
+        {adjDedL.map(a => <Row key={'d' + a.id} k={'− ' + a.label} v={'(' + peso(a.amount) + ')'} />)}
         {dBreak ? <Row k="− Personal break" v={`(${peso(dBreak)})`} /> : null}
         {dSss ? <Row k="− SSS (EE)" v={`(${peso(dSss)})`} /> : null}
         {dPhic ? <Row k="− PhilHealth (EE)" v={`(${peso(dPhic)})`} /> : null}
@@ -514,7 +547,9 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
           <Row k="Overtime" v={peso(pay.ot)} />
           <Row k="Sunday" v={peso(pay.sunday)} />
           <Row k="Holiday" v={peso(pay.holiday)} />
-          <Row k="Gross" v={peso(pay.gross)} strong />
+          <Row k={adjEarn.length ? 'Gross (attendance)' : 'Gross'} v={peso(pay.gross)} strong />
+          {adjEarn.map(a => <Row key={'e' + a.id} k={a.label} v={peso(a.amount)} />)}
+          {adjEarn.length ? <Row k="Total earnings" v={peso(round2((Number(pay.gross) || 0) + adjEarnTot))} strong /> : null}
         </div>
         <div>
           <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#7a6a0c', marginBottom: '6px' }}>Deductions</div>
@@ -525,6 +560,7 @@ function BreakdownModal({ line, onClose }: { line: Line; onClose: () => void }) 
           <Row k="Pag-IBIG (EE)" v={peso(ded.pagibig_ee)} />
           <Row k="Withholding" v={peso(ded.withholding)} />
           <Row k="BALE" v={peso(ded.bale)} />
+          {adjDedL.map(a => <Row key={'d' + a.id} k={a.label} v={peso(a.amount)} />)}
           <Row k="Total deductions" v={peso(ded.total)} strong />
           {/* AUDIT VIEW — admin/accounting only, and the one place the difference is spelled out.
               The summary table, the Excel export and the payslip all show what was actually

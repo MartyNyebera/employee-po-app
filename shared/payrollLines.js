@@ -21,6 +21,22 @@ const cent = (v) => Math.round((Number(v) || 0) * 100);
 const num = (v) => Number(v) || 0;
 
 // ============================================================================
+// ADJUSTMENT LINES (payroll_adjustments): one-off earnings (13th month, back pay, bonus) and
+// deductions the engine stored in the line's breakdown AFTER working out the statutory deductions on
+// attendance pay only. Read back here, never recomputed. A line with none (every line computed
+// before adjustments existed) yields all zeros, so every figure below is exactly what it always was.
+// ============================================================================
+export function adjustmentsOf(l) {
+  const a = (l && l.breakdown && l.breakdown.adjustments) || {};
+  const norm = (xs) => (Array.isArray(xs) ? xs : [])
+    .map((x) => ({ id: x.id, label: String(x.label == null ? '' : x.label), amount: num(x.amount) }))
+    .filter((x) => cent(x.amount) > 0);
+  const earnings = norm(a.earnings), deductions = norm(a.deductions);
+  const sum = (xs) => xs.reduce((n, x) => n + cent(x.amount), 0);
+  return { earnings, deductions, earnC: sum(earnings), dedC: sum(deductions) };
+}
+
+// ============================================================================
 // THE BAND — Gross, Deductions, Net, reconciled so they always tie.
 //
 // computePayroll builds gross, the deduction total and net from UNROUNDED values and then rounds
@@ -37,7 +53,10 @@ const num = (v) => Number(v) || 0;
 // construction, in whole centavos, for every row and for all time.
 // ============================================================================
 export function payrollBand(l) {
-  const gross = cent(l && l.gross);
+  // GROSS here is everything earned: attendance pay (the stored gross, which SSS was worked out on)
+  // plus any adjustment earnings. The stored gross column itself is never changed.
+  const adj = adjustmentsOf(l);
+  const gross = cent(l && l.gross) + adj.earnC;
   const net = cent(l && l.net);
   const applied = gross - net;
   const bd = (l && l.breakdown) || {};
@@ -50,6 +69,8 @@ export function payrollBand(l) {
   const itemized = bd.deductions && bd.deductions.total != null ? cent(bd.deductions.total) : applied + uncollected;
   return {
     gross: gross / 100,
+    otherEarnings: adj.earnC / 100,
+    otherDeductions: adj.dedC / 100,
     deductions: applied / 100,
     net: net / 100,
     uncollected: uncollected / 100,
@@ -77,6 +98,7 @@ export function payrollBand(l) {
 // row always shows its rate. DISPLAY ONLY: the Amount fields are the engine's own values.
 // ============================================================================
 export function payslipEarnings(l) {
+  const adj = adjustmentsOf(l);
   const bd = (l && l.breakdown) || {};
   const ref = bd.reference || {};
   const mults = ref.multipliers || {};
@@ -106,8 +128,10 @@ export function payslipEarnings(l) {
     regHolHours, regHolRate: hourly * (num(mults.regular_holiday) || 2.0), regHolAmount,
     specHolHours, specHolRate: hourly * (num(mults.special_holiday) || 1.30), specHolAmount,
     holOffDays, holOffRate: dailyRate, holOffAmount,
-    // The engine's stored gross — what Total Earnings prints.
-    total: num(l && l.gross),
+    // Total Earnings: the engine's stored (attendance) gross plus any adjustment earnings.
+    total: (cent(l && l.gross) + adj.earnC) / 100,
+    // Each adjustment earning is its own row under the standard ones, with its own label.
+    otherItems: adj.earnings, otherTotal: adj.earnC / 100,
   };
   // ...and the same residual the deduction grid has, for the same reason. base_pay, ot_pay and
   // sunday_pay are each STORED already rounded to centavos, while gross was rounded from the
@@ -116,10 +140,10 @@ export function payslipEarnings(l) {
   // 7,477.72). `adjustment` closes exactly that gap and is 0 when none is needed, so the printed
   // earnings column always reaches the printed Total Earnings.
   //
-  // Invariant, always, in whole centavos:  sum(the six amounts) + adjustment === total
+  // Invariant, always, in whole centavos:  sum(the six amounts) + adjustment + otherTotal === total
   const shownEarn = cent(out.regAmount) + cent(out.otAmount) + cent(out.sundayAmount)
     + cent(out.regHolAmount) + cent(out.specHolAmount) + cent(out.holOffAmount);
-  out.adjustment = (cent(out.total) - shownEarn) / 100;
+  out.adjustment = (cent(l && l.gross) - shownEarn) / 100;
   return out;
 }
 
@@ -163,6 +187,9 @@ export function payslipDeductions(l, band) {
     { key: 'undertime', label: 'Undertime', amount: num(l && l.late_undertime_deduction) },
     { key: 'break', label: 'Personal break', amount: num(ded.break) },
     { key: 'bale', label: 'BALE', amount: num(l && l.bale) },
+    // Adjustment deductions come last in priority: if pay runs out, the company's own one-off lines are
+    // the first to be capped, ahead of any statutory figure.
+    ...adjustmentsOf(l).deductions.map((a) => ({ key: 'adj:' + a.id, label: a.label, amount: a.amount })),
   ];
 
   const capped = b.uncollected > 0;

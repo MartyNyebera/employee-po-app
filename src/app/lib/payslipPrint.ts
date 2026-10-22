@@ -33,7 +33,7 @@ export interface PayslipLine {
   bale: number | string;
   gross: number | string;
   net: number | string;
-  breakdown?: { reference?: any; totals?: any; deductions?: any; pay?: any; days?: Array<{ holiday?: string | null; kind?: string; net_hours?: number; amount?: number }> } | null;
+  breakdown?: { reference?: any; totals?: any; deductions?: any; pay?: any; adjustments?: any; days?: Array<{ holiday?: string | null; kind?: string; net_hours?: number; amount?: number }> } | null;
 }
 export interface PayslipPeriod { id: number; start_date: string; end_date: string; }
 
@@ -202,8 +202,8 @@ function slipHtml(period: PayslipPeriod, l: PayslipLine): string {
           <tr><td class="lbl">Reg. Hol.</td><td class="num">${esc(qtyStr(regHolHours))}</td><td class="num">${money(regHolRate)}</td><td class="num">${money(regHol)}</td></tr>
           <tr><td class="lbl">Special Hol.</td><td class="num">${esc(qtyStr(specHolHours))}</td><td class="num">${money(specHolRate)}</td><td class="num">${money(specHol)}</td></tr>
           ${holOffPay > 0 ? `<tr><td class="lbl">Holiday pay</td><td class="num">${esc(qtyStr(holOffDays))}</td><td class="num">${money(dailyRate)}</td><td class="num">${money(holOffPay)}</td></tr>` : ''}
-          ${earnRounding !== 0 ? `<tr><td class="lbl">Rounding</td><td class="num"></td><td class="num"></td><td class="num">${money(earnRounding)}</td></tr>` : ''}
-          <tr class="tot"><td class="lbl" colspan="3">Total Earnings</td><td class="num">${money(l.gross)}</td></tr>
+          ${earnRounding !== 0 ? `<tr><td class="lbl">Rounding</td><td class="num"></td><td class="num"></td><td class="num">${money(earnRounding)}</td></tr>` : ''}${E.otherItems.map((a: { label: string; amount: number }) => `<tr><td class="lbl">${esc(a.label)}</td><td class="num"></td><td class="num"></td><td class="num">${money(a.amount)}</td></tr>`).join('')}
+          <tr class="tot"><td class="lbl" colspan="3">Total Earnings</td><td class="num">${money(E.total)}</td></tr>
         </tbody></table>
       </div>
       <div>
