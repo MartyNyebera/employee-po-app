@@ -2290,6 +2290,31 @@ async function runMigrations() {
         )
       `);
       console.log('✅ payroll_adjustments (+ log) tables ready');
+      // 13th month: basic pay earned outside the system, per employee per year (editable, every change logged).
+      await query(`
+        CREATE TABLE IF NOT EXISTS thirteenth_month_prior (
+          person_id INTEGER NOT NULL REFERENCES persons(id),
+          year INTEGER NOT NULL,
+          amount NUMERIC(14,2) NOT NULL CHECK (amount >= 0),
+          notes TEXT,
+          updated_by TEXT,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (person_id, year)
+        )
+      `);
+      await query(`
+        CREATE TABLE IF NOT EXISTS thirteenth_month_prior_log (
+          id BIGSERIAL PRIMARY KEY,
+          person_id INTEGER NOT NULL,
+          year INTEGER NOT NULL,
+          old_amount NUMERIC(14,2),
+          new_amount NUMERIC(14,2) NOT NULL,
+          notes TEXT,
+          changed_by TEXT,
+          changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      console.log('✅ thirteenth_month_prior (+ log) tables ready');
     } catch (err) { console.log('ℹ️ payroll_adjustments tables skipped:', err.message); }
 
     console.log('✅ All migrations complete');
@@ -6672,6 +6697,198 @@ app.post('/api/payroll/adjustments/:id/void', requireRole(['admin', 'accounting'
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('payroll adjustment void error:', err);
+    res.status(500).json({ error: err.message });
+  } finally { client.release(); }
+});
+
+// ============================================================================
+// 13TH MONTH CALCULATOR. Read-only maths on payroll that already exists, plus ONE write path: posting a
+// balance into a pay period as a "13th Month Pay" earning adjustment (PAYROLL ADJUSTMENT LINES above).
+// It never touches attendance, the compute rules or any stored pay line.
+//
+//   Basic earned in system = sum over the year's payroll lines of  base pay - late/undertime - personal-break
+//                            deductions. OT, Sunday, holiday premiums and not-worked holiday pay are NOT basic.
+//   Basic earned before system = an editable amount per employee per year (earnings paid outside the system).
+//   13th month due = (in system + before system) / 12, to the centavo.
+//   Already paid = non-voided "13th Month Pay" earning adjustments for that person and year, so it cannot be
+//                  paid twice. The year of an adjustment is the one in its reason ("13th month 2026", which is
+//                  what Post writes); one entered by hand without a year counts toward the year its pay period
+//                  ends in.
+//   Balance to pay = due - already paid. Zero or negative balances are never posted.
+// A pay period counts toward the year its END date falls in. Whole centavos throughout.
+// ============================================================================
+const THIRTEENTH_LABEL = '13th Month Pay';
+const thirteenthRoles = ['admin', 'accounting'];
+
+async function thirteenthMonthData(year, db = { query }) {
+  const yStart = `${year}-01-01`, yEnd = `${year}-12-31`;
+  const periods = (await db.query(
+    `SELECT p.id, to_char(p.start_date,'YYYY-MM-DD') AS start_date, to_char(p.end_date,'YYYY-MM-DD') AS end_date, p.status, p.payroll_finalized,
+            (SELECT COUNT(*)::int FROM payroll_lines l WHERE l.pay_period_id = p.id) AS lines
+       FROM pay_periods p WHERE p.end_date BETWEEN $1::date AND $2::date ORDER BY p.start_date, p.id`, [yStart, yEnd])).rows;
+  const periodIds = periods.map((p) => p.id);
+  const lines = periodIds.length ? (await db.query(
+    `SELECT l.pay_period_id, l.person_id, l.base_pay, l.late_undertime_deduction,
+            COALESCE((l.breakdown->'deductions'->>'break')::numeric, 0) AS break_ded
+       FROM payroll_lines l WHERE l.pay_period_id = ANY($1::int[])`, [periodIds])).rows : [];
+  const prior = (await db.query(`SELECT person_id, amount, notes, updated_by FROM thirteenth_month_prior WHERE year = $1`, [year])).rows;
+  const paidRows = (await db.query(
+    `SELECT a.person_id, a.amount, a.reason, EXTRACT(YEAR FROM pp.end_date)::int AS period_year
+       FROM payroll_adjustments a JOIN pay_periods pp ON pp.id = a.period_id
+      WHERE a.kind = 'earning' AND a.voided_at IS NULL AND lower(btrim(a.label)) = lower($1)`, [THIRTEENTH_LABEL])).rows;
+  const persons = (await db.query(
+    `SELECT id, full_name, status, pay_rate, to_char(hired_on,'YYYY-MM-DD') AS hired_on, to_char(last_day,'YYYY-MM-DD') AS last_day
+       FROM persons ORDER BY full_name`)).rows;
+
+  const cent = (v) => Math.round(Number(v || 0) * 100);
+  const byPerson = new Map();
+  const slot = (id) => { if (!byPerson.has(id)) byPerson.set(id, { inC: 0, periods: [], priorC: 0, notes: null, priorBy: null, paidC: 0 }); return byPerson.get(id); };
+  const pById = new Map(periods.map((p) => [p.id, p]));
+  for (const l of lines) {
+    const s = slot(l.person_id); const p = pById.get(l.pay_period_id);
+    const basic = cent(l.base_pay) - cent(l.late_undertime_deduction) - cent(l.break_ded);
+    s.inC += basic; s.periods.push({ id: p.id, start: p.start_date, end: p.end_date, finalized: p.payroll_finalized === true, basic: (basic / 100).toFixed(2) });
+  }
+  for (const r of prior) { const s = slot(r.person_id); s.priorC = cent(r.amount); s.notes = r.notes ?? null; s.priorBy = r.updated_by ?? null; }
+  for (const a of paidRows) {
+    const m = /13th\s*month\s*(\d{4})/i.exec(a.reason || '');
+    const y = m ? Number(m[1]) : a.period_year;
+    if (y === year) slot(a.person_id).paidC += cent(a.amount);
+  }
+  const rows = [];
+  for (const p of persons) {
+    const employedInYear = (!p.hired_on || p.hired_on <= yEnd) && (!p.last_day || p.last_day >= yStart);
+    const s = byPerson.get(p.id);
+    // Active at any point in the year (resigned included), or with pay/prior/paid on file for it. A person
+    // with no rate and nothing on file for the year has nothing to compute and is left out.
+    if (!s && !(employedInYear && p.pay_rate !== null)) continue;
+    const e = s || { inC: 0, periods: [], priorC: 0, notes: null, priorBy: null, paidC: 0 };
+    e.periods.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : a.id - b.id));
+    const dueC = Math.round((e.inC + e.priorC) / 12);
+    rows.push({
+      personId: Number(p.id), fullName: p.full_name, status: p.status, hiredOn: p.hired_on, lastDay: p.last_day,
+      basicInSystem: (e.inC / 100).toFixed(2), periodsCounted: e.periods,
+      basicBeforeSystem: (e.priorC / 100).toFixed(2), priorNotes: e.notes,
+      dueBasis: ((e.inC + e.priorC) / 100).toFixed(2), due: (dueC / 100).toFixed(2),
+      alreadyPaid: (e.paidC / 100).toFixed(2), balance: ((dueC - e.paidC) / 100).toFixed(2),
+      _c: { inC: e.inC, priorC: e.priorC, dueC, paidC: e.paidC },
+    });
+  }
+  const sum = (k) => rows.reduce((n, r) => n + r._c[k], 0);
+  const totals = {
+    basicInSystem: (sum('inC') / 100).toFixed(2), basicBeforeSystem: (sum('priorC') / 100).toFixed(2),
+    due: (sum('dueC') / 100).toFixed(2), alreadyPaid: (sum('paidC') / 100).toFixed(2),
+    balance: ((sum('dueC') - sum('paidC')) / 100).toFixed(2),
+  };
+  for (const r of rows) delete r._c;
+  return {
+    year, rows, totals,
+    periods: periods.map((p) => ({ id: p.id, start: p.start_date, end: p.end_date, status: p.status, finalized: p.payroll_finalized === true, lines: p.lines })),
+    // Every period of the year that is not finalized: its lines (if any) are still subject to change.
+    notFinalized: periods.filter((p) => p.payroll_finalized !== true).map((p) => ({ id: p.id, start: p.start_date, end: p.end_date, status: p.status, lines: p.lines })),
+  };
+}
+
+app.get('/api/payroll/thirteenth-month', requireRole(thirteenthRoles), async (req, res) => {
+  try {
+    const year = Number(req.query.year);
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) return res.status(400).json({ error: 'Pick a year' });
+    const d = await thirteenthMonthData(year);
+    // Periods an amount can be posted into: any that is not finalized (open or locked).
+    const postable = (await query(
+      `SELECT id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date, status
+         FROM pay_periods WHERE payroll_finalized IS NOT TRUE ORDER BY start_date DESC, id DESC`)).rows;
+    res.json({ ...d, postable: postable.map((p) => ({ id: p.id, start: p.start_date, end: p.end_date, status: p.status })) });
+  } catch (err) { console.error('13th month error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/payroll/thirteenth-month/export', requireRole(thirteenthRoles), async (req, res) => {
+  try {
+    const year = Number(req.query.year);
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) return res.status(400).json({ error: 'Pick a year' });
+    const d = await thirteenthMonthData(year);
+    const warn = d.notFinalized.length ? ` · NOT FINAL: ${d.notFinalized.length} period${d.notFinalized.length === 1 ? '' : 's'} of ${year} not finalized (${d.notFinalized.map((p) => p.id).join(', ')})` : '';
+    res.json(reportWorkbook({
+      title: `13th Month Pay — ${year}`, sheetName: `13th month ${year}`, filename: `13th-month-${year}.xlsx`,
+      subtitle: `Basic = base pay − late/undertime − personal break (no OT or premiums) · due = (in system + before system) ÷ 12${warn}`,
+      heads: ['Employee', 'Status', 'Periods counted', 'Basic earned in system', 'Basic earned before system', 'Total basic', '13th month due', 'Already paid', 'Balance to pay'],
+      kinds: ['text', 'text', 'text', 'money', 'money', 'money', 'money', 'money', 'money'], widths: [30, 11, 22, 20, 22, 16, 16, 15, 16],
+      rows: d.rows.map((r) => [r.fullName, r.status, r.periodsCounted.map((p) => p.id).join(', '), r.basicInSystem, r.basicBeforeSystem, r.dueBasis, r.due, r.alreadyPaid, r.balance]),
+      totals: [`TOTAL (${d.rows.length} employee${d.rows.length === 1 ? '' : 's'})`, '', '', d.totals.basicInSystem, d.totals.basicBeforeSystem, (Number(d.totals.basicInSystem) + Number(d.totals.basicBeforeSystem)).toFixed(2), d.totals.due, d.totals.alreadyPaid, d.totals.balance],
+      user: req.user }));
+  } catch (err) { console.error('13th month export error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// Earnings paid outside the system, per employee per year. Every change is logged (old -> new, who, when).
+app.put('/api/payroll/thirteenth-month/prior', requireRole(thirteenthRoles), async (req, res) => {
+  const client = await getClient();
+  try {
+    const b = req.body || {};
+    const year = Number(b.year), personId = /^\d+$/.test(String(b.personId ?? '')) ? Number(b.personId) : null;
+    const cents = adjCents(b.amount === '' || b.amount == null ? '0' : b.amount);
+    const notes = String(b.notes ?? '').trim().slice(0, 500) || null;
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) return res.status(400).json({ error: 'Pick a year' });
+    if (personId === null) return res.status(400).json({ error: 'Pick the employee' });
+    if (cents === null) return res.status(400).json({ error: 'Amount must be 0 or more, with at most 2 decimals' });
+    await client.query('BEGIN');
+    if (!(await client.query(`SELECT 1 FROM persons WHERE id = $1`, [personId])).rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Employee not found' }); }
+    const cur = (await client.query(`SELECT amount, notes FROM thirteenth_month_prior WHERE person_id = $1 AND year = $2 FOR UPDATE`, [personId, year])).rows[0];
+    const by = req.user?.name || null;
+    await client.query(
+      `INSERT INTO thirteenth_month_prior (person_id, year, amount, notes, updated_by, updated_at) VALUES ($1,$2,$3,$4,$5,NOW())
+       ON CONFLICT (person_id, year) DO UPDATE SET amount = $3, notes = $4, updated_by = $5, updated_at = NOW()`,
+      [personId, year, (cents / 100).toFixed(2), notes, by]);
+    await client.query(
+      `INSERT INTO thirteenth_month_prior_log (person_id, year, old_amount, new_amount, notes, changed_by) VALUES ($1,$2,$3,$4,$5,$6)`,
+      [personId, year, cur ? cur.amount : null, (cents / 100).toFixed(2), notes, by]);
+    await client.query('COMMIT');
+    res.json(await thirteenthMonthData(year));
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('13th month prior error:', err);
+    res.status(500).json({ error: err.message });
+  } finally { client.release(); }
+});
+
+// Post the balances into a pay period as "13th Month Pay" earning adjustments (reason "13th month {year}").
+// The balances are recomputed INSIDE the transaction, under a lock, so a double click or a second post can
+// only ever pay what is still owed; a zero or negative balance is skipped, never posted.
+app.post('/api/payroll/thirteenth-month/post', requireRole(thirteenthRoles), async (req, res) => {
+  const client = await getClient();
+  try {
+    const b = req.body || {};
+    const year = Number(b.year), periodId = /^\d+$/.test(String(b.periodId ?? '')) ? Number(b.periodId) : null;
+    const ids = Array.isArray(b.personIds) ? [...new Set(b.personIds.map(Number).filter(Number.isInteger))] : [];
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) return res.status(400).json({ error: 'Pick a year' });
+    if (periodId === null) return res.status(400).json({ error: 'Pick the pay period to post into' });
+    if (ids.length === 0) return res.status(400).json({ error: 'Select at least one employee' });
+    await client.query('BEGIN');
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, ['13th-month-' + year]);
+    const pr = (await client.query(`SELECT id, payroll_finalized FROM pay_periods WHERE id = $1 FOR UPDATE`, [periodId])).rows[0];
+    if (!pr) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Pay period not found' }); }
+    if (pr.payroll_finalized === true) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'This payroll is finalized. Pick a period that is not, or un-finalize it first.' }); }
+    const d = await thirteenthMonthData(year, client);
+    const by = req.user?.name || null, byId = req.user?.id != null ? String(req.user.id) : null;
+    const posted = [], skipped = [];
+    for (const id of ids) {
+      const r = d.rows.find((x) => x.personId === id);
+      if (!r) { skipped.push({ personId: id, reason: 'not in this year’s list' }); continue; }
+      const balC = Math.round(Number(r.balance) * 100);
+      if (balC <= 0) { skipped.push({ personId: id, fullName: r.fullName, reason: balC === 0 ? 'nothing left to pay' : 'already paid more than due' }); continue; }
+      const amount = (balC / 100).toFixed(2), reason = `13th month ${year}`;
+      const ins = (await client.query(
+        `INSERT INTO payroll_adjustments (period_id, person_id, kind, label, amount, reason, created_by, created_by_id)
+         VALUES ($1,$2,'earning',$3,$4,$5,$6,$7) RETURNING id`, [periodId, id, THIRTEENTH_LABEL, amount, reason, by, byId])).rows[0];
+      await client.query(
+        `INSERT INTO payroll_adjustment_log (adjustment_id, period_id, person_id, action, kind, label, amount, reason, changed_by)
+         VALUES ($1,$2,$3,'add','earning',$4,$5,$6,$7)`, [ins.id, periodId, id, THIRTEENTH_LABEL, amount, reason, by]);
+      posted.push({ personId: id, fullName: r.fullName, amount, adjustmentId: Number(ins.id) });
+    }
+    await client.query('COMMIT');
+    res.status(201).json({ posted, skipped, data: await thirteenthMonthData(year) });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('13th month post error:', err);
     res.status(500).json({ error: err.message });
   } finally { client.release(); }
 });

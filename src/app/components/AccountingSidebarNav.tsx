@@ -17,7 +17,7 @@ import type { ReactNode } from 'react';
 import {
   LayoutDashboard, ChevronDown, ChevronRight, ClipboardList, FileText, Plus, PackageMinus, PenTool,
   Briefcase, ArrowLeftRight, Truck, ReceiptText, Users, Building2, CalendarCheck, Calculator, IdCard,
-  HandCoins, Coins, ShoppingCart, CreditCard, FileOutput, Wallet,
+  HandCoins, Coins, ShoppingCart, CreditCard, FileOutput, Wallet, Gift,
 } from 'lucide-react';
 import { NavBadge } from './NavBadge';
 
@@ -25,7 +25,7 @@ import { NavBadge } from './NavBadge';
 export type AccountingView =
   | 'new-pr' | 'requests' | 'orders' | 'projects' | 'tradings' | 'facilities' | 'expenses'
   | 'withdrawals' | 'clients' | 'delivery-receipts' | 'billing-invoices' | 'receivables'
-  | 'timesheet' | 'payroll' | 'signature' | 'payables' | 'collections' | 'purchases' | 'pcf';
+  | 'timesheet' | 'payroll' | 'signature' | 'payables' | 'collections' | 'purchases' | 'pcf' | 'thirteenth';
 
 // Which live count an item wears. The portal supplies the numbers; this file only places them.
 export type BadgeKey = 'requests' | 'orders' | 'receivables';
@@ -74,6 +74,7 @@ export const NAV_GROUPS: NavGroup[] = [
     id: 'hr', label: 'HUMAN RESOURCES', items: [
       { id: 'attendance-sheet', label: 'ATTENDANCE SHEET', icon: CalendarCheck, view: 'timesheet' },
       { id: 'payroll-payout', label: 'PAYROLL PAY-OUT', icon: Calculator, view: 'payroll' },
+      { id: 'thirteenth-month', label: '13TH MONTH PAY', icon: Gift, view: 'thirteenth', hover: 'Basic earned ÷ 12, post to payroll' },
       // The roster endpoints are admin-only on the server, so Accounting cannot load it. Not widened.
       { id: 'employee-profiles', label: 'EMPLOYEE PROFILES', icon: IdCard },
     ],

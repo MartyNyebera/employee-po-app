@@ -5,6 +5,7 @@ import { S, Modal, TextInput, GhostBtn, pill, peso } from './crmKit';
 import { printPayslip, printPayslips } from '../../lib/payslipPrint';
 import { payrollBand } from '../../lib/payrollBand';
 import { PayrollAdjustmentsModal } from './PayrollAdjustments';
+import { ThirteenthMonth } from './ThirteenthMonth';
 
 // ============================================================================
 // Payroll Review (Phase 4b) — shared by the Admin dashboard and the Accounting portal. Shows the
@@ -84,6 +85,7 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
   const [exporting, setExporting] = useState(false);
   // The adjustments modal: null = closed; personId = pre-selected employee (null = the whole period).
   const [adjFor, setAdjFor] = useState<{ personId: number | null } | null>(null);
+  const [showThirteenth, setShowThirteenth] = useState(false);
 
   // Compute is available to BOTH roles now. The REAL gate is requireRole(['admin','accounting'])
   // on POST .../compute; this only decides whether the button is drawn. Written as an explicit
@@ -198,6 +200,9 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
     return { gross: c.gross / 100, ded: c.ded / 100, net: c.net / 100 };
   }, [filtered]);
 
+  // The 13th month calculator replaces the page while open (all hooks above have already run).
+  if (showThirteenth) return <div style={S.page}><ThirteenthMonth api={api} isAdmin={canCompute} onBack={() => setShowThirteenth(false)} /></div>;
+
   return (
     <div style={S.page}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px', gap: '16px', flexWrap: 'wrap' }}>
@@ -223,6 +228,8 @@ export function PayrollReview({ api, role }: { api: Api; role: 'admin' | 'accoun
               {exporting ? 'Exporting…' : 'Export to Excel'}{search && filtered.length !== lines.length ? ` (${filtered.length})` : ''}
             </button>
           )}
+          <button style={{ ...S.rowBtn, padding: '9px 14px', fontWeight: 600 }} onClick={() => setShowThirteenth(true)}
+            title="Work out each employee's 13th month and post it to payroll">13th month</button>
           {period && (
             <button style={{ ...S.rowBtn, padding: '9px 14px', fontWeight: 600 }} onClick={() => setAdjFor({ personId: null })}
               title="One-off earnings (13th month, back pay, bonus) and deductions for this period">

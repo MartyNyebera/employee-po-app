@@ -16,6 +16,7 @@ import { AllocationTag, AllocationFilter, matchesAllocation, type AllocType } fr
 import { CollectionsReport } from '../components/CollectionsReport';
 import { PurchasesReport } from '../components/PurchasesReport';
 import { PcfScreen } from '../components/PcfScreen';
+import { ThirteenthMonth } from '../components/crm/ThirteenthMonth';
 import { renderPrintDocument } from '../lib/printChrome';
 import {
   AccountingNav, loadNavPrefs, saveNavPrefs, toggleGroup as toggleGroupPrefs, revealGroupFor, setMinimized,
@@ -1388,6 +1389,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
           {view === 'billing-invoices' && <BillingInvoices api={aFetch} isAdmin />}
 
           {view === 'receivables' && <Receivables key={receivablesFocus ?? 'all'} api={aFetch} isAdmin focusId={receivablesFocus} />}
+
+          {view === 'thirteenth' && <ThirteenthMonth api={aFetch} isAdmin />}
 
           {view === 'pcf' && <PcfScreen api={aFetch} isAdmin />}
 
