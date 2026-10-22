@@ -6746,7 +6746,9 @@ async function thirteenthMonthData(year, db = { query }) {
   const pById = new Map(periods.map((p) => [p.id, p]));
   for (const l of lines) {
     const s = slot(l.person_id); const p = pById.get(l.pay_period_id);
-    const basic = cent(l.base_pay) - cent(l.late_undertime_deduction) - cent(l.break_ded);
+    // Floored at 0 per period: where late/undertime/break exceeded the pay, the engine floors net at 0 and
+    // writes the remainder off, so the employee earned 0 basic that period, not a negative figure.
+    const basic = Math.max(0, cent(l.base_pay) - cent(l.late_undertime_deduction) - cent(l.break_ded));
     s.inC += basic; s.periods.push({ id: p.id, start: p.start_date, end: p.end_date, finalized: p.payroll_finalized === true, basic: (basic / 100).toFixed(2) });
   }
   for (const r of prior) { const s = slot(r.person_id); s.priorC = cent(r.amount); s.notes = r.notes ?? null; s.priorBy = r.updated_by ?? null; }
