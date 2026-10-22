@@ -130,6 +130,8 @@ export function BillingInvoices({ api, isAdmin }: { api: Api; isAdmin: boolean }
   const [voiding, setVoiding] = useState<Bi | null>(null);
   const [voidReason, setVoidReason] = useState('');
   const [voidBusy, setVoidBusy] = useState(false);
+  // Shown inside the void dialog: the server's refusal (e.g. the invoice still has payments).
+  const [voidError, setVoidError] = useState('');
 
   const load = async () => {
     setLoading(true);
@@ -159,13 +161,13 @@ export function BillingInvoices({ api, isAdmin }: { api: Api; isAdmin: boolean }
   const confirmVoid = async () => {
     if (!voiding) return;
     if (!voidReason.trim()) { toast.error('A reason is required to void a billing invoice'); return; }
-    setVoidBusy(true);
+    setVoidBusy(true); setVoidError('');
     try {
       const updated = await api<Bi>(`/billing-invoices/${voiding.id}/void`, { method: 'POST', body: JSON.stringify({ reason: voidReason.trim() }) });
       setRows(rs => rs.map(r => (r.id === voiding.id ? updated : r)));
       toast.success(`BI No. ${voiding.biNumber} voided`);
       setVoiding(null); setVoidReason('');
-    } catch (e: any) { toast.error(e.message || 'Could not void'); } finally { setVoidBusy(false); }
+    } catch (e: any) { setVoidError(e.message || 'Could not void'); } finally { setVoidBusy(false); }
   };
 
   const onPrint = (bi: Bi) => {
@@ -238,7 +240,7 @@ export function BillingInvoices({ api, isAdmin }: { api: Api; isAdmin: boolean }
                     <button title="Print working copy" style={S.rowBtn} onClick={() => onPrint(bi)}><Printer size={14} /></button>
                     {isAdmin && !bi.voidedAt && (
                       <button title="Void (the record is kept)" style={{ ...S.rowBtn, color: '#b91c1c' }}
-                        onClick={() => { setVoiding(bi); setVoidReason(''); }}><Ban size={14} /></button>
+                        onClick={() => { setVoiding(bi); setVoidReason(''); setVoidError(''); }}><Ban size={14} /></button>
                     )}
                   </td>
                 </tr>
@@ -257,16 +259,16 @@ export function BillingInvoices({ api, isAdmin }: { api: Api; isAdmin: boolean }
         <Modal title={`Void BI No. ${voiding.biNumber}`} onClose={() => setVoiding(null)}
           footer={<>
             <GhostBtn onClick={() => setVoiding(null)}>Cancel</GhostBtn>
-            <PrimaryBtn onClick={confirmVoid} disabled={voidBusy}>{voidBusy ? 'Voiding…' : 'Void this invoice'}</PrimaryBtn>
+            <PrimaryBtn onClick={confirmVoid} disabled={voidBusy || voiding.paymentCount > 0}>{voidBusy ? 'Voiding…' : 'Void this invoice'}</PrimaryBtn>
           </>}>
           <p style={{ fontSize: '13px', color: '#5a5a5a', marginTop: 0 }}>
             The record is kept, never deleted, and prints stamped <b>VOID</b>. The booklet number is
-            <b> not</b> freed for reuse. Payments already logged against it stay on the record but it
-            stops counting as a receivable.
+            <b> not</b> freed for reuse. It stops counting as a receivable.
           </p>
-          {num(voiding.paidTotal) > 0 && (
-            <p style={{ fontSize: '13px', color: '#b45309' }}>
-              <AlertTriangle size={13} style={{ verticalAlign: '-2px' }} /> {peso(num(voiding.paidTotal))} has already been collected against this invoice.
+          {(voiding.paymentCount > 0 || voidError) && (
+            <p style={{ fontSize: '13px', color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '8px 10px' }}>
+              <AlertTriangle size={13} style={{ verticalAlign: '-2px' }} />{' '}
+              {voidError || `This invoice has ${voiding.paymentCount} payment${voiding.paymentCount === 1 ? '' : 's'} recorded against it (${peso(num(voiding.paidTotal))}). Void ${voiding.paymentCount === 1 ? 'that payment' : 'those payments'} first (in Receivables), or record ${voiding.paymentCount === 1 ? 'it' : 'them'} again on the replacement invoice, then void this invoice.`}
             </p>
           )}
           <Field label="Reason *">

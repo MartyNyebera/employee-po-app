@@ -9607,6 +9607,7 @@ app.post('/api/billing-invoices', requireRole(biRoles), async (req, res) => {
 });
 
 // VOID, never delete. The booklet sheet is spent either way and the number is not freed.
+const BI_VOID_BLOCKED_MSG = (n) => `This invoice has ${n} payment${n === 1 ? '' : 's'} recorded against it. Void ${n === 1 ? 'that payment' : 'those payments'} first (in Receivables), or record ${n === 1 ? 'it' : 'them'} again on the replacement invoice, then void this invoice.`;
 app.post('/api/billing-invoices/:id/void', requireRole(biRoles), async (req, res) => {
   const reason = String(req.body?.reason ?? '').trim();
   if (!reason) return res.status(400).json({ error: 'A reason is required to void a billing invoice' });
@@ -9617,6 +9618,15 @@ app.post('/api/billing-invoices/:id/void', requireRole(biRoles), async (req, res
     const cur = await client.query('SELECT id, voided_at FROM billing_invoices WHERE id = $1 FOR UPDATE', [req.params.id]);
     if (!cur.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Billing invoice not found' }); }
     if (cur.rows[0].voided_at) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'This billing invoice is already voided' }); }
+    // An invoice with collections on it cannot be voided out from under them: the money would stay on
+    // file against a document that no longer counts. The payments have to be voided first (or, if the
+    // invoice is being replaced, recorded again on the replacement). The row lock above is held, so a
+    // payment cannot slip in between this check and the void.
+    const live = await client.query('SELECT COUNT(*)::int AS n FROM invoice_payments WHERE billing_invoice_id = $1 AND voided_at IS NULL', [req.params.id]);
+    if (live.rows[0].n > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: BI_VOID_BLOCKED_MSG(live.rows[0].n) });
+    }
     await client.query(
       `UPDATE billing_invoices SET voided_at = NOW(), voided_by = $1, voided_by_id = $2, void_reason = $3, updated_at = NOW()
         WHERE id = $4`,
