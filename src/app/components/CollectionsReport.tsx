@@ -18,10 +18,13 @@ type Api = <T = any>(path: string, options?: RequestInit) => Promise<T>;
 interface CollectionRow {
   id: number; paidOn: string; biId: number; biNumber: string; client: string;
   orNumber: string | null; reference: string | null; amount: string;
+  /** null when the invoice has no withholding entered. */
+  ewt: string | null; totalDue: string;
 }
 interface CollectionsData {
   rows: CollectionRow[]; total: string; count: number;
-  summary: { client: string; payments: number; total: string }[];
+  ewtTotal: string; invoicedTotal: string; invoiceCount: number;
+  summary: { client: string; payments: number; total: string; ewt: string; invoiced: string; invoiceCount: number }[];
   voidedExcluded: number; clients: string[];
 }
 
@@ -115,16 +118,20 @@ export function CollectionsReport({ api, isAdmin: _isAdmin, onOpenInvoice }: {
               <thead><tr>
                 <th style={tightTh}>Client</th>
                 <th style={{ ...tightTh, textAlign: 'right' }}>Payments</th>
-                <th style={{ ...tightTh, textAlign: 'right' }}>Total collected</th>
+                <th style={{ ...tightTh, textAlign: 'right' }}>Amount collected</th>
+                <th style={{ ...tightTh, textAlign: 'right' }}>EWT</th>
+                <th style={{ ...tightTh, textAlign: 'right' }}>Total invoiced</th>
               </tr></thead>
               <tbody>
                 {(data?.summary ?? []).length === 0 ? (
-                  <tr><td style={{ ...tightTd, color: '#8a8a8a' }} colSpan={3}>No payments in this range.</td></tr>
+                  <tr><td style={{ ...tightTd, color: '#8a8a8a' }} colSpan={5}>No payments in this range.</td></tr>
                 ) : data!.summary.map(s => (
                   <tr key={s.client} style={{ cursor: 'pointer' }} title="Show this client's payments" onClick={() => { setClient(s.client); setByClient(false); }}>
                     <td style={{ ...tightTd, maxWidth: '420px' }}><div style={oneLine} title={s.client}>{s.client}</div></td>
                     <td style={{ ...tightTd, textAlign: 'right', whiteSpace: 'nowrap' }}>{s.payments}</td>
                     <td style={{ ...tightTd, textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600 }}>{peso(Number(s.total))}</td>
+                    <td style={{ ...tightTd, textAlign: 'right', whiteSpace: 'nowrap' }}>{peso(Number(s.ewt))}</td>
+                    <td style={{ ...tightTd, textAlign: 'right', whiteSpace: 'nowrap' }}>{peso(Number(s.invoiced))}</td>
                   </tr>
                 ))}
               </tbody>
@@ -132,6 +139,8 @@ export function CollectionsReport({ api, isAdmin: _isAdmin, onOpenInvoice }: {
                 <td style={{ ...tightTd, fontWeight: 700, background: '#f7f7f7' }}>Total — {data?.summary.length ?? 0} client{data?.summary.length === 1 ? '' : 's'}</td>
                 <td style={{ ...tightTd, textAlign: 'right', fontWeight: 700, background: '#f7f7f7' }}>{data?.count ?? 0}</td>
                 <td style={{ ...tightTd, textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 700, background: '#f7f7f7' }}>{peso(Number(data?.total ?? 0))}</td>
+                <td style={{ ...tightTd, textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 700, background: '#f7f7f7' }}>{peso(Number(data?.ewtTotal ?? 0))}</td>
+                <td style={{ ...tightTd, textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 700, background: '#f7f7f7' }}>{peso(Number(data?.invoicedTotal ?? 0))}</td>
               </tr></tfoot>
             </table>
           ) : (
@@ -142,11 +151,13 @@ export function CollectionsReport({ api, isAdmin: _isAdmin, onOpenInvoice }: {
                 <th style={tightTh}>BI No.</th>
                 <th style={tightTh}>OR No.</th>
                 <th style={tightTh}>Reference</th>
-                <th style={{ ...tightTh, textAlign: 'right', paddingRight: '16px' }}>Amount</th>
+                <th style={{ ...tightTh, textAlign: 'right', paddingRight: '16px' }}>Amount collected</th>
+                <th style={{ ...tightTh, textAlign: 'right', paddingRight: '16px' }}>EWT</th>
+                <th style={{ ...tightTh, textAlign: 'right' }}>Total</th>
               </tr></thead>
               <tbody>
                 {rows.length === 0 ? (
-                  <tr><td style={{ ...tightTd, color: '#8a8a8a' }} colSpan={6}>No payments match.</td></tr>
+                  <tr><td style={{ ...tightTd, color: '#8a8a8a' }} colSpan={8}>No payments match.</td></tr>
                 ) : rows.map(r => (
                   <tr key={r.id} style={{ cursor: 'pointer' }} title="Open this invoice in Receivables" onClick={() => onOpenInvoice(r.biId)}>
                     <td style={{ ...tightTd, whiteSpace: 'nowrap' }}>{shortDate(r.paidOn)}</td>
@@ -155,12 +166,22 @@ export function CollectionsReport({ api, isAdmin: _isAdmin, onOpenInvoice }: {
                     <td style={{ ...tightTd, whiteSpace: 'nowrap' }}>{r.orNumber || '—'}</td>
                     <td style={{ ...tightTd, maxWidth: '200px' }}><div style={oneLine} title={r.reference || undefined}>{r.reference || '—'}</div></td>
                     <td style={{ ...tightTd, textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600, paddingRight: '16px' }}>{peso(Number(r.amount))}</td>
+                    <td style={{ ...tightTd, textAlign: 'right', whiteSpace: 'nowrap', paddingRight: '16px' }}>{r.ewt == null ? '—' : peso(Number(r.ewt))}</td>
+                    <td style={{ ...tightTd, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <a href="#" title="Open this invoice in Receivables" style={{ color: '#2563eb', textDecoration: 'underline' }}
+                        onClick={e => { e.preventDefault(); e.stopPropagation(); onOpenInvoice(r.biId); }}>{peso(Number(r.totalDue))}</a>
+                    </td>
                   </tr>
                 ))}
               </tbody>
               <tfoot><tr>
                 <td style={{ ...tightTd, fontWeight: 700, background: '#f7f7f7' }} colSpan={5}>Total collected — {data?.count ?? 0} payment{data?.count === 1 ? '' : 's'}</td>
                 <td style={{ ...tightTd, textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 700, background: '#f7f7f7', paddingRight: '16px' }}>{peso(Number(data?.total ?? 0))}</td>
+                <td style={{ ...tightTd, textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 700, background: '#f7f7f7', paddingRight: '16px' }}>{peso(Number(data?.ewtTotal ?? 0))}</td>
+                <td style={{ ...tightTd, textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 700, background: '#f7f7f7' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 600, color: '#5a5a5a' }}>Total invoiced ({data?.invoiceCount ?? 0} invoice{data?.invoiceCount === 1 ? '' : 's'})</div>
+                  {peso(Number(data?.invoicedTotal ?? 0))}
+                </td>
               </tr></tfoot>
             </table>
           )}

@@ -7137,8 +7137,46 @@ async function collectionsData(qs) {
   const f = collectionsWhere(qs);
   const rows = (await query(
     `SELECT ip.id, to_char(ip.paid_on,'YYYY-MM-DD') AS paid_on, bi.id AS bi_id, bi.bi_number, bi.billed_to AS client,
-            ip.or_number, ip.reference, ip.amount
+            ip.or_number, ip.reference, ip.amount, bi.total_amount_due
        ${COLLECTIONS_FROM} WHERE ${f.where} ORDER BY ip.paid_on DESC, ip.id DESC`, f.params)).rows;
+  // EWT per payment, derived (never stored): invoice withholding x (payment / invoice total), in whole
+  // centavos. It is worked out over the invoice's WHOLE non-voided payment history (not only the filtered
+  // rows); once the payments add up to the invoice total, the centavo remainder goes to the latest payment
+  // so the EWT adds up exactly to the withholding. A blank withholding counts as 0.
+  const toC = (v) => Math.round(Number(v || 0) * 100);
+  const ewtById = new Map();
+  const biIds = [...new Set(rows.map((r) => Number(r.bi_id)))];
+  const wBlank = new Set();
+  if (biIds.length) {
+    const hist = (await query(
+      `SELECT ip.id, ip.billing_invoice_id AS bi_id, ip.amount, bi.total_amount_due, bi.less_withholding
+         FROM invoice_payments ip JOIN billing_invoices bi ON bi.id = ip.billing_invoice_id
+        WHERE ip.voided_at IS NULL AND ip.billing_invoice_id = ANY($1::int[]) ORDER BY ip.paid_on, ip.id`, [biIds])).rows;
+    const byBi = new Map();
+    for (const h of hist) { if (!byBi.has(h.bi_id)) byBi.set(h.bi_id, []); byBi.get(h.bi_id).push(h); }
+    for (const [biId, list] of byBi) {
+      if (list[0].less_withholding == null) wBlank.add(Number(biId));
+      const W = toC(list[0].less_withholding), T = toC(list[0].total_amount_due);
+      let paid = 0, got = 0;
+      for (const h of list) {
+        const a = toC(h.amount);
+        const e = T > 0 ? Math.round((W * a) / T) : 0;
+        ewtById.set(Number(h.id), e); paid += a; got += e;
+      }
+      if (T > 0 && paid === T) { const last = list[list.length - 1]; ewtById.set(Number(last.id), ewtById.get(Number(last.id)) + (W - got)); }
+    }
+  }
+  const c2 = (c) => (c / 100).toFixed(2);
+  let ewtC = 0, invC = 0; const seen = new Set(); const perClient = new Map();
+  for (const r of rows) {
+    const e = ewtById.get(Number(r.id)) || 0;
+    const pc = perClient.get(r.client) || { client: r.client, payments: 0, amountC: 0, ewtC: 0, invC: 0, seen: new Set() };
+    pc.payments++; pc.amountC += toC(r.amount); pc.ewtC += e;
+    ewtC += e;
+    if (!seen.has(r.bi_id)) { seen.add(r.bi_id); invC += toC(r.total_amount_due); }
+    if (!pc.seen.has(r.bi_id)) { pc.seen.add(r.bi_id); pc.invC += toC(r.total_amount_due); }
+    perClient.set(r.client, pc);
+  }
   const tot = (await query(`SELECT COALESCE(SUM(ip.amount),0) AS total, COUNT(*)::int AS n ${COLLECTIONS_FROM} WHERE ${f.where}`, f.params)).rows[0];
   const summary = (await query(
     `SELECT bi.billed_to AS client, COUNT(*)::int AS payments, SUM(ip.amount) AS total
@@ -7152,9 +7190,13 @@ async function collectionsData(qs) {
     rows: rows.map((r) => ({
       id: Number(r.id), paidOn: r.paid_on, biId: Number(r.bi_id), biNumber: r.bi_number, client: r.client,
       orNumber: r.or_number ?? null, reference: r.reference ?? null, amount: money2s(r.amount),
+      ewt: wBlank.has(Number(r.bi_id)) ? null : c2(ewtById.get(Number(r.id)) || 0), totalDue: money2s(r.total_amount_due),
     })),
-    total: money2s(tot.total), count: tot.n,
-    summary: summary.map((s) => ({ client: s.client, payments: s.payments, total: money2s(s.total) })),
+    total: money2s(tot.total), count: tot.n, ewtTotal: c2(ewtC), invoicedTotal: c2(invC), invoiceCount: seen.size,
+    summary: summary.map((s) => {
+      const pc = perClient.get(s.client);
+      return { client: s.client, payments: s.payments, total: money2s(s.total), ewt: c2(pc ? pc.ewtC : 0), invoiced: c2(pc ? pc.invC : 0), invoiceCount: pc ? pc.seen.size : 0 };
+    }),
     voidedExcluded: vc.n, clients,
   };
 }
@@ -7174,14 +7216,14 @@ app.get('/api/reports/collections/export', requireRole(reportRoles), async (req,
     res.json(by
       ? reportWorkbook({
           title: 'Collections — summary by client', subtitle, sheetName: 'Collections by client', filename: `collections-by-client-${range.replace(/ to /, '_to_')}.xlsx`,
-          heads: ['Client', 'Payments', 'Total collected'], kinds: ['text', 'int', 'money'], widths: [42, 11, 18],
-          rows: d.summary.map((s) => [s.client, s.payments, s.total]),
-          totals: [`TOTAL (${d.summary.length} client${d.summary.length === 1 ? '' : 's'})`, d.count, d.total], user: req.user })
+          heads: ['Client', 'Payments', 'Amount collected', 'EWT', 'Total invoiced'], kinds: ['text', 'int', 'money', 'money', 'money'], widths: [42, 11, 18, 16, 18],
+          rows: d.summary.map((s) => [s.client, s.payments, s.total, s.ewt, s.invoiced]),
+          totals: [`TOTAL (${d.summary.length} client${d.summary.length === 1 ? '' : 's'}; ${d.invoiceCount} invoice${d.invoiceCount === 1 ? '' : 's'} invoiced)`, d.count, d.total, d.ewtTotal, d.invoicedTotal], user: req.user })
       : reportWorkbook({
           title: 'Collections report', subtitle, sheetName: 'Collections', filename: `collections-${range.replace(/ to /, '_to_')}.xlsx`,
-          heads: ['Date received', 'Client', 'BI No.', 'OR No.', 'Reference', 'Amount'], kinds: ['text', 'text', 'text', 'text', 'text', 'money'], widths: [14, 36, 12, 14, 24, 16],
-          rows: d.rows.map((r) => [r.paidOn, r.client, r.biNumber, r.orNumber ?? '', r.reference ?? '', r.amount]),
-          totals: [`TOTAL (${d.count} payment${d.count === 1 ? '' : 's'})`, '', '', '', '', d.total], user: req.user }));
+          heads: ['Date received', 'Client', 'BI No.', 'OR No.', 'Reference', 'Amount collected', 'EWT', 'Total'], kinds: ['text', 'text', 'text', 'text', 'text', 'money', 'money', 'money'], widths: [14, 36, 12, 14, 24, 18, 16, 18],
+          rows: d.rows.map((r) => [r.paidOn, r.client, r.biNumber, r.orNumber ?? '', r.reference ?? '', r.amount, r.ewt ?? '', r.totalDue]),
+          totals: [`TOTAL (${d.count} payment${d.count === 1 ? '' : 's'}; Total = invoiced, ${d.invoiceCount} invoice${d.invoiceCount === 1 ? '' : 's'})`, '', '', '', '', d.total, d.ewtTotal, d.invoicedTotal], user: req.user }));
   } catch (err) { console.error('collections export error:', err); res.status(500).json({ error: err.message }); }
 });
 
