@@ -13,11 +13,11 @@
 // form is right, and so the error can be explained before the round trip.
 // ============================================================================
 
-export type PaymentMode = '' | 'cash' | 'check' | 'bank_transfer';
+export type PaymentMode = '' | 'cash' | 'check' | 'bank_transfer' | 'petty_cash';
 export type TargetKind = 'project' | 'trading' | 'facility';
 
 export const PAYMENT_MODE_LABEL: Record<Exclude<PaymentMode, ''>, string> = {
-  cash: 'Cash', check: 'Check', bank_transfer: 'Bank transfer',
+  cash: 'Cash', check: 'Check', bank_transfer: 'Bank transfer', petty_cash: 'Petty cash',
 };
 
 export interface ExpenseLineDraft { key: number; target: string; amount: string }

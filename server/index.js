@@ -1093,6 +1093,47 @@ async function runMigrations() {
     } catch (err) { console.log('ℹ️ expenses/expense_allocations skipped:', err.message); }
 
 
+    // ============== PCF (petty cash fund): settings, their change log, replenishments ==============
+    // See the PCF block above the attendance module. A replenishment is money INTO the fund and lives in
+    // its own table: no spend CTE, expense total or disbursement figure reads it. Settings is one row.
+    try {
+      await query(`CREATE TABLE IF NOT EXISTS pcf_settings (
+        id INT PRIMARY KEY CHECK (id = 1),
+        custodian TEXT NOT NULL CHECK (btrim(custodian) <> ''),
+        fund_amount NUMERIC(14,2) NOT NULL CHECK (fund_amount >= 0),
+        opening_balance NUMERIC(14,2) NOT NULL CHECK (opening_balance >= 0),
+        opening_date DATE NOT NULL,
+        updated_by TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`);
+      await query(`CREATE TABLE IF NOT EXISTS pcf_settings_log (
+        id BIGSERIAL PRIMARY KEY,
+        changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        changed_by TEXT,
+        field TEXT NOT NULL,
+        old_value TEXT,
+        new_value TEXT
+      )`);
+      await query(`CREATE TABLE IF NOT EXISTS pcf_replenishments (
+        id BIGSERIAL PRIMARY KEY,
+        repl_date DATE NOT NULL,
+        amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+        reference TEXT,
+        notes TEXT,
+        created_by TEXT,
+        created_by_id TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        voided_at TIMESTAMPTZ,
+        voided_by TEXT,
+        voided_by_id TEXT,
+        void_reason TEXT,
+        CONSTRAINT pcf_replenishments_void_needs_reason
+          CHECK (voided_at IS NULL OR btrim(COALESCE(void_reason, '')) <> '')
+      )`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_pcf_replenishments_date ON pcf_replenishments(repl_date)`);
+      console.log('✅ pcf tables ready (petty cash fund)');
+    } catch (err) { console.log('ℹ️ pcf tables skipped:', err.message); }
+
     // ============== DISBURSEMENT VOUCHERS: PO payments + payment details ==============
     // A voucher IS the existing `expenses` row (EXP-YYYY-NNNN) — Kimoel's single cash-out document.
     // It already pays EXPENSES through expense_allocations above. It now also pays SUPPLIER INVOICES:
@@ -1120,7 +1161,15 @@ async function runMigrations() {
       await query(`DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'expenses_payment_mode_check') THEN
           ALTER TABLE expenses ADD CONSTRAINT expenses_payment_mode_check
-            CHECK (payment_mode IS NULL OR payment_mode IN ('cash', 'check', 'bank_transfer'));
+            CHECK (payment_mode IS NULL OR payment_mode IN ('cash', 'check', 'bank_transfer', 'petty_cash'));
+        END IF;
+        -- Existing databases: allow 'petty_cash' as a payment mode. Only ever widens the allowed values,
+        -- and only runs while the constraint does not yet mention it.
+        IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'expenses_payment_mode_check'
+                    AND pg_get_constraintdef(oid) NOT LIKE '%petty_cash%') THEN
+          ALTER TABLE expenses DROP CONSTRAINT expenses_payment_mode_check;
+          ALTER TABLE expenses ADD CONSTRAINT expenses_payment_mode_check
+            CHECK (payment_mode IS NULL OR payment_mode IN ('cash', 'check', 'bank_transfer', 'petty_cash'));
         END IF;
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'expenses_check_details_need_check') THEN
           ALTER TABLE expenses ADD CONSTRAINT expenses_check_details_need_check
@@ -6811,6 +6860,177 @@ app.get('/api/reports/purchases/export', requireRole(reportRoles), async (req, r
 });
 
 // ============================================================================
+// PCF -- PETTY CASH FUND (imprest). Reuses the Disbursement Voucher system: spending the fund IS a
+// voucher whose payment_mode is 'petty_cash' (an ordinary expense row, so its expense lines count toward
+// project / trading / facility spend exactly as any voucher's do -- no spend logic is touched).
+// A REPLENISHMENT is the opposite: a transfer INTO the fund. It lives in its own table (pcf_replenishments),
+// is never an expense, and no spend CTE or disbursement total reads it.
+//
+// The balance is DERIVED on every read, never stored:
+//   opening balance + non-voided replenishments - non-voided petty-cash vouchers, both from the opening date on.
+// It may go negative (shown amber by the screen); nothing here blocks that. All sums are whole centavos.
+// Fund settings are one row (custodian, fixed fund amount, opening balance + date); every change to it is
+// logged field by field in pcf_settings_log.
+// ============================================================================
+const cents2 = (v) => { const s = String(v ?? '').trim().replace(/,/g, ''); return /^\d+(\.\d{1,2})?$/.test(s) ? Math.round(Number(s) * 100) : null; };
+const fromCents = (c) => (c / 100).toFixed(2);
+const isRealYmd = (s) => { if (!REPORT_YMD.test(String(s || ''))) return false; const d = new Date(`${s}T00:00:00Z`); return !isNaN(d) && d.toISOString().slice(0, 10) === s; };
+
+async function pcfSettings() {
+  const r = (await query(`SELECT custodian, fund_amount, opening_balance, to_char(opening_date,'YYYY-MM-DD') AS opening_date, updated_by, updated_at FROM pcf_settings WHERE id = 1`)).rows[0];
+  return r ? { custodian: r.custodian, fundAmount: money2s(r.fund_amount), openingBalance: money2s(r.opening_balance), openingDate: r.opening_date, updatedBy: r.updated_by ?? null, updatedAt: r.updated_at } : null;
+}
+
+// The whole ledger since the opening date, oldest first, with the running balance on every line.
+// Voided lines are counted, not listed: they reverse out of the balance by not being in it.
+async function pcfLedger(settings) {
+  const open = settings.openingDate;
+  const reps = (await query(
+    `SELECT id, to_char(repl_date,'YYYY-MM-DD') AS d, amount, reference, notes, created_at, voided_at
+       FROM pcf_replenishments WHERE repl_date >= $1::date`, [open])).rows;
+  const vous = (await query(
+    `SELECT e.id, e.serial_no, to_char(e.expense_date,'YYYY-MM-DD') AS d, e.description, e.payee, e.amount, e.created_at, e.voided_at
+       FROM expenses e WHERE e.payment_mode = 'petty_cash' AND e.expense_date >= $1::date`, [open])).rows;
+  const live = [
+    ...reps.filter((r) => !r.voided_at).map((r) => ({
+      kind: 'replenishment', id: Number(r.id), date: r.d, at: new Date(r.created_at).getTime(), ref: r.reference ?? '', desc: r.notes || 'Replenishment',
+      inC: Math.round(Number(r.amount) * 100), outC: 0,
+    })),
+    ...vous.filter((v) => !v.voided_at).map((v) => ({
+      kind: 'voucher', id: Number(v.id), date: v.d, at: new Date(v.created_at).getTime(), ref: v.serial_no ?? '', desc: [v.payee, v.description].filter(Boolean).join(' — '),
+      inC: 0, outC: Math.round(Number(v.amount) * 100),
+    })),
+  ].sort((a, b) => a.date.localeCompare(b.date) || a.at - b.at || a.id - b.id);
+  let bal = Math.round(Number(settings.openingBalance) * 100);
+  for (const e of live) { bal += e.inC - e.outC; e.balC = bal; }
+  return {
+    entries: live, balanceC: bal,
+    voided: { replenishments: reps.filter((r) => r.voided_at).length, vouchers: vous.filter((v) => v.voided_at).length },
+  };
+}
+
+async function pcfData(qs) {
+  const settings = await pcfSettings();
+  if (!settings) return { configured: false, settings: null };
+  const L = await pcfLedger(settings);
+  const fundC = Math.round(Number(settings.fundAmount) * 100);
+  // "Since the last replenishment" = the vouchers that come after the latest live replenishment in ledger order.
+  const lastRepIdx = L.entries.map((e) => e.kind).lastIndexOf('replenishment');
+  const sinceC = L.entries.slice(lastRepIdx + 1).reduce((n, e) => n + e.outC, 0);
+  const from = ymdOrNull(qs.from), to = ymdOrNull(qs.to);
+  const shown = L.entries.filter((e) => (!from || e.date >= from) && (!to || e.date <= to));
+  const log = (await query(`SELECT to_char(changed_at AT TIME ZONE 'Asia/Manila','YYYY-MM-DD HH24:MI') AS at, changed_by, field, old_value, new_value FROM pcf_settings_log ORDER BY id DESC LIMIT 30`)).rows;
+  return {
+    configured: true, settings,
+    cards: {
+      fundAmount: settings.fundAmount, balance: fromCents(L.balanceC), balanceNegative: L.balanceC < 0,
+      spentSinceReplenishment: fromCents(sinceC), toReplenish: fromCents(Math.max(fundC - L.balanceC, 0)),
+      lastReplenishmentDate: lastRepIdx >= 0 ? L.entries[lastRepIdx].date : null,
+    },
+    ledger: shown.map((e) => ({
+      kind: e.kind, id: e.id, date: e.date, ref: e.ref, description: e.desc,
+      moneyIn: e.inC ? fromCents(e.inC) : null, moneyOut: e.outC ? fromCents(e.outC) : null, balance: fromCents(e.balC),
+    })),
+    totals: { moneyIn: fromCents(shown.reduce((n, e) => n + e.inC, 0)), moneyOut: fromCents(shown.reduce((n, e) => n + e.outC, 0)), count: shown.length },
+    voidedExcluded: L.voided.replenishments + L.voided.vouchers,
+    settingsLog: log.map((l) => ({ at: l.at, by: l.changed_by, field: l.field, from: l.old_value, to: l.new_value })),
+  };
+}
+
+app.get('/api/pcf', requireRole(reportRoles), async (req, res) => {
+  try { res.json(await pcfData(req.query)); }
+  catch (err) { console.error('pcf error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/pcf/export', requireRole(reportRoles), async (req, res) => {
+  try {
+    const d = await pcfData(req.query);
+    if (!d.configured) return res.status(400).json({ error: 'Set up the fund first -- there is nothing to export yet.' });
+    const range = `${ymdOrNull(req.query.from) || 'opening'} to ${ymdOrNull(req.query.to) || 'today'}`;
+    const closing = d.ledger.length ? d.ledger[d.ledger.length - 1].balance : d.cards.balance;
+    res.json(reportWorkbook({
+      title: 'Petty Cash Fund — ledger', sheetName: 'PCF ledger', filename: `pcf-ledger-${range.replace(/ to /, '_to_')}.xlsx`,
+      subtitle: `Custodian ${d.settings.custodian} · fund ${d.settings.fundAmount} · ${range}`,
+      heads: ['Date', 'Type', 'Reference', 'Description', 'Money in', 'Money out', 'Balance'],
+      kinds: ['text', 'text', 'text', 'text', 'money', 'money', 'money'], widths: [13, 15, 18, 46, 15, 15, 16],
+      rows: d.ledger.map((e) => [e.date, e.kind === 'replenishment' ? 'Replenishment' : 'Petty cash voucher', e.ref, e.description, e.moneyIn ?? '', e.moneyOut ?? '', e.balance]),
+      totals: [`TOTAL (${d.totals.count} line${d.totals.count === 1 ? '' : 's'}) — balance at end`, '', '', '', d.totals.moneyIn, d.totals.moneyOut, closing], user: req.user }));
+  } catch (err) { console.error('pcf export error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// Set up / change the fund. Accounting + admin/owner. Each changed field is logged with who and when.
+app.put('/api/pcf/settings', requireRole(reportRoles), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const custodian = String(b.custodian ?? '').trim().slice(0, 100);
+    const fundC = cents2(b.fundAmount), openC = cents2(b.openingBalance);
+    const openingDate = String(b.openingDate ?? '').trim();
+    if (!custodian) return res.status(400).json({ error: 'The custodian’s name is required' });
+    if (fundC === null) return res.status(400).json({ error: 'Fund amount must be a number (0 or more, at most 2 decimals)' });
+    if (openC === null) return res.status(400).json({ error: 'Opening balance must be a number (0 or more, at most 2 decimals)' });
+    if (!isRealYmd(openingDate)) return res.status(400).json({ error: 'Opening date must be a valid date' });
+    const next = { custodian, fund_amount: fromCents(fundC), opening_balance: fromCents(openC), opening_date: openingDate };
+    const cur = await pcfSettings();
+    const by = req.user?.name || null;
+    const client = await getClient();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `INSERT INTO pcf_settings (id, custodian, fund_amount, opening_balance, opening_date, updated_by, updated_at)
+         VALUES (1,$1,$2,$3,$4,$5,NOW())
+         ON CONFLICT (id) DO UPDATE SET custodian=$1, fund_amount=$2, opening_balance=$3, opening_date=$4, updated_by=$5, updated_at=NOW()`,
+        [next.custodian, next.fund_amount, next.opening_balance, next.opening_date, by]);
+      const before = cur ? { custodian: cur.custodian, fund_amount: cur.fundAmount, opening_balance: cur.openingBalance, opening_date: cur.openingDate } : {};
+      for (const f of Object.keys(next)) {
+        if (cur && String(before[f]) === String(next[f])) continue;
+        await client.query(`INSERT INTO pcf_settings_log (changed_by, field, old_value, new_value) VALUES ($1,$2,$3,$4)`,
+          [by, f, cur ? String(before[f]) : null, String(next[f])]);
+      }
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
+    res.json(await pcfData({}));
+  } catch (err) { console.error('pcf settings error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// Record a replenishment: money INTO the fund. Not an expense, not a voucher.
+app.post('/api/pcf/replenishments', requireRole(reportRoles), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const settings = await pcfSettings();
+    if (!settings) return res.status(400).json({ error: 'Set up the fund before recording a replenishment' });
+    const amountC = cents2(b.amount);
+    if (amountC === null || amountC <= 0) return res.status(400).json({ error: 'Amount must be more than 0 (at most 2 decimals)' });
+    const date = String(b.date ?? '').trim();
+    if (!isRealYmd(date)) return res.status(400).json({ error: 'Date must be a valid date' });
+    if (date < settings.openingDate) return res.status(400).json({ error: `The fund opened on ${settings.openingDate}; a replenishment cannot be dated before it` });
+    const reference = String(b.reference ?? '').trim().slice(0, 100) || null;
+    const notes = String(b.notes ?? '').trim().slice(0, 500) || null;
+    const r = await query(
+      `INSERT INTO pcf_replenishments (repl_date, amount, reference, notes, created_by, created_by_id) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+      [date, fromCents(amountC), reference, notes, req.user?.name || null, req.user?.id != null ? String(req.user.id) : null]);
+    res.status(201).json({ id: Number(r.rows[0].id), ...(await pcfData({})) });
+  } catch (err) { console.error('pcf replenishment error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// Void a replenishment: it stays on file, struck through in nothing but this table, and stops counting.
+app.post('/api/pcf/replenishments/:id/void', requireRole(reportRoles), async (req, res) => {
+  try {
+    if (!/^\d+$/.test(String(req.params.id))) return res.status(404).json({ error: 'Replenishment not found' });
+    const reason = String(req.body?.reason ?? '').trim().slice(0, 500);
+    if (!reason) return res.status(400).json({ error: 'A reason is required to void a replenishment' });
+    const r = await query(
+      `UPDATE pcf_replenishments SET voided_at = NOW(), voided_by = $1, voided_by_id = $2, void_reason = $3
+        WHERE id = $4 AND voided_at IS NULL RETURNING id`,
+      [req.user?.name || null, req.user?.id != null ? String(req.user.id) : null, reason, req.params.id]);
+    if (!r.rows[0]) {
+      const ex = await query(`SELECT voided_at FROM pcf_replenishments WHERE id = $1`, [req.params.id]);
+      return res.status(ex.rows[0] ? 409 : 404).json({ error: ex.rows[0] ? 'This replenishment is already voided' : 'Replenishment not found' });
+    }
+    res.json(await pcfData({}));
+  } catch (err) { console.error('pcf void error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// ============================================================================
 // Attendance module — Phase 1: time stations + clock scans.
 // Station admin routes are admin-only; scan/today are station-only (a station JWT
 // from /api/clock/station-login). Punches are append-only.
@@ -9996,7 +10216,7 @@ function validateAllocations(raw, totalStr) {
 // DISBURSEMENT VOUCHER additions. A voucher is the expense above; these validate the two things it
 // gained — payment details on the header, and PO-payment lines beside the expense lines.
 // ---------------------------------------------------------------------------------------------------
-const PAYMENT_MODES = ['cash', 'check', 'bank_transfer'];
+const PAYMENT_MODES = ['cash', 'check', 'bank_transfer', 'petty_cash'];
 
 // Payment details. All optional (an expense-only voucher is valid exactly as it always was), but
 // they hang together: a check number only means something on a check payment, and a check payment
@@ -10005,7 +10225,7 @@ function validateVoucherHeader(b) {
   const optional = (v, max) => { const s = String(v ?? '').trim(); return s ? s.slice(0, max) : null; };
   const paymentMode = optional(b.paymentMode, 20);
   if (paymentMode && !PAYMENT_MODES.includes(paymentMode)) {
-    return { error: "Payment mode must be 'cash', 'check' or 'bank_transfer'" };
+    return { error: "Payment mode must be 'cash', 'check', 'bank_transfer' or 'petty_cash'" };
   }
   const checkNo = optional(b.checkNo, 50);
   const bank = optional(b.bank, 100);

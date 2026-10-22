@@ -183,6 +183,7 @@ export function DisbursementVoucherModal({ api, projects, tradings, facilities, 
                 <option value="cash">Cash</option>
                 <option value="check">Check</option>
                 <option value="bank_transfer">Bank transfer</option>
+                <option value="petty_cash">Petty cash</option>
               </select>
             </div>
           </div>

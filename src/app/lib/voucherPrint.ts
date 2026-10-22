@@ -65,7 +65,7 @@ const dayFmt = (d?: string | null): string => {
   return `${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}, ${m[1]}`;
 };
 
-const MODE_LABEL: Record<string, string> = { cash: 'Cash', check: 'Check', bank_transfer: 'Bank transfer' };
+const MODE_LABEL: Record<string, string> = { cash: 'Cash', check: 'Check', bank_transfer: 'Bank transfer', petty_cash: 'Petty cash' };
 const KIND_LABEL: Record<string, string> = { project: 'Project', trading: 'Trading deal', facility: 'Facility' };
 
 export function printVoucher(v: PrintableVoucher): { ok: boolean; error?: string } {

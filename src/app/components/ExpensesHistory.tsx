@@ -96,7 +96,7 @@ const peso = (n: number) =>
 const KIND_LABEL: Record<TargetOption['kind'], string> = { project: 'Project', trading: 'Trading', facility: 'Facility' };
 // Spelled out rather than KIND_LABEL + 's', which produced "Facilitys".
 const KIND_PLURAL: Record<TargetOption['kind'], string> = { project: 'Projects', trading: 'Tradings', facility: 'Facilities' };
-const MODE_LABEL: Record<string, string> = { cash: 'Cash', check: 'Check', bank_transfer: 'Bank transfer' };
+const MODE_LABEL: Record<string, string> = { cash: 'Cash', check: 'Check', bank_transfer: 'Bank transfer', petty_cash: 'Petty cash' };
 
 // "Check #1234" / "Cash" / "—": the mode column, with the check number where there is one.
 export const modeText = (r: Pick<ExpenseHistoryRow, 'paymentMode' | 'checkNo'>) =>

@@ -46,7 +46,7 @@ const num = (v: unknown) => { const n = Number(String(v ?? '').replace(/,/g, '')
 const peso = (n: number | string) =>
   `₱${(num(n)).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-const MODE_LABEL: Record<string, string> = { cash: 'Cash', check: 'Check', bank_transfer: 'Bank transfer' };
+const MODE_LABEL: Record<string, string> = { cash: 'Cash', check: 'Check', bank_transfer: 'Bank transfer', petty_cash: 'Petty cash' };
 
 const FILTERS = [
   { id: 'all', label: 'All' }, { id: 'overdue', label: 'Overdue' }, { id: 'unpaid', label: 'Unpaid' },

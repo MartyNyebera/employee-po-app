@@ -15,6 +15,7 @@ import { esc, printPurchaseOrder } from '../lib/orderPrint';
 import { AllocationTag, AllocationFilter, matchesAllocation, type AllocType } from '../components/AllocationTag';
 import { CollectionsReport } from '../components/CollectionsReport';
 import { PurchasesReport } from '../components/PurchasesReport';
+import { PcfScreen } from '../components/PcfScreen';
 import { renderPrintDocument } from '../lib/printChrome';
 import {
   AccountingNav, loadNavPrefs, saveNavPrefs, toggleGroup as toggleGroupPrefs, revealGroupFor, setMinimized,
@@ -1387,6 +1388,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
           {view === 'billing-invoices' && <BillingInvoices api={aFetch} isAdmin />}
 
           {view === 'receivables' && <Receivables key={receivablesFocus ?? 'all'} api={aFetch} isAdmin focusId={receivablesFocus} />}
+
+          {view === 'pcf' && <PcfScreen api={aFetch} isAdmin />}
 
           {view === 'purchases' && <PurchasesReport api={aFetch} isAdmin onOpenPo={(id) => { setPoFocus(id); setPoAlloc(''); setView('orders'); }} />}
 
