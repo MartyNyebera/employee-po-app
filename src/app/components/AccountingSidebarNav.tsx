@@ -25,7 +25,7 @@ import { NavBadge } from './NavBadge';
 export type AccountingView =
   | 'new-pr' | 'requests' | 'orders' | 'projects' | 'tradings' | 'facilities' | 'expenses'
   | 'withdrawals' | 'clients' | 'delivery-receipts' | 'billing-invoices' | 'receivables'
-  | 'timesheet' | 'payroll' | 'signature' | 'payables';
+  | 'timesheet' | 'payroll' | 'signature' | 'payables' | 'collections';
 
 // Which live count an item wears. The portal supplies the numbers; this file only places them.
 export type BadgeKey = 'requests' | 'orders' | 'receivables';
@@ -80,7 +80,7 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     id: 'accounting', label: 'ACCOUNTING', items: [
-      { id: 'collections-report', label: 'COLLECTIONS REPORT', icon: HandCoins },
+      { id: 'collections-report', label: 'COLLECTIONS REPORT', icon: HandCoins, view: 'collections', hover: 'Payments received on billing invoices' },
       { id: 'receivable-report', label: 'RECEIVABLE REPORT', icon: Coins, view: 'receivables',
         hover: 'Billing invoice − collection', badge: 'receivables' },
       { id: 'purchases', label: 'PURCHASES', icon: ShoppingCart, hover: 'Summary of PO requests' },

@@ -6616,6 +6616,117 @@ app.get('/api/payroll/periods/:id/export', requireRole(['admin', 'accounting']),
 });
 
 // ============================================================================
+// ACCOUNTING REPORTS -- Collections, Purchases. Read-only, derived on every read; nothing is stored.
+// Accounting + admin/owner (the same roles as the Receivables / Payable screens they sit beside).
+// Every figure is summed here in SQL (exact NUMERIC) -- the browser only formats them -- and the Excel
+// export is built from the SAME query with the SAME filters, so the file is exactly the rows on screen.
+// ============================================================================
+const reportRoles = ['owner', 'admin', 'accounting'];
+const REPORT_YMD = /^\d{4}-\d{2}-\d{2}$/;
+const ymdOrNull = (v) => (REPORT_YMD.test(String(v || '')) ? String(v) : null);
+// ILIKE pattern with the wildcard characters in the search text made literal.
+const likeOf = (s) => `%${String(s).trim().replace(/[\\%_]/g, (c) => '\\' + c)}%`;
+const money2s = (v) => Number(v ?? 0).toFixed(2);
+
+// One-sheet workbook handed back as base64 JSON, the way the payroll export is (the shared front-end
+// helper downloadXlsx reads this shape). `kinds` names each column's cell style; `totals` is the last
+// row, summed by the caller from the same data as `rows`.
+function reportWorkbook({ title, subtitle, sheetName, filename, heads, kinds, widths, rows, totals, user }) {
+  const T = STYLE;
+  const styleOf = (k) => (k === 'money' ? T.MONEY : k === 'int' ? T.NUMBER : T.TEXT);
+  const numOrText = (k, v) => (k === 'money' || k === 'int' ? (v === '' || v == null ? null : Number(v)) : (v ?? ''));
+  const out = [
+    [{ v: 'KIMOEL TRADING & CONSTRUCTION INCORPORATED', s: T.TITLE }],
+    [{ v: title, s: T.SUBTITLE }],
+    [{ v: `${subtitle} · exported ${new Date().toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}${user && user.name ? ` by ${user.name}` : ''}`, s: T.MUTED }],
+    [],
+    heads.map((h) => ({ v: h, s: T.HEADER })),
+    ...rows.map((r) => r.map((v, i) => ({ v: numOrText(kinds[i], v), s: styleOf(kinds[i]) }))),
+    totals.map((v, i) => (i === 0 ? { v, s: T.TOTAL_LABEL }
+      : (kinds[i] === 'money' || kinds[i] === 'int') && v !== '' ? { v: Number(v), s: T.MONEY_BOLD }
+      : { v: '', s: T.TOTAL_LABEL })),
+  ];
+  const headerRow = 5;
+  const buf = buildXlsx({
+    rows: out, sheetName, widths, freezeRows: headerRow,
+    autoFilter: `A${headerRow}:${colName(heads.length - 1)}${headerRow + rows.length}`,
+  });
+  return { filename, mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', base64: buf.toString('base64'), rowCount: rows.length };
+}
+
+// ---- COLLECTIONS: every non-voided payment logged against a billing invoice.
+function collectionsWhere(qs, { voided = false, withClient = true, withSearch = true } = {}) {
+  const conds = [voided ? 'ip.voided_at IS NOT NULL' : 'ip.voided_at IS NULL'];
+  const params = [];
+  const add = (sql, v) => { params.push(v); conds.push(sql.replace('?', `$${params.length}`)); };
+  const from = ymdOrNull(qs.from), to = ymdOrNull(qs.to);
+  if (from) add('ip.paid_on >= ?::date', from);
+  if (to) add('ip.paid_on <= ?::date', to);
+  const client = String(qs.client || '').trim();
+  if (withClient && client) add('bi.billed_to = ?', client);
+  const q = String(qs.q || '').trim();
+  if (withSearch && q) {
+    params.push(likeOf(q));
+    const n = params.length;
+    conds.push(`(COALESCE(ip.or_number,'') ILIKE $${n} OR bi.bi_number ILIKE $${n} OR bi.billed_to ILIKE $${n})`);
+  }
+  return { where: conds.join(' AND '), params };
+}
+const COLLECTIONS_FROM = `FROM invoice_payments ip JOIN billing_invoices bi ON bi.id = ip.billing_invoice_id`;
+
+async function collectionsData(qs) {
+  const f = collectionsWhere(qs);
+  const rows = (await query(
+    `SELECT ip.id, to_char(ip.paid_on,'YYYY-MM-DD') AS paid_on, bi.id AS bi_id, bi.bi_number, bi.billed_to AS client,
+            ip.or_number, ip.reference, ip.amount
+       ${COLLECTIONS_FROM} WHERE ${f.where} ORDER BY ip.paid_on DESC, ip.id DESC`, f.params)).rows;
+  const tot = (await query(`SELECT COALESCE(SUM(ip.amount),0) AS total, COUNT(*)::int AS n ${COLLECTIONS_FROM} WHERE ${f.where}`, f.params)).rows[0];
+  const summary = (await query(
+    `SELECT bi.billed_to AS client, COUNT(*)::int AS payments, SUM(ip.amount) AS total
+       ${COLLECTIONS_FROM} WHERE ${f.where} GROUP BY bi.billed_to ORDER BY bi.billed_to`, f.params)).rows;
+  const fv = collectionsWhere(qs, { voided: true });
+  const vc = (await query(`SELECT COUNT(*)::int AS n ${COLLECTIONS_FROM} WHERE ${fv.where}`, fv.params)).rows[0];
+  // The client picker lists whoever paid in the chosen dates, whatever client or search is applied.
+  const fc = collectionsWhere(qs, { withClient: false, withSearch: false });
+  const clients = (await query(`SELECT DISTINCT bi.billed_to AS client ${COLLECTIONS_FROM} WHERE ${fc.where} ORDER BY 1`, fc.params)).rows.map((r) => r.client);
+  return {
+    rows: rows.map((r) => ({
+      id: Number(r.id), paidOn: r.paid_on, biId: Number(r.bi_id), biNumber: r.bi_number, client: r.client,
+      orNumber: r.or_number ?? null, reference: r.reference ?? null, amount: money2s(r.amount),
+    })),
+    total: money2s(tot.total), count: tot.n,
+    summary: summary.map((s) => ({ client: s.client, payments: s.payments, total: money2s(s.total) })),
+    voidedExcluded: vc.n, clients,
+  };
+}
+
+app.get('/api/reports/collections', requireRole(reportRoles), async (req, res) => {
+  try { res.json(await collectionsData(req.query)); }
+  catch (err) { console.error('collections report error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/reports/collections/export', requireRole(reportRoles), async (req, res) => {
+  try {
+    const d = await collectionsData(req.query);
+    const by = String(req.query.summary || '') === '1';
+    const range = `${ymdOrNull(req.query.from) || 'start'} to ${ymdOrNull(req.query.to) || 'today'}`;
+    const filt = [String(req.query.client || '').trim() && `client ${String(req.query.client).trim()}`, String(req.query.q || '').trim() && `search "${String(req.query.q).trim()}"`].filter(Boolean);
+    const subtitle = `${by ? 'Collections summary by client' : 'Collections report'} · ${range}${filt.length ? ` · ${filt.join(', ')}` : ''} · ${d.voidedExcluded} voided payment${d.voidedExcluded === 1 ? '' : 's'} left out`;
+    res.json(by
+      ? reportWorkbook({
+          title: 'Collections — summary by client', subtitle, sheetName: 'Collections by client', filename: `collections-by-client-${range.replace(/ to /, '_to_')}.xlsx`,
+          heads: ['Client', 'Payments', 'Total collected'], kinds: ['text', 'int', 'money'], widths: [42, 11, 18],
+          rows: d.summary.map((s) => [s.client, s.payments, s.total]),
+          totals: [`TOTAL (${d.summary.length} client${d.summary.length === 1 ? '' : 's'})`, d.count, d.total], user: req.user })
+      : reportWorkbook({
+          title: 'Collections report', subtitle, sheetName: 'Collections', filename: `collections-${range.replace(/ to /, '_to_')}.xlsx`,
+          heads: ['Date received', 'Client', 'BI No.', 'OR No.', 'Reference', 'Amount'], kinds: ['text', 'text', 'text', 'text', 'text', 'money'], widths: [14, 36, 12, 14, 24, 16],
+          rows: d.rows.map((r) => [r.paidOn, r.client, r.biNumber, r.orNumber ?? '', r.reference ?? '', r.amount]),
+          totals: [`TOTAL (${d.count} payment${d.count === 1 ? '' : 's'})`, '', '', '', '', d.total], user: req.user }));
+  } catch (err) { console.error('collections export error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// ============================================================================
 // Attendance module — Phase 1: time stations + clock scans.
 // Station admin routes are admin-only; scan/today are station-only (a station JWT
 // from /api/clock/station-login). Punches are append-only.

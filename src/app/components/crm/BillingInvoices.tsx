@@ -616,7 +616,7 @@ const FILTERS = [
 
 // `isAdmin` — as above. A view-only caller still gets the whole ledger, the per-invoice detail
 // and the payment history; it just cannot log or reverse a collection.
-export function Receivables({ api, isAdmin }: { api: Api; isAdmin: boolean }) {
+export function Receivables({ api, isAdmin, focusId = null }: { api: Api; isAdmin: boolean; focusId?: number | null }) {
   // The Actions column only exists for a manage caller, so every colSpan follows it.
   const COLS = isAdmin ? 10 : 9;
   const [rows, setRows] = useState<Bi[]>([]);
@@ -636,6 +636,17 @@ export function Receivables({ api, isAdmin }: { api: Api; isAdmin: boolean }) {
     finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
+
+  // Arrived from the Collections Report: open that invoice's payment history and bring it into view.
+  const [focused, setFocused] = useState(false);
+  useEffect(() => {
+    if (focusId === null || focused || loading || !rows.some(r => r.id === focusId)) return;
+    setFocused(true);
+    setOpen(focusId); setDetail(null);
+    api<Bi>(`/billing-invoices/${focusId}`).then(setDetail).catch((e: any) => toast.error(e.message || 'Could not load the payment history'));
+    setTimeout(() => document.getElementById(`bi-row-${focusId}`)?.scrollIntoView({ block: 'center' }), 50);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId, loading, rows, focused]);
 
   const openRow = async (bi: Bi) => {
     if (open === bi.id) { setOpen(null); setDetail(null); return; }
@@ -729,7 +740,7 @@ export function Receivables({ api, isAdmin }: { api: Api; isAdmin: boolean }) {
                 const rowStyle = bi.overdue ? { background: '#fef2f2' } : undefined;
                 return (
                   <Fragment key={bi.id}>
-                    <tr style={rowStyle}>
+                    <tr id={`bi-row-${bi.id}`} style={rowStyle}>
                       <td style={{ ...tightTd, cursor: 'pointer' }} onClick={() => openRow(bi)}>
                         {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                       </td>

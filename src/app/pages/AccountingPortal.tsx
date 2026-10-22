@@ -13,6 +13,7 @@ import { confirmDialog } from '../lib/confirm';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { esc, printPurchaseOrder } from '../lib/orderPrint';
 import { AllocationTag, AllocationFilter, matchesAllocation, type AllocType } from '../components/AllocationTag';
+import { CollectionsReport } from '../components/CollectionsReport';
 import { renderPrintDocument } from '../lib/printChrome';
 import {
   AccountingNav, loadNavPrefs, saveNavPrefs, toggleGroup as toggleGroupPrefs, revealGroupFor, setMinimized,
@@ -1062,6 +1063,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const [search, setSearch] = useState('');
   const [busyId, setBusyId] = useState('');
   const [poAlloc, setPoAlloc] = useState('');
+  // The invoice the Collections Report sent us to (opened inside Receivables); cleared on any menu click.
+  const [receivablesFocus, setReceivablesFocus] = useState<number | null>(null);
   const [viewing, setViewing] = useState<PurchaseRequest | null>(null);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [showProjectModal, setShowProjectModal] = useState(false);
@@ -1315,7 +1318,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
       <AccountingNav
         activeView={view} minimized={mini} prefs={navPrefs}
         badges={{ requests: pendingCount, orders: pendingOrderCount, receivables: overdueInvoiceCount }}
-        onNavigate={(v) => { setView(v); setMobileOpen(false); }}
+        onNavigate={(v) => { setReceivablesFocus(null); setView(v); setMobileOpen(false); }}
         onToggleGroup={toggleGroup} />
       <div className="border-t border-gray-200 px-3 py-3 space-y-1">
         <div className={`flex items-center gap-3 px-3 py-2 ${mini ? 'justify-center' : ''}`}>
@@ -1375,7 +1378,9 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 
           {view === 'billing-invoices' && <BillingInvoices api={aFetch} isAdmin />}
 
-          {view === 'receivables' && <Receivables api={aFetch} isAdmin />}
+          {view === 'receivables' && <Receivables key={receivablesFocus ?? 'all'} api={aFetch} isAdmin focusId={receivablesFocus} />}
+
+          {view === 'collections' && <CollectionsReport api={aFetch} isAdmin onOpenInvoice={(id) => { setReceivablesFocus(id); setView('receivables'); }} />}
 
           {view === 'timesheet' && <TimesheetReview api={aFetch} role="accounting" />}
 
