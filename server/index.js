@@ -55,6 +55,7 @@ import { seed } from './seed.js';
 import { hashPassword, comparePassword, signToken, requireAuth, requireAdmin, requireSuperAdmin, requireRole, effectiveRole } from './auth.js';
 import { buildXlsx, STYLE, colName } from './xlsx.js';
 import { registerListExports, listWorkbookJson } from './listExports.js';
+import { registerAccountingOverview } from './accountingOverview.js';
 // The SAME module src/app/lib/payslipPrint.ts reads, so the exported breakdown and the printed
 // payslip cannot disagree. Plain .js outside src/ precisely so both sides can import it.
 import { payrollBand, payslipEarnings, payslipDeductions, adjustmentsOf } from '../shared/payrollLines.js';
@@ -792,6 +793,14 @@ async function runMigrations() {
       `);
       console.log('✅ tradings table ready');
     } catch (err) { console.log('ℹ️ tradings table skipped:', err.message); }
+
+    // Dates the Accounting Overview watches: when a project should be finished, and when a trading deal is
+    // expected to be delivered. Both optional (NULL = "no date set"), display/alert only -- nothing computes on them.
+    try {
+      await query(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS target_completion_date DATE`);
+      await query(`ALTER TABLE tradings ADD COLUMN IF NOT EXISTS expected_delivery_date DATE`);
+      console.log('✅ projects.target_completion_date / tradings.expected_delivery_date ready');
+    } catch (err) { console.log('ℹ️ overview date columns skipped:', err.message); }
 
     // Charge a PR to a trading, exactly as project_id / facility_id already do. ON DELETE RESTRICT
     // rather than the SET NULL those two use: SET NULL is precisely "how a deleted project's spend
@@ -9383,6 +9392,22 @@ function mapCustomer(r) {
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
+// A DATE column as 'YYYY-MM-DD'. node-postgres hands DATE back as a local-midnight Date, so the LOCAL parts are the
+// calendar day (reading it as UTC shifts it by a day in Manila).
+const dateOnly = (v) => {
+  if (v === null || v === undefined || v === '') return null;
+  if (v instanceof Date) return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, '0')}-${String(v.getDate()).padStart(2, '0')}`;
+  return String(v).slice(0, 10);
+};
+const ymdOrNullBody = (v) => {
+  if (v === undefined) return undefined;
+  if (v === null || v === '') return null;
+  const t = String(v);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t);
+  if (!m) return false;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  return d.getUTCFullYear() === +m[1] && d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3] ? t : false;   // a real calendar day
+};
 function mapProject(r) {
   return r && {
     id: r.id, name: r.name, description: r.description, status: r.status,
@@ -9392,6 +9417,7 @@ function mapProject(r) {
     contractPriceVat: r.contract_price_vat ?? 'inclusive',
     netProfitPercent: r.net_profit_percent === null || r.net_profit_percent === undefined ? null : parseFloat(r.net_profit_percent),
     completedAt: r.completed_at ?? null, completedBy: r.completed_by ?? null,
+    targetCompletionDate: dateOnly(r.target_completion_date),
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
@@ -11298,14 +11324,16 @@ app.post('/api/projects', requireRole(['owner','admin','accounting']), async (re
     if (!b.name || !String(b.name).trim()) return res.status(400).json({ error: 'Project name is required' });
     const basis = vatBasis(b.contractPriceVat);
     if (basis === undefined) return res.status(400).json({ error: `Contract price VAT basis must be one of: ${VAT_BASES.join(', ')}` });
+    const target = ymdOrNullBody(b.targetCompletionDate);
+    if (target === false) return res.status(400).json({ error: 'Target completion date must be a valid date' });
     const id = newId('PRJ');
     const r = await query(
-      `INSERT INTO projects (id,name,description,status,client,location,start_date,end_date,budget_allocation,contract_price,contract_price_vat,net_profit_percent)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      `INSERT INTO projects (id,name,description,status,client,location,start_date,end_date,budget_allocation,contract_price,contract_price_vat,net_profit_percent,target_completion_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
       [id, b.name, orNull(b.description), orNull(b.status) || 'Active', orNull(b.client), orNull(b.location), orNull(b.startDate), orNull(b.endDate), Number(b.budgetAllocation) || 0,
        b.contractPrice === undefined || b.contractPrice === null || b.contractPrice === '' ? null : Number(b.contractPrice),
        basis || 'inclusive',
-       b.netProfitPercent === undefined || b.netProfitPercent === null || b.netProfitPercent === '' ? null : Number(b.netProfitPercent)]
+       b.netProfitPercent === undefined || b.netProfitPercent === null || b.netProfitPercent === '' ? null : Number(b.netProfitPercent), target ?? null]
     );
     res.status(201).json(mapProject(r.rows[0]));
   } catch (err) { console.error('project create error:', err); res.status(500).json({ error: err.message }); }
@@ -11313,10 +11341,11 @@ app.post('/api/projects', requireRole(['owner','admin','accounting']), async (re
 app.patch('/api/projects/:id', requireRole(['owner','admin','accounting']), async (req, res) => {
   try {
     const b = req.body;
-    const cols = { name:b.name, description:b.description, status:b.status, client:b.client, location:b.location, start_date:b.startDate, end_date:b.endDate, budget_allocation:b.budgetAllocation, contract_price:b.contractPrice, contract_price_vat:b.contractPriceVat, net_profit_percent:b.netProfitPercent };
+    const cols = { name:b.name, description:b.description, status:b.status, client:b.client, location:b.location, start_date:b.startDate, end_date:b.endDate, budget_allocation:b.budgetAllocation, contract_price:b.contractPrice, contract_price_vat:b.contractPriceVat, net_profit_percent:b.netProfitPercent, target_completion_date:b.targetCompletionDate };
     const sets = []; const params = []; let i = 1;
     for (const [k, v] of Object.entries(cols)) {
       if (v === undefined) continue;
+      if (k === 'target_completion_date' && ymdOrNullBody(v) === false) return res.status(400).json({ error: 'Target completion date must be a valid date' });
       sets.push(`${k} = $${i++}`);
       if (k === 'budget_allocation') params.push(Number(v) || 0);
       else if (k === 'contract_price') params.push(v === null || v === '' ? null : Number(v));
@@ -11404,6 +11433,7 @@ function mapTrading(r) {
     sellingPrice: r.selling_price === null || r.selling_price === undefined ? null : parseFloat(r.selling_price),
     sellingPriceVat: r.selling_price_vat ?? 'inclusive',
     salesOrderId: r.sales_order_id ?? null,
+    expectedDeliveryDate: dateOnly(r.expected_delivery_date),
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
@@ -11457,11 +11487,13 @@ app.post('/api/tradings', requireRole(['owner', 'admin', 'accounting']), async (
     if (price !== null && (!isFinite(price) || price < 0)) return res.status(400).json({ error: 'Selling price must be a non-negative number or blank' });
     const basis = vatBasis(b.sellingPriceVat);
     if (basis === undefined) return res.status(400).json({ error: `Selling price VAT basis must be one of: ${VAT_BASES.join(', ')}` });
+    const expected = ymdOrNullBody(b.expectedDeliveryDate);
+    if (expected === false) return res.status(400).json({ error: 'Expected delivery date must be a valid date' });
     const r = await query(
-      `INSERT INTO tradings (id, name, client, status, selling_price, selling_price_vat, sales_order_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      `INSERT INTO tradings (id, name, client, status, selling_price, selling_price_vat, sales_order_id, expected_delivery_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
       [newId('TRD'), String(b.name).trim(), orNull(b.client), orNull(b.status) || 'Active', price,
-       basis || 'inclusive', orNull(b.salesOrderId)]
+       basis || 'inclusive', orNull(b.salesOrderId), expected ?? null]
     );
     res.status(201).json(mapTrading(r.rows[0]));
   } catch (err) { console.error('trading create error:', err); res.status(500).json({ error: err.message }); }
@@ -11470,11 +11502,12 @@ app.patch('/api/tradings/:id', requireRole(['owner', 'admin', 'accounting']), as
   try {
     const b = req.body || {};
     const cols = { name: b.name, client: b.client, status: b.status, selling_price: b.sellingPrice,
-                   selling_price_vat: b.sellingPriceVat, sales_order_id: b.salesOrderId };
+                   selling_price_vat: b.sellingPriceVat, sales_order_id: b.salesOrderId, expected_delivery_date: b.expectedDeliveryDate };
     const sets = []; const params = []; let i = 1;
     for (const [k, v] of Object.entries(cols)) {
       if (v === undefined) continue;
       if (k === 'name' && !String(v ?? '').trim()) return res.status(400).json({ error: 'Trading name cannot be empty' });
+      if (k === 'expected_delivery_date' && ymdOrNullBody(v) === false) return res.status(400).json({ error: 'Expected delivery date must be a valid date' });
       sets.push(`${k} = $${i++}`);
       if (k === 'selling_price') {
         const price = tradingPrice(v);
@@ -12755,6 +12788,11 @@ registerListExports(app, {
   query, requireRole, effectiveRole, reportRoles, biRoles, drRoles, payablesRoles, attendanceReviewRoles,
   BI_SELECT, mapBillingInvoice, PAYABLE_SELECT, mapPayable, PO_ALLOC_COLS, PO_ALLOC_JOINS, mapPoAllocation,
   PROJECT_SPEND_SQL, TRADING_SPEND_SQL, FACILITY_SPEND_SQL, attendanceSheetData,
+});
+// The Accounting Overview screen's data (server/accountingOverview.js): cards, alerts, calendar, charts.
+registerAccountingOverview(app, {
+  query, requireRole, reportRoles, BI_SELECT, mapBillingInvoice, PAYABLE_SELECT, mapPayable,
+  collectionsWhere, pcfData, backToWorkdayYMD,
 });
 
 // Create new tables before starting server

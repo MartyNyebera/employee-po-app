@@ -70,10 +70,12 @@ export function payableBadge(r: Pick<PayableRow, 'status' | 'overdue' | 'overpai
   return <span className={`${base} text-gray-700 bg-gray-100 border-gray-200`}>Unpaid</span>;
 }
 
-export function PayableReport({ api, onOpenVoucher, reloadKey = 0 }: {
+export function PayableReport({ api, onOpenVoucher, initialSearch = '', reloadKey = 0 }: {
   api: Api;
   /** Opens the Disbursement Report searched to this voucher number. */
   onOpenVoucher?: (serialNo: string) => void;
+  /** The search box starts with this (e.g. a PO number, from an Overview alert). */
+  initialSearch?: string;
   /** Bumped by the portal after a voucher is saved or voided, so this refreshes without a reload. */
   reloadKey?: number;
 }) {
@@ -82,7 +84,7 @@ export function PayableReport({ api, onOpenVoucher, reloadKey = 0 }: {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterId>('all');
   const [supplierId, setSupplierId] = useState('');
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(initialSearch);
   const [alloc, setAlloc] = useState('');
   const [open, setOpen] = useState<string | null>(null);
   // Suppliers for the dropdown come from the UNFILTERED set, so choosing one doesn't empty the list.

@@ -39,6 +39,7 @@ import { DualBasisProfit, type DualBasisRow, type BasisTotals } from '../compone
 import { ExpensesHistory, type TargetOption } from '../components/ExpensesHistory';
 import { DisbursementVoucherModal } from '../components/DisbursementVoucher';
 import { PayableReport } from '../components/PayableReport';
+import { AccountingOverview, type OverviewLink } from '../components/AccountingOverview';
 import { ExportXlsxButton } from '../components/ExportXlsxButton';
 import { GlAccountsScreen } from '../components/GlAccountsScreen';
 import { PayrollReview } from '../components/crm/PayrollReview';
@@ -89,6 +90,8 @@ interface Project {
   location?: string; startDate?: string; endDate?: string; budgetAllocation?: number;
   contractPrice?: number | null; netProfitPercent?: number | null;
   contractPriceVat?: VatBasis;
+  /** When the project should be finished; the Overview alerts on it. Optional. */
+  targetCompletionDate?: string | null;
 }
 // How an entered price is to be read. Supplier and client prices arrive both ways, so the number
 // alone is ambiguous and each one carries its own tag. 'exempt' is VAT-free on both bases — it is
@@ -115,6 +118,8 @@ interface Trading {
   id: string; name: string; client?: string | null; status?: string;
   sellingPrice?: number | null; salesOrderId?: string | null;
   sellingPriceVat?: VatBasis;
+  /** When the deal is expected to be delivered; the Overview alerts on it until a Delivery Receipt exists. Optional. */
+  expectedDeliveryDate?: string | null;
 }
 // Spend is never summed in the browser. GET /api/projects/spend, /api/tradings/spend and
 // /api/facilities/spend are the one definition (PROJECT_SPEND_SQL and friends in server/index.js),
@@ -577,6 +582,7 @@ function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; 
     name: initial?.name || '', description: initial?.description || '', status: initial?.status || 'Active',
     location: initial?.location || '',
     startDate: (initial?.startDate || '').slice(0, 10), endDate: (initial?.endDate || '').slice(0, 10),
+    targetCompletionDate: initial?.targetCompletionDate || '',
     contractPrice: initial?.contractPrice != null ? String(initial.contractPrice) : '',
     // Defaults to VAT-inclusive, the common case and the basis every pre-existing priced row was
     // backfilled to. An existing project keeps whatever it already carries.
@@ -636,6 +642,7 @@ function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; 
         name: f.name.trim(), description: f.description.trim() || null, status: f.status,
         location: f.location.trim() || null,
         startDate: f.startDate || null, endDate: f.endDate || null,
+        targetCompletionDate: f.targetCompletionDate || null,
         budgetAllocation: f.budgetAllocation === '' ? null : Number(f.budgetAllocation),
         contractPrice: f.contractPrice === '' ? null : Number(f.contractPrice),
         contractPriceVat: f.contractPriceVat,
@@ -705,6 +712,11 @@ function ProjectModal({ initial, onClose, onSaved }: { initial: Project | null; 
             <div>
               <label className={flabel}>End date</label>
               <input type="date" value={f.endDate} onChange={e => set('endDate', e.target.value)} className={input} />
+            </div>
+            <div>
+              <label className={flabel}>Target completion date</label>
+              <input type="date" value={f.targetCompletionDate} onChange={e => set('targetCompletionDate', e.target.value)} className={input} data-field="targetCompletionDate" />
+              <p className="mt-1 text-xs text-gray-400">The Overview warns when this is near or passed.</p>
             </div>
           </div>
         </div>
@@ -973,6 +985,7 @@ function TradingModal({ trading, onClose, onSaved }: {
     name: trading?.name ?? '', client: trading?.client ?? '',
     status: trading?.status ?? 'Active',
     sellingPrice: trading?.sellingPrice != null ? String(trading.sellingPrice) : '',
+    expectedDeliveryDate: trading?.expectedDeliveryDate || '',
   });
   const [saving, setSaving] = useState(false);
   // The basis of the selling price. Defaults to VAT-inclusive, which is both the common case and
@@ -989,7 +1002,7 @@ function TradingModal({ trading, onClose, onSaved }: {
       const body = JSON.stringify({
         name: f.name.trim(), client: f.client.trim() || null,
         status: f.status, sellingPrice: price === '' ? null : price,
-        sellingPriceVat: vat,
+        sellingPriceVat: vat, expectedDeliveryDate: f.expectedDeliveryDate || null,
       });
       if (trading) await aFetch(`/tradings/${trading.id}`, { method: 'PATCH', body });
       else await aFetch('/tradings', { method: 'POST', body });
@@ -1037,6 +1050,13 @@ function TradingModal({ trading, onClose, onSaved }: {
                 revenues depending on whether VAT is already in it. */}
             <VatBasisField value={vat} idSuffix="trading" onChange={setVat} />
           </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
+            <div>
+              <label className={label}>Expected delivery date <span className="text-gray-400 font-normal">(optional)</span></label>
+              <input type="date" value={f.expectedDeliveryDate} onChange={e => set('expectedDeliveryDate', e.target.value)} className={input} data-field="expectedDeliveryDate" />
+              <p className="mt-1 text-xs text-gray-400">The Overview warns until a Delivery Receipt exists for this deal.</p>
+            </div>
+          </div>
         </div>
         <div className="flex justify-end gap-2 px-5 py-4 border-t border-gray-200">
           <button onClick={onClose} className="px-4 py-2 text-sm font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">Cancel</button>
@@ -1051,7 +1071,7 @@ function TradingModal({ trading, onClose, onSaved }: {
 // Portal shell
 // ============================================================================
 function Portal({ session, onSignOut }: { session: Session; onSignOut: () => void }) {
-  const [view, setView] = useState<PortalView>('requests');
+  const [view, setView] = useState<PortalView>('overview');
   // Sidebar preferences (minimized strip + which groups are open), remembered per browser. Loading
   // and saving are wrapped, so the menu works with storage unavailable — it just forgets.
   const [navPrefs, setNavPrefs] = useState<NavPrefs>(() => loadNavPrefs());
@@ -1097,6 +1117,23 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const [logExpense, setLogExpense] = useState<{ target: TargetRef | null; poId?: string; poIds?: string[]; pettyCash?: boolean } | null>(null);
   // The voucher number the Payable Report's CV No. link sent us to: the Disbursement Report opens searched to it.
   const [voucherFocus, setVoucherFocus] = useState('');
+  // A PO number an Overview alert sent us to (the Payable Report opens searched to it), and a project / trading row to highlight.
+  const [payableSearch, setPayableSearch] = useState('');
+  const [rowFocus, setRowFocus] = useState<string | null>(null);
+  useEffect(() => {
+    if (!rowFocus || (view !== 'projects' && view !== 'tradings')) return;
+    const t = setTimeout(() => document.getElementById(`row-${rowFocus}`)?.scrollIntoView({ block: 'center' }), 80);
+    return () => clearTimeout(t);
+  }, [view, rowFocus]);
+  // Where an Overview click goes. Each target is an existing screen; nothing new is fetched here.
+  const openFromOverview = (l: OverviewLink) => {
+    setVoucherFocus(''); setReceivablesFocus(null); setPoFocus(null); setPayableSearch(''); setRowFocus(null);
+    if (l.view === 'receivables' && l.id !== undefined) setReceivablesFocus(Number(l.id));
+    if (l.view === 'payables' && l.search) setPayableSearch(l.search);
+    if (l.view === 'orders' && l.id !== undefined) { setPoFocus(String(l.id)); setPoAlloc(''); }
+    if ((l.view === 'projects' || l.view === 'tradings') && l.id !== undefined) setRowFocus(String(l.id));
+    setView(l.view as PortalView); setMobileOpen(false);
+  };
   const [expensesFor, setExpensesFor] = useState<TargetRef | null>(null);
   const [expensesReload, setExpensesReload] = useState(0);
   // How many invoices are overdue (outstanding balance past their collection date). The server
@@ -1332,7 +1369,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
       <AccountingNav
         activeView={view} minimized={mini} prefs={navPrefs}
         badges={{ requests: pendingCount, orders: pendingOrderCount, receivables: overdueInvoiceCount }}
-        onNavigate={(v) => { setVoucherFocus(''); setReceivablesFocus(null); setPoFocus(null); setView(v); setMobileOpen(false); }}
+        onNavigate={(v) => { setVoucherFocus(''); setReceivablesFocus(null); setPoFocus(null); setPayableSearch(''); setRowFocus(null); setView(v); setMobileOpen(false); }}
         onToggleGroup={toggleGroup} />
       <div className="border-t border-gray-200 px-3 py-3 space-y-1">
         <div className={`flex items-center gap-3 px-3 py-2 ${mini ? 'justify-center' : ''}`}>
@@ -1373,6 +1410,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
         <main className="flex-1 overflow-y-auto p-4 lg:p-6">
           {view === 'signature' && <SignaturePad initial={signature} onSaved={setSignature} />}
 
+          {view === 'overview' && <AccountingOverview api={aFetch} userKey={String(session.id)} onOpen={openFromOverview} />}
+
           {view === 'expenses' && (
             <ExpensesHistory key={voucherFocus || 'all'} initialSearch={voucherFocus} api={aFetch} targets={expenseTargets} isAdmin reloadKey={expensesReload}
               onNewVoucher={() => setLogExpense({ target: null })}
@@ -1380,7 +1419,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
           )}
 
           {view === 'payables' && (
-            <PayableReport api={aFetch} reloadKey={expensesReload}
+            <PayableReport key={payableSearch || 'all'} initialSearch={payableSearch} api={aFetch} reloadKey={expensesReload}
               onOpenVoucher={(serialNo) => { setVoucherFocus(serialNo); setView('expenses'); }} />
           )}
 
@@ -1445,6 +1484,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                             <th className="px-4 py-3">Project</th>
                             <th className="px-4 py-3">Status</th>
                             <th className="px-4 py-3">Timeline</th>
+                            <th className="px-4 py-3">Target completion</th>
                             <th className="px-4 py-3 text-right">Budget</th>
                             <th className="px-4 py-3 text-right">Spent</th>
                             <th className="px-4 py-3 text-right">Remaining</th>
@@ -1455,7 +1495,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                           {projects.map(p => {
                             const s = projectSpend?.[p.id];
                             return (
-                            <tr key={p.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                            <tr key={p.id} id={`row-${p.id}`} className={`border-b border-gray-100 last:border-0 hover:bg-gray-50 ${rowFocus === p.id ? 'bg-blue-50 ring-2 ring-inset ring-blue-300' : ''}`}>
                               <td className="px-4 py-3">
                                 <div className="font-medium text-gray-900">{p.name}</div>
                                 {p.location && <div className="text-xs text-gray-400">{p.location}</div>}
@@ -1464,6 +1504,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                               <td className="px-4 py-3 text-gray-500 text-xs">
                                 {p.startDate ? new Date(p.startDate).toLocaleDateString() : '—'} → {p.endDate ? new Date(p.endDate).toLocaleDateString() : '—'}
                               </td>
+                              <td className="px-4 py-3 text-xs whitespace-nowrap text-gray-500" data-target-date={p.id}>{p.targetCompletionDate ? new Date(p.targetCompletionDate + 'T00:00:00').toLocaleDateString() : '—'}</td>
                               <td className="px-4 py-3 text-right font-semibold text-gray-900 whitespace-nowrap">{peso(p.budgetAllocation || 0)}</td>
                               <td className="px-4 py-3 text-right whitespace-nowrap">
                                 {s ? (
@@ -1589,6 +1630,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                           <tr className="border-b border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-700 uppercase tracking-wide">
                             <th className="px-4 py-3">Trading</th>
                             <th className="px-4 py-3">Status</th>
+                            <th className="px-4 py-3">Expected delivery</th>
                             <th className="px-4 py-3 text-right" title="As recorded: purchase-request cost is VAT-exclusive, logged expenses are VAT-inclusive receipts. The profit panel above restates this on each basis.">Cost <span className="normal-case font-normal text-gray-400">(as recorded)</span></th>
                             <th className="px-4 py-3 text-right">Selling price</th>
                             <th className="px-4 py-3 text-right" title="Selling price minus cost as recorded, i.e. the original mixed-basis figure. See the panel above for the like-for-like view.">Profit <span className="normal-case font-normal text-gray-400">(mixed basis)</span></th>
@@ -1599,12 +1641,13 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                           {tradings.map(t => {
                             const sp = tradingSpend?.[t.id] ?? null;
                             return (
-                            <tr key={t.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                            <tr key={t.id} id={`row-${t.id}`} className={`border-b border-gray-100 last:border-0 hover:bg-gray-50 ${rowFocus === t.id ? 'bg-blue-50 ring-2 ring-inset ring-blue-300' : ''}`}>
                               <td className="px-4 py-3">
                                 <div className="font-medium text-gray-900">{t.name}</div>
                                 {t.client && <div className="text-xs text-gray-400">{t.client}</div>}
                               </td>
                               <td className="px-4 py-3"><span className="text-xs font-medium px-2.5 py-1 rounded-full border bg-gray-50 text-gray-700 border-gray-200">{t.status || 'Active'}</span></td>
+                              <td className="px-4 py-3 text-xs whitespace-nowrap text-gray-500" data-expected-date={t.id}>{t.expectedDeliveryDate ? new Date(t.expectedDeliveryDate + 'T00:00:00').toLocaleDateString() : '—'}</td>
                               <td className="px-4 py-3 text-right whitespace-nowrap">
                                 {sp ? (
                                   <>

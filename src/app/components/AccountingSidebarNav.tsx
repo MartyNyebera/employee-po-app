@@ -25,7 +25,7 @@ import { NavBadge } from './NavBadge';
 export type AccountingView =
   | 'new-pr' | 'requests' | 'orders' | 'projects' | 'tradings' | 'facilities' | 'expenses'
   | 'withdrawals' | 'clients' | 'delivery-receipts' | 'billing-invoices' | 'receivables'
-  | 'timesheet' | 'payroll' | 'signature' | 'payables' | 'collections' | 'purchases' | 'pcf' | 'thirteenth' | 'gl-accounts';
+  | 'timesheet' | 'payroll' | 'signature' | 'payables' | 'collections' | 'purchases' | 'pcf' | 'thirteenth' | 'gl-accounts' | 'overview';
 
 // Which live count an item wears. The portal supplies the numbers; this file only places them.
 export type BadgeKey = 'requests' | 'orders' | 'receivables';
@@ -43,9 +43,8 @@ export interface NavItem {
 
 export interface NavGroup { id: string; label: string; items: NavItem[] }
 
-// The single item above the groups. Accounting has no overview screen today (its landing page is
-// Purchase Requests), so this is dimmed rather than pointed at something that is not an overview.
-export const NAV_TOP: NavItem = { id: 'overview', label: 'OVERVIEW SYSTEM', icon: LayoutDashboard };
+// The single item above the groups: the Overview screen, which is also the portal's landing page.
+export const NAV_TOP: NavItem = { id: 'overview', label: 'OVERVIEW SYSTEM', icon: LayoutDashboard, view: 'overview' };
 
 // Labels are the specified ones, verbatim. Items after the specified ones in a group are screens
 // that already existed and are kept reachable in the nearest-fitting group.
