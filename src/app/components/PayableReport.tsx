@@ -10,12 +10,12 @@
 //   status       = unpaid / partial / paid / overpaid   (overpaying is allowed, and shown in amber)
 //   overdue      = past a due date the PO's terms actually state, with a balance
 //
-// View-only callers get the whole report; the "Pay" action (which opens the Disbursement Voucher
-// with that PO pre-filled) is hidden for them, the same required-prop pattern the billing screens use.
+// The report is READ-ONLY for everyone: payments are made only from the Disbursement Report. Each payment's
+// CV No. links there.
 // ============================================================================
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { Search, ChevronDown, ChevronRight, Coins, AlertTriangle, X } from 'lucide-react';
+import { Search, ChevronDown, ChevronRight, AlertTriangle, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { AllocationTag, AllocationFilter, matchesAllocation, type AllocType } from './AllocationTag';
 import { ExportXlsxButton } from './ExportXlsxButton';
@@ -47,9 +47,6 @@ const num = (v: unknown) => { const n = Number(String(v ?? '').replace(/,/g, '')
 const peso = (n: number | string) =>
   `₱${(num(n)).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-/** A PO that can be paid right now: payable at all, and with something still owed. Drives Pay and the tick boxes. */
-export const isPayableNow = (r: Pick<PayableRow, 'unpayable' | 'balance'>) => !r.unpayable && num(r.balance) > 0;
-
 const MODE_LABEL: Record<string, string> = { cash: 'Cash', check: 'Check', bank_transfer: 'Bank transfer', petty_cash: 'Petty cash' };
 
 const FILTERS = [
@@ -73,15 +70,8 @@ export function payableBadge(r: Pick<PayableRow, 'status' | 'overdue' | 'overpai
   return <span className={`${base} text-gray-700 bg-gray-100 border-gray-200`}>Unpaid</span>;
 }
 
-export function PayableReport({ api, isAdmin, onPay, onPaySelected, onOpenVoucher, reloadKey = 0 }: {
+export function PayableReport({ api, onOpenVoucher, reloadKey = 0 }: {
   api: Api;
-  /** The caller's answer to "may this person pay a supplier" — derived from the permission matrix by
-   *  whoever renders the screen, never from a role name in here. The server's requireRole is the real gate. */
-  isAdmin: boolean;
-  /** Opens the Disbursement Voucher with this PO pre-filled. */
-  onPay?: (poId: string) => void;
-  /** Opens ONE Disbursement Voucher with a Pay PO line for each of these POs. */
-  onPaySelected?: (poIds: string[]) => void;
   /** Opens the Disbursement Report searched to this voucher number. */
   onOpenVoucher?: (serialNo: string) => void;
   /** Bumped by the portal after a voucher is saved or voided, so this refreshes without a reload. */
@@ -95,8 +85,6 @@ export function PayableReport({ api, isAdmin, onPay, onPaySelected, onOpenVouche
   const [search, setSearch] = useState('');
   const [alloc, setAlloc] = useState('');
   const [open, setOpen] = useState<string | null>(null);
-  // POs ticked for "Pay selected". Pruned to what is still payable whenever the rows change.
-  const [picked, setPicked] = useState<Set<string>>(new Set());
   // Suppliers for the dropdown come from the UNFILTERED set, so choosing one doesn't empty the list.
   const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
 
@@ -123,25 +111,12 @@ export function PayableReport({ api, isAdmin, onPay, onPaySelected, onOpenVouche
     }).catch(() => { /* the dropdown simply stays short */ });
   }, [reloadKey]);
 
-  useEffect(() => {
-    setPicked(s => {
-      const ok = new Set(rows.filter(isPayableNow).map(r => r.id));
-      const n = new Set([...s].filter(id => ok.has(id)));
-      return n.size === s.size ? s : n;
-    });
-  }, [rows]);
-  const toggleOne = (id: string) => setPicked(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows
       .filter(r => matchesAllocation(r, alloc))
       .filter(r => !q || `${r.poNumber} ${r.supplier || ''} ${r.allocationName || ''}`.toLowerCase().includes(q));
   }, [rows, search, alloc]);
-  // Only ticked rows that are on screen go on the voucher, in screen order.
-  const selectedIds = visible.filter(r => picked.has(r.id) && isPayableNow(r)).map(r => r.id);
-  const allTicked = visible.filter(isPayableNow).length > 0 && visible.filter(isPayableNow).every(r => picked.has(r.id));
-  const toggleAll = () => setPicked(allTicked ? new Set() : new Set(visible.filter(isPayableNow).map(r => r.id)));
 
 
   return (
@@ -155,15 +130,7 @@ export function PayableReport({ api, isAdmin, onPay, onPaySelected, onOpenVouche
           </p>
         </div>
         {/* The orders on screen, in screen order: the status chip, supplier, allocation and search all apply. */}
-        <div className="flex flex-wrap items-center gap-2">
-          {isAdmin && onPaySelected && selectedIds.length > 0 && (
-            <button onClick={() => onPaySelected(selectedIds)} data-pay-selected
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-gray-900 text-white rounded-lg hover:bg-gray-800">
-              <Coins className="w-4 h-4" /> Pay selected ({selectedIds.length})
-            </button>
-          )}
-          <ExportXlsxButton api={api} path="/reports/payables/export" ids={visible.map(r => r.id)} disabled={loading} />
-        </div>
+        <ExportXlsxButton api={api} path="/reports/payables/export" ids={visible.map(r => r.id)} disabled={loading} />
       </div>
 
       {summary && <PayableSummary summary={summary} />}
@@ -205,8 +172,7 @@ export function PayableReport({ api, isAdmin, onPay, onPaySelected, onOpenVouche
       </div>
 
       {loading ? <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading…</div> : (
-        <PayableTable rows={visible} isAdmin={isAdmin} openId={open} onPay={onPay} onOpenVoucher={onOpenVoucher}
-          picked={onPaySelected ? picked : undefined} onPick={toggleOne} onPickAll={toggleAll} allPicked={allTicked}
+        <PayableTable rows={visible} openId={open} onOpenVoucher={onOpenVoucher}
           onToggle={id => setOpen(open === id ? null : id)}
           emptyText={rows.length > 0 ? 'Nothing matches that search.' : filter !== 'all' || supplierId || alloc ? 'No purchase orders match these filters.' : 'No purchase orders yet.'} />
       )}
@@ -237,23 +203,18 @@ export function PayableSummary({ summary }: { summary: Summary }) {
 }
 
 // The table. Pure: it renders the rows it is given, so every status can be rendered with a fixture.
-export function PayableTable({ rows, isAdmin, openId, onToggle, onPay, onOpenVoucher, picked, onPick, onPickAll, allPicked, emptyText }: {
-  rows: PayableRow[]; isAdmin: boolean; openId: string | null;
-  onToggle: (id: string) => void; onPay?: (poId: string) => void; emptyText: string;
+export function PayableTable({ rows, openId, onToggle, onOpenVoucher, emptyText }: {
+  rows: PayableRow[]; openId: string | null;
+  onToggle: (id: string) => void; emptyText: string;
   onOpenVoucher?: (serialNo: string) => void;
-  /** Tick boxes for "Pay selected": only for a manage caller, and only when the screen supports it. */
-  picked?: Set<string>; onPick?: (id: string) => void; onPickAll?: () => void; allPicked?: boolean;
 }) {
-  const ticks = isAdmin && !!picked;
-  // The Actions and tick columns only exist for a manage caller, so every colSpan follows them.
-  const COLS = (isAdmin ? 11 : 10) + (ticks ? 1 : 0);
+  const COLS = 10;
   return (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           <div className="overflow-x-scroll max-w-full">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wide">
                 <tr>
-                  {ticks && <th className="pl-3 pr-1 py-3 w-6"><input type="checkbox" checked={!!allPicked} onChange={() => onPickAll?.()} aria-label="Select all payable orders" /></th>}
                   <th className="px-3 py-3 w-8"></th>
                   <th className="px-3 py-3 text-left">PO No.</th>
                   <th className="px-3 py-3 text-left">Supplier</th>
@@ -264,7 +225,6 @@ export function PayableTable({ rows, isAdmin, openId, onToggle, onPay, onOpenVou
                   <th className="px-3 py-3 text-right">Balance</th>
                   <th className="px-3 py-3 text-left">Due date</th>
                   <th className="px-3 py-3 text-left">Status</th>
-                  {isAdmin && <th className="px-3 py-3 text-right sticky right-0 z-[2] bg-gray-50 shadow-[-6px_0_6px_-6px_rgba(0,0,0,0.25)]">Actions</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -279,11 +239,6 @@ export function PayableTable({ rows, isAdmin, openId, onToggle, onPay, onOpenVou
                     <Fragment key={r.id}>
                       {/* Overdue is the thing this screen must not let slide past, so the whole row carries it. */}
                       <tr className={r.overdue ? 'bg-red-50/60' : r.status === 'overpaid' ? 'bg-amber-50/50' : undefined}>
-                        {ticks && (
-                          <td className="pl-3 pr-1 py-3">
-                            {isPayableNow(r) && <input type="checkbox" checked={picked!.has(r.id)} onChange={() => onPick?.(r.id)} aria-label={`Select ${r.poNumber}`} data-pick={r.id} />}
-                          </td>
-                        )}
                         <td className="px-3 py-3 cursor-pointer text-gray-400" onClick={() => onToggle(r.id)}>
                           {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                         </td>
@@ -302,16 +257,6 @@ export function PayableTable({ rows, isAdmin, openId, onToggle, onPay, onOpenVou
                           {!r.dueDate && r.paymentTerms && <div className="text-[11px] text-gray-400 max-w-[170px] truncate" title={r.paymentTerms}>{r.paymentTerms}</div>}
                         </td>
                         <td className="px-3 py-3">{payableBadge(r)}</td>
-                        {isAdmin && (
-                          <td className={`px-3 py-3 text-right whitespace-nowrap sticky right-0 z-[1] shadow-[-6px_0_6px_-6px_rgba(0,0,0,0.25)] ${r.overdue ? 'bg-red-50' : r.status === 'overpaid' ? 'bg-amber-50' : 'bg-white'}`}>
-                            {isPayableNow(r) && onPay && (
-                              <button onClick={() => onPay(r.id)} title="Pay this PO with a disbursement voucher"
-                                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">
-                                <Coins className="w-3.5 h-3.5" /> Pay
-                              </button>
-                            )}
-                          </td>
-                        )}
                       </tr>
                       {isOpen && (
                         <tr>

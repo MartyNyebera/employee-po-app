@@ -1380,9 +1380,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
           )}
 
           {view === 'payables' && (
-            <PayableReport api={aFetch} isAdmin reloadKey={expensesReload}
-              onPay={(poId) => setLogExpense({ target: null, poId })}
-              onPaySelected={(poIds) => setLogExpense({ target: null, poIds })}
+            <PayableReport api={aFetch} reloadKey={expensesReload}
               onOpenVoucher={(serialNo) => { setVoucherFocus(serialNo); setView('expenses'); }} />
           )}
 
