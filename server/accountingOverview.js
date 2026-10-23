@@ -162,6 +162,68 @@ export function registerAccountingOverview(app, d) {
 
   const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
+  // ---- CHARTS. Every figure is built here from the same rows the reports read, so a chart total always ties to its report.
+  //   cashFlow     last 6 Manila months: collections (non-voided invoice payments by date received) vs disbursements
+  //                (non-voided vouchers by date, petty cash included; PCF "Add amount" is a transfer, never counted)
+  //   aging        positive balances in one bucket each, by days past the next unmet due date; no due date = not yet due
+  //   spendByGl    this month's EXPENSE lines of non-voided vouchers by GL account (PO payments are supplier settlements)
+  const AGING = [
+    { key: 'notDue', label: 'Not yet due / no due date' }, { key: 'd1_30', label: '1–30 days late' }, { key: 'd31_60', label: '31–60' },
+    { key: 'd61_90', label: '61–90' }, { key: 'd90', label: '90+' },
+  ];
+  const bucketOf = (daysLate) => (daysLate <= 0 ? 'notDue' : daysLate <= 30 ? 'd1_30' : daysLate <= 60 ? 'd31_60' : daysLate <= 90 ? 'd61_90' : 'd90');
+  function aging(items) {
+    const acc = Object.fromEntries(AGING.map((b) => [b.key, { key: b.key, label: b.label, amountC: 0, count: 0 }]));
+    for (const it of items) { const b = acc[bucketOf(it.daysLate)]; b.amountC += it.balC; b.count++; }
+    const buckets = AGING.map((b) => ({ key: b.key, label: b.label, amount: money(acc[b.key].amountC), count: acc[b.key].count }));
+    return { buckets, total: money(Object.values(acc).reduce((n, b) => n + b.amountC, 0)), count: items.length };
+  }
+
+  async function buildCharts(today, A) {
+    const thisMonth = monthOf(today);
+    const months = Array.from({ length: 6 }, (_, i) => shiftMonth(thisMonth, i - 5));
+    const lo = `${months[0]}-01`, hi = lastDay(thisMonth);
+    const col = new Map((await query(
+      `SELECT to_char(ip.paid_on, 'YYYY-MM') AS m, SUM(ip.amount) AS total, COUNT(*)::int AS n
+         FROM invoice_payments ip JOIN billing_invoices bi ON bi.id = ip.billing_invoice_id
+        WHERE ip.voided_at IS NULL AND ip.paid_on BETWEEN $1::date AND $2::date GROUP BY 1`, [lo, hi])).rows.map((r) => [r.m, r]));
+    const dis = new Map((await query(
+      `SELECT to_char(expense_date, 'YYYY-MM') AS m, SUM(amount) AS total, COUNT(*)::int AS n
+         FROM expenses WHERE voided_at IS NULL AND expense_date BETWEEN $1::date AND $2::date GROUP BY 1`, [lo, hi])).rows.map((r) => [r.m, r]));
+    const cashFlow = months.map((m) => {
+      const c = cents(col.get(m)?.total), d = cents(dis.get(m)?.total);
+      return { month: m, collected: money(c), disbursed: money(d), net: money(c - d), collectedCount: col.get(m)?.n || 0, disbursedCount: dis.get(m)?.n || 0 };
+    });
+
+    // Receivables: the next unmet due date (first date while its part is unpaid, else the second). Payables: the PO's due date.
+    const recv = [];
+    for (const r of A.invoices) {
+      if (r.voidedAt) continue;
+      const balC = cents(r.balance);
+      if (balC <= 0) continue;
+      let due = r.dueDate;
+      if (r.dueDate && r.dpPercent !== null && r.dueDate2 && cents(r.paidTotal) >= Math.round(cents(r.totalAmountDue) * r.dpPercent / 100)) due = r.dueDate2;
+      recv.push({ balC, daysLate: due ? -daysBetween(today, due) : 0 });
+    }
+    const pay = [];
+    for (const p of A.payables) {
+      const balC = cents(p.balance);
+      if (p.unpayable || balC <= 0) continue;
+      pay.push({ balC, daysLate: p.dueDate ? -daysBetween(today, p.dueDate) : 0 });
+    }
+
+    const first = `${thisMonth}-01`;
+    const glRows = (await query(
+      `SELECT COALESCE(g.id::text, 'none') AS key, COALESCE(g.name, 'No GL account') AS name, SUM(a.amount) AS total, COUNT(*)::int AS n
+         FROM expense_allocations a JOIN expenses e ON e.id = a.expense_id LEFT JOIN gl_accounts g ON g.id = a.gl_account_id
+        WHERE e.voided_at IS NULL AND e.expense_date BETWEEN $1::date AND $2::date
+        GROUP BY 1, 2 ORDER BY SUM(a.amount) DESC, 2`, [first, hi])).rows;
+    const spendByGl = { month: thisMonth, rows: glRows.map((r) => ({ key: r.key, name: r.name, amount: money(cents(r.total)), lines: r.n })),
+      total: money(glRows.reduce((n, r) => n + cents(r.total), 0)) };
+
+    return { cashFlow, aging: { receivables: aging(recv), payables: aging(pay) }, spendByGl };
+  }
+
   app.get('/api/accounting/overview', requireRole(reportRoles), async (req, res) => {
     try {
       const today = await manilaToday();
@@ -201,6 +263,7 @@ export function registerAccountingOverview(app, d) {
       const dis = (await query(
         `SELECT COALESCE(SUM(amount),0) AS total, COUNT(*)::int AS n FROM expenses WHERE voided_at IS NULL AND expense_date BETWEEN $1::date AND $2::date`, [first, last])).rows[0];
       const pcf = await pcfData({});
+      const charts = await buildCharts(today, A);
 
       res.json({
         today, month: monthOf(today),
@@ -211,7 +274,7 @@ export function registerAccountingOverview(app, d) {
           disbursed: { amount: money(cents(dis.total)), count: dis.n, from: first, to: last, view: 'expenses' },
           pcf: { configured: !!pcf.configured, balance: pcf.configured ? pcf.cards.balance : null, balanceNegative: pcf.configured ? pcf.cards.balanceNegative : false, view: 'pcf' },
         },
-        alerts: A.alerts, counts: A.counts, totals: A.totals, noDueDate: A.noDueDate, calendar, next14,
+        alerts: A.alerts, counts: A.counts, totals: A.totals, noDueDate: A.noDueDate, calendar, next14, charts,
         horizonDays: HORIZON_DAYS, paydayDays: PAYDAY_DAYS,
       });
     } catch (err) { console.error('accounting overview error:', err); res.status(500).json({ error: err.message }); }

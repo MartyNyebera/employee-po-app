@@ -15,6 +15,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CalendarClock, ChevronDown, ChevronRight, X } from 'lucide-react';
 import { peso, shortDate } from '../lib/overviewFormat';
 import { OverviewCalendar, Next14, type CalendarData, type Next14Data } from './OverviewCalendar';
+import { OverviewCharts, type ChartsData } from './OverviewCharts';
 
 type Api = <T = any>(path: string, options?: RequestInit) => Promise<T>;
 
@@ -42,7 +43,7 @@ export interface OverviewData {
   counts: Record<AlertType, Counts>;
   totals: Counts;
   noDueDate: NoDueItem[];
-  calendar: CalendarData; next14: Next14Data;
+  calendar: CalendarData; next14: Next14Data; charts: ChartsData;
   horizonDays: number; paydayDays: number;
 }
 
@@ -196,6 +197,9 @@ export function AccountingOverview({ api, userKey, onOpen }: {
           selected={selDay} onSelect={setSelDay} onMonth={goMonth} onOpen={onOpen} loading={calLoading} />
         <Next14 data={data.next14} onOpen={onOpen} />
       </div>
+
+      {/* ---- charts: cash in vs out, aging, spending by GL account ---- */}
+      <OverviewCharts charts={data.charts} />
 
       {/* ---- no due date set ---- */}
       <div className="bg-white rounded-xl border border-gray-200" data-nodue>
