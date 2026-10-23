@@ -65,6 +65,8 @@ export function DisbursementVoucherModal({ api, projects, tradings, facilities, 
   const [payablesState, setPayablesState] = useState<'loading' | 'ready' | 'failed'>('loading');
   // Active GL accounts for the optional per-line dropdown. If they cannot load the form still works (the field is optional).
   const [glAccounts, setGlAccounts] = useState<GlAccountItem[]>([]);
+  // The line currently typing a brand-new GL account name inline ("+ Add new GL account").
+  const [newGl, setNewGl] = useState<{ key: number; name: string; saving: boolean } | null>(null);
   const set = <K extends keyof VoucherDraft>(k: K, v: VoucherDraft[K]) => setD(p => ({ ...p, [k]: v }));
   // The description is suggested for a PO-only voucher until the person types their own.
   const descTouched = useRef(false);
@@ -142,6 +144,20 @@ export function DisbursementVoucherModal({ api, projects, tradings, facilities, 
   }));
   const setRow = (key: number, k: 'target' | 'amount' | 'glAccountId', v: string) =>
     setD(p => ({ ...p, expenseLines: p.expenseLines.map(r => (r.key === key ? { ...r, [k]: v } : r)) }));
+
+  // Saves the typed name to the GL list (or finds the existing one, ignoring case) and selects it on that line.
+  const addGl = async () => {
+    if (!newGl) return;
+    const name = newGl.name.trim();
+    if (!name) { toast.error('Type a name for the GL account'); return; }
+    setNewGl({ ...newGl, saving: true });
+    try {
+      const g = await api<GlAccountItem>('/gl-accounts', { method: 'POST', body: JSON.stringify({ name, reuse: true }) });
+      setGlAccounts(list => (list.some(x => x.id === g.id) ? list : [...list, g].sort((a, b) => a.name.localeCompare(b.name))));
+      setRow(newGl.key, 'glAccountId', String(g.id));
+      setNewGl(null);
+    } catch (e: any) { toast.error(e.message || 'Could not add the GL account'); setNewGl(n => (n ? { ...n, saving: false } : n)); }
+  };
 
   const save = async () => {
     const built = buildVoucherPayload(d);
@@ -281,10 +297,24 @@ export function DisbursementVoucherModal({ api, projects, tradings, facilities, 
                   </div>
                   <div className="w-full sm:w-44">
                     {i === 0 && <label className="block text-xs font-medium text-gray-500 mb-1">GL Account <span className="font-normal text-gray-400">(optional)</span></label>}
-                    <select value={r.glAccountId ?? ''} onChange={e => setRow(r.key, 'glAccountId', e.target.value)} className={`${input} bg-white`} aria-label="GL Account">
-                      <option value="">—</option>
-                      {glAccounts.map(g => <option key={g.id} value={String(g.id)}>{g.name}</option>)}
-                    </select>
+                    {newGl && newGl.key === r.key ? (
+                      <div className="flex items-center gap-1">
+                        <input autoFocus value={newGl.name} maxLength={80} placeholder="New GL account" aria-label="New GL account name"
+                          onChange={e => setNewGl({ ...newGl, name: e.target.value })}
+                          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addGl(); } if (e.key === 'Escape') setNewGl(null); }}
+                          className={input} />
+                        <button type="button" onClick={addGl} disabled={newGl.saving} title="Save to the GL list and use it here"
+                          className="px-2 py-2 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">{newGl.saving ? '…' : 'Add'}</button>
+                        <button type="button" onClick={() => setNewGl(null)} title="Cancel" className="p-2 text-gray-400 rounded-lg hover:bg-gray-50"><X className="w-4 h-4" /></button>
+                      </div>
+                    ) : (
+                      <select value={r.glAccountId ?? ''} aria-label="GL Account" className={`${input} bg-white`}
+                        onChange={e => { if (e.target.value === '__new__') setNewGl({ key: r.key, name: '', saving: false }); else setRow(r.key, 'glAccountId', e.target.value); }}>
+                        <option value="">—</option>
+                        {glAccounts.map(g => <option key={g.id} value={String(g.id)}>{g.name}</option>)}
+                        <option value="__new__">+ Add new GL account</option>
+                      </select>
+                    )}
                   </div>
                   <div className="w-full sm:w-36">
                     {i === 0 && <label className="block text-xs font-medium text-gray-500 mb-1">Amount (₱)</label>}

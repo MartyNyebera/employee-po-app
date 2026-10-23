@@ -1096,8 +1096,7 @@ async function runMigrations() {
     // ============== GL accounts: a chart-of-accounts label an expense line may carry ==============
     // Optional on every expense line (existing lines stay NULL and show a dash). A GL account is never
     // hard-deleted while a line uses it: the FK is ON DELETE RESTRICT and the API checks first, so the
-    // way to retire one is to deactivate it. Seeded once, only into an empty table, so a rename or a
-    // deactivation by the accountant is never undone by a restart.
+    // way to retire one is to deactivate it. No seed data: the accountant enters her own list.
     try {
       await query(`CREATE TABLE IF NOT EXISTS gl_accounts (
         id SERIAL PRIMARY KEY,
@@ -1111,10 +1110,6 @@ async function runMigrations() {
       await query(`CREATE UNIQUE INDEX IF NOT EXISTS gl_accounts_name_ci_key ON gl_accounts (LOWER(BTRIM(name)))`);
       await query(`ALTER TABLE expense_allocations ADD COLUMN IF NOT EXISTS gl_account_id INTEGER REFERENCES gl_accounts(id) ON DELETE RESTRICT`);
       await query(`CREATE INDEX IF NOT EXISTS idx_expense_alloc_gl ON expense_allocations(gl_account_id) WHERE gl_account_id IS NOT NULL`);
-      await query(`INSERT INTO gl_accounts (name, created_by)
-        SELECT n, 'system (starter list)' FROM unnest(ARRAY['Fuel and Oil','Transportation and Travel','Meals','Office Supplies',
-          'Repairs and Maintenance','Postage and Delivery','Communication','Miscellaneous']) WITH ORDINALITY AS t(n, o)
-         WHERE NOT EXISTS (SELECT 1 FROM gl_accounts) ORDER BY o`);
       console.log('✅ gl_accounts ready');
     } catch (err) { console.log('ℹ️ gl_accounts skipped:', err.message); }
 
@@ -12677,6 +12672,12 @@ app.post('/api/gl-accounts', requireRole(reportRoles), async (req, res) => {
     const name = glName(req.body?.name);
     if (!name) return res.status(400).json({ error: 'Enter a name for the GL account' });
     const dup = await query('SELECT 1 FROM gl_accounts WHERE LOWER(BTRIM(name)) = LOWER($1)', [name]);
+    if (dup.rows[0] && req.body?.reuse) {
+      // Inline "+ Add new GL account" on the voucher form: a name that already exists (any case) is returned, not duplicated.
+      const ex = (await query(`${GL_SELECT} WHERE LOWER(BTRIM(g.name)) = LOWER($1)`, [name])).rows[0];
+      if (!ex.active) return res.status(409).json({ error: `"${ex.name}" already exists but is inactive — reactivate it in GL Accounts` });
+      return res.status(200).json(glRow(ex));
+    }
     if (dup.rows[0]) return res.status(409).json({ error: `There is already a GL account called "${name}"` });
     const r = await query('INSERT INTO gl_accounts (name, created_by) VALUES ($1, $2) RETURNING id', [name, req.user?.name || null]);
     const row = await query(`${GL_SELECT} WHERE g.id = $1`, [r.rows[0].id]);
