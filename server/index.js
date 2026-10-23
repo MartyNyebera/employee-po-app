@@ -11073,12 +11073,17 @@ app.get('/api/expenses', requireRole(['owner', 'admin', 'accounting']), async (r
                 LEFT JOIN gl_accounts g3 ON g3.id = a3.gl_account_id
                WHERE a3.expense_id = e.id) AS allocations,
              (SELECT json_agg(json_build_object(
-                        'id', v3.id, 'purchaseOrderId', v3.purchase_order_id, 'poNumber', po3.po_number,
-                        'supplier', COALESCE(s3.name, po3.client), 'poTotal', po3.amount, 'amount', v3.amount) ORDER BY v3.id)
-                FROM voucher_po_payments v3
-                JOIN purchase_orders po3 ON po3.id = v3.purchase_order_id
-                LEFT JOIN suppliers s3 ON s3.id = po3.supplier_id
-               WHERE v3.expense_id = e.id) AS po_payments
+                        'id', x.id, 'purchaseOrderId', x.purchase_order_id, 'poNumber', x.po_number,
+                        'supplier', x.supplier, 'poTotal', x.po_total, 'amount', x.amount,
+                        'allocName', x.alloc_name, 'allocType', x.alloc_type, 'allocId', x.alloc_id) ORDER BY x.id)
+                FROM (SELECT v3.id, v3.purchase_order_id, v3.amount, po3.po_number, po3.amount AS po_total,
+                             COALESCE(s3.name, po3.client) AS supplier, ${PO_ALLOC_COLS}
+                        FROM voucher_po_payments v3
+                        JOIN purchase_orders po3 ON po3.id = v3.purchase_order_id
+                        LEFT JOIN suppliers s3 ON s3.id = po3.supplier_id
+                        LEFT JOIN purchase_requests pr ON pr.id = po3.purchase_request_id
+                        ${PO_ALLOC_JOINS}
+                       WHERE v3.expense_id = e.id) x) AS po_payments
              ${targetCol ? ', h.amt AS allocated_here' : ''}
         FROM expenses e${hereJoin}
        ${whereSql}
@@ -11099,7 +11104,11 @@ app.get('/api/expenses', requireRole(['owner', 'admin', 'accounting']), async (r
         // Payment details and the PO-payment lines. Absent on an expense-only voucher, so those rows
         // read exactly as they always did, plus null/empty for the new fields.
         paymentMode: r.payment_mode ?? null, checkNo: r.check_no ?? null, bank: r.bank ?? null, checkDate: r.check_date ?? null,
-        poPayments: (r.po_payments || []).map(p => ({ ...p, poTotal: money2(p.poTotal), amount: money2(p.amount) })),
+        // Each PO line also says what that PO was bought for (the Disbursement Report's Project For column).
+        poPayments: (r.po_payments || []).map(({ allocName, allocType, allocId, ...p }) => ({
+          ...p, poTotal: money2(p.poTotal), amount: money2(p.amount),
+          ...mapPoAllocation({ alloc_name: allocName, alloc_type: allocType, alloc_id: allocId }),
+        })),
         poPaymentCount: (r.po_payments || []).length,
         payee: r.payee, referenceNo: r.reference_no,
         createdBy: r.created_by, createdAt: r.created_at,

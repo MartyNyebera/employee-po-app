@@ -45,6 +45,9 @@ export interface ExpenseHistoryPoPayment {
   supplier: string | null;
   poTotal: number;
   amount: number;
+  /** What that PO was bought for (resolved server-side from its purchase request). */
+  allocationName?: string | null;
+  allocationType?: string | null;
 }
 
 export interface ExpenseHistoryRow {
@@ -173,6 +176,7 @@ export function ExpensesHistory({ api, targets, isAdmin, onNewVoucher, reloadKey
     return rows.filter(r => [
       r.serialNo, r.description, r.payee, r.createdBy, r.targets, r.referenceNo, r.checkNo,
       ...(r.poPayments || []).flatMap(p => [p.poNumber, p.supplier]),
+      ...projectForList(r),
     ].some(v => (v || '').toLowerCase().includes(q)));
   }, [rows, search]);
 
@@ -237,7 +241,7 @@ export function ExpensesHistory({ api, targets, isAdmin, onNewVoucher, reloadKey
       <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-          <input type="text" placeholder="Search voucher no., payee, description, PO no., supplier…" value={search} onChange={e => setSearch(e.target.value)}
+          <input type="text" placeholder="Search CV no., payee, project, PO no., description, supplier…" value={search} onChange={e => setSearch(e.target.value)}
             className="w-full pl-9 pr-4 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
         </div>
         <label className="flex flex-col gap-1">
@@ -380,14 +384,44 @@ export function chargedToSummary(r: ExpenseHistoryRow): { first: string; suffix:
   return { first: lines[0].label, suffix: `+${distinct - 1} more`, full };
 }
 
+// "Project For" and "PO Ref." cells. A list collapses to its first entry plus "+n more"; the full list is the
+// hover text. Distinct entries only, in line order (PO payments first, then expense lines).
+export interface ListSummary { first: string; suffix: string; full: string }
+export function listSummary(items: string[]): ListSummary {
+  const u = [...new Set(items.filter(Boolean))];
+  if (u.length === 0) return { first: '', suffix: '', full: '' };
+  return { first: u[0], suffix: u.length > 1 ? `+${u.length - 1} more` : '', full: u.join('\n') };
+}
+/** What the voucher was for: each expense line's project / trading deal / facility, and each paid PO's own allocation. */
+export function projectForList(r: ExpenseHistoryRow): string[] {
+  return [
+    ...(r.poPayments || []).map(p => p.allocationName || ''),
+    ...r.allocations.map(a => a.name || a.targetId),
+  ].filter(Boolean);
+}
+/** The PO numbers the voucher paid. */
+export const poRefList = (r: ExpenseHistoryRow): string[] => (r.poPayments || []).map(p => p.poNumber).filter(Boolean);
+
+// One cell holding a ListSummary: one line, the first entry ellipsised, the "+n more" tag never.
+function ListCell({ s, className }: { s: ListSummary; className: string }) {
+  if (!s.first) return <span className="text-gray-400">—</span>;
+  return (
+    <div className={`flex items-center gap-1.5 min-w-0 ${className}`} title={s.full}>
+      <span className="truncate whitespace-nowrap min-w-0">{s.first}</span>
+      {s.suffix && <span className="whitespace-nowrap flex-shrink-0 text-gray-400">{s.suffix}</span>}
+    </div>
+  );
+}
+
 // The voucher rows. Pure: renders the rows it is given, so every kind of voucher (expense-only,
 // PO-only, mixed, check, voided) can be rendered from a fixture. Every row is ONE line tall however
-// many split lines the voucher has; the breakdown lives in the expanded row (click the row or the
-// chevron). The footer adds up the vouchers shown, voided ones excluded, in whole centavos.
+// many split lines the voucher has; the breakdown (plus the payment mode, check details and status)
+// lives in the expanded row (click the row or the chevron). The CV No. opens the voucher. The footer
+// adds up the vouchers shown, voided ones excluded, in whole centavos.
 export function VoucherTable({ rows, onOpen }: { rows: ExpenseHistoryRow[]; onOpen: (r: ExpenseHistoryRow) => void }) {
   const [openIds, setOpenIds] = useState<Set<number>>(new Set());
   const toggle = (id: number) => setOpenIds(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  const COLS = 9;
+  const COLS = 8;
   const live = rows.filter(r => r.status !== 'voided');
   const liveCentavos = live.reduce((n, r) => n + Math.round((Number(r.amount) || 0) * 100), 0);
   return (
@@ -397,14 +431,13 @@ export function VoucherTable({ rows, onOpen }: { rows: ExpenseHistoryRow[]; onOp
                 <thead className="bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wide">
                   <tr>
                     <th className="pl-3 pr-1 py-3 w-6"></th>
-                    <th className="px-3 py-3 text-left whitespace-nowrap">Voucher No.</th>
+                    <th className="px-3 py-3 text-left whitespace-nowrap">CV No.</th>
                     <th className="px-3 py-3 text-left whitespace-nowrap">Date</th>
                     <th className="px-3 py-3 text-left whitespace-nowrap">Payee</th>
+                    <th className="px-3 py-3 text-left whitespace-nowrap">Project For</th>
+                    <th className="px-3 py-3 text-left whitespace-nowrap">PO Ref.</th>
                     <th className="px-3 py-3 text-left whitespace-nowrap">Description</th>
-                    <th className="px-3 py-3 text-left whitespace-nowrap">Charged to</th>
-                    <th className="px-3 py-3 text-left whitespace-nowrap">Mode</th>
-                    <th className="px-3 py-3 text-right whitespace-nowrap">Total</th>
-                    <th className="pl-3 pr-6 py-3 text-left whitespace-nowrap">Status</th>
+                    <th className="pl-3 pr-6 py-3 text-right whitespace-nowrap">Total Amount</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -412,7 +445,8 @@ export function VoucherTable({ rows, onOpen }: { rows: ExpenseHistoryRow[]; onOp
                     const voided = r.status === 'voided';
                     const isOpen = openIds.has(r.expenseId);
                     const lines = chargeLines(r);
-                    const cs = chargedToSummary(r);
+                    const pf = listSummary(projectForList(r));
+                    const po = listSummary(poRefList(r));
                     const dim = voided ? 'text-gray-400' : 'text-gray-600';
                     return (
                       <Fragment key={r.expenseId}>
@@ -421,28 +455,27 @@ export function VoucherTable({ rows, onOpen }: { rows: ExpenseHistoryRow[]; onOp
                           {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                         </td>
                         <td className="px-3 py-3 whitespace-nowrap">
-                          <span className={`font-mono text-xs font-semibold ${voided ? 'text-gray-400' : 'text-gray-900'}`}>
+                          <button type="button" onClick={e => { e.stopPropagation(); onOpen(r); }} title="Open this voucher"
+                            className={`font-mono text-xs font-semibold underline ${voided ? 'text-gray-400 line-through' : 'text-blue-600 hover:text-blue-800'}`}>
                             {r.serialNo || '—'}
-                          </span>
+                          </button>
+                          {voided && <span className="ml-1.5 inline-block px-1.5 py-px rounded border border-red-200 bg-red-50 text-[10px] font-bold tracking-wide text-red-600 align-middle"
+                            title={r.voidReason || 'Voided'}>VOID</span>}
                         </td>
                         <td className={`px-3 py-3 whitespace-nowrap ${dim}`}>{prettyDate(r.expenseDate)}</td>
                         <td className="px-3 py-3 max-w-[150px]">
                           <div className={`truncate whitespace-nowrap ${voided ? 'text-gray-400 line-through' : 'text-gray-900'}`} title={r.payee || undefined}>{r.payee || '—'}</div>
                         </td>
-                        <td className="px-3 py-3 max-w-[190px]">
+                        <td className="px-3 py-3 max-w-[230px]">
+                          <ListCell s={pf} className={`text-xs ${dim} ${voided ? 'line-through' : ''}`} />
+                        </td>
+                        <td className="px-3 py-3 max-w-[170px]">
+                          <ListCell s={po} className={`font-mono text-xs ${dim} ${voided ? 'line-through' : ''}`} />
+                        </td>
+                        <td className="px-3 py-3 max-w-[240px]">
                           <div className={`truncate whitespace-nowrap ${voided ? 'text-gray-400 line-through' : 'text-gray-700'}`} title={r.description}>{r.description}</div>
                         </td>
-                        <td className="px-3 py-3 max-w-[250px]" title={cs.full || undefined}>
-                          {lines.length === 0 ? <span className="text-gray-400">—</span> : (
-                            <div className={`flex items-center gap-1.5 text-xs ${dim} ${voided ? 'line-through' : ''}`}>
-                              {r.isSplit && <Split className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />}
-                              <span className="truncate whitespace-nowrap min-w-0">{cs.first}</span>
-                              {cs.suffix && <span className="whitespace-nowrap flex-shrink-0 text-gray-400">{cs.suffix}</span>}
-                            </div>
-                          )}
-                        </td>
-                        <td className={`px-3 py-3 whitespace-nowrap text-xs ${dim}`}>{modeText(r)}</td>
-                        <td className={`px-3 py-3 text-right whitespace-nowrap font-semibold ${voided ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
+                        <td className={`pl-3 pr-6 py-3 text-right whitespace-nowrap font-semibold ${voided ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
                           {/* Under a target filter, the voucher total is not the amount that hit that
                               target, so the share is spelled out instead of being inferred. Inline, so
                               the row stays one line. */}
@@ -451,17 +484,17 @@ export function VoucherTable({ rows, onOpen }: { rows: ExpenseHistoryRow[]; onOp
                           )}
                           {peso(r.amount)}
                         </td>
-                        <td className="pl-3 pr-6 py-3 whitespace-nowrap">
-                          {voided ? (
-                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-600" title={r.voidReason || undefined}>
-                              <Ban className="w-3.5 h-3.5" /> Voided
-                            </span>
-                          ) : <span className="text-xs font-semibold text-emerald-700">Active</span>}
-                        </td>
                       </tr>
                       {isOpen && (
                         <tr className="bg-gray-50">
                           <td colSpan={COLS} className="px-6 py-3">
+                            {/* Payment mode, check details and status no longer have columns; they live here. */}
+                            <p className="text-xs text-gray-500 mb-2">
+                              <span className="text-gray-400">Mode</span> {modeText(r)}
+                              {r.paymentMode === 'check' && (r.bank || r.checkDate) ? <> · {[r.bank, r.checkDate ? prettyDate(r.checkDate) : ''].filter(Boolean).join(' · ')}</> : null}
+                              {' · '}<span className="text-gray-400">Status</span>{' '}
+                              {voided ? <span className="font-semibold text-red-600">Voided{r.voidReason ? ` — ${r.voidReason}` : ''}</span> : <span className="font-semibold text-emerald-700">Active</span>}
+                            </p>
                             {lines.length === 0 ? <p className="text-xs text-gray-400">This voucher has no lines.</p> : (
                               <table className="text-xs w-full max-w-2xl">
                                 <thead className="text-gray-400 uppercase"><tr>
@@ -499,12 +532,11 @@ export function VoucherTable({ rows, onOpen }: { rows: ExpenseHistoryRow[]; onOp
                 </tbody>
                 <tfoot>
                   <tr className="bg-gray-50 border-t-2 border-gray-200 font-semibold text-gray-900">
-                    <td className="px-3 py-3 text-xs" colSpan={COLS - 2}>
+                    <td className="px-3 py-3 text-xs" colSpan={COLS - 1}>
                       Total of the {live.length} active voucher{live.length === 1 ? '' : 's'} shown
                       {rows.length !== live.length && <span className="font-normal text-gray-400"> · {rows.length - live.length} voided not counted</span>}
                     </td>
-                    <td className="px-3 py-3 text-right whitespace-nowrap">{peso(liveCentavos / 100)}</td>
-                    <td className="pr-6"></td>
+                    <td className="pl-3 pr-6 py-3 text-right whitespace-nowrap">{peso(liveCentavos / 100)}</td>
                   </tr>
                 </tfoot>
               </table>

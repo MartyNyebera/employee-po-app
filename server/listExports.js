@@ -85,7 +85,7 @@ const ALLOC_LABEL = { project: 'Project', trading: 'Trading', facility: 'Facilit
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
 export function registerListExports(app, d) {
-  const { query, requireRole, reportRoles, biRoles, payablesRoles, BI_SELECT, mapBillingInvoice, PAYABLE_SELECT, mapPayable } = d;
+  const { query, requireRole, reportRoles, biRoles, payablesRoles, BI_SELECT, mapBillingInvoice, PAYABLE_SELECT, mapPayable, PO_ALLOC_COLS, PO_ALLOC_JOINS, mapPoAllocation } = d;
   const fail = (res, tag, err) => { console.error(`${tag} export error:`, err); res.status(500).json({ error: err.message }); };
 
   // ---------------------------------------------------------------- 1. Disbursement Report
@@ -103,9 +103,13 @@ export function registerListExports(app, d) {
                   LEFT JOIN projects p ON p.id = a.project_id LEFT JOIN tradings t ON t.id = a.trading_id LEFT JOIN facilities f ON f.id = a.facility_id
                   LEFT JOIN gl_accounts g ON g.id = a.gl_account_id
                  WHERE a.expense_id = e.id) AS allocations,
-               (SELECT json_agg(json_build_object('po', po.po_number, 'supplier', COALESCE(s.name, po.client), 'amount', v.amount) ORDER BY v.id)
-                  FROM voucher_po_payments v JOIN purchase_orders po ON po.id = v.purchase_order_id LEFT JOIN suppliers s ON s.id = po.supplier_id
-                 WHERE v.expense_id = e.id) AS po_payments
+               (SELECT json_agg(json_build_object('po', x.po_number, 'supplier', x.supplier, 'amount', x.amount,
+                          'allocName', x.alloc_name, 'allocType', x.alloc_type, 'allocId', x.alloc_id) ORDER BY x.id)
+                  FROM (SELECT v.id, v.amount, po.po_number, COALESCE(s.name, po.client) AS supplier, ${PO_ALLOC_COLS}
+                          FROM voucher_po_payments v JOIN purchase_orders po ON po.id = v.purchase_order_id LEFT JOIN suppliers s ON s.id = po.supplier_id
+                          LEFT JOIN purchase_requests pr ON pr.id = po.purchase_request_id
+                          ${PO_ALLOC_JOINS}
+                         WHERE v.expense_id = e.id) x) AS po_payments
           FROM expenses e WHERE e.id = ANY($1::int[])`, [ids]);
       const by = new Map(r.rows.map((x) => [String(x.id), x]));
       const rows = ids.map((i) => by.get(i)).filter(Boolean);
@@ -118,9 +122,15 @@ export function registerListExports(app, d) {
       const main = rows.map((x) => {
         const voided = !!x.voided_at;
         if (!voided) { liveC += cents(x.amount); liveN++; }
-        const labels = [...new Set(lineList(x).map((l) => l.label))];
-        return [x.serial_no || '', x.d, x.payee || '', x.description || '', labels.join('; '),
-          x.payment_mode ? (MODE_LABEL[x.payment_mode] || x.payment_mode) : '', x.check_no || '', x.bank || '', Number(x.amount).toFixed(2), voided ? 'Voided' : 'Active'];
+        // Project For: each PO line's own allocation, then each expense line's project / trading deal / facility
+        // (the same list the screen collapses to "first +n more"; here it is in full). PO Ref.: the POs paid.
+        const projectFor = [...new Set([
+          ...(x.po_payments || []).map((p) => mapPoAllocation({ alloc_name: p.allocName, alloc_type: p.allocType, alloc_id: p.allocId }).allocationName || ''),
+          ...(x.allocations || []).map((a) => a.name || ''),
+        ].filter(Boolean))];
+        const poRefs = [...new Set((x.po_payments || []).map((p) => p.po).filter(Boolean))];
+        const mode = x.payment_mode ? `${MODE_LABEL[x.payment_mode] || x.payment_mode}${x.payment_mode === 'check' && x.check_no ? ` #${x.check_no}` : ''}` : '';
+        return [x.serial_no || '', x.d, x.payee || '', projectFor.join('; '), poRefs.join('; '), x.description || '', Number(x.amount).toFixed(2), mode, voided ? 'Voided' : 'Active'];
       });
       let lineC = 0;
       const lines = [];
@@ -135,10 +145,10 @@ export function registerListExports(app, d) {
       const subtitle = `Disbursement report · ${from} to ${to} · ${plural(rows.length, 'voucher')}`;
       send(res, `Disbursement-Report_${from}_to_${to}.xlsx`, [
         sheetOf({ name: 'Vouchers', title: 'Disbursement Report — vouchers', subtitle, user: req.user,
-          heads: ['Voucher No.', 'Date', 'Payee', 'Description', 'Charged to', 'Mode', 'Check No.', 'Bank', 'Total', 'Status'],
-          kinds: ['text', 'date', 'text', 'text', 'text', 'text', 'text', 'text', 'money', 'text'],
-          widths: [16, 12, 28, 40, 48, 14, 14, 20, 16, 10], rows: main,
-          totals: [[`TOTAL of the ${plural(liveN, 'active voucher')} shown${rows.length !== liveN ? ` (${rows.length - liveN} voided not counted)` : ''}`, '', '', '', '', '', '', '', c2(liveC), '']] }),
+          heads: ['CV No.', 'Date', 'Payee', 'Project For', 'PO Ref.', 'Description', 'Total Amount', 'Mode', 'Status'],
+          kinds: ['text', 'date', 'text', 'text', 'text', 'text', 'money', 'text', 'text'],
+          widths: [16, 12, 28, 48, 32, 40, 16, 16, 10], rows: main,
+          totals: [[`TOTAL of the ${plural(liveN, 'active voucher')} shown${rows.length !== liveN ? ` (${rows.length - liveN} voided not counted)` : ''}`, '', '', '', '', '', c2(liveC), '', '']] }),
         sheetOf({ name: 'Lines', title: 'Disbursement Report — voucher lines', subtitle, user: req.user,
           heads: ['Voucher No.', 'Date', 'Payee', 'Charged to', 'Type', 'GL Account', 'Amount', 'Status'],
           kinds: ['text', 'date', 'text', 'text', 'text', 'text', 'money', 'text'],
