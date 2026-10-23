@@ -409,6 +409,7 @@ export function PoPicker({ payables, loading, selected, excludeIds, onPick, onCl
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
   const matches = useMemo(() => filterPayables(payables, q, excludeIds) as Payable[], [payables, q, excludeIds]);
+  const available = useMemo(() => filterPayables(payables, '', excludeIds).length, [payables, excludeIds]);
 
   if (selected) {
     return (
@@ -427,7 +428,7 @@ export function PoPicker({ payables, loading, selected, excludeIds, onPick, onCl
         onBlur={() => setTimeout(() => setOpen(false), 150)}
         placeholder={loading ? 'Loading purchase orders…' : 'Search PO no., supplier or project…'}
         className={`${input} pl-9`} aria-label="Search purchase orders" />
-      {open && <PoPickerList matches={matches} loading={loading} query={q} onPick={p => { onPick(p); setQ(''); setOpen(false); }} />}
+      {open && <PoPickerList matches={matches} total={available} loading={loading} query={q} onPick={p => { onPick(p); setQ(''); setOpen(false); }} />}
     </div>
   );
 }
@@ -504,11 +505,16 @@ export function PayeePicker({ value, onChange, suppliers, employees, recent }: {
 }
 
 // The dropdown under the search box. What the person sees is what tells two look-alike orders apart.
-export function PoPickerList({ matches, loading, query, onPick }: {
-  matches: Payable[]; loading: boolean; query: string; onPick: (p: Payable) => void;
+export function PoPickerList({ matches, total, loading, query, onPick }: {
+  matches: Payable[]; total?: number; loading: boolean; query: string; onPick: (p: Payable) => void;
 }) {
   return (
     <div className="absolute z-20 mt-1 w-full max-h-64 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg" data-po-list>
+      {!loading && total !== undefined && total > 0 && (
+        <div className="px-3 py-1.5 text-[11px] font-semibold text-gray-500 bg-gray-50 border-b border-gray-100 sticky top-0" data-po-count>
+          {query.trim() ? `${matches.length} of ${total} POs with a balance` : `${total} PO${total === 1 ? '' : 's'} with a balance`}
+        </div>
+      )}
       {matches.length === 0 ? (
         <p className="px-3 py-3 text-xs text-gray-400">{loading ? 'Loading…' : query ? 'No purchase order matches that.' : 'No purchase orders to pay.'}</p>
       ) : matches.map(p => (

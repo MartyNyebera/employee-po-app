@@ -120,19 +120,25 @@ export interface PayableLite {
 }
 
 /**
- * Pickable POs for a search box. Matches the PO number or supplier, hides POs already on this
- * voucher (the server refuses the same PO twice), and puts what needs paying first: overdue, then
- * anything with a balance, then the rest. Capped so the dropdown stays a dropdown.
+ * Pickable POs for a search box: every payable PO that still has a balance, NOT capped (the dropdown
+ * scrolls). Matches the PO number, supplier or project; hides POs already on this voucher (the server
+ * refuses the same PO twice). Order: overdue first, oldest due date first; then the rest by PO date,
+ * newest first. `limit` is optional and only for callers that really want a short list.
  */
-export function filterPayables(list: PayableLite[], query: string, excludeIds: string[], limit = 8): PayableLite[] {
+export function filterPayables(list: PayableLite[], query: string, excludeIds: string[], limit?: number): PayableLite[] {
   const q = query.trim().toLowerCase();
   const taken = new Set(excludeIds);
-  const rank = (p: PayableLite) => (p.overdue ? 0 : Number(p.balance) > 0 ? 1 : 2);
-  return list
-    .filter(p => !p.unpayable && !taken.has(p.id))
+  const date = (p: PayableLite) => (p as { poDate?: string }).poDate || '';
+  const due = (p: PayableLite) => (p as { dueDate?: string | null }).dueDate || '';
+  const out = list
+    .filter(p => !p.unpayable && !taken.has(p.id) && (toCentavos(p.balance) ?? 0) > 0)
     .filter(p => !q || `${p.poNumber} ${p.supplier || ''} ${p.allocationName || ''}`.toLowerCase().includes(q))
-    .sort((a, b) => rank(a) - rank(b) || a.poNumber.localeCompare(b.poNumber))
-    .slice(0, limit);
+    .sort((a, b) => {
+      if (a.overdue !== b.overdue) return a.overdue ? -1 : 1;
+      if (a.overdue) return due(a).localeCompare(due(b)) || a.poNumber.localeCompare(b.poNumber);
+      return date(b).localeCompare(date(a)) || b.poNumber.localeCompare(a.poNumber);
+    });
+  return limit ? out.slice(0, limit) : out;
 }
 
 /** A starting description for a voucher that only pays POs, so the required field is not a chore. */
