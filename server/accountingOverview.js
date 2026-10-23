@@ -14,12 +14,14 @@ const money = (c) => (c / 100).toFixed(2);
 const utc = (ymd) => { const [y, m, d] = ymd.split('-').map(Number); return Date.UTC(y, m - 1, d); };
 const daysBetween = (a, b) => Math.round((utc(b) - utc(a)) / 86400000);
 const monthOf = (ymd) => ymd.slice(0, 7);
+const addDays = (ymd, n) => new Date(utc(ymd) + n * 86400000).toISOString().slice(0, 10);
 const lastDay = (ym) => { const [y, m] = ym.split('-').map(Number); return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); };
 const shiftMonth = (ym, n) => { const [y, m] = ym.split('-').map(Number); const d = new Date(Date.UTC(y, m - 1 + n, 1)); return d.toISOString().slice(0, 7); };
 
 export const HORIZON_DAYS = 7;
 export const PAYDAY_DAYS = 3;
 export const ALERT_TYPES = ['receivable', 'payable', 'project', 'trading', 'payday'];
+export const NEXT_DAYS = 14;
 
 export function registerAccountingOverview(app, d) {
   const { query, requireRole, reportRoles, BI_SELECT, mapBillingInvoice, PAYABLE_SELECT, mapPayable, collectionsWhere, pcfData, backToWorkdayYMD } = d;
@@ -120,13 +122,66 @@ export function registerAccountingOverview(app, d) {
     for (const a of alerts) { counts[a.type][a.severity]++; counts[a.type].total++; }
     const totals = { overdue: 0, today: 0, upcoming: 0, total: alerts.length };
     for (const a of alerts) totals[a.severity]++;
-    return { alerts, counts, totals, noDueDate, invoices, payables };
+    return { alerts, counts, totals, noDueDate, invoices, payables, projects, tradings, hs };
   }
+
+  // ---- CALENDAR + NEXT 14 DAYS. Every dated thing that is still open, on its own date. An item that is already
+  // late keeps its ORIGINAL date (flagged overdue) rather than moving to today. Paid, completed and delivered items
+  // are gone. Split-terms invoices show both of their dates while they are owed.
+  function buildEvents(today, A, holidays) {
+    const ev = [];
+    const push = (kind, key, date, title, subtitle, amountC, link, open) => {
+      const days = daysBetween(today, date);
+      ev.push({ id: `${kind}:${key}:${date}`, kind, date, title, subtitle: subtitle || '', amount: amountC === null ? null : money(amountC), overdue: !!open && days < 0, days, link });
+    };
+    for (const r of A.invoices) {
+      if (r.voidedAt) continue;
+      const balC = cents(r.balance), paidC = cents(r.paidTotal), dueC = cents(r.totalAmountDue);
+      if (balC <= 0 || !r.dueDate) continue;
+      const link = { view: 'receivables', id: r.id };
+      const split = r.dpPercent !== null && !!r.dueDate2;
+      const dpC = split ? Math.round(dueC * r.dpPercent / 100) : dueC;
+      const title = `${r.biNumber} — ${r.billedTo}`;
+      if (!split || paidC < dpC) push('receivable', r.id, r.dueDate, title, split ? 'Down payment' : (r.sourceName || ''), split ? dpC - paidC : balC, link, true);
+      if (r.dueDate2) push('receivable', r.id, r.dueDate2, title, 'Balance', balC, link, true);
+    }
+    for (const p of A.payables) {
+      if (p.unpayable || cents(p.balance) <= 0 || !p.dueDate) continue;
+      push('payable', p.id, p.dueDate, `${p.poNumber} — ${p.supplier || 'Unknown supplier'}`, p.allocationName || '', cents(p.balance), { view: 'payables', id: p.id, search: p.poNumber }, true);
+    }
+    for (const pr of A.projects) {
+      if (pr.status === 'Completed' || !pr.target) continue;
+      push('project', pr.id, pr.target, pr.name, pr.client ? `${pr.client} · target completion` : 'Target completion', null, { view: 'projects', id: pr.id }, true);
+    }
+    for (const t of A.tradings) {
+      if (t.delivered || t.status === 'Completed' || !t.expected) continue;
+      push('trading', t.id, t.expected, t.name, t.client ? `${t.client} · expected delivery` : 'Expected delivery', null, { view: 'tradings', id: t.id }, true);
+    }
+    return { ev, push };
+  }
+
+  const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
   app.get('/api/accounting/overview', requireRole(reportRoles), async (req, res) => {
     try {
       const today = await manilaToday();
       const A = await buildAlerts(today);
+      const month = MONTH_RE.test(String(req.query.month || '')) ? String(req.query.month) : monthOf(today);
+      const { ev, push } = buildEvents(today, A);
+      // paydays for the shown month and the next-14-days window; holidays likewise
+      const spanMonths = new Set([month, monthOf(today), monthOf(addDays(today, NEXT_DAYS - 1))]);
+      for (const m of spanMonths) for (const pd of paydaysOf(m, A.hs)) push('payday', pd.date, pd.date, 'Payday', pd.label, null, { view: 'payroll' }, false);
+      const lo = `${[...spanMonths].sort()[0]}-01`, hi = lastDay([...spanMonths].sort().slice(-1)[0]);
+      const hol = (await query(`SELECT to_char(holiday_date,'YYYY-MM-DD') AS d, name, type FROM holidays WHERE holiday_date BETWEEN $1::date AND $2::date ORDER BY holiday_date`, [lo, hi])).rows;
+      for (const h of hol) push('holiday', h.d, h.d, h.name || 'Holiday', h.type === 'regular' ? 'Regular holiday' : 'Special holiday', null, null, false);
+      const byDate = (a, b) => a.date.localeCompare(b.date) || a.kind.localeCompare(b.kind) || a.title.localeCompare(b.title);
+      const calendar = { month, events: ev.filter((e) => monthOf(e.date) === month).sort(byDate) };
+      const lastDayN = addDays(today, NEXT_DAYS - 1);
+      const next14 = {
+        from: today, to: lastDayN,
+        overdue: ev.filter((e) => e.overdue).sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title)),
+        upcoming: ev.filter((e) => !e.overdue && e.date >= today && e.date <= lastDayN).sort(byDate),
+      };
 
       // RECEIVABLES: the Receivables report -- non-voided invoices, only POSITIVE balances, the overdue part as the report flags it.
       const liveInv = A.invoices.filter((r) => !r.voidedAt);
@@ -156,7 +211,7 @@ export function registerAccountingOverview(app, d) {
           disbursed: { amount: money(cents(dis.total)), count: dis.n, from: first, to: last, view: 'expenses' },
           pcf: { configured: !!pcf.configured, balance: pcf.configured ? pcf.cards.balance : null, balanceNegative: pcf.configured ? pcf.cards.balanceNegative : false, view: 'pcf' },
         },
-        alerts: A.alerts, counts: A.counts, totals: A.totals, noDueDate: A.noDueDate,
+        alerts: A.alerts, counts: A.counts, totals: A.totals, noDueDate: A.noDueDate, calendar, next14,
         horizonDays: HORIZON_DAYS, paydayDays: PAYDAY_DAYS,
       });
     } catch (err) { console.error('accounting overview error:', err); res.status(500).json({ error: err.message }); }

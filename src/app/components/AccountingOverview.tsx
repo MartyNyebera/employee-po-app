@@ -13,6 +13,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CalendarClock, ChevronDown, ChevronRight, X } from 'lucide-react';
+import { peso, shortDate } from '../lib/overviewFormat';
+import { OverviewCalendar, Next14, type CalendarData, type Next14Data } from './OverviewCalendar';
 
 type Api = <T = any>(path: string, options?: RequestInit) => Promise<T>;
 
@@ -40,6 +42,7 @@ export interface OverviewData {
   counts: Record<AlertType, Counts>;
   totals: Counts;
   noDueDate: NoDueItem[];
+  calendar: CalendarData; next14: Next14Data;
   horizonDays: number; paydayDays: number;
 }
 
@@ -48,10 +51,7 @@ export const TYPE_LABEL: Record<AlertType, string> = {
 };
 const TYPE_ORDER: AlertType[] = ['receivable', 'payable', 'project', 'trading', 'payday'];
 
-const num = (v: unknown) => { const n = Number(String(v ?? '').replace(/,/g, '')); return Number.isFinite(n) ? n : 0; };
-export const peso = (v: unknown) => `₱${num(v).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-export const shortDate = (ymd: string) => { const [y, m, d] = ymd.split('-').map(Number); return `${MONTHS[m - 1]} ${d}${y !== new Date().getFullYear() ? `, ${y}` : ''}`; };
+export { peso, shortDate };
 
 /** "3 days late" / "due today" / "in 5 days" — decided from the server's signed day count. */
 export function whenText(a: Pick<OverviewAlert, 'severity' | 'days' | 'type'>): string {
@@ -87,6 +87,11 @@ export function AccountingOverview({ api, userKey, onOpen }: {
   const [listType, setListType] = useState<AlertType | 'all' | null>(null);
   const [noDueOpen, setNoDueOpen] = useState(false);
   const [popup, setPopup] = useState(false);
+  // The month on the calendar. Changing it asks the same endpoint for that month; only its calendar part is used.
+  const [calMonth, setCalMonth] = useState<string | null>(null);
+  const [cal, setCal] = useState<CalendarData | null>(null);
+  const [calLoading, setCalLoading] = useState(false);
+  const [selDay, setSelDay] = useState<string | null>(null);
 
   useEffect(() => {
     let off = false;
@@ -99,6 +104,14 @@ export function AccountingOverview({ api, userKey, onOpen }: {
       .catch(e => { if (!off) setError(e.message || 'Could not load the overview'); });
     return () => { off = true; };
   }, []);
+
+  const goMonth = (ym: string) => {
+    setCalMonth(ym); setSelDay(null); setCalLoading(true);
+    api<OverviewData>(`/accounting/overview?month=${ym}`)
+      .then(r => setCal(r.calendar))
+      .catch(e => setError(e.message || 'Could not load that month'))
+      .finally(() => setCalLoading(false));
+  };
 
   const shown = useMemo(() => (data && listType ? data.alerts.filter(a => listType === 'all' || a.type === listType) : []), [data, listType]);
 
@@ -175,6 +188,13 @@ export function AccountingOverview({ api, userKey, onOpen }: {
         {card('disbursed', 'Disbursed this month', peso(c.disbursed.amount), `${c.disbursed.count} voucher${c.disbursed.count === 1 ? '' : 's'} · petty cash included`, { view: c.disbursed.view })}
         {card('pcf', 'PCF current balance', c.pcf.configured ? peso(c.pcf.balance) : '—', c.pcf.configured ? 'petty cash fund' : 'fund not set up',
           { view: c.pcf.view }, c.pcf.balanceNegative ? 'text-amber-600' : undefined)}
+      </div>
+
+      {/* ---- calendar + next 14 days: side by side on a wide screen, stacked under it on a phone ---- */}
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] gap-4 items-start" data-calendar-row>
+        <OverviewCalendar month={calMonth ?? data.calendar.month} events={(calMonth && cal ? cal : data.calendar).events} today={data.today}
+          selected={selDay} onSelect={setSelDay} onMonth={goMonth} onOpen={onOpen} loading={calLoading} />
+        <Next14 data={data.next14} onOpen={onOpen} />
       </div>
 
       {/* ---- no due date set ---- */}
