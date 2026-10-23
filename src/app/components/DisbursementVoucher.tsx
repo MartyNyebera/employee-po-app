@@ -28,6 +28,7 @@ import {
 
 type Api = <T = any>(path: string, options?: RequestInit) => Promise<T>;
 
+export interface GlAccountItem { id: number; name: string; active: boolean }
 export interface VoucherTargetItem { id: string; name: string; status?: string | null }
 export interface VoucherTargetRef { kind: TargetKind; id: string; name?: string }
 
@@ -62,6 +63,8 @@ export function DisbursementVoucherModal({ api, projects, tradings, facilities, 
   const [saving, setSaving] = useState(false);
   const [payables, setPayables] = useState<Payable[]>([]);
   const [payablesState, setPayablesState] = useState<'loading' | 'ready' | 'failed'>('loading');
+  // Active GL accounts for the optional per-line dropdown. If they cannot load the form still works (the field is optional).
+  const [glAccounts, setGlAccounts] = useState<GlAccountItem[]>([]);
   const set = <K extends keyof VoucherDraft>(k: K, v: VoucherDraft[K]) => setD(p => ({ ...p, [k]: v }));
   // The description is suggested for a PO-only voucher until the person types their own.
   const descTouched = useRef(false);
@@ -71,6 +74,12 @@ export function DisbursementVoucherModal({ api, projects, tradings, facilities, 
     api<{ payables: Payable[] }>('/payables?payable=1')
       .then(r => { if (!off) { setPayables(r.payables || []); setPayablesState('ready'); } })
       .catch(() => { if (!off) setPayablesState('failed'); });
+    return () => { off = true; };
+  }, []);
+
+  useEffect(() => {
+    let off = false;
+    api<GlAccountItem[]>('/gl-accounts?active=1').then(r => { if (!off) setGlAccounts(r || []); }).catch(() => { /* optional field */ });
     return () => { off = true; };
   }, []);
 
@@ -131,7 +140,7 @@ export function DisbursementVoucherModal({ api, projects, tradings, facilities, 
     // Without PO lines the old rule stands: there is always at least one expense row to fill.
     expenseLines: p.poLines.length === 0 && p.expenseLines.length === 1 ? p.expenseLines : p.expenseLines.filter(r => r.key !== key),
   }));
-  const setRow = (key: number, k: 'target' | 'amount', v: string) =>
+  const setRow = (key: number, k: 'target' | 'amount' | 'glAccountId', v: string) =>
     setD(p => ({ ...p, expenseLines: p.expenseLines.map(r => (r.key === key ? { ...r, [k]: v } : r)) }));
 
   const save = async () => {
@@ -268,6 +277,13 @@ export function DisbursementVoucherModal({ api, projects, tradings, facilities, 
                           ))}
                         </optgroup>
                       ))}
+                    </select>
+                  </div>
+                  <div className="w-full sm:w-44">
+                    {i === 0 && <label className="block text-xs font-medium text-gray-500 mb-1">GL Account <span className="font-normal text-gray-400">(optional)</span></label>}
+                    <select value={r.glAccountId ?? ''} onChange={e => setRow(r.key, 'glAccountId', e.target.value)} className={`${input} bg-white`} aria-label="GL Account">
+                      <option value="">—</option>
+                      {glAccounts.map(g => <option key={g.id} value={String(g.id)}>{g.name}</option>)}
                     </select>
                   </div>
                   <div className="w-full sm:w-36">

@@ -54,7 +54,7 @@ import jwt from 'jsonwebtoken';
 import { seed } from './seed.js';
 import { hashPassword, comparePassword, signToken, requireAuth, requireAdmin, requireSuperAdmin, requireRole, effectiveRole } from './auth.js';
 import { buildXlsx, STYLE, colName } from './xlsx.js';
-import { registerListExports } from './listExports.js';
+import { registerListExports, listWorkbookJson } from './listExports.js';
 // The SAME module src/app/lib/payslipPrint.ts reads, so the exported breakdown and the printed
 // payslip cannot disagree. Plain .js outside src/ precisely so both sides can import it.
 import { payrollBand, payslipEarnings, payslipDeductions, adjustmentsOf } from '../shared/payrollLines.js';
@@ -1092,6 +1092,31 @@ async function runMigrations() {
       await query(`CREATE INDEX IF NOT EXISTS idx_expense_alloc_facility ON expense_allocations(facility_id) WHERE facility_id IS NOT NULL`);
       console.log('✅ expenses + expense_allocations tables ready');
     } catch (err) { console.log('ℹ️ expenses/expense_allocations skipped:', err.message); }
+
+    // ============== GL accounts: a chart-of-accounts label an expense line may carry ==============
+    // Optional on every expense line (existing lines stay NULL and show a dash). A GL account is never
+    // hard-deleted while a line uses it: the FK is ON DELETE RESTRICT and the API checks first, so the
+    // way to retire one is to deactivate it. Seeded once, only into an empty table, so a rename or a
+    // deactivation by the accountant is never undone by a restart.
+    try {
+      await query(`CREATE TABLE IF NOT EXISTS gl_accounts (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_by TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_by TEXT,
+        updated_at TIMESTAMPTZ
+      )`);
+      await query(`CREATE UNIQUE INDEX IF NOT EXISTS gl_accounts_name_ci_key ON gl_accounts (LOWER(BTRIM(name)))`);
+      await query(`ALTER TABLE expense_allocations ADD COLUMN IF NOT EXISTS gl_account_id INTEGER REFERENCES gl_accounts(id) ON DELETE RESTRICT`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_expense_alloc_gl ON expense_allocations(gl_account_id) WHERE gl_account_id IS NOT NULL`);
+      await query(`INSERT INTO gl_accounts (name, created_by)
+        SELECT n, 'system (starter list)' FROM unnest(ARRAY['Fuel and Oil','Transportation and Travel','Meals','Office Supplies',
+          'Repairs and Maintenance','Postage and Delivery','Communication','Miscellaneous']) WITH ORDINALITY AS t(n, o)
+         WHERE NOT EXISTS (SELECT 1 FROM gl_accounts) ORDER BY o`);
+      console.log('✅ gl_accounts ready');
+    } catch (err) { console.log('ℹ️ gl_accounts skipped:', err.message); }
 
 
     // ============== PCF (petty cash fund): settings, their change log, replenishments ==============
@@ -7342,7 +7367,7 @@ async function pcfSettings() {
 async function pcfLedger(settings) {
   const open = settings.openingDate;
   const reps = (await query(
-    `SELECT id, to_char(repl_date,'YYYY-MM-DD') AS d, amount, reference, notes, created_at, voided_at
+    `SELECT id, to_char(repl_date,'YYYY-MM-DD') AS d, amount, reference, notes, created_at, voided_at, void_reason
        FROM pcf_replenishments WHERE repl_date >= $1::date`, [open])).rows;
   const vous = (await query(
     `SELECT e.id, e.serial_no, to_char(e.expense_date,'YYYY-MM-DD') AS d, e.description, e.payee, e.amount, e.created_at, e.voided_at
@@ -7361,8 +7386,42 @@ async function pcfLedger(settings) {
   for (const e of live) { bal += e.inC - e.outC; e.balC = bal; }
   return {
     entries: live, balanceC: bal,
+    // Every addition on file since the opening date, voided ones flagged: the "Additional amount" list behind
+    // the card. Not used by the cards, which are summed from `entries` exactly as before.
+    additions: reps.map((r) => ({ id: Number(r.id), date: r.d, reference: r.reference ?? '', notes: r.notes ?? '', amount: money2s(r.amount),
+      voided: !!r.voided_at, voidReason: r.void_reason ?? null, at: new Date(r.created_at).getTime() }))
+      .sort((a, b) => a.date.localeCompare(b.date) || a.at - b.at || a.id - b.id).map(({ at, ...x }) => x),
     voided: { replenishments: reps.filter((r) => r.voided_at).length, vouchers: vous.filter((v) => v.voided_at).length },
   };
+}
+
+// The table on the PCF screen: one row per LINE of every live petty-cash voucher since the opening date --
+// its expense lines (charged to a project / trading deal / facility, with the optional GL account) and any
+// PO-payment lines (a petty-cash voucher may pay a PO; those rows carry no GL account). Lines are summed in
+// whole centavos, so for the whole fund the rows add up to the Spent card exactly: the voucher total is its
+// lines, and the balance trigger guarantees it.
+async function pcfLines(settings) {
+  const r = (await query(
+    `SELECT e.id AS expense_id, e.serial_no, to_char(e.expense_date,'YYYY-MM-DD') AS d, e.payee, e.description, e.created_at,
+            1 AS lk, a.id AS line_id, COALESCE(p.name, t.name, f.name, '?') AS project_for, g.name AS gl_account, a.amount
+       FROM expenses e
+       JOIN expense_allocations a ON a.expense_id = e.id
+       LEFT JOIN projects p ON p.id = a.project_id LEFT JOIN tradings t ON t.id = a.trading_id LEFT JOIN facilities f ON f.id = a.facility_id
+       LEFT JOIN gl_accounts g ON g.id = a.gl_account_id
+      WHERE e.payment_mode = 'petty_cash' AND e.voided_at IS NULL AND e.expense_date >= $1::date
+     UNION ALL
+     SELECT e.id, e.serial_no, to_char(e.expense_date,'YYYY-MM-DD'), e.payee, e.description, e.created_at,
+            2, vp.id, 'PO ' || po.po_number || COALESCE(' · ' || COALESCE(s.name, po.client), ''), NULL, vp.amount
+       FROM expenses e
+       JOIN voucher_po_payments vp ON vp.expense_id = e.id
+       JOIN purchase_orders po ON po.id = vp.purchase_order_id
+       LEFT JOIN suppliers s ON s.id = po.supplier_id
+      WHERE e.payment_mode = 'petty_cash' AND e.voided_at IS NULL AND e.expense_date >= $1::date`, [settings.openingDate])).rows;
+  return r.map((x) => ({
+    key: `${x.lk === 1 ? 'a' : 'p'}${x.line_id}`, expenseId: Number(x.expense_id), ref: x.serial_no ?? '', date: x.d, payee: x.payee ?? '',
+    projectFor: x.project_for, description: x.description ?? '', glAccount: x.gl_account ?? null,
+    amountC: Math.round(Number(x.amount) * 100), at: new Date(x.created_at).getTime(), lk: x.lk, lineId: Number(x.line_id),
+  })).sort((a, b) => a.date.localeCompare(b.date) || a.at - b.at || a.expenseId - b.expenseId || a.lk - b.lk || a.lineId - b.lineId);
 }
 
 async function pcfData(qs) {
@@ -7371,7 +7430,9 @@ async function pcfData(qs) {
   const L = await pcfLedger(settings);
   const addC = L.entries.reduce((n, e) => n + e.inC, 0), spentC = L.entries.reduce((n, e) => n + e.outC, 0);
   const from = ymdOrNull(qs.from), to = ymdOrNull(qs.to);
-  const shown = L.entries.filter((e) => (!from || e.date >= from) && (!to || e.date <= to));
+  const needle = String(qs.q || '').trim().toLowerCase();
+  const shown = (await pcfLines(settings)).filter((x) => (!from || x.date >= from) && (!to || x.date <= to)
+    && (!needle || [x.payee, x.description, x.projectFor, x.glAccount, x.ref].some((v) => String(v || '').toLowerCase().includes(needle))));
   const log = (await query(`SELECT to_char(changed_at AT TIME ZONE 'Asia/Manila','YYYY-MM-DD HH24:MI') AS at, changed_by, field, old_value, new_value FROM pcf_settings_log ORDER BY id DESC LIMIT 30`)).rows;
   return {
     configured: true, settings,
@@ -7379,11 +7440,9 @@ async function pcfData(qs) {
       fundAmount: settings.fundAmount, additionalAmount: fromCents(addC), spent: fromCents(spentC),
       balance: fromCents(L.balanceC), balanceNegative: L.balanceC < 0,
     },
-    ledger: shown.map((e) => ({
-      kind: e.kind, id: e.id, date: e.date, ref: e.ref, description: e.desc,
-      amount: fromCents(e.inC - e.outC), balance: fromCents(e.balC),
-    })),
-    totals: { net: fromCents(shown.reduce((n, e) => n + e.inC - e.outC, 0)), count: shown.length },
+    lines: shown.map((x) => ({ key: x.key, expenseId: x.expenseId, date: x.date, ref: x.ref, payee: x.payee, projectFor: x.projectFor, description: x.description, glAccount: x.glAccount, amount: fromCents(x.amountC) })),
+    totals: { amount: fromCents(shown.reduce((n, x) => n + x.amountC, 0)), count: shown.length },
+    additions: L.additions,
     voidedExcluded: L.voided.replenishments + L.voided.vouchers,
     settingsLog: log.map((l) => ({ at: l.at, by: l.changed_by, field: l.field, from: l.old_value, to: l.new_value })),
   };
@@ -7398,15 +7457,26 @@ app.get('/api/pcf/export', requireRole(reportRoles), async (req, res) => {
   try {
     const d = await pcfData(req.query);
     if (!d.configured) return res.status(400).json({ error: 'Set up the fund first -- there is nothing to export yet.' });
-    const range = `${ymdOrNull(req.query.from) || 'opening'} to ${ymdOrNull(req.query.to) || 'today'}`;
-    const closing = d.ledger.length ? d.ledger[d.ledger.length - 1].balance : d.cards.balance;
-    res.json(reportWorkbook({
-      title: 'Petty Cash Fund — ledger', sheetName: 'PCF ledger', filename: `pcf-ledger-${range.replace(/ to /, '_to_')}.xlsx`,
-      subtitle: `Custodian ${d.settings.custodian} · fund ${d.settings.fundAmount} · ${range}`,
-      heads: ['Date', 'Type', 'Reference', 'Description', 'Amount', 'Balance'],
-      kinds: ['text', 'text', 'text', 'text', 'money', 'money'], widths: [13, 20, 18, 46, 16, 16],
-      rows: d.ledger.map((e) => [e.date, e.kind === 'replenishment' ? 'Additional amount' : 'Petty cash voucher', e.ref, e.description, e.amount, e.balance]),
-      totals: [`TOTAL (${d.totals.count} line${d.totals.count === 1 ? '' : 's'}) — balance at end`, '', '', '', d.totals.net, closing], user: req.user }));
+    const from = ymdOrNull(req.query.from), to = ymdOrNull(req.query.to);
+    const range = `${from || 'opening'} to ${to || 'today'}`;
+    // Second sheet: the additions (live ones only, in the same date range) that sit behind the Additional amount card.
+    const adds = d.additions.filter((a) => !a.voided && (!from || a.date >= from) && (!to || a.date <= to));
+    const addC = adds.reduce((n, a) => n + Math.round(Number(a.amount) * 100), 0);
+    const q = String(req.query.q || '').trim();
+    res.json(listWorkbookJson({
+      filename: `PCF-Ledger_${from || d.settings.openingDate}_to_${to || new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date())}.xlsx`, user: req.user,
+      subtitle: `Custodian ${d.settings.custodian} · ${range}${q ? ` · search "${q}"` : ''}`,
+      sheets: [
+        { name: 'PCF ledger', title: 'Petty Cash Fund — petty cash vouchers, one row per line',
+          heads: ['Date', 'REF#', 'Payee', 'Project For', 'Description', 'GL Account', 'Total Amount'],
+          kinds: ['date', 'text', 'text', 'text', 'text', 'text', 'money'], widths: [13, 16, 28, 36, 46, 26, 16],
+          rows: d.lines.map((x) => [x.date, x.ref, x.payee, x.projectFor, x.description, x.glAccount || '', x.amount]),
+          totals: [[`TOTAL (${d.totals.count} line${d.totals.count === 1 ? '' : 's'})`, '', '', '', '', '', d.totals.amount]] },
+        { name: 'Additions', title: 'Petty Cash Fund — additional amounts (added to the fund)',
+          heads: ['Date', 'Reference', 'Notes', 'Amount'], kinds: ['date', 'text', 'text', 'money'], widths: [13, 22, 46, 16],
+          rows: adds.map((a) => [a.date, a.reference, a.notes, a.amount]),
+          totals: [[`TOTAL (${adds.length} addition${adds.length === 1 ? '' : 's'})`, '', '', fromCents(addC)]] },
+      ] }));
   } catch (err) { console.error('pcf export error:', err); res.status(500).json({ error: err.message }); }
 });
 
@@ -10665,7 +10735,14 @@ function parseAllocationLines(raw) {
     });
     if (picked.length === 0) return { error: `Line ${n}: pick a project, trading or facility to charge` };
     if (picked.length > 1) return { error: `Line ${n}: a line can only charge ONE target, got ${picked.length}` };
-    lines.push({ kind: picked[0], targetId: String(a[`${picked[0]}Id`]).trim(), amountStr: amtStr });
+    // Optional GL account (a gl_accounts id). Absent / blank = none.
+    const glRaw = a?.glAccountId;
+    let glAccountId = null;
+    if (glRaw !== undefined && glRaw !== null && String(glRaw).trim() !== '') {
+      if (!/^\d+$/.test(String(glRaw).trim())) return { error: `Line ${n}: invalid GL account` };
+      glAccountId = Number(String(glRaw).trim());
+    }
+    lines.push({ kind: picked[0], targetId: String(a[`${picked[0]}Id`]).trim(), amountStr: amtStr, glAccountId });
     centavos += Math.round(Number(amtStr) * 100);
   }
   return { lines, centavos };
@@ -10802,6 +10879,11 @@ app.post('/api/expenses', requireRole(['owner', 'admin', 'accounting']), async (
     for (const l of a.lines) {
       const t = await client.query(`SELECT id FROM ${TARGET_TABLE[l.kind]} WHERE id = $1`, [l.targetId]);
       if (!t.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: `${l.kind} not found: ${l.targetId}` }); }
+      if (l.glAccountId !== null) {
+        const g = await client.query('SELECT id, name, active FROM gl_accounts WHERE id = $1', [l.glAccountId]);
+        if (!g.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: `GL account not found: ${l.glAccountId}` }); }
+        if (!g.rows[0].active) { await client.query('ROLLBACK'); return res.status(400).json({ error: `GL account "${g.rows[0].name}" is inactive — pick an active one` }); }
+      }
     }
     // Every PO being paid must exist and be one a payment can still be made against. Overpaying is
     // NOT checked here on purpose: it is allowed, and shown as 'overpaid' on the payable instead.
@@ -10851,10 +10933,10 @@ app.post('/api/expenses', requireRole(['owner', 'admin', 'accounting']), async (
     }
     for (const l of a.lines) {
       await client.query(
-        `INSERT INTO expense_allocations (expense_id, project_id, trading_id, facility_id, amount)
-         VALUES ($1, $2, $3, $4, $5)`,
+        `INSERT INTO expense_allocations (expense_id, project_id, trading_id, facility_id, amount, gl_account_id)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
         [expenseId, l.kind === 'project' ? l.targetId : null, l.kind === 'trading' ? l.targetId : null,
-         l.kind === 'facility' ? l.targetId : null, l.amountStr]
+         l.kind === 'facility' ? l.targetId : null, l.amountStr, l.glAccountId]
       );
     }
     for (const l of a.poLines) {
@@ -10987,11 +11069,13 @@ app.get('/api/expenses', requireRole(['owner', 'admin', 'accounting']), async (r
                                      WHEN a3.trading_id IS NOT NULL THEN 'trading' ELSE 'facility' END,
                         'targetId', COALESCE(a3.project_id, a3.trading_id, a3.facility_id),
                         'name', COALESCE(p3.name, t3.name, f3.name),
+                        'glAccount', g3.name,
                         'amount', a3.amount) ORDER BY a3.id)
                 FROM expense_allocations a3
                 LEFT JOIN projects   p3 ON p3.id = a3.project_id
                 LEFT JOIN tradings   t3 ON t3.id = a3.trading_id
                 LEFT JOIN facilities f3 ON f3.id = a3.facility_id
+                LEFT JOIN gl_accounts g3 ON g3.id = a3.gl_account_id
                WHERE a3.expense_id = e.id) AS allocations,
              (SELECT json_agg(json_build_object(
                         'id', v3.id, 'purchaseOrderId', v3.purchase_order_id, 'poNumber', po3.po_number,
@@ -12566,6 +12650,78 @@ app.delete('/api/staff/:id', requireSuperAdmin, async (req, res) => {
     res.status(500).json({ error: err.message });
   } finally {
     client.release();
+  }
+});
+
+// ============================================================================
+// GL ACCOUNTS -- the labels an expense line may carry (gl_accounts, see the table setup). Managed by
+// accounting / admin / owner: add, rename, deactivate / reactivate. An account that any line uses can
+// never be deleted (409, and the FK is RESTRICT as the backstop): deactivate it instead, which keeps the
+// history readable and only stops it being offered on new lines.
+// ============================================================================
+const glName = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
+const glRow = (r) => ({ id: Number(r.id), name: r.name, active: !!r.active, linesUsing: Number(r.lines_using ?? 0), createdBy: r.created_by ?? null, createdAt: r.created_at });
+const GL_SELECT = `SELECT g.id, g.name, g.active, g.created_by, g.created_at,
+         (SELECT COUNT(*) FROM expense_allocations a WHERE a.gl_account_id = g.id) AS lines_using FROM gl_accounts g`;
+
+app.get('/api/gl-accounts', requireRole(reportRoles), async (req, res) => {
+  try {
+    const activeOnly = String(req.query.active || '') === '1';
+    const r = await query(`${GL_SELECT} ${activeOnly ? 'WHERE g.active' : ''} ORDER BY LOWER(g.name)`);
+    res.json(r.rows.map(glRow));
+  } catch (err) { console.error('gl accounts list error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/gl-accounts', requireRole(reportRoles), async (req, res) => {
+  try {
+    const name = glName(req.body?.name);
+    if (!name) return res.status(400).json({ error: 'Enter a name for the GL account' });
+    const dup = await query('SELECT 1 FROM gl_accounts WHERE LOWER(BTRIM(name)) = LOWER($1)', [name]);
+    if (dup.rows[0]) return res.status(409).json({ error: `There is already a GL account called "${name}"` });
+    const r = await query('INSERT INTO gl_accounts (name, created_by) VALUES ($1, $2) RETURNING id', [name, req.user?.name || null]);
+    const row = await query(`${GL_SELECT} WHERE g.id = $1`, [r.rows[0].id]);
+    res.status(201).json(glRow(row.rows[0]));
+  } catch (err) { console.error('gl account create error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// Rename and / or (de)activate. Lines already coded to the account follow a rename (they point at the id).
+app.patch('/api/gl-accounts/:id', requireRole(reportRoles), async (req, res) => {
+  try {
+    if (!/^\d+$/.test(String(req.params.id))) return res.status(404).json({ error: 'GL account not found' });
+    const b = req.body || {};
+    const sets = [], params = [];
+    if (b.name !== undefined) {
+      const name = glName(b.name);
+      if (!name) return res.status(400).json({ error: 'Enter a name for the GL account' });
+      const dup = await query('SELECT 1 FROM gl_accounts WHERE LOWER(BTRIM(name)) = LOWER($1) AND id <> $2', [name, req.params.id]);
+      if (dup.rows[0]) return res.status(409).json({ error: `There is already a GL account called "${name}"` });
+      params.push(name); sets.push(`name = $${params.length}`);
+    }
+    if (b.active !== undefined) { params.push(!!b.active); sets.push(`active = $${params.length}`); }
+    if (!sets.length) return res.status(400).json({ error: 'Nothing to change' });
+    params.push(req.user?.name || null); sets.push(`updated_by = $${params.length}`, 'updated_at = NOW()');
+    params.push(req.params.id);
+    const u = await query(`UPDATE gl_accounts SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING id`, params);
+    if (!u.rows[0]) return res.status(404).json({ error: 'GL account not found' });
+    const row = await query(`${GL_SELECT} WHERE g.id = $1`, [req.params.id]);
+    res.json(glRow(row.rows[0]));
+  } catch (err) { console.error('gl account update error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/gl-accounts/:id', requireRole(reportRoles), async (req, res) => {
+  try {
+    if (!/^\d+$/.test(String(req.params.id))) return res.status(404).json({ error: 'GL account not found' });
+    const cur = (await query(`${GL_SELECT} WHERE g.id = $1`, [req.params.id])).rows[0];
+    if (!cur) return res.status(404).json({ error: 'GL account not found' });
+    if (Number(cur.lines_using) > 0) {
+      return res.status(409).json({ error: `"${cur.name}" is used by ${cur.lines_using} expense line${Number(cur.lines_using) === 1 ? '' : 's'} and cannot be deleted — deactivate it instead` });
+    }
+    await query('DELETE FROM gl_accounts WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    // A line started using it between the check and the delete: the RESTRICT FK says no.
+    if (err.code === '23503') return res.status(409).json({ error: 'That GL account is now in use and cannot be deleted — deactivate it instead' });
+    console.error('gl account delete error:', err); res.status(500).json({ error: err.message });
   }
 });
 

@@ -20,7 +20,8 @@ export const PAYMENT_MODE_LABEL: Record<Exclude<PaymentMode, ''>, string> = {
   cash: 'Cash', check: 'Check', bank_transfer: 'Bank transfer', petty_cash: 'Petty cash',
 };
 
-export interface ExpenseLineDraft { key: number; target: string; amount: string }
+// glAccountId: the optional GL account picked for the line ('' = none).
+export interface ExpenseLineDraft { key: number; target: string; amount: string; glAccountId?: string }
 export interface PoLineDraft { key: number; purchaseOrderId: string; amount: string }
 
 export interface VoucherDraft {
@@ -183,7 +184,7 @@ export function buildVoucherPayload(d: VoucherDraft): BuildResult {
     if (!target) return { ok: false, error: `Line ${i + 1}: choose what to charge` };
     const c = toCentavos(r.amount);
     if (c === null || c <= 0) return { ok: false, error: `Line ${i + 1}: enter an amount` };
-    allocations.push({ [`${target.kind}Id`]: target.id, amount: r.amount.replace(/,/g, '').trim() });
+    allocations.push({ [`${target.kind}Id`]: target.id, amount: r.amount.replace(/,/g, '').trim(), ...(r.glAccountId ? { glAccountId: r.glAccountId } : {}) });
   }
 
   const poC = poPayments.reduce((n, p) => n + (toCentavos(p.amount) ?? 0), 0);

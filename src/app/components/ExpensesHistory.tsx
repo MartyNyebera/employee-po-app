@@ -33,6 +33,8 @@ export interface ExpenseHistoryAllocation {
   kind: 'project' | 'trading' | 'facility';
   targetId: string;
   name: string | null;
+  /** The line's GL account name, when one was picked. */
+  glAccount?: string | null;
   amount: number;
 }
 
@@ -354,14 +356,14 @@ export function ExpensesHistory({ api, targets, isAdmin, onNewVoucher, reloadKey
 
 // One voucher's lines in one flat list: PO payments first, then expense allocations. `key` is what makes
 // two lines "the same target" (one PO, or one project/trading/facility).
-export interface ChargeLine { key: string; label: string; type: string; amount: number }
+export interface ChargeLine { key: string; label: string; type: string; amount: number; gl?: string | null }
 export function chargeLines(r: ExpenseHistoryRow): ChargeLine[] {
   return [
     ...(r.poPayments || []).map(p => ({
       key: `po:${p.purchaseOrderId}`, label: `PO ${p.poNumber}${p.supplier ? ` · ${p.supplier}` : ''}`, type: 'PO payment', amount: p.amount,
     })),
     ...r.allocations.map(a => ({
-      key: `${a.kind}:${a.targetId}`, label: a.name || a.targetId, type: KIND_LABEL[a.kind] || a.kind, amount: a.amount,
+      key: `${a.kind}:${a.targetId}`, label: a.name || a.targetId, type: KIND_LABEL[a.kind] || a.kind, amount: a.amount, gl: a.glAccount ?? null,
     })),
   ];
 }
@@ -465,6 +467,7 @@ export function VoucherTable({ rows, onOpen }: { rows: ExpenseHistoryRow[]; onOp
                                 <thead className="text-gray-400 uppercase"><tr>
                                   <th className="text-left py-1 pr-4 font-semibold">Charged to</th>
                                   <th className="text-left py-1 pr-4 font-semibold">Type</th>
+                                  <th className="text-left py-1 pr-4 font-semibold">GL Account</th>
                                   <th className="text-right py-1 font-semibold">Amount</th>
                                 </tr></thead>
                                 <tbody>
@@ -472,11 +475,12 @@ export function VoucherTable({ rows, onOpen }: { rows: ExpenseHistoryRow[]; onOp
                                     <tr key={i} className={voided ? 'text-gray-400 line-through' : 'text-gray-800'}>
                                       <td className="py-1 pr-4">{l.label}</td>
                                       <td className="py-1 pr-4 whitespace-nowrap">{l.type}</td>
+                                      <td className="py-1 pr-4 whitespace-nowrap">{l.gl || '—'}</td>
                                       <td className="py-1 text-right whitespace-nowrap">{peso(l.amount)}</td>
                                     </tr>
                                   ))}
                                   <tr className="border-t border-gray-300 font-semibold text-gray-900">
-                                    <td className="py-1 pr-4" colSpan={2}>Voucher total</td>
+                                    <td className="py-1 pr-4" colSpan={3}>Voucher total</td>
                                     <td className="py-1 text-right whitespace-nowrap">{peso(r.amount)}</td>
                                   </tr>
                                 </tbody>
@@ -570,7 +574,7 @@ export function VoucherDetail({ detail, isAdmin, onPrint, onVoid, onClose }: {
                       <div key={`${a.kind}:${a.targetId}:${i}`} className="flex items-center justify-between gap-3 px-3 py-2">
                         <div className="min-w-0">
                           <p className="text-gray-900 truncate">{a.name || a.targetId}</p>
-                          <p className="text-[11px] text-gray-400">{KIND_LABEL[a.kind]}</p>
+                          <p className="text-[11px] text-gray-400">{KIND_LABEL[a.kind]}{a.glAccount ? ` · ${a.glAccount}` : ''}</p>
                         </div>
                         <span className="font-semibold text-gray-900 whitespace-nowrap">{peso(a.amount)}</span>
                       </div>

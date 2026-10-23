@@ -17,7 +17,7 @@ import type { ReactNode } from 'react';
 import {
   LayoutDashboard, ChevronDown, ChevronRight, ClipboardList, FileText, Plus, PackageMinus, PenTool,
   Briefcase, ArrowLeftRight, Truck, ReceiptText, Users, Building2, CalendarCheck, Calculator, IdCard,
-  HandCoins, Coins, ShoppingCart, CreditCard, FileOutput, Wallet, Gift,
+  HandCoins, Coins, ShoppingCart, CreditCard, FileOutput, Wallet, Gift, BookOpen,
 } from 'lucide-react';
 import { NavBadge } from './NavBadge';
 
@@ -25,7 +25,7 @@ import { NavBadge } from './NavBadge';
 export type AccountingView =
   | 'new-pr' | 'requests' | 'orders' | 'projects' | 'tradings' | 'facilities' | 'expenses'
   | 'withdrawals' | 'clients' | 'delivery-receipts' | 'billing-invoices' | 'receivables'
-  | 'timesheet' | 'payroll' | 'signature' | 'payables' | 'collections' | 'purchases' | 'pcf' | 'thirteenth';
+  | 'timesheet' | 'payroll' | 'signature' | 'payables' | 'collections' | 'purchases' | 'pcf' | 'thirteenth' | 'gl-accounts';
 
 // Which live count an item wears. The portal supplies the numbers; this file only places them.
 export type BadgeKey = 'requests' | 'orders' | 'receivables';
@@ -90,6 +90,7 @@ export const NAV_GROUPS: NavGroup[] = [
       // and now can also pay POs. One screen for everything that went out, so no second nav entry.
       { id: 'disbursement-report', label: 'DISBURSEMENT REPORT', icon: FileOutput, view: 'expenses', hover: 'Manual voucher' },
       { id: 'pcf', label: 'PCF', icon: Wallet, view: 'pcf', hover: 'Petty cash fund' },
+      { id: 'gl-accounts', label: 'GL ACCOUNTS', icon: BookOpen, view: 'gl-accounts', hover: 'Accounts an expense line can be coded to' },
     ],
   },
 ];

@@ -40,6 +40,7 @@ import { ExpensesHistory, type TargetOption } from '../components/ExpensesHistor
 import { DisbursementVoucherModal } from '../components/DisbursementVoucher';
 import { PayableReport } from '../components/PayableReport';
 import { ExportXlsxButton } from '../components/ExportXlsxButton';
+import { GlAccountsScreen } from '../components/GlAccountsScreen';
 import { PayrollReview } from '../components/crm/PayrollReview';
 
 // ============================================================================
@@ -1394,6 +1395,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
           {view === 'thirteenth' && <ThirteenthMonth api={aFetch} isAdmin />}
 
           {view === 'pcf' && <PcfScreen api={aFetch} isAdmin />}
+
+          {view === 'gl-accounts' && <GlAccountsScreen api={aFetch} />}
 
           {view === 'purchases' && <PurchasesReport api={aFetch} isAdmin onOpenPo={(id) => { setPoFocus(id); setPoAlloc(''); setView('orders'); }} />}
 

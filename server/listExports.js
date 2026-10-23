@@ -68,6 +68,13 @@ function sheetOf({ name, title, subtitle, user, heads, kinds, widths, rows, tota
   return { rows: out, sheetName: name, widths, freezeRows: headerRow, autoFilter: `A${headerRow}:${colName(heads.length - 1)}${headerRow + rows.length}` };
 }
 
+// A finished multi-sheet export as the JSON the front-end download helper reads (used by routes outside this file).
+//   sheets: [{ name, title, heads, kinds, widths, rows, totals }]   rowCount = the first sheet's rows
+export function listWorkbookJson({ filename, subtitle, user, sheets }) {
+  const buf = buildWorkbook(sheets.map((s) => sheetOf({ ...s, subtitle, user })));
+  return { filename, mime: MIME, base64: buf.toString('base64'), rowCount: sheets[0].rows.length };
+}
+
 function send(res, filename, sheets, rowCount) {
   const buf = buildWorkbook(sheets);
   res.json({ filename, mime: MIME, base64: buf.toString('base64'), rowCount });
@@ -91,9 +98,10 @@ export function registerListExports(app, d) {
                e.payment_mode, e.check_no, e.bank, e.voided_at,
                (SELECT json_agg(json_build_object(
                           'kind', CASE WHEN a.project_id IS NOT NULL THEN 'Project' WHEN a.trading_id IS NOT NULL THEN 'Trading' ELSE 'Facility' END,
-                          'name', COALESCE(p.name, t.name, f.name, COALESCE(a.project_id, a.trading_id, a.facility_id)), 'amount', a.amount) ORDER BY a.id)
+                          'name', COALESCE(p.name, t.name, f.name, COALESCE(a.project_id, a.trading_id, a.facility_id)), 'gl', g.name, 'amount', a.amount) ORDER BY a.id)
                   FROM expense_allocations a
                   LEFT JOIN projects p ON p.id = a.project_id LEFT JOIN tradings t ON t.id = a.trading_id LEFT JOIN facilities f ON f.id = a.facility_id
+                  LEFT JOIN gl_accounts g ON g.id = a.gl_account_id
                  WHERE a.expense_id = e.id) AS allocations,
                (SELECT json_agg(json_build_object('po', po.po_number, 'supplier', COALESCE(s.name, po.client), 'amount', v.amount) ORDER BY v.id)
                   FROM voucher_po_payments v JOIN purchase_orders po ON po.id = v.purchase_order_id LEFT JOIN suppliers s ON s.id = po.supplier_id
@@ -103,8 +111,8 @@ export function registerListExports(app, d) {
       const rows = ids.map((i) => by.get(i)).filter(Boolean);
 
       const lineList = (x) => [
-        ...(x.po_payments || []).map((p) => ({ label: `PO ${p.po}${p.supplier ? ` · ${p.supplier}` : ''}`, type: 'PO payment', amount: p.amount })),
-        ...(x.allocations || []).map((a) => ({ label: a.name, type: a.kind, amount: a.amount })),
+        ...(x.po_payments || []).map((p) => ({ label: `PO ${p.po}${p.supplier ? ` · ${p.supplier}` : ''}`, type: 'PO payment', gl: '', amount: p.amount })),
+        ...(x.allocations || []).map((a) => ({ label: a.name, type: a.kind, gl: a.gl || '', amount: a.amount })),
       ];
       let liveC = 0, liveN = 0;
       const main = rows.map((x) => {
@@ -120,7 +128,7 @@ export function registerListExports(app, d) {
         const voided = !!x.voided_at;
         for (const l of lineList(x)) {
           if (!voided) lineC += cents(l.amount);
-          lines.push([x.serial_no || '', x.d, x.payee || '', l.label, l.type, Number(l.amount).toFixed(2), voided ? 'Voided' : 'Active']);
+          lines.push([x.serial_no || '', x.d, x.payee || '', l.label, l.type, l.gl, Number(l.amount).toFixed(2), voided ? 'Voided' : 'Active']);
         }
       }
       const { from, to } = span(req, rows.map((x) => x.d));
@@ -132,10 +140,10 @@ export function registerListExports(app, d) {
           widths: [16, 12, 28, 40, 48, 14, 14, 20, 16, 10], rows: main,
           totals: [[`TOTAL of the ${plural(liveN, 'active voucher')} shown${rows.length !== liveN ? ` (${rows.length - liveN} voided not counted)` : ''}`, '', '', '', '', '', '', '', c2(liveC), '']] }),
         sheetOf({ name: 'Lines', title: 'Disbursement Report — voucher lines', subtitle, user: req.user,
-          heads: ['Voucher No.', 'Date', 'Payee', 'Charged to', 'Type', 'Amount', 'Status'],
-          kinds: ['text', 'date', 'text', 'text', 'text', 'money', 'text'],
-          widths: [16, 12, 28, 48, 14, 16, 10], rows: lines,
-          totals: [['TOTAL of the lines of active vouchers', '', '', '', '', c2(lineC), '']] }),
+          heads: ['Voucher No.', 'Date', 'Payee', 'Charged to', 'Type', 'GL Account', 'Amount', 'Status'],
+          kinds: ['text', 'date', 'text', 'text', 'text', 'text', 'money', 'text'],
+          widths: [16, 12, 28, 48, 14, 26, 16, 10], rows: lines,
+          totals: [['TOTAL of the lines of active vouchers', '', '', '', '', '', c2(lineC), '']] }),
       ], main.length);
     } catch (err) { fail(res, 'disbursements', err); }
   });
