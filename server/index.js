@@ -54,6 +54,7 @@ import jwt from 'jsonwebtoken';
 import { seed } from './seed.js';
 import { hashPassword, comparePassword, signToken, requireAuth, requireAdmin, requireSuperAdmin, requireRole, effectiveRole } from './auth.js';
 import { buildXlsx, STYLE, colName } from './xlsx.js';
+import { registerListExports } from './listExports.js';
 // The SAME module src/app/lib/payslipPrint.ts reads, so the exported breakdown and the printed
 // payslip cannot disagree. Plain .js outside src/ precisely so both sides can import it.
 import { payrollBand, payslipEarnings, payslipDeductions, adjustmentsOf } from '../shared/payrollLines.js';
@@ -12558,6 +12559,10 @@ app.delete('/api/staff/:id', requireSuperAdmin, async (req, res) => {
     client.release();
   }
 });
+
+// "Export to Excel" for the Accounting list screens (server/listExports.js). Registered here, after every
+// const it reads has been initialised.
+registerListExports(app, { query, requireRole, reportRoles, biRoles, payablesRoles, BI_SELECT, mapBillingInvoice, PAYABLE_SELECT, mapPayable });
 
 // Create new tables before starting server
 const startServer = async () => {

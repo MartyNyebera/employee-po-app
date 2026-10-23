@@ -19,6 +19,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Plus, Printer, Ban, FileText, Search, Coins, ChevronDown, ChevronRight, AlertTriangle, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import { printBillingInvoice } from '../../lib/billingInvoicePrint';
+import { ExportXlsxButton } from '../ExportXlsxButton';
 import { computeBiTotals, type BiBox, type VatTreatment, type Withholding } from '../../lib/biTotals';
 import { S, Modal, Field, TextInput, TextArea, PrimaryBtn, GhostBtn, pill, peso, TableScroll, tightTh, tightTd, stickyTh, stickyTd, shortDate, oneLine } from './crmKit';
 
@@ -693,9 +694,13 @@ export function Receivables({ api, isAdmin, focusId = null }: { api: Api; isAdmi
 
   return (
     <div style={S.page}>
-      <div style={{ marginBottom: '18px' }}>
-        <h1 style={S.h1}>Receivables</h1>
-        <p style={S.sub}>What each client owes against their billing invoice. Partial collections are normal — log each one as it comes in.</p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap', marginBottom: '18px' }}>
+        <div>
+          <h1 style={S.h1}>Receivables</h1>
+          <p style={S.sub}>What each client owes against their billing invoice. Partial collections are normal — log each one as it comes in.</p>
+        </div>
+        {/* The invoices on screen, in screen order: the status chip applies. */}
+        <ExportXlsxButton api={api} path="/reports/receivables/export" ids={filtered.map(b => b.id)} disabled={loading} />
       </div>
 
       <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '16px' }}>

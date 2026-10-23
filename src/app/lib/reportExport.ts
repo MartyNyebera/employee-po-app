@@ -3,8 +3,8 @@
 // figure: the file cannot disagree with the table.
 type Api = <T = any>(path: string, options?: RequestInit) => Promise<T>;
 
-export async function downloadXlsx(api: Api, path: string): Promise<{ filename: string; rowCount: number }> {
-  const r = await api<{ filename: string; mime: string; base64: string; rowCount: number }>(path);
+export async function downloadXlsx(api: Api, path: string, options?: RequestInit): Promise<{ filename: string; rowCount: number }> {
+  const r = await api<{ filename: string; mime: string; base64: string; rowCount: number }>(path, options);
   // base64 -> bytes: the only "arithmetic" on the way to the file, and it is on characters.
   const bytes = Uint8Array.from(atob(r.base64), c => c.charCodeAt(0));
   const url = URL.createObjectURL(new Blob([bytes], { type: r.mime }));

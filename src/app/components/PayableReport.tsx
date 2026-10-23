@@ -18,6 +18,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Search, ChevronDown, ChevronRight, Coins, AlertTriangle, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { AllocationTag, AllocationFilter, matchesAllocation, type AllocType } from './AllocationTag';
+import { ExportXlsxButton } from './ExportXlsxButton';
 
 type Api = <T = any>(path: string, options?: RequestInit) => Promise<T>;
 
@@ -123,12 +124,16 @@ export function PayableReport({ api, isAdmin, onPay, reloadKey = 0 }: {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="font-semibold text-gray-900">Payable Report</h2>
-        <p className="text-sm text-gray-500">
-          What is still owed to each supplier, per purchase order — the PO total (VAT included, as printed) less what disbursement
-          vouchers have paid against it. Paying a PO here is not project spend: its cost already counts through its purchase request.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="font-semibold text-gray-900">Payable Report</h2>
+          <p className="text-sm text-gray-500">
+            What is still owed to each supplier, per purchase order — the PO total (VAT included, as printed) less what disbursement
+            vouchers have paid against it. Paying a PO here is not project spend: its cost already counts through its purchase request.
+          </p>
+        </div>
+        {/* The orders on screen, in screen order: the status chip, supplier, allocation and search all apply. */}
+        <ExportXlsxButton api={api} path="/reports/payables/export" ids={visible.map(r => r.id)} disabled={loading} />
       </div>
 
       {summary && <PayableSummary summary={summary} />}

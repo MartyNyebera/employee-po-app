@@ -27,6 +27,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Receipt, Search, Ban, Split, X, Printer, Plus, FileText, ChevronDown, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { printVoucher } from '../lib/voucherPrint';
+import { ExportXlsxButton } from './ExportXlsxButton';
 
 export interface ExpenseHistoryAllocation {
   kind: 'project' | 'trading' | 'facility';
@@ -219,12 +220,16 @@ export function ExpensesHistory({ api, targets, isAdmin, onNewVoucher, reloadKey
             suppliers (purchase orders), cover expenses, or both. Voided vouchers stay listed, struck through.
           </p>
         </div>
-        {isAdmin && onNewVoucher && (
-          <button onClick={onNewVoucher}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-            <Plus className="w-4 h-4" /> New Disbursement Voucher
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* The vouchers on screen, in screen order: the same filters AND the search box. */}
+          <ExportXlsxButton api={api} path="/reports/disbursements/export" ids={visible.map(r => r.expenseId)} from={from} to={to} disabled={loading} />
+          {isAdmin && onNewVoucher && (
+            <button onClick={onNewVoucher}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+              <Plus className="w-4 h-4" /> New Disbursement Voucher
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">

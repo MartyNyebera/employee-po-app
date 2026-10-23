@@ -7,10 +7,10 @@
 // ZIP of XML parts, and Node's built-in zlib does the only hard part (DEFLATE), so the
 // whole format costs ~120 lines and nothing to install.
 //
-// Scope is deliberately narrow: one sheet, inline strings (no sharedStrings part), a
-// fixed handful of cell styles, optional freeze pane and autofilter. That is everything
-// a report export needs. It is NOT a general spreadsheet library — no formulas, no
-// multiple sheets, no dates-as-serials (pass dates pre-formatted as text).
+// Scope is deliberately narrow: inline strings (no sharedStrings part), a fixed handful of
+// cell styles, optional freeze pane and autofilter per sheet. buildXlsx writes one sheet,
+// buildWorkbook several; dateSerial turns 'YYYY-MM-DD' into a real Excel date (use STYLE.DATE).
+// That is everything a report export needs. It is NOT a general spreadsheet library — no formulas.
 // ============================================================================
 import zlib from 'node:zlib';
 
@@ -88,11 +88,19 @@ export const colName = (i) => {
 // Style indexes into cellXfs below. Exported so callers name a style instead of a number.
 // TOTAL_LABEL and MONEY_BOLD carry a TOP border, which is what draws the rule above a totals
 // row; SUBTITLE is the same bold with no border, for a heading line.
-export const STYLE = { TEXT: 0, TITLE: 1, HEADER: 2, MONEY: 3, MONEY_BOLD: 4, NUMBER: 5, TOTAL_LABEL: 6, MUTED: 7, SUBTITLE: 8 };
+export const STYLE = { TEXT: 0, TITLE: 1, HEADER: 2, MONEY: 3, MONEY_BOLD: 4, NUMBER: 5, TOTAL_LABEL: 6, MUTED: 7, SUBTITLE: 8, DATE: 9 };
+
+// A real Excel date: whole days since 1899-12-30 (the 1900 system, with Excel's leap-year quirk already
+// absorbed by that epoch). Pass 'YYYY-MM-DD'; anything else returns null so the cell is left empty.
+export function dateSerial(ymd) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(ymd ?? ''));
+  if (!m) return null;
+  return Math.round((Date.UTC(+m[1], +m[2] - 1, +m[3]) - Date.UTC(1899, 11, 30)) / 86400000);
+}
 
 const STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<numFmts count="2"><numFmt numFmtId="164" formatCode="#,##0.00"/><numFmt numFmtId="165" formatCode="0.##"/></numFmts>
+<numFmts count="3"><numFmt numFmtId="164" formatCode="#,##0.00"/><numFmt numFmtId="165" formatCode="0.##"/><numFmt numFmtId="166" formatCode="yyyy-mm-dd"/></numFmts>
 <fonts count="4">
 <font><sz val="11"/><name val="Calibri"/></font>
 <font><b/><sz val="11"/><name val="Calibri"/></font>
@@ -110,7 +118,7 @@ const STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <border><left/><right/><top style="thin"><color rgb="FF9A9A9A"/></top><bottom/><diagonal/></border>
 </borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="9">
+<cellXfs count="10">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
 <xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>
 <xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>
@@ -120,6 +128,7 @@ const STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <xf numFmtId="0" fontId="1" fillId="0" borderId="2" xfId="0" applyFont="1" applyBorder="1"/>
 <xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/>
 <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<xf numFmtId="166" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
 </cellXfs>
 </styleSheet>`;
 
@@ -137,17 +146,8 @@ function cellXml(ref, cell) {
   return `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${xmlEsc(c.v)}</t></is></c>`;
 }
 
-/**
- * Builds a single-sheet workbook.
- *   rows        — array of arrays of cells (see cellXml). Row 1 is rows[0].
- *   sheetName   — tab label (Excel forbids : \ / ? * [ ] and caps it at 31 chars).
- *   widths      — per-column character widths.
- *   freezeRows  — rows kept visible when scrolling (0 = none).
- *   autoFilter  — e.g. 'A5:J12', the header row plus its data.
- * Returns a Buffer holding the .xlsx.
- */
-export function buildXlsx({ rows, sheetName = 'Sheet1', widths = [], freezeRows = 0, autoFilter = null }) {
-  const safeName = String(sheetName).replace(/[:\\/?*[\]]/g, ' ').slice(0, 31) || 'Sheet1';
+// One worksheet's XML. `opts` is a sheet description (see buildXlsx / buildWorkbook).
+function sheetXml({ rows, widths = [], freezeRows = 0, autoFilter = null }) {
   const body = rows.map((cells, r) =>
     `<row r="${r + 1}">${cells.map((c, i) => cellXml(colName(i) + (r + 1), c)).join('')}</row>`
   ).join('');
@@ -161,20 +161,53 @@ export function buildXlsx({ rows, sheetName = 'Sheet1', widths = [], freezeRows 
   const pane = freezeRows > 0
     ? `<pane ySplit="${freezeRows}" topLeftCell="A${freezeRows + 1}" activePane="bottomLeft" state="frozen"/>`
     : '';
-  const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="${dim}"/><sheetViews><sheetView workbookViewId="0">${pane}</sheetView></sheetViews>${cols}<sheetData>${body}</sheetData>${autoFilter ? `<autoFilter ref="${autoFilter}"/>` : ''}</worksheet>`;
+}
 
+const safeSheetName = (n) => String(n).replace(/[:\/?*[\]]/g, ' ').slice(0, 31) || 'Sheet1';
+
+/**
+ * Builds a workbook of one or more sheets. `sheets` is an array of
+ *   { rows, sheetName, widths, freezeRows, autoFilter }
+ * (the fields documented on buildXlsx). Sheet names are made unique if two collide after cleaning.
+ * Returns a Buffer holding the .xlsx.
+ */
+export function buildWorkbook(sheets) {
+  const used = new Set();
+  const named = sheets.map((sh, i) => {
+    let name = safeSheetName(sh.sheetName ?? `Sheet${i + 1}`), n = 2;
+    while (used.has(name.toLowerCase())) name = safeSheetName(`${String(sh.sheetName).slice(0, 28)} ${n++}`);
+    used.add(name.toLowerCase());
+    return { ...sh, name };
+  });
   const B = (s) => Buffer.from(s, 'utf8');
+  const sheetOverrides = named.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('');
+  const sheetRefs = named.map((s, i) => `<sheet name="${xmlEsc(s.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('');
+  const sheetRels = named.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('');
   return zip([
     { name: '[Content_Types].xml', data: B(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`) },
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${sheetOverrides}<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`) },
     { name: '_rels/.rels', data: B(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`) },
     { name: 'xl/workbook.xml', data: B(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${xmlEsc(safeName)}" sheetId="1" r:id="rId1"/></sheets></workbook>`) },
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheetRefs}</sheets></workbook>`) },
     { name: 'xl/_rels/workbook.xml.rels', data: B(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`) },
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheetRels}<Relationship Id="rId${named.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`) },
     { name: 'xl/styles.xml', data: B(STYLES_XML) },
-    { name: 'xl/worksheets/sheet1.xml', data: B(sheet) },
+    ...named.map((s, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: B(sheetXml(s)) })),
   ]);
+}
+
+/**
+ * Builds a single-sheet workbook.
+ *   rows        — array of arrays of cells (see cellXml). Row 1 is rows[0].
+ *   sheetName   — tab label (Excel forbids : \ / ? * [ ] and caps it at 31 chars).
+ *   widths      — per-column character widths.
+ *   freezeRows  — rows kept visible when scrolling (0 = none).
+ *   autoFilter  — e.g. 'A5:J12', the header row plus its data.
+ * Returns a Buffer holding the .xlsx.
+ */
+export function buildXlsx({ rows, sheetName = 'Sheet1', widths = [], freezeRows = 0, autoFilter = null }) {
+  return buildWorkbook([{ rows, sheetName, widths, freezeRows, autoFilter }]);
 }
