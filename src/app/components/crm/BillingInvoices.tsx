@@ -191,11 +191,15 @@ export function BillingInvoices({ api, isAdmin }: { api: Api; isAdmin: boolean }
           <h1 style={S.h1}>Billing Invoices</h1>
           <p style={S.sub}>Raised from a delivery receipt. The figures mirror the client&rsquo;s purchase order; the number comes from the booklet.</p>
         </div>
-        {isAdmin && (
-          <button style={{ ...S.addBtn, color: '#000000' }} onClick={() => setCreating(true)}>
-            <Plus size={16} style={{ marginRight: '6px' }} /> New Billing Invoice
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+          {/* The invoices on screen, in screen order: the search box applies. */}
+          <ExportXlsxButton api={api} path="/reports/billing-invoices/export" ids={filtered.map(b => b.id)} disabled={loading} />
+          {isAdmin && (
+            <button style={{ ...S.addBtn, color: '#000000' }} onClick={() => setCreating(true)}>
+              <Plus size={16} style={{ marginRight: '6px' }} /> New Billing Invoice
+            </button>
+          )}
+        </div>
       </div>
 
       <div style={{ position: 'relative', maxWidth: '340px', marginBottom: '20px' }}>

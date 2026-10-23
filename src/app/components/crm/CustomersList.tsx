@@ -3,6 +3,7 @@ import { Plus, Search, Trash2, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { fetchApi } from '../../api/client';
+import { ExportXlsxButton } from '../ExportXlsxButton';
 import { S, Modal, Field, TextInput, Select, TextArea, PrimaryBtn, GhostBtn, pill } from './crmKit';
 
 // The api is injected so this one screen serves BOTH the admin dashboard (default: client.ts's
@@ -73,11 +74,15 @@ export function CustomersList({ isAdmin, api = fetchApi }: { isAdmin: boolean; a
         <div><h1 style={S.h1}>Clients</h1><p style={S.sub}>Who we sell to — contractors, builders, factories, distributors.</p></div>
         {/* Sales owns client creation, but Admin can add clients too — needed when Sales is out and
             Admin covers. Both use the same POST /customers endpoint (requireRole owner/admin/sales). */}
-        {isAdmin && (
-          <button style={{ ...S.addBtn, color: '#000000' }} onClick={() => { setEditing(null); setShowModal(true); }}>
-            <Plus size={16} style={{ marginRight: '6px' }} /> Add Client
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+          {/* The clients on screen, in screen order: the search box and the status filter both apply. */}
+          <ExportXlsxButton api={api} path="/reports/clients/export" ids={filtered.map(c => c.id)} disabled={loading} />
+          {isAdmin && (
+            <button style={{ ...S.addBtn, color: '#000000' }} onClick={() => { setEditing(null); setShowModal(true); }}>
+              <Plus size={16} style={{ marginRight: '6px' }} /> Add Client
+            </button>
+          )}
+        </div>
       </div>
 
       <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>

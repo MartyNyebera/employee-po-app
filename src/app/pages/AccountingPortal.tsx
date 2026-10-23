@@ -39,6 +39,7 @@ import { DualBasisProfit, type DualBasisRow, type BasisTotals } from '../compone
 import { ExpensesHistory, type TargetOption } from '../components/ExpensesHistory';
 import { DisbursementVoucherModal } from '../components/DisbursementVoucher';
 import { PayableReport } from '../components/PayableReport';
+import { ExportXlsxButton } from '../components/ExportXlsxButton';
 import { PayrollReview } from '../components/crm/PayrollReview';
 
 // ============================================================================
@@ -1410,6 +1411,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                   <p className="text-sm text-gray-500">Project master data — these appear in the employee's "For (Project)" picker. Spent is approved &amp; ordered purchase requests plus the direct expenses logged here.</p>
                 </div>
                 <div className="flex flex-wrap gap-2 flex-shrink-0">
+                  <ExportXlsxButton api={aFetch} path="/reports/projects/export" ids={projects.map(p => p.id)} disabled={loading} />
                   <button onClick={() => setLogExpense({ target: null })} disabled={projects.length === 0 && tradings.length === 0 && facilities.length === 0} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium whitespace-nowrap border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"><Receipt className="w-4 h-4" /> New Voucher</button>
                   <button onClick={() => { setEditingProject(null); setShowProjectModal(true); }} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium whitespace-nowrap bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Plus className="w-4 h-4" /> New Project</button>
                 </div>
@@ -1495,7 +1497,10 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                   <h2 className="font-semibold text-gray-900">Facilities</h2>
                   <p className="text-sm text-gray-500">Internal company facilities (equipment/items used internally, not client projects). A facility is a named category that purchase requests can be tagged to — they appear in the "For (Project)" picker under Facilities. Spent is the total of purchase requests charged to each.</p>
                 </div>
-                <button onClick={() => { setEditingFacility(null); setShowFacilityModal(true); }} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Plus className="w-4 h-4" /> New Facility</button>
+                <div className="flex flex-wrap gap-2 flex-shrink-0">
+                  <ExportXlsxButton api={aFetch} path="/reports/facilities/export" ids={facilities.map(f => f.id)} disabled={loading} />
+                  <button onClick={() => { setEditingFacility(null); setShowFacilityModal(true); }} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Plus className="w-4 h-4" /> New Facility</button>
+                </div>
               </div>
               {loading ? <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading…</div>
                 : facilities.length === 0 ? (
@@ -1554,6 +1559,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                   <p className="text-sm text-gray-500">Each trading deal is its own cost centre, like a project — purchase requests and expenses charged to it add up here. Cost is the total of its purchase requests plus its share of any expense. Set a selling price to see profit and margin; there is no budget. Margin updates as costs are logged, so it tightens until the deal is done.</p>
                 </div>
                 <div className="flex flex-col sm:flex-row gap-2 sm:flex-shrink-0">
+                  <ExportXlsxButton api={aFetch} path="/reports/tradings/export" ids={tradings.map(t => t.id)} disabled={loading} />
                   <button onClick={() => setLogExpense({ target: null })} disabled={projects.length === 0 && tradings.length === 0 && facilities.length === 0} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium whitespace-nowrap border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"><Receipt className="w-4 h-4" /> New Voucher</button>
                   <button onClick={() => { setEditingTrading(null); setShowTradingModal(true); }} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium whitespace-nowrap bg-blue-600 text-white rounded-lg hover:bg-blue-700"><Plus className="w-4 h-4" /> New Trading</button>
                 </div>
@@ -1665,6 +1671,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                   <option value="approved">Approved</option>
                   <option value="disapproved">Disapproved</option>
                 </select>
+                {/* The requests on screen, in screen order: the search box and the status filter both apply. */}
+                <ExportXlsxButton api={aFetch} path="/reports/purchase-requests/export" ids={filtered.map(r => r.id)} disabled={loading} />
               </div>
 
               {loading ? <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading…</div>
@@ -1734,6 +1742,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
                         className="px-3 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[260px]" />
                       {poAlloc && <button onClick={() => setPoAlloc('')} className="text-xs font-medium text-blue-600 hover:underline">Clear</button>}
                       {poAlloc && <span className="text-xs text-gray-400">{shownOrders.length} of {orders.length} orders</span>}
+                      {/* The orders on screen, in screen order: the allocation filter applies. */}
+                      <span className="ml-auto"><ExportXlsxButton api={aFetch} path="/reports/purchase-orders/export" ids={shownOrders.map(o => o.id)} disabled={loading} /></span>
                     </div>
                     {shownOrders.length === 0 && <p className="text-sm text-gray-400 py-6 text-center">No purchase orders match that allocation.</p>}
                     {shownOrders.map(po => (

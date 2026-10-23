@@ -3,6 +3,7 @@ import { RefreshCw, Lock, Unlock, Plus, Search, Pencil, History, ShieldCheck, Ho
 import { toast } from 'sonner';
 import { confirmDialog } from '../../lib/confirm';
 import { S, Modal, Field, TextInput, TextArea, PrimaryBtn, GhostBtn, pill, peso } from './crmKit';
+import { ExportXlsxButton } from '../ExportXlsxButton';
 
 // ============================================================================
 // Attendance review sheet (Phase 3) — shared by the Admin dashboard and the
@@ -341,7 +342,11 @@ export function TimesheetReview({ api, role, focus }: { api: Api; role: 'admin' 
           <h1 style={S.h1}>Attendance Sheet</h1>
           <p style={S.sub}>Daily in/out per person for a pay period, computed from time-station punches. Corrections are logged; locking freezes the period. No pay is computed here.</p>
         </div>
-        <button style={S.addBtn} onClick={() => setShowNew(true)}><Plus size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />Pay Period</button>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+          {/* The days on screen, in screen order (grouped by person): the search box and the department filter both apply. */}
+          <ExportXlsxButton api={api} path="/reports/attendance-sheet/export" ids={groups.flatMap(g => g.days.map(d => d.id))} extra={{ periodId: selectedId }} disabled={loading || !period} />
+          <button style={S.addBtn} onClick={() => setShowNew(true)}><Plus size={15} style={{ verticalAlign: '-2px', marginRight: '6px' }} />Pay Period</button>
+        </div>
       </div>
 
       {/* Period picker + actions */}

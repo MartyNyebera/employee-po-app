@@ -229,4 +229,266 @@ export function registerListExports(app, d) {
       ], main.length);
     } catch (err) { fail(res, 'receivables', err); }
   });
+  registerScreenExports(app, d);
+}
+
+// ============================================================================
+// The rest of the Accounting menu's list screens. Same contract as above: the screen posts the ids of the
+// rows it shows (in its order), the server re-reads them and writes the columns the screen shows.
+// ============================================================================
+const cap = (s) => (s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : '');
+const VAT_LABEL = { inclusive: 'VAT-inclusive', exclusive: 'VAT-exclusive', exempt: 'VAT-exempt / zero-rated' };
+const ALLOC_TEXT = (a) => (a.allocationType && a.allocationName ? `${a.allocationName} · ${ALLOC_LABEL[a.allocationType] || a.allocationType}` : '');
+
+// Mirrors src/app/lib/nextDept.ts (a display hint shown beside a request's status).
+function nextDept(status, kind) {
+  if (kind === 'pr') return ({ pending: 'Next: Accounting', reviewed: 'Next: Admin', verified: 'Next: Purchasing', ordered: 'Next: Admin' })[status] || '';
+  return ({ pending: 'Next: Accounting', 'accounting-approved': 'Next: Admin', approved: 'Next: Warehouse (delivery)', rejected: 'Next: Purchasing (revise)' })[status] || '';
+}
+
+// ---- Attendance Sheet display maths, mirroring TimesheetReview.tsx (display only, no pay is computed).
+const LUNCH_START = 12 * 60, LUNCH_END = 13 * 60;
+const manilaMinuteOfDay = (iso) => {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date(iso));
+  return (Number(parts.find((p) => p.type === 'hour')?.value) % 24) * 60 + Number(parts.find((p) => p.type === 'minute')?.value);
+};
+const lunchNet = (d) => {
+  if (d.worked_minutes === null || d.worked_minutes === undefined) return null;
+  if (!d.first_in || !d.last_out) return d.worked_minutes;
+  const overlap = Math.max(0, Math.min(manilaMinuteOfDay(d.last_out), LUNCH_END) - Math.max(manilaMinuteOfDay(d.first_in), LUNCH_START));
+  return Math.max(0, d.worked_minutes - overlap);
+};
+const breakOf = (d) => Math.max(0, Number(d.break_minutes) || 0);
+const dockedOf = (d) => (d.break_excused ? 0 : breakOf(d));
+const paidMin = (d) => { const ln = lunchNet(d); return ln === null ? null : Math.max(0, ln - dockedOf(d)); };
+const fmtTime = (iso) => (iso ? new Date(iso).toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit', hour12: true }) : '');
+const fmtBreakMin = (m) => (m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`);
+const FLAG_LABEL = { missing_out: 'Missing OUT', missing_in: 'Missing IN' };
+const hours2 = (m) => (m === null || m === undefined ? '' : (Math.round((m / 60) * 100) / 100).toFixed(2));
+
+export function registerScreenExports(app, d) {
+  const { query, requireRole, reportRoles, drRoles, biRoles, attendanceReviewRoles, effectiveRole,
+    BI_SELECT, mapBillingInvoice, PO_ALLOC_COLS, PO_ALLOC_JOINS, mapPoAllocation,
+    PROJECT_SPEND_SQL, TRADING_SPEND_SQL, FACILITY_SPEND_SQL, attendanceSheetData } = d;
+  const fail = (res, tag, err) => { console.error(`${tag} export error:`, err); res.status(500).json({ error: err.message }); };
+  const orderBy = (ids, items, key) => { const m = new Map(items.map((x) => [String(key(x)), x])); return ids.map((i) => m.get(i)).filter(Boolean); };
+  const nothing = (res, what) => res.status(400).json({ error: `There are no ${what} to export` });
+
+  // ---------------------------------------------------------------- PR REQUEST
+  app.post('/api/reports/purchase-requests/export', requireRole(['admin', 'purchasing', 'accounting']), async (req, res) => {
+    try {
+      const ids = bodyIds(req);
+      if (!ids || !ids.length) return nothing(res, 'purchase requests');
+      const r = await query(
+        `SELECT pr.id, pr.pr_number, pr.status, pr.total, pr.items, pr.employee_name, pr.checked_by,
+                to_char(pr.needed_by, 'YYYY-MM-DD') AS needed_by,
+                to_char(pr.created_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD') AS d,
+                COALESCE(p.name, f.name, t.name, pr.project_label) AS project_name
+           FROM purchase_requests pr
+           LEFT JOIN projects p ON p.id = pr.project_id LEFT JOIN facilities f ON f.id = pr.facility_id LEFT JOIN tradings t ON t.id = pr.trading_id
+          WHERE pr.id::text = ANY($1::text[])`, [ids]);
+      let rows = orderBy(ids, r.rows, (x) => x.id);
+      // Same rule as GET /api/purchase-requests: purchasing never sees a request still pending review.
+      if (effectiveRole(req.user) === 'purchasing') rows = rows.filter((x) => x.status !== 'pending');
+      const main = rows.map((x) => {
+        const items = Array.isArray(x.items) ? x.items : [];
+        return [x.pr_number, x.d, x.employee_name || '', x.project_name || 'Personal use', items.length, items.map((i) => i.description).join(', '),
+          x.checked_by || '', x.needed_by || '', cap(x.status), nextDept(x.status, 'pr'), x.total == null ? '' : Number(x.total).toFixed(2)];
+      });
+      const { from, to } = span(req, rows.map((x) => x.d));
+      send(res, `PR-Request_${from}_to_${to}.xlsx`, [sheetOf({
+        name: 'PR Request', title: 'PR Request — purchase requests', subtitle: `PR Request · ${from} to ${to} · ${plural(rows.length, 'purchase request')}`, user: req.user,
+        heads: ['PR No.', 'Date', 'Prepared by', 'Charged to', 'Items', 'Item descriptions', 'Reviewed by', 'Needed by', 'Status', 'Next step', 'Total'],
+        kinds: ['text', 'date', 'text', 'text', 'int', 'text', 'text', 'date', 'text', 'text', 'money'],
+        widths: [16, 12, 24, 32, 8, 60, 22, 12, 14, 24, 16], rows: main, totals: null })], main.length);
+    } catch (err) { fail(res, 'purchase-requests', err); }
+  });
+
+  // ---------------------------------------------------------------- PO REQUEST
+  app.post('/api/reports/purchase-orders/export', requireRole(reportRoles), async (req, res) => {
+    try {
+      const ids = bodyIds(req);
+      if (!ids || !ids.length) return nothing(res, 'purchase orders');
+      const r = await query(
+        `SELECT po.id, po.po_number, po.client, po.amount, po.status, po.processed_by, po.po_reviewed_by,
+                to_char(po.created_date, 'YYYY-MM-DD') AS created_date, to_char(po.delivery_date, 'YYYY-MM-DD') AS delivery_date,
+                pr.pr_number, ${PO_ALLOC_COLS}
+           FROM purchase_orders po
+           LEFT JOIN purchase_requests pr ON pr.id = po.purchase_request_id
+           ${PO_ALLOC_JOINS}
+          WHERE po.id::text = ANY($1::text[]) AND COALESCE(po.order_type, 'purchase') <> 'sales'`, [ids]);
+      const rows = orderBy(ids, r.rows, (x) => x.id);
+      const label = (s) => (s === 'pending' ? 'Needs review' : s === 'accounting-approved' ? 'Awaiting admin' : s === 'rejected' ? 'Rejected' : cap(s));
+      const main = rows.map((x) => [x.po_number, x.pr_number || '', x.client || '', ALLOC_TEXT(mapPoAllocation(x)), x.processed_by || '', x.po_reviewed_by || '',
+        x.created_date || '', x.delivery_date || '', label(x.status), nextDept(x.status, 'po'), Number(x.amount).toFixed(2)]);
+      const { from, to } = span(req, rows.map((x) => x.created_date));
+      send(res, `PO-Request_${from}_to_${to}.xlsx`, [sheetOf({
+        name: 'PO Request', title: 'PO Request — purchase orders', subtitle: `PO Request · ${from} to ${to} · ${plural(rows.length, 'purchase order')}`, user: req.user,
+        heads: ['PO No.', 'For PR', 'Supplier', 'Allocated to', 'Prepared by', 'Reviewed by', 'PO Date', 'Delivery Date', 'Status', 'Next step', 'Amount'],
+        kinds: ['text', 'text', 'text', 'text', 'text', 'text', 'date', 'date', 'text', 'text', 'money'],
+        widths: [18, 16, 32, 36, 22, 22, 12, 13, 16, 26, 16], rows: main, totals: null })], main.length);
+    } catch (err) { fail(res, 'purchase-orders', err); }
+  });
+
+  // ---------------------------------------------------------------- CONTRACT SERVICES (projects)
+  app.post('/api/reports/projects/export', requireRole(reportRoles), async (req, res) => {
+    try {
+      const ids = bodyIds(req);
+      if (!ids || !ids.length) return nothing(res, 'projects');
+      const spend = (await query(PROJECT_SPEND_SQL)).rows;
+      const meta = new Map((await query(`SELECT id, location, to_char(start_date, 'YYYY-MM-DD') AS s, to_char(end_date, 'YYYY-MM-DD') AS e FROM projects WHERE id::text = ANY($1::text[])`, [ids])).rows.map((x) => [String(x.id), x]));
+      const rows = orderBy(ids, spend, (x) => x.id);
+      const main = rows.map((x) => { const m = meta.get(String(x.id)) || {}; return [x.name, m.location || '', x.status || 'Active', m.s || '', m.e || '',
+        Number(x.budget).toFixed(2), Number(x.spent).toFixed(2), Number(x.spent_prs).toFixed(2), Number(x.spent_expenses).toFixed(2), Number(x.remaining).toFixed(2), Number(x.over_budget).toFixed(2)]; });
+      const today = todayManila();
+      send(res, `Contract-Services_${today}_to_${today}.xlsx`, [sheetOf({
+        name: 'Contract Services', title: 'Contract Services — projects', subtitle: `Contract Services · as of ${today} · ${plural(rows.length, 'project')}`, user: req.user,
+        heads: ['Project', 'Location', 'Status', 'Start', 'End', 'Budget', 'Spent', 'Spent on PRs', 'Spent on expenses', 'Remaining', 'Over budget'],
+        kinds: ['text', 'text', 'text', 'date', 'date', 'money', 'money', 'money', 'money', 'money', 'money'],
+        widths: [40, 26, 12, 12, 12, 16, 16, 16, 18, 16, 16], rows: main, totals: null })], main.length);
+    } catch (err) { fail(res, 'projects', err); }
+  });
+
+  // ---------------------------------------------------------------- CONTRACT TRADING (trading deals)
+  app.post('/api/reports/tradings/export', requireRole(reportRoles), async (req, res) => {
+    try {
+      const ids = bodyIds(req);
+      if (!ids || !ids.length) return nothing(res, 'trading deals');
+      const rows = orderBy(ids, (await query(TRADING_SPEND_SQL)).rows, (x) => x.id);
+      const main = rows.map((x) => [x.name, x.client || '', x.status || 'Active', Number(x.spent).toFixed(2), Number(x.spent_prs).toFixed(2), Number(x.spent_expenses).toFixed(2),
+        x.selling_price == null ? '' : Number(x.selling_price).toFixed(2), x.selling_price == null ? '' : (VAT_LABEL[x.selling_price_vat || 'inclusive'] || x.selling_price_vat),
+        x.margin == null ? '' : Number(x.margin).toFixed(2), x.margin_percent == null ? '' : Number(x.margin_percent).toFixed(2)]);
+      const today = todayManila();
+      send(res, `Contract-Trading_${today}_to_${today}.xlsx`, [sheetOf({
+        name: 'Contract Trading', title: 'Contract Trading — trading deals', subtitle: `Contract Trading · as of ${today} · ${plural(rows.length, 'deal')} · cost as recorded, profit on the mixed basis shown on screen`, user: req.user,
+        heads: ['Trading', 'Client', 'Status', 'Cost (as recorded)', 'Cost: PRs', 'Cost: expenses', 'Selling price', 'Selling price basis', 'Profit (mixed basis)', 'Margin %'],
+        kinds: ['text', 'text', 'text', 'money', 'money', 'money', 'money', 'text', 'money', 'money'],
+        widths: [40, 28, 12, 18, 16, 16, 16, 24, 18, 12], rows: main, totals: null })], main.length);
+    } catch (err) { fail(res, 'tradings', err); }
+  });
+
+  // ---------------------------------------------------------------- FACILITIES
+  app.post('/api/reports/facilities/export', requireRole(reportRoles), async (req, res) => {
+    try {
+      const ids = bodyIds(req);
+      if (!ids || !ids.length) return nothing(res, 'facilities');
+      const spend = (await query(FACILITY_SPEND_SQL)).rows;
+      const desc = new Map((await query(`SELECT id, description FROM facilities WHERE id::text = ANY($1::text[])`, [ids])).rows.map((x) => [String(x.id), x.description]));
+      const rows = orderBy(ids, spend, (x) => x.id);
+      const main = rows.map((x) => [x.name, desc.get(String(x.id)) || '', Number(x.spent).toFixed(2), Number(x.spent_prs).toFixed(2), Number(x.spent_expenses).toFixed(2)]);
+      const today = todayManila();
+      send(res, `Facilities_${today}_to_${today}.xlsx`, [sheetOf({
+        name: 'Facilities', title: 'Facilities', subtitle: `Facilities · as of ${today} · ${rows.length} ${rows.length === 1 ? 'facility' : 'facilities'}`, user: req.user,
+        heads: ['Facility', 'Description', 'Spent', 'Spent on PRs', 'Spent on expenses'],
+        kinds: ['text', 'text', 'money', 'money', 'money'], widths: [36, 56, 16, 16, 18], rows: main, totals: null })], main.length);
+    } catch (err) { fail(res, 'facilities', err); }
+  });
+
+  // ---------------------------------------------------------------- DELIVERY RECEIPT
+  app.post('/api/reports/delivery-receipts/export', requireRole(drRoles), async (req, res) => {
+    try {
+      const ids = bodyIds(req, { numeric: true });
+      if (!ids || !ids.length) return nothing(res, 'delivery receipts');
+      const r = await query(
+        `SELECT dr.id, dr.serial_no, dr.dr_number, to_char(dr.dr_date, 'YYYY-MM-DD') AS d, dr.delivered_to, dr.delivered_tin, dr.trading_id, dr.items, dr.voided_at,
+                COALESCE(t.name, p.name) AS source_name
+           FROM delivery_receipts dr LEFT JOIN tradings t ON t.id = dr.trading_id LEFT JOIN projects p ON p.id = dr.project_id
+          WHERE dr.id = ANY($1::bigint[])`, [ids]);
+      const rows = orderBy(ids, r.rows, (x) => x.id);
+      const main = rows.map((x) => [x.dr_number, x.serial_no || '', x.d, x.delivered_to || '', x.delivered_tin || '', x.trading_id ? 'Trading' : 'Project', x.source_name || '',
+        (Array.isArray(x.items) ? x.items : []).length, x.voided_at ? 'Voided' : 'Issued']);
+      const { from, to } = span(req, rows.map((x) => x.d));
+      send(res, `Delivery-Receipts_${from}_to_${to}.xlsx`, [sheetOf({
+        name: 'Delivery Receipts', title: 'Delivery Receipts', subtitle: `Delivery Receipts · ${from} to ${to} · ${plural(rows.length, 'receipt')}`, user: req.user,
+        heads: ['DR No.', 'Serial', 'Date', 'Delivered to', 'TIN', 'For', 'Deal / project', 'Items', 'Status'],
+        kinds: ['text', 'text', 'date', 'text', 'text', 'text', 'text', 'int', 'text'],
+        widths: [14, 16, 12, 36, 18, 10, 36, 8, 10], rows: main, totals: null })], main.length);
+    } catch (err) { fail(res, 'delivery-receipts', err); }
+  });
+
+  // ---------------------------------------------------------------- CUSTOMER'S BILLING
+  app.post('/api/reports/billing-invoices/export', requireRole(biRoles), async (req, res) => {
+    try {
+      const ids = bodyIds(req, { numeric: true });
+      if (!ids || !ids.length) return nothing(res, 'billing invoices');
+      const bis = (await query(`${BI_SELECT} WHERE bi.id = ANY($1::int[])`, [ids])).rows.map(mapBillingInvoice);
+      const rows = orderBy(ids, bis, (x) => x.id);
+      const label = { unpaid: 'Unpaid', partial: 'Partly paid', paid: 'Paid', overpaid: 'Overpaid', voided: 'Voided' };
+      const main = rows.map((x) => [x.biNumber, x.serialNo || '', x.biDate, x.billedTo || '', x.billedTin || '', x.drNumber || '', x.sourceName || '', cap(x.saleType),
+        Number(x.totalAmountDue).toFixed(2), x.voidedAt ? 'Voided' : (label[x.status] || x.status)]);
+      const { from, to } = span(req, rows.map((x) => x.biDate));
+      send(res, `Billing-Invoices_${from}_to_${to}.xlsx`, [sheetOf({
+        name: 'Billing Invoices', title: "Customer's Billing — billing invoices", subtitle: `Billing invoices · ${from} to ${to} · ${plural(rows.length, 'invoice')} (voided ones included, as on screen)`, user: req.user,
+        heads: ['BI No.', 'Serial', 'Date', 'Billed to', 'TIN', 'From DR', 'Deal / project', 'Sale', 'Total due', 'Status'],
+        kinds: ['text', 'text', 'date', 'text', 'text', 'text', 'text', 'text', 'money', 'text'],
+        widths: [14, 16, 12, 36, 18, 14, 36, 12, 16, 12], rows: main, totals: null })], main.length);
+    } catch (err) { fail(res, 'billing-invoices', err); }
+  });
+
+  // ---------------------------------------------------------------- CLIENTS
+  app.post('/api/reports/clients/export', requireRole(['owner', 'admin', 'sales', 'accounting']), async (req, res) => {
+    try {
+      const ids = bodyIds(req);
+      if (!ids || !ids.length) return nothing(res, 'clients');
+      const r = await query(`SELECT id, name, type, contact_person, phone, tin, what_they_buy, source, status FROM customers WHERE id::text = ANY($1::text[])`, [ids]);
+      const rows = orderBy(ids, r.rows, (x) => x.id);
+      const main = rows.map((x) => [x.name, x.type || '', x.contact_person || '', x.phone || '', x.tin || '', x.what_they_buy || '', x.source || '', x.status || '']);
+      const today = todayManila();
+      send(res, `Clients_${today}_to_${today}.xlsx`, [sheetOf({
+        name: 'Clients', title: 'Clients', subtitle: `Clients · as of ${today} · ${plural(rows.length, 'client')}`, user: req.user,
+        heads: ['Name', 'Type', 'Contact', 'Phone', 'TIN', 'Buys', 'Source', 'Status'],
+        kinds: ['text', 'text', 'text', 'text', 'text', 'text', 'text', 'text'],
+        widths: [36, 14, 26, 18, 20, 40, 18, 10], rows: main, totals: null })], main.length);
+    } catch (err) { fail(res, 'clients', err); }
+  });
+
+  // ---------------------------------------------------------------- ATTENDANCE SHEET
+  app.post('/api/reports/attendance-sheet/export', requireRole(attendanceReviewRoles), async (req, res) => {
+    try {
+      const ids = bodyIds(req, { numeric: true });
+      const periodId = String((req.body && req.body.periodId) ?? '');
+      if (!/^\d+$/.test(periodId)) return res.status(400).json({ error: 'Pick a pay period first' });
+      if (!ids || !ids.length) return nothing(res, 'attendance days');
+      const sheet = await attendanceSheetData(periodId);
+      if (!sheet) return res.status(404).json({ error: 'Pay period not found' });
+      const days = orderBy(ids, sheet.rows, (x) => x.id);
+      const yn = (b) => (b ? 'Yes' : 'No');
+      const statusText = (x) => [({ complete: 'Complete', no_out: 'No OUT', incomplete: 'Incomplete' })[x.status] || x.status || '—',
+        x.is_wfh ? 'WFH' : null, ...(x.flags || []).map((f) => FLAG_LABEL[f] || f), x.is_adjusted ? 'edited' : null, (x.manual_punch_count || 0) > 0 ? 'manual punch' : null].filter(Boolean).join(' · ');
+      const main = days.map((x) => {
+        const brk = breakOf(x), brks = x.breaks || [];
+        const hasBreak = brks.length > 0 || brk > 0;
+        const breakLabel = brks.length === 1 ? `${brks[0].out}–${brks[0].ret}` : brks.length > 1 ? `${brks.length} breaks` : 'manual';
+        const breakText = hasBreak ? `${breakLabel} · ${brk > 0 ? fmtBreakMin(brk) : 'free'}${x.break_excused && brk > 0 ? ' (excused)' : ''}` : '';
+        return [x.full_name, x.department || '', x.position || '', x.work_date, fmtTime(x.first_in), fmtTime(x.last_out), breakText, hours2(paidMin(x)), statusText(x),
+          yn(x.early_ot_approved), yn(x.ot_approved), yn(x.late_excused), (!(brk > 0) && !x.break_excused) ? '' : yn(x.break_excused)];
+      });
+      // Per-person block, as in each person's header row on screen.
+      const byPerson = new Map();
+      for (const x of days) {
+        if (!byPerson.has(x.person_id)) byPerson.set(x.person_id, { p: x, n: 0, min: 0, dock: 0 });
+        const g = byPerson.get(x.person_id); g.n++; g.min += paidMin(x) || 0; if (lunchNet(x) !== null) g.dock += dockedOf(x);
+      }
+      const cls = new Map((sheet.classification || []).map((c) => [c.person_id, c]));
+      const bale = new Map((sheet.bale || []).map((b) => [b.person_id, b]));
+      const people = [...byPerson.values()].map((g) => {
+        const c = cls.get(g.p.person_id); const b = bale.get(g.p.person_id);
+        const has = c && (c.present || c.half || c.absent);
+        return [g.p.full_name, g.p.department || '', g.p.position || '', g.n, hours2(g.min), hours2(g.dock), has ? c.present + 0.5 * c.half : '', has ? c.present : '', has ? c.half : '', has ? c.absent : '',
+          b && b.amount != null && b.amount !== '' ? Number(b.amount).toFixed(2) : ''];
+      });
+      const p = sheet.period;
+      const subtitle = `Attendance Sheet · pay period ${p.start_date} to ${p.end_date} (${p.status}) · ${plural(days.length, 'day')} shown · hours are paid hours, net of lunch and the docked break, as on screen`;
+      send(res, `Attendance-Sheet_${p.start_date}_to_${p.end_date}.xlsx`, [
+        sheetOf({ name: 'Attendance', title: 'Attendance Sheet — daily', subtitle, user: req.user,
+          heads: ['Employee', 'Department', 'Position', 'Date', 'In', 'Out', 'Break', 'Hours', 'Status', 'Early OT', 'Late OT', 'Excuse Late', 'Excuse Break'],
+          kinds: ['text', 'text', 'text', 'date', 'text', 'text', 'text', 'money', 'text', 'text', 'text', 'text', 'text'],
+          widths: [28, 18, 22, 12, 11, 11, 24, 9, 30, 10, 10, 12, 13], rows: main, totals: null }),
+        sheetOf({ name: 'By person', title: 'Attendance Sheet — per person', subtitle, user: req.user,
+          heads: ['Employee', 'Department', 'Position', 'Punched days', 'Total hours', 'Break docked (hours)', 'Payroll days', 'Present', 'Half', 'Absent', 'BALE'],
+          kinds: ['text', 'text', 'text', 'int', 'money', 'money', 'money', 'int', 'int', 'int', 'money'],
+          widths: [28, 18, 22, 13, 12, 20, 13, 9, 7, 8, 14], rows: people, totals: null }),
+      ], main.length);
+    } catch (err) { fail(res, 'attendance-sheet', err); }
+  });
 }

@@ -7950,16 +7950,18 @@ app.post('/api/attendance/periods/:id/rebuild', requireRole(attendanceReviewRole
 
 // The review sheet for a period: the period header + every punched day in range, joined to the
 // person, so Finance/Admin can review in/out/hours/flags. Read-only; call rebuild to refresh.
-app.get('/api/attendance/periods/:id/sheet', requireRole(attendanceReviewRoles), async (req, res) => {
-  try {
+// The sheet's data, shared by the route below and by the Attendance Sheet Excel export
+// (server/listExports.js), so the file is built from the very same rows the screen gets.
+async function attendanceSheetData(periodId) {
+  {
     const pr = await query(
       `SELECT id, to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(end_date,'YYYY-MM-DD') AS end_date,
               status, locked_by, locked_at, payroll_finalized
          FROM pay_periods WHERE id = $1`,
-      [req.params.id]
+      [periodId]
     );
     const period = pr.rows[0];
-    if (!period) return res.status(404).json({ error: 'Pay period not found' });
+    if (!period) return null;
     const rows = await query(
       // ot_eligible + ot_approved back the per-day OT toggle. Sensitive pay fields (pay_rate,
       // withholding, sss/philhealth/pagibig) are deliberately NOT selected — Finance never sees them.
@@ -8073,7 +8075,14 @@ app.get('/api/attendance/periods/:id/sheet', requireRole(attendanceReviewRoles),
     const emptyDays = cDates.filter(d =>
       d <= todayManila && !cHolidayMap[d] && dowYMD(d) !== 0 && !datesWithAnyAttendance.has(d));
 
-    res.json({ period, rows: rowsOut, bale: bale.rows, classification, empty_days: emptyDays });
+    return { period, rows: rowsOut, bale: bale.rows, classification, empty_days: emptyDays };
+  }
+}
+app.get('/api/attendance/periods/:id/sheet', requireRole(attendanceReviewRoles), async (req, res) => {
+  try {
+    const data = await attendanceSheetData(req.params.id);
+    if (!data) return res.status(404).json({ error: 'Pay period not found' });
+    res.json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -12562,7 +12571,11 @@ app.delete('/api/staff/:id', requireSuperAdmin, async (req, res) => {
 
 // "Export to Excel" for the Accounting list screens (server/listExports.js). Registered here, after every
 // const it reads has been initialised.
-registerListExports(app, { query, requireRole, reportRoles, biRoles, payablesRoles, BI_SELECT, mapBillingInvoice, PAYABLE_SELECT, mapPayable });
+registerListExports(app, {
+  query, requireRole, effectiveRole, reportRoles, biRoles, drRoles, payablesRoles, attendanceReviewRoles,
+  BI_SELECT, mapBillingInvoice, PAYABLE_SELECT, mapPayable, PO_ALLOC_COLS, PO_ALLOC_JOINS, mapPoAllocation,
+  PROJECT_SPEND_SQL, TRADING_SPEND_SQL, FACILITY_SPEND_SQL, attendanceSheetData,
+});
 
 // Create new tables before starting server
 const startServer = async () => {

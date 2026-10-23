@@ -18,6 +18,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Plus, Printer, Ban, FileText, Search } from 'lucide-react';
 import { toast } from 'sonner';
+import { ExportXlsxButton } from '../ExportXlsxButton';
 import { printBirDeliveryReceipt } from '../../lib/deliveryReceiptPrint';
 import { S, Modal, Field, TextInput, TextArea, PrimaryBtn, GhostBtn, pill, TableScroll, tightTh, tightTd, stickyTh, stickyTd, shortDate, oneLine } from './crmKit';
 
@@ -120,11 +121,15 @@ export function DeliveryReceipts({ api, isAdmin }: { api: Api; isAdmin: boolean 
           <h1 style={S.h1}>Delivery Receipts</h1>
           <p style={S.sub}>Issued against a trading deal or project. Line items come from its purchase requests; the number comes from the booklet.</p>
         </div>
-        {isAdmin && (
-          <button style={{ ...S.addBtn, color: '#000000' }} onClick={() => setCreating(true)}>
-            <Plus size={16} style={{ marginRight: '6px' }} /> New Delivery Receipt
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+          {/* The receipts on screen, in screen order: the search box applies. */}
+          <ExportXlsxButton api={api} path="/reports/delivery-receipts/export" ids={filtered.map(d => d.id)} disabled={loading} />
+          {isAdmin && (
+            <button style={{ ...S.addBtn, color: '#000000' }} onClick={() => setCreating(true)}>
+              <Plus size={16} style={{ marginRight: '6px' }} /> New Delivery Receipt
+            </button>
+          )}
+        </div>
       </div>
 
       <div style={{ position: 'relative', maxWidth: '340px', marginBottom: '20px' }}>
