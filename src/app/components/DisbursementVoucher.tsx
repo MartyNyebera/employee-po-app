@@ -23,7 +23,7 @@ import { AllocationTag, type Allocated } from './AllocationTag';
 import {
   type VoucherDraft, type PayableLite, type PaymentMode, type TargetKind,
   buildVoucherPayload, voucherTotals, restForLine, defaultPoAmount, totalFromLines,
-  filterPayables, suggestDescription, encodeTarget, manilaToday,
+  filterPayables, suggestDescription, encodeTarget, manilaToday, payeeGroups, payeeIsListed,
 } from '../lib/voucherMath';
 
 type Api = <T = any>(path: string, options?: RequestInit) => Promise<T>;
@@ -85,6 +85,18 @@ export function DisbursementVoucherModal({ api, projects, tradings, facilities, 
     return () => { off = true; };
   }, []);
 
+  // "Paid to" options. Each list is optional: if one cannot load, the box still takes any typed name.
+  const [supplierNames, setSupplierNames] = useState<string[]>([]);
+  const [employeeNames, setEmployeeNames] = useState<string[]>([]);
+  const [recentPayees, setRecentPayees] = useState<string[]>([]);
+  useEffect(() => {
+    let off = false;
+    api<{ name: string }[]>('/suppliers').then(r => { if (!off) setSupplierNames((r || []).map(s => s.name).filter(Boolean)); }).catch(() => { /* optional */ });
+    api<{ employees: string[]; recent: string[] }>('/voucher-payees')
+      .then(r => { if (!off) { setEmployeeNames(r?.employees || []); setRecentPayees(r?.recent || []); } }).catch(() => { /* optional */ });
+    return () => { off = true; };
+  }, []);
+
   const byId = useMemo(() => new Map(payables.map(p => [p.id, p])), [payables]);
 
   // Arrived from the Payable Report: add that PO once the list has loaded.
@@ -99,6 +111,7 @@ export function DisbursementVoucherModal({ api, projects, tradings, facilities, 
       const poLines = [{ key: nextKey.current++, purchaseOrderId: p.id, amount: amt }];
       return {
         ...prev, poLines,
+        payee: prev.payee.trim() ? prev.payee : (p.supplier || ''),
         // The empty expense row is only a convenience for the expense-first case.
         expenseLines: prev.expenseLines.filter(r => r.target !== '' || r.amount.trim() !== ''),
         amount: prev.amount || amt,
@@ -128,8 +141,11 @@ export function DisbursementVoucherModal({ api, projects, tradings, facilities, 
     setD(p => {
       const poLines = p.poLines.map(r => (r.key === key
         ? { ...r, purchaseOrderId: po.id, amount: r.amount.trim() ? r.amount : defaultPoAmount(po.balance) } : r));
+      // First PO on the voucher and no payee yet: the supplier is who is being paid (she can change it).
+      const firstPo = !p.poLines.some(x => x.key !== key && x.purchaseOrderId);
       return {
         ...p, poLines,
+        payee: firstPo && !p.payee.trim() ? (po.supplier || '') : p.payee,
         description: descTouched.current || p.description.trim() ? p.description : suggestDescription(poLines, byId),
       };
     });
@@ -199,7 +215,7 @@ export function DisbursementVoucherModal({ api, projects, tradings, facilities, 
             </div>
             <div>
               <label className={label}>Paid to <span className="text-gray-400 font-normal">(payee)</span></label>
-              <input value={d.payee} onChange={e => set('payee', e.target.value)} maxLength={200} className={input} />
+              <PayeePicker value={d.payee} onChange={v => set('payee', v)} suppliers={supplierNames} employees={employeeNames} recent={recentPayees} />
             </div>
             <div>
               <label className={label}>Payment mode</label>
@@ -429,6 +445,49 @@ export function CheckDetailsFields({ mode, checkNo, bank, checkDate, onChange }:
         <label className={label}>Check date</label>
         <input type="date" value={checkDate} onChange={e => onChange('checkDate', e.target.value)} className={input} />
       </div>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------------------------
+// "Paid to": a searchable, grouped dropdown (Suppliers / Employees / Recent payees). The value is still
+// plain text, so a name that is on no list can be used as typed ("Use “…”") and is NOT added to any list.
+// ----------------------------------------------------------------------------------------------
+export function PayeePicker({ value, onChange, suppliers, employees, recent }: {
+  value: string; onChange: (v: string) => void; suppliers: string[]; employees: string[]; recent: string[];
+}) {
+  const [open, setOpen] = useState(false);
+  // While the list is open she is searching with what she types; just opened, everything shows.
+  const [q, setQ] = useState<string | null>(null);
+  const groups = useMemo(() => payeeGroups(suppliers, employees, recent, q ?? ''), [suppliers, employees, recent, q]);
+  const typed = (q ?? '').trim();
+  const pick = (v: string) => { onChange(v); setQ(null); setOpen(false); };
+  return (
+    <div className="relative">
+      <input value={q ?? value} maxLength={200} className={input} role="combobox" aria-expanded={open} aria-label="Paid to"
+        placeholder="Search or type a name…" autoComplete="off"
+        onChange={e => { setQ(e.target.value); onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => { setOpen(false); setQ(null); }, 150)} />
+      {open && (
+        <div className="absolute z-20 mt-1 w-full max-h-64 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg" data-payee-list>
+          {groups.map(g => (
+            <div key={g.label}>
+              <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-gray-400 bg-gray-50 sticky top-0">{g.label}</div>
+              {g.names.map(n => (
+                // onMouseDown, not onClick: the input's blur would otherwise close the list before the click lands.
+                <button key={g.label + n} type="button" data-payee={n} onMouseDown={e => { e.preventDefault(); pick(n); }}
+                  className="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-gray-50 truncate">{n}</button>
+              ))}
+            </div>
+          ))}
+          {typed && !payeeIsListed(groups, typed) && (
+            <button type="button" data-payee-new onMouseDown={e => { e.preventDefault(); pick(typed); }}
+              className="w-full text-left px-3 py-2 text-sm font-medium text-blue-600 hover:bg-gray-50 border-t border-gray-100">Use “{typed}”</button>
+          )}
+          {groups.length === 0 && !typed && <p className="px-3 py-3 text-xs text-gray-400">No names yet — type one.</p>}
+        </div>
+      )}
     </div>
   );
 }

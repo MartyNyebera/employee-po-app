@@ -214,3 +214,36 @@ export function buildVoucherPayload(d: VoucherDraft): BuildResult {
   }
   return { ok: true, payload };
 }
+
+// ---- "Paid to" options -------------------------------------------------------------------------
+export interface PayeeGroup { label: 'Suppliers' | 'Employees' | 'Recent payees'; names: string[] }
+const payeeKey = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+
+/**
+ * The grouped, filtered options for the "Paid to" box. Suppliers first, then employees, then recent payees;
+ * a name already in an earlier group is not repeated in a later one (compared ignoring case and spacing).
+ * Matches as she types are case-insensitive substrings; empty groups are dropped.
+ */
+export function payeeGroups(suppliers: string[], employees: string[], recent: string[], q: string): PayeeGroup[] {
+  const seen = new Set<string>();
+  const take = (xs: string[], sort: boolean) => {
+    const out: string[] = [];
+    for (const x of xs) {
+      const n = x.replace(/\s+/g, ' ').trim(); const k = payeeKey(n);
+      if (!k || seen.has(k)) continue;
+      seen.add(k); out.push(n);
+    }
+    return sort ? out.sort((a, b) => a.localeCompare(b)) : out;
+  };
+  const needle = payeeKey(q);
+  const hit = (n: string) => !needle || payeeKey(n).includes(needle);
+  return ([
+    { label: 'Suppliers' as const, names: take(suppliers, true) },
+    { label: 'Employees' as const, names: take(employees, true) },
+    { label: 'Recent payees' as const, names: take(recent, true) },
+  ]).map(g => ({ ...g, names: g.names.filter(hit) })).filter(g => g.names.length > 0);
+}
+
+/** True when the typed text is exactly one of the offered names (so "Use “…”" is not needed). */
+export const payeeIsListed = (groups: PayeeGroup[], q: string) =>
+  groups.some(g => g.names.some(n => payeeKey(n) === payeeKey(q)));

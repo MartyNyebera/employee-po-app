@@ -12663,6 +12663,20 @@ app.delete('/api/staff/:id', requireSuperAdmin, async (req, res) => {
 // never be deleted (409, and the FK is RESTRICT as the backstop): deactivate it instead, which keeps the
 // history readable and only stops it being offered on new lines.
 // ============================================================================
+// "Paid to" options for the Disbursement Voucher: NAMES ONLY. /api/persons is admin-only and carries rates, so
+// accounting gets just the active roster names plus the payees used on vouchers in the last 90 days.
+app.get('/api/voucher-payees', requireRole(reportRoles), async (req, res) => {
+  try {
+    const emp = await query(`SELECT full_name FROM persons WHERE status = 'active' AND BTRIM(COALESCE(full_name,'')) <> '' ORDER BY LOWER(full_name)`);
+    const rec = await query(
+      `SELECT payee FROM (
+         SELECT BTRIM(payee) AS payee, MAX(expense_date) AS last_used FROM expenses
+          WHERE voided_at IS NULL AND BTRIM(COALESCE(payee,'')) <> '' AND expense_date >= (NOW() AT TIME ZONE 'Asia/Manila')::date - 90
+          GROUP BY BTRIM(payee)) x ORDER BY LOWER(payee)`);
+    res.json({ employees: emp.rows.map(r => r.full_name), recent: rec.rows.map(r => r.payee) });
+  } catch (err) { console.error('voucher payees error:', err); res.status(500).json({ error: err.message }); }
+});
+
 const glName = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
 const glRow = (r) => ({ id: Number(r.id), name: r.name, active: !!r.active, linesUsing: Number(r.lines_using ?? 0), createdBy: r.created_by ?? null, createdAt: r.created_at });
 const GL_SELECT = `SELECT g.id, g.name, g.active, g.created_by, g.created_at,
