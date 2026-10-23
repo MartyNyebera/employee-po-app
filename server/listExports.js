@@ -171,8 +171,8 @@ export function registerListExports(app, d) {
       let totC = 0, paidC = 0, outC = 0;
       const main = rows.map((x) => {
         totC += cents(x.poTotal); paidC += cents(x.paidTotal); outC += Math.max(cents(x.balance), 0);
-        return [x.poNumber, x.supplier || '', x.allocationType && x.allocationName ? `${x.allocationName} · ${ALLOC_LABEL[x.allocationType] || x.allocationType}` : '',
-          x.poDate, x.poTotal, x.paidTotal, x.balance, x.dueDate || '', statusText(x)];
+        return [x.poNumber, x.poDate, x.supplier || '', x.allocationType && x.allocationName ? `${x.allocationName} · ${ALLOC_LABEL[x.allocationType] || x.allocationType}` : '',
+          x.poTotal, x.paidTotal, x.balance, x.dueDate || '', statusText(x)];
       });
       const pays = rows.length ? (await query(
         `SELECT vp.purchase_order_id, vp.amount, e.serial_no, to_char(e.expense_date, 'YYYY-MM-DD') AS d
@@ -190,9 +190,9 @@ export function registerListExports(app, d) {
       const subtitle = `Payable report · PO dates ${from} to ${to} · ${plural(rows.length, 'purchase order')}`;
       send(res, `Payable-Report_${from}_to_${to}.xlsx`, [
         sheetOf({ name: 'Payables', title: 'Payable Report — purchase orders', subtitle, user: req.user,
-          heads: ['PO No.', 'Supplier', 'Allocated to', 'PO Date', 'PO Total', 'Paid', 'Balance', 'Due Date', 'Status'],
-          kinds: ['text', 'text', 'text', 'date', 'money', 'money', 'money', 'date', 'text'],
-          widths: [18, 32, 36, 12, 16, 16, 16, 12, 12], rows: main,
+          heads: ['PO#', 'PO Date', 'Supplier', 'Allocated To', 'Amount Due', 'Payment', 'Balance', 'Due Date', 'Status'],
+          kinds: ['text', 'date', 'text', 'text', 'money', 'money', 'money', 'date', 'text'],
+          widths: [18, 12, 32, 36, 16, 16, 16, 12, 12], rows: main,
           totals: [[`TOTAL (${plural(rows.length, 'purchase order')}) — Balance column = Outstanding, positive balances only`, '', '', '', c2(totC), c2(paidC), c2(outC), '', '']] }),
         sheetOf({ name: 'Payments', title: 'Payable Report — voucher payments (voided vouchers left out)', subtitle, user: req.user,
           heads: ['PO No.', 'Supplier', 'Voucher No.', 'Date', 'Amount'],

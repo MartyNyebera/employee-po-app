@@ -202,13 +202,28 @@ export function PayableSummary({ summary }: { summary: Summary }) {
   );
 }
 
+// The Balance cell carries the signals the removed Due Date / Status columns used to: overdue is red with a small
+// "overdue" tag, overpaid is amber "Overpaid −₱X", a settled PO is a muted "Paid", unpaid/partial is the plain amount.
+export function BalanceCell({ r }: { r: Pick<PayableRow, 'balance' | 'status' | 'overdue' | 'overpaidAmount' | 'amountOverdue'> }) {
+  const bal = num(r.balance);
+  if (r.status === 'overpaid' || bal < 0) {
+    return <span className="font-semibold text-amber-700" title="More has been paid than is owed — check the voucher amounts">{`Overpaid −${peso(r.overpaidAmount)}`}</span>;
+  }
+  if (bal === 0) return <span className="text-gray-400">Paid</span>;
+  if (r.overdue) {
+    return <span className="font-semibold text-red-600" title={`${peso(r.amountOverdue)} overdue`}>{peso(r.balance)}
+      <span className="ml-1.5 align-middle text-[10px] font-bold uppercase tracking-wide px-1 py-px rounded border border-red-200 bg-red-50">overdue</span></span>;
+  }
+  return <span className="font-semibold text-gray-900">{peso(r.balance)}</span>;
+}
+
 // The table. Pure: it renders the rows it is given, so every status can be rendered with a fixture.
 export function PayableTable({ rows, openId, onToggle, onOpenVoucher, emptyText }: {
   rows: PayableRow[]; openId: string | null;
   onToggle: (id: string) => void; emptyText: string;
   onOpenVoucher?: (serialNo: string) => void;
 }) {
-  const COLS = 10;
+  const COLS = 8;
   return (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           <div className="overflow-x-scroll max-w-full">
@@ -216,15 +231,13 @@ export function PayableTable({ rows, openId, onToggle, onOpenVoucher, emptyText 
               <thead className="bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wide">
                 <tr>
                   <th className="px-3 py-3 w-8"></th>
-                  <th className="px-3 py-3 text-left">PO No.</th>
-                  <th className="px-3 py-3 text-left">Supplier</th>
-                  <th className="px-3 py-3 text-left">Allocated to</th>
-                  <th className="px-3 py-3 text-left">PO date</th>
-                  <th className="px-3 py-3 text-right">PO total</th>
-                  <th className="px-3 py-3 text-right">Paid</th>
-                  <th className="px-3 py-3 text-right">Balance</th>
-                  <th className="px-3 py-3 text-left">Due date</th>
-                  <th className="px-3 py-3 text-left">Status</th>
+                  <th className="px-3 py-3 text-left whitespace-nowrap">PO#</th>
+                  <th className="px-3 py-3 text-left whitespace-nowrap">PO Date</th>
+                  <th className="px-3 py-3 text-left whitespace-nowrap">Supplier</th>
+                  <th className="px-3 py-3 text-left whitespace-nowrap">Allocated To</th>
+                  <th className="px-3 py-3 text-right whitespace-nowrap">Amount Due</th>
+                  <th className="px-3 py-3 text-right whitespace-nowrap">Payment</th>
+                  <th className="pl-3 pr-6 py-3 text-right whitespace-nowrap">Balance</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -246,21 +259,22 @@ export function PayableTable({ rows, openId, onToggle, onOpenVoucher, emptyText 
                           <span className="font-mono text-xs font-semibold text-gray-900">{r.poNumber}</span>
                           {r.unpayable && <span className="ml-1.5 text-[10px] font-semibold uppercase text-gray-500 border border-gray-300 rounded px-1">{r.poStatus}</span>}
                         </td>
-                        <td className="px-3 py-3 max-w-[170px]"><div className="truncate text-gray-900" title={r.supplier || ''}>{r.supplier || '—'}</div></td>
-                        <td className="px-3 py-3 max-w-[190px]"><AllocationTag a={r} maxWidth={150} stacked /></td>
                         <td className="px-3 py-3 whitespace-nowrap text-gray-600">{r.poDate}</td>
+                        <td className="px-3 py-3 max-w-[200px]"><div className="truncate whitespace-nowrap text-gray-900" title={r.supplier || ''}>{r.supplier || '—'}</div></td>
+                        <td className="px-3 py-3 max-w-[240px] whitespace-nowrap"><AllocationTag a={r} maxWidth={150} /></td>
                         <td className="px-3 py-3 text-right whitespace-nowrap">{peso(r.poTotal)}</td>
                         <td className={`px-3 py-3 text-right whitespace-nowrap ${num(r.paidTotal) > 0 ? 'text-emerald-700' : 'text-gray-400'}`}>{peso(r.paidTotal)}</td>
-                        <td className={`px-3 py-3 text-right whitespace-nowrap font-semibold ${r.overdue ? 'text-red-600' : bal < 0 ? 'text-amber-700' : 'text-gray-900'}`}>{peso(r.balance)}</td>
-                        <td className={`px-3 py-3 whitespace-nowrap ${r.overdue ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
-                          {r.dueDate || '—'}
-                          {!r.dueDate && r.paymentTerms && <div className="text-[11px] text-gray-400 max-w-[170px] truncate" title={r.paymentTerms}>{r.paymentTerms}</div>}
-                        </td>
-                        <td className="px-3 py-3">{payableBadge(r)}</td>
+                        <td className="pl-3 pr-6 py-3 text-right whitespace-nowrap" data-balance={r.id}><BalanceCell r={r} /></td>
                       </tr>
                       {isOpen && (
                         <tr>
                           <td className="px-6 py-3 bg-gray-50" colSpan={COLS}>
+                            <div className="flex flex-wrap items-center gap-x-6 gap-y-1 mb-2 text-xs" data-po-facts>
+                              <span><span className="text-gray-400">Due date</span>{' '}
+                                <span className={r.overdue ? 'font-medium text-red-600' : 'text-gray-800'}>{r.dueDate || '—'}</span>
+                                {!r.dueDate && r.paymentTerms && <span className="text-gray-400"> ({r.paymentTerms})</span>}</span>
+                              <span className="flex items-center gap-1.5"><span className="text-gray-400">Status</span> {payableBadge(r)}</span>
+                            </div>
                             <p className="text-xs text-gray-500 mb-2">
                               {r.paymentTerms ? `Terms: ${r.paymentTerms}` : 'No payment terms on this PO'}
                               {r.receivedDate ? ` · received ${r.receivedDate}` : ' · not yet received'}
