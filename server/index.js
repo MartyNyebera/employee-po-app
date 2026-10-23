@@ -7319,10 +7319,13 @@ app.get('/api/reports/purchases/export', requireRole(reportRoles), async (req, r
 // is never an expense, and no spend CTE or disbursement total reads it.
 //
 // The balance is DERIVED on every read, never stored:
-//   opening balance + non-voided replenishments - non-voided petty-cash vouchers, both from the opening date on.
+//   Fund amount (the starting cash) + Additional amount (non-voided replenishments) - Spent (non-voided
+//   petty-cash vouchers), both from the opening date on.
 // It may go negative (shown amber by the screen); nothing here blocks that. All sums are whole centavos.
-// Fund settings are one row (custodian, fixed fund amount, opening balance + date); every change to it is
-// logged field by field in pcf_settings_log.
+// Fund settings are one row (custodian, fund amount, opening date); every change to it is logged field by
+// field in pcf_settings_log. The "fund amount" and "opening balance" columns were merged into one value:
+// opening_balance is the starting cash, and a save writes the same figure to fund_amount (kept only
+// because the column is NOT NULL).
 // ============================================================================
 const cents2 = (v) => { const s = String(v ?? '').trim().replace(/,/g, ''); return /^\d+(\.\d{1,2})?$/.test(s) ? Math.round(Number(s) * 100) : null; };
 const fromCents = (c) => (c / 100).toFixed(2);
@@ -7330,7 +7333,7 @@ const isRealYmd = (s) => { if (!REPORT_YMD.test(String(s || ''))) return false; 
 
 async function pcfSettings() {
   const r = (await query(`SELECT custodian, fund_amount, opening_balance, to_char(opening_date,'YYYY-MM-DD') AS opening_date, updated_by, updated_at FROM pcf_settings WHERE id = 1`)).rows[0];
-  return r ? { custodian: r.custodian, fundAmount: money2s(r.fund_amount), openingBalance: money2s(r.opening_balance), openingDate: r.opening_date, updatedBy: r.updated_by ?? null, updatedAt: r.updated_at } : null;
+  return r ? { custodian: r.custodian, fundAmount: money2s(r.opening_balance), openingDate: r.opening_date, updatedBy: r.updated_by ?? null, updatedAt: r.updated_at } : null;
 }
 
 // The whole ledger since the opening date, oldest first, with the running balance on every line.
@@ -7345,7 +7348,7 @@ async function pcfLedger(settings) {
        FROM expenses e WHERE e.payment_mode = 'petty_cash' AND e.expense_date >= $1::date`, [open])).rows;
   const live = [
     ...reps.filter((r) => !r.voided_at).map((r) => ({
-      kind: 'replenishment', id: Number(r.id), date: r.d, at: new Date(r.created_at).getTime(), ref: r.reference ?? '', desc: r.notes || 'Replenishment',
+      kind: 'replenishment', id: Number(r.id), date: r.d, at: new Date(r.created_at).getTime(), ref: r.reference ?? '', desc: r.notes || 'Additional amount',
       inC: Math.round(Number(r.amount) * 100), outC: 0,
     })),
     ...vous.filter((v) => !v.voided_at).map((v) => ({
@@ -7353,7 +7356,7 @@ async function pcfLedger(settings) {
       inC: 0, outC: Math.round(Number(v.amount) * 100),
     })),
   ].sort((a, b) => a.date.localeCompare(b.date) || a.at - b.at || a.id - b.id);
-  let bal = Math.round(Number(settings.openingBalance) * 100);
+  let bal = Math.round(Number(settings.fundAmount) * 100);
   for (const e of live) { bal += e.inC - e.outC; e.balC = bal; }
   return {
     entries: live, balanceC: bal,
@@ -7365,25 +7368,21 @@ async function pcfData(qs) {
   const settings = await pcfSettings();
   if (!settings) return { configured: false, settings: null };
   const L = await pcfLedger(settings);
-  const fundC = Math.round(Number(settings.fundAmount) * 100);
-  // "Since the last replenishment" = the vouchers that come after the latest live replenishment in ledger order.
-  const lastRepIdx = L.entries.map((e) => e.kind).lastIndexOf('replenishment');
-  const sinceC = L.entries.slice(lastRepIdx + 1).reduce((n, e) => n + e.outC, 0);
+  const addC = L.entries.reduce((n, e) => n + e.inC, 0), spentC = L.entries.reduce((n, e) => n + e.outC, 0);
   const from = ymdOrNull(qs.from), to = ymdOrNull(qs.to);
   const shown = L.entries.filter((e) => (!from || e.date >= from) && (!to || e.date <= to));
   const log = (await query(`SELECT to_char(changed_at AT TIME ZONE 'Asia/Manila','YYYY-MM-DD HH24:MI') AS at, changed_by, field, old_value, new_value FROM pcf_settings_log ORDER BY id DESC LIMIT 30`)).rows;
   return {
     configured: true, settings,
     cards: {
-      fundAmount: settings.fundAmount, balance: fromCents(L.balanceC), balanceNegative: L.balanceC < 0,
-      spentSinceReplenishment: fromCents(sinceC), toReplenish: fromCents(Math.max(fundC - L.balanceC, 0)),
-      lastReplenishmentDate: lastRepIdx >= 0 ? L.entries[lastRepIdx].date : null,
+      fundAmount: settings.fundAmount, additionalAmount: fromCents(addC), spent: fromCents(spentC),
+      balance: fromCents(L.balanceC), balanceNegative: L.balanceC < 0,
     },
     ledger: shown.map((e) => ({
       kind: e.kind, id: e.id, date: e.date, ref: e.ref, description: e.desc,
-      moneyIn: e.inC ? fromCents(e.inC) : null, moneyOut: e.outC ? fromCents(e.outC) : null, balance: fromCents(e.balC),
+      amount: fromCents(e.inC - e.outC), balance: fromCents(e.balC),
     })),
-    totals: { moneyIn: fromCents(shown.reduce((n, e) => n + e.inC, 0)), moneyOut: fromCents(shown.reduce((n, e) => n + e.outC, 0)), count: shown.length },
+    totals: { net: fromCents(shown.reduce((n, e) => n + e.inC - e.outC, 0)), count: shown.length },
     voidedExcluded: L.voided.replenishments + L.voided.vouchers,
     settingsLog: log.map((l) => ({ at: l.at, by: l.changed_by, field: l.field, from: l.old_value, to: l.new_value })),
   };
@@ -7403,10 +7402,10 @@ app.get('/api/pcf/export', requireRole(reportRoles), async (req, res) => {
     res.json(reportWorkbook({
       title: 'Petty Cash Fund — ledger', sheetName: 'PCF ledger', filename: `pcf-ledger-${range.replace(/ to /, '_to_')}.xlsx`,
       subtitle: `Custodian ${d.settings.custodian} · fund ${d.settings.fundAmount} · ${range}`,
-      heads: ['Date', 'Type', 'Reference', 'Description', 'Money in', 'Money out', 'Balance'],
-      kinds: ['text', 'text', 'text', 'text', 'money', 'money', 'money'], widths: [13, 15, 18, 46, 15, 15, 16],
-      rows: d.ledger.map((e) => [e.date, e.kind === 'replenishment' ? 'Replenishment' : 'Petty cash voucher', e.ref, e.description, e.moneyIn ?? '', e.moneyOut ?? '', e.balance]),
-      totals: [`TOTAL (${d.totals.count} line${d.totals.count === 1 ? '' : 's'}) — balance at end`, '', '', '', d.totals.moneyIn, d.totals.moneyOut, closing], user: req.user }));
+      heads: ['Date', 'Type', 'Reference', 'Description', 'Amount', 'Balance'],
+      kinds: ['text', 'text', 'text', 'text', 'money', 'money'], widths: [13, 20, 18, 46, 16, 16],
+      rows: d.ledger.map((e) => [e.date, e.kind === 'replenishment' ? 'Additional amount' : 'Petty cash voucher', e.ref, e.description, e.amount, e.balance]),
+      totals: [`TOTAL (${d.totals.count} line${d.totals.count === 1 ? '' : 's'}) — balance at end`, '', '', '', d.totals.net, closing], user: req.user }));
   } catch (err) { console.error('pcf export error:', err); res.status(500).json({ error: err.message }); }
 });
 
@@ -7415,13 +7414,12 @@ app.put('/api/pcf/settings', requireRole(reportRoles), async (req, res) => {
   try {
     const b = req.body || {};
     const custodian = String(b.custodian ?? '').trim().slice(0, 100);
-    const fundC = cents2(b.fundAmount), openC = cents2(b.openingBalance);
+    const fundC = cents2(b.fundAmount);
     const openingDate = String(b.openingDate ?? '').trim();
     if (!custodian) return res.status(400).json({ error: 'The custodian’s name is required' });
     if (fundC === null) return res.status(400).json({ error: 'Fund amount must be a number (0 or more, at most 2 decimals)' });
-    if (openC === null) return res.status(400).json({ error: 'Opening balance must be a number (0 or more, at most 2 decimals)' });
     if (!isRealYmd(openingDate)) return res.status(400).json({ error: 'Opening date must be a valid date' });
-    const next = { custodian, fund_amount: fromCents(fundC), opening_balance: fromCents(openC), opening_date: openingDate };
+    const next = { custodian, fund_amount: fromCents(fundC), opening_date: openingDate };
     const cur = await pcfSettings();
     const by = req.user?.name || null;
     const client = await getClient();
@@ -7431,8 +7429,8 @@ app.put('/api/pcf/settings', requireRole(reportRoles), async (req, res) => {
         `INSERT INTO pcf_settings (id, custodian, fund_amount, opening_balance, opening_date, updated_by, updated_at)
          VALUES (1,$1,$2,$3,$4,$5,NOW())
          ON CONFLICT (id) DO UPDATE SET custodian=$1, fund_amount=$2, opening_balance=$3, opening_date=$4, updated_by=$5, updated_at=NOW()`,
-        [next.custodian, next.fund_amount, next.opening_balance, next.opening_date, by]);
-      const before = cur ? { custodian: cur.custodian, fund_amount: cur.fundAmount, opening_balance: cur.openingBalance, opening_date: cur.openingDate } : {};
+        [next.custodian, next.fund_amount, next.fund_amount, next.opening_date, by]);
+      const before = cur ? { custodian: cur.custodian, fund_amount: cur.fundAmount, opening_date: cur.openingDate } : {};
       for (const f of Object.keys(next)) {
         if (cur && String(before[f]) === String(next[f])) continue;
         await client.query(`INSERT INTO pcf_settings_log (changed_by, field, old_value, new_value) VALUES ($1,$2,$3,$4)`,
