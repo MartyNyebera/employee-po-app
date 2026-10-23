@@ -39,7 +39,13 @@ interface PcfData {
 const FIELD_LABEL: Record<string, string> = { custodian: 'Custodian', fund_amount: 'Fund amount', opening_date: 'Opening date' };
 const AMBER = '#b45309';
 
-export function PcfScreen({ api, isAdmin }: { api: Api; isAdmin: boolean }) {
+export function PcfScreen({ api, isAdmin, reloadKey = 0, onNewVoucher }: {
+  api: Api; isAdmin: boolean;
+  /** Bumped by the portal after a voucher is saved, so the cards and table refresh at once. */
+  reloadKey?: number;
+  /** Opens the Disbursement Voucher as a PCF voucher (petty cash, expense lines only). Only offered to a manage caller. */
+  onNewVoucher?: () => void;
+}) {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [search, setSearch] = useState('');
@@ -63,7 +69,7 @@ export function PcfScreen({ api, isAdmin }: { api: Api; isAdmin: boolean }) {
     catch (e: any) { toast.error(e.message || 'Failed to load the petty cash fund'); setData(null); }
     finally { setLoading(false); }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [from, to, q]);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [from, to, q, reloadKey]);
 
   const exportXlsx = async () => {
     setExporting(true);
@@ -136,6 +142,7 @@ export function PcfScreen({ api, isAdmin }: { api: Api; isAdmin: boolean }) {
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           {isAdmin && <button style={{ ...S.rowBtn, marginLeft: 0, padding: '10px 14px', fontSize: '13px' }} onClick={() => setSettingsOpen(true)}><Settings size={14} style={{ verticalAlign: 'middle', marginRight: '6px' }} />Fund settings</button>}
           {isAdmin && data?.configured && <button style={S.addBtn} onClick={() => setReplOpen(true)}><Plus size={15} style={{ marginRight: '6px' }} />Add amount</button>}
+          {isAdmin && data?.configured && onNewVoucher && <button style={S.addBtn} onClick={onNewVoucher}><Plus size={15} style={{ marginRight: '6px' }} />New PCF Voucher</button>}
           <button style={{ ...S.rowBtn, marginLeft: 0, padding: '10px 14px', fontSize: '13px', opacity: !data?.configured || exporting ? 0.5 : 1 }} disabled={!data?.configured || exporting} onClick={exportXlsx}>
             <Download size={14} style={{ verticalAlign: 'middle', marginRight: '6px' }} />{exporting ? 'Exporting…' : 'Export to Excel'}
           </button>

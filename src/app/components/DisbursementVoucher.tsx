@@ -23,7 +23,7 @@ import { AllocationTag, type Allocated } from './AllocationTag';
 import {
   type VoucherDraft, type PayableLite, type PaymentMode, type TargetKind,
   buildVoucherPayload, voucherTotals, restForLine, defaultPoAmount, totalFromLines,
-  filterPayables, suggestDescription, encodeTarget, manilaToday, payeeGroups, payeeIsListed,
+  filterPayables, suggestDescription, toCentavos, fromCentavos, encodeTarget, manilaToday, payeeGroups, payeeIsListed,
 } from '../lib/voucherMath';
 
 type Api = <T = any>(path: string, options?: RequestInit) => Promise<T>;
@@ -42,20 +42,24 @@ const peso = (n: number | string) =>
 const input = 'w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500';
 const label = 'block text-sm font-medium text-gray-700 mb-1';
 
-export function DisbursementVoucherModal({ api, projects, tradings, facilities, initialTarget, initialPoId, onClose, onSaved }: {
+export function DisbursementVoucherModal({ api, projects, tradings, facilities, initialTarget, initialPoId, initialPoIds, pettyCash, onClose, onSaved }: {
   api: Api;
   projects: VoucherTargetItem[]; tradings: VoucherTargetItem[]; facilities: VoucherTargetItem[];
   /** Opened from a project/trading/facility: its first expense line is pre-pointed at it. */
   initialTarget?: VoucherTargetRef | null;
   /** Opened from the Payable Report: that PO is pre-loaded as a PO line. */
   initialPoId?: string | null;
+  /** Opened from "Pay selected" on the Payable Report: one Pay PO line per PO, each at its remaining balance. */
+  initialPoIds?: string[] | null;
+  /** Opened from the PCF screen: payment mode is Petty cash and locked, and there is no Pay PO section (expense lines only). */
+  pettyCash?: boolean;
   onClose: () => void; onSaved: () => void;
 }) {
   const today = manilaToday();
   const nextKey = useRef(100);
   const [d, setD] = useState<VoucherDraft>(() => ({
     amount: '', expenseDate: today, description: '', payee: '', referenceNo: '',
-    paymentMode: '', checkNo: '', bank: '', checkDate: '',
+    paymentMode: pettyCash ? 'petty_cash' : '', checkNo: '', bank: '', checkDate: '',
     // One empty expense row to start, as the old form did — unless a PO is what brought us here.
     expenseLines: [{ key: 1, target: initialTarget ? encodeTarget(initialTarget.kind, initialTarget.id) : '', amount: '' }],
     poLines: [],
@@ -72,6 +76,7 @@ export function DisbursementVoucherModal({ api, projects, tradings, facilities, 
   const descTouched = useRef(false);
 
   useEffect(() => {
+    if (pettyCash) { setPayablesState('ready'); return; } // expense lines only: no PO list needed
     let off = false;
     api<{ payables: Payable[] }>('/payables?payable=1')
       .then(r => { if (!off) { setPayables(r.payables || []); setPayablesState('ready'); } })
@@ -99,26 +104,30 @@ export function DisbursementVoucherModal({ api, projects, tradings, facilities, 
 
   const byId = useMemo(() => new Map(payables.map(p => [p.id, p])), [payables]);
 
-  // Arrived from the Payable Report: add that PO once the list has loaded.
+  // Arrived from the Payable Report (Pay, or Pay selected): add those POs once the list has loaded, each at its
+  // remaining balance (editable). The payee is the supplier when they all share one, otherwise left for her to pick.
+  const seedIds = useMemo(() => (initialPoIds && initialPoIds.length ? initialPoIds : initialPoId ? [initialPoId] : []), [initialPoIds, initialPoId]);
   const seeded = useRef(false);
   useEffect(() => {
-    if (seeded.current || !initialPoId || payablesState !== 'ready') return;
+    if (seeded.current || seedIds.length === 0 || payablesState !== 'ready') return;
     seeded.current = true;
-    const p = byId.get(initialPoId);
-    if (!p) return;
+    const picked = seedIds.map(id => byId.get(id)).filter((p): p is Payable => !!p);
+    if (picked.length === 0) return;
     setD(prev => {
-      const amt = defaultPoAmount(p.balance);
-      const poLines = [{ key: nextKey.current++, purchaseOrderId: p.id, amount: amt }];
+      const poLines = picked.map(p => ({ key: nextKey.current++, purchaseOrderId: p.id, amount: defaultPoAmount(p.balance) }));
+      const total = poLines.reduce((n, l) => n + (toCentavos(l.amount) ?? 0), 0);
+      const names = [...new Set(picked.map(p => (p.supplier || '').replace(/s+/g, ' ').trim().toLowerCase()))];
+      const sharedSupplier = names.length === 1 && names[0] ? (picked[0].supplier || '') : '';
       return {
         ...prev, poLines,
-        payee: prev.payee.trim() ? prev.payee : (p.supplier || ''),
+        payee: prev.payee.trim() ? prev.payee : sharedSupplier,
         // The empty expense row is only a convenience for the expense-first case.
         expenseLines: prev.expenseLines.filter(r => r.target !== '' || r.amount.trim() !== ''),
-        amount: prev.amount || amt,
+        amount: prev.amount || (total > 0 ? fromCentavos(total) : ''),
         description: prev.description || suggestDescription(poLines, byId),
       };
     });
-  }, [payablesState, initialPoId, byId]);
+  }, [payablesState, seedIds, byId]);
 
   const t = voucherTotals(d);
 
@@ -196,7 +205,7 @@ export function DisbursementVoucherModal({ api, projects, tradings, facilities, 
       <div className="w-full max-w-3xl bg-white rounded-2xl shadow-xl max-h-[92vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
           <div>
-            <h3 className="font-bold text-gray-900">Disbursement Voucher</h3>
+            <h3 className="font-bold text-gray-900">{pettyCash ? 'New PCF Voucher' : 'Disbursement Voucher'}</h3>
             <p className="text-xs text-gray-400">The Voucher No. (EXP-…) is assigned when you save.</p>
           </div>
           <button onClick={onClose} className="p-1 rounded-md text-gray-400 hover:bg-gray-100"><X className="w-5 h-5" /></button>
@@ -219,7 +228,7 @@ export function DisbursementVoucherModal({ api, projects, tradings, facilities, 
             </div>
             <div>
               <label className={label}>Payment mode</label>
-              <select value={d.paymentMode} onChange={e => set('paymentMode', e.target.value as PaymentMode)} className={`${input} bg-white`}>
+              <select value={d.paymentMode} disabled={pettyCash} title={pettyCash ? 'A PCF voucher is always paid from petty cash' : undefined} onChange={e => set('paymentMode', e.target.value as PaymentMode)} className={`${input} bg-white ${pettyCash ? 'bg-gray-50 text-gray-500' : ''}`}>
                 <option value="">Not specified</option>
                 <option value="cash">Cash</option>
                 <option value="check">Check</option>
@@ -240,7 +249,8 @@ export function DisbursementVoucherModal({ api, projects, tradings, facilities, 
               className={`${input} resize-none`} />
           </div>
 
-          {/* ---- PAY PO ---- */}
+          {/* ---- PAY PO ---- (not on a PCF voucher) */}
+          {!pettyCash && (
           <div className="border border-gray-200 rounded-xl overflow-visible">
             <div className="flex items-center justify-between gap-3 px-3 py-2.5 bg-gray-50 border-b border-gray-200 rounded-t-xl">
               <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-700"><FileText className="w-4 h-4 text-gray-500" /> Pay PO</div>
@@ -288,6 +298,7 @@ export function DisbursementVoucherModal({ api, projects, tradings, facilities, 
               </div>
             )}
           </div>
+          )}
 
           {/* ---- EXPENSES ---- */}
           <div className="border border-gray-200 rounded-xl overflow-hidden">

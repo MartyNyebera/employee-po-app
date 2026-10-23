@@ -1094,7 +1094,9 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   // `target: null` inside the object means "open, nothing pre-selected".
   // The Disbursement Voucher form (it replaced Log Expense). `target` pre-points the first expense line
   // (opened from a project/trading/facility); `poId` pre-loads a PO line (opened from the Payable Report).
-  const [logExpense, setLogExpense] = useState<{ target: TargetRef | null; poId?: string } | null>(null);
+  const [logExpense, setLogExpense] = useState<{ target: TargetRef | null; poId?: string; poIds?: string[]; pettyCash?: boolean } | null>(null);
+  // The voucher number the Payable Report's CV No. link sent us to: the Disbursement Report opens searched to it.
+  const [voucherFocus, setVoucherFocus] = useState('');
   const [expensesFor, setExpensesFor] = useState<TargetRef | null>(null);
   const [expensesReload, setExpensesReload] = useState(0);
   // How many invoices are overdue (outstanding balance past their collection date). The server
@@ -1330,7 +1332,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
       <AccountingNav
         activeView={view} minimized={mini} prefs={navPrefs}
         badges={{ requests: pendingCount, orders: pendingOrderCount, receivables: overdueInvoiceCount }}
-        onNavigate={(v) => { setReceivablesFocus(null); setPoFocus(null); setView(v); setMobileOpen(false); }}
+        onNavigate={(v) => { setVoucherFocus(''); setReceivablesFocus(null); setPoFocus(null); setView(v); setMobileOpen(false); }}
         onToggleGroup={toggleGroup} />
       <div className="border-t border-gray-200 px-3 py-3 space-y-1">
         <div className={`flex items-center gap-3 px-3 py-2 ${mini ? 'justify-center' : ''}`}>
@@ -1372,14 +1374,16 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
           {view === 'signature' && <SignaturePad initial={signature} onSaved={setSignature} />}
 
           {view === 'expenses' && (
-            <ExpensesHistory api={aFetch} targets={expenseTargets} isAdmin reloadKey={expensesReload}
+            <ExpensesHistory key={voucherFocus || 'all'} initialSearch={voucherFocus} api={aFetch} targets={expenseTargets} isAdmin reloadKey={expensesReload}
               onNewVoucher={() => setLogExpense({ target: null })}
               onChanged={() => loadAll({ silent: true })} />
           )}
 
           {view === 'payables' && (
             <PayableReport api={aFetch} isAdmin reloadKey={expensesReload}
-              onPay={(poId) => setLogExpense({ target: null, poId })} />
+              onPay={(poId) => setLogExpense({ target: null, poId })}
+              onPaySelected={(poIds) => setLogExpense({ target: null, poIds })}
+              onOpenVoucher={(serialNo) => { setVoucherFocus(serialNo); setView('expenses'); }} />
           )}
 
           {view === 'withdrawals' && <WithdrawalTab fetchFn={aFetch} />}
@@ -1394,7 +1398,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 
           {view === 'thirteenth' && <ThirteenthMonth api={aFetch} isAdmin />}
 
-          {view === 'pcf' && <PcfScreen api={aFetch} isAdmin />}
+          {view === 'pcf' && <PcfScreen api={aFetch} isAdmin reloadKey={expensesReload} onNewVoucher={() => setLogExpense({ target: null, pettyCash: true })} />}
 
           {view === 'gl-accounts' && <GlAccountsScreen api={aFetch} />}
 
@@ -1818,7 +1822,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
       )}
       {logExpense && (
         <DisbursementVoucherModal api={aFetch} projects={projects} tradings={tradings} facilities={facilities}
-          initialTarget={logExpense.target} initialPoId={logExpense.poId ?? null}
+          initialTarget={logExpense.target} initialPoId={logExpense.poId ?? null} initialPoIds={logExpense.poIds ?? null} pettyCash={!!logExpense.pettyCash}
           onClose={() => setLogExpense(null)}
           onSaved={() => { setLogExpense(null); setExpensesReload(n => n + 1); loadAll({ silent: true }); }} />
       )}

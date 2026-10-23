@@ -47,6 +47,9 @@ const num = (v: unknown) => { const n = Number(String(v ?? '').replace(/,/g, '')
 const peso = (n: number | string) =>
   `₱${(num(n)).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+/** A PO that can be paid right now: payable at all, and with something still owed. Drives Pay and the tick boxes. */
+export const isPayableNow = (r: Pick<PayableRow, 'unpayable' | 'balance'>) => !r.unpayable && num(r.balance) > 0;
+
 const MODE_LABEL: Record<string, string> = { cash: 'Cash', check: 'Check', bank_transfer: 'Bank transfer', petty_cash: 'Petty cash' };
 
 const FILTERS = [
@@ -70,13 +73,17 @@ export function payableBadge(r: Pick<PayableRow, 'status' | 'overdue' | 'overpai
   return <span className={`${base} text-gray-700 bg-gray-100 border-gray-200`}>Unpaid</span>;
 }
 
-export function PayableReport({ api, isAdmin, onPay, reloadKey = 0 }: {
+export function PayableReport({ api, isAdmin, onPay, onPaySelected, onOpenVoucher, reloadKey = 0 }: {
   api: Api;
   /** The caller's answer to "may this person pay a supplier" — derived from the permission matrix by
    *  whoever renders the screen, never from a role name in here. The server's requireRole is the real gate. */
   isAdmin: boolean;
   /** Opens the Disbursement Voucher with this PO pre-filled. */
   onPay?: (poId: string) => void;
+  /** Opens ONE Disbursement Voucher with a Pay PO line for each of these POs. */
+  onPaySelected?: (poIds: string[]) => void;
+  /** Opens the Disbursement Report searched to this voucher number. */
+  onOpenVoucher?: (serialNo: string) => void;
   /** Bumped by the portal after a voucher is saved or voided, so this refreshes without a reload. */
   reloadKey?: number;
 }) {
@@ -88,6 +95,8 @@ export function PayableReport({ api, isAdmin, onPay, reloadKey = 0 }: {
   const [search, setSearch] = useState('');
   const [alloc, setAlloc] = useState('');
   const [open, setOpen] = useState<string | null>(null);
+  // POs ticked for "Pay selected". Pruned to what is still payable whenever the rows change.
+  const [picked, setPicked] = useState<Set<string>>(new Set());
   // Suppliers for the dropdown come from the UNFILTERED set, so choosing one doesn't empty the list.
   const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
 
@@ -114,12 +123,25 @@ export function PayableReport({ api, isAdmin, onPay, reloadKey = 0 }: {
     }).catch(() => { /* the dropdown simply stays short */ });
   }, [reloadKey]);
 
+  useEffect(() => {
+    setPicked(s => {
+      const ok = new Set(rows.filter(isPayableNow).map(r => r.id));
+      const n = new Set([...s].filter(id => ok.has(id)));
+      return n.size === s.size ? s : n;
+    });
+  }, [rows]);
+  const toggleOne = (id: string) => setPicked(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows
       .filter(r => matchesAllocation(r, alloc))
       .filter(r => !q || `${r.poNumber} ${r.supplier || ''} ${r.allocationName || ''}`.toLowerCase().includes(q));
   }, [rows, search, alloc]);
+  // Only ticked rows that are on screen go on the voucher, in screen order.
+  const selectedIds = visible.filter(r => picked.has(r.id) && isPayableNow(r)).map(r => r.id);
+  const allTicked = visible.filter(isPayableNow).length > 0 && visible.filter(isPayableNow).every(r => picked.has(r.id));
+  const toggleAll = () => setPicked(allTicked ? new Set() : new Set(visible.filter(isPayableNow).map(r => r.id)));
 
 
   return (
@@ -133,7 +155,15 @@ export function PayableReport({ api, isAdmin, onPay, reloadKey = 0 }: {
           </p>
         </div>
         {/* The orders on screen, in screen order: the status chip, supplier, allocation and search all apply. */}
-        <ExportXlsxButton api={api} path="/reports/payables/export" ids={visible.map(r => r.id)} disabled={loading} />
+        <div className="flex flex-wrap items-center gap-2">
+          {isAdmin && onPaySelected && selectedIds.length > 0 && (
+            <button onClick={() => onPaySelected(selectedIds)} data-pay-selected
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-gray-900 text-white rounded-lg hover:bg-gray-800">
+              <Coins className="w-4 h-4" /> Pay selected ({selectedIds.length})
+            </button>
+          )}
+          <ExportXlsxButton api={api} path="/reports/payables/export" ids={visible.map(r => r.id)} disabled={loading} />
+        </div>
       </div>
 
       {summary && <PayableSummary summary={summary} />}
@@ -175,7 +205,8 @@ export function PayableReport({ api, isAdmin, onPay, reloadKey = 0 }: {
       </div>
 
       {loading ? <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading…</div> : (
-        <PayableTable rows={visible} isAdmin={isAdmin} openId={open} onPay={onPay}
+        <PayableTable rows={visible} isAdmin={isAdmin} openId={open} onPay={onPay} onOpenVoucher={onOpenVoucher}
+          picked={onPaySelected ? picked : undefined} onPick={toggleOne} onPickAll={toggleAll} allPicked={allTicked}
           onToggle={id => setOpen(open === id ? null : id)}
           emptyText={rows.length > 0 ? 'Nothing matches that search.' : filter !== 'all' || supplierId || alloc ? 'No purchase orders match these filters.' : 'No purchase orders yet.'} />
       )}
@@ -206,18 +237,23 @@ export function PayableSummary({ summary }: { summary: Summary }) {
 }
 
 // The table. Pure: it renders the rows it is given, so every status can be rendered with a fixture.
-export function PayableTable({ rows, isAdmin, openId, onToggle, onPay, emptyText }: {
+export function PayableTable({ rows, isAdmin, openId, onToggle, onPay, onOpenVoucher, picked, onPick, onPickAll, allPicked, emptyText }: {
   rows: PayableRow[]; isAdmin: boolean; openId: string | null;
   onToggle: (id: string) => void; onPay?: (poId: string) => void; emptyText: string;
+  onOpenVoucher?: (serialNo: string) => void;
+  /** Tick boxes for "Pay selected": only for a manage caller, and only when the screen supports it. */
+  picked?: Set<string>; onPick?: (id: string) => void; onPickAll?: () => void; allPicked?: boolean;
 }) {
-  // The Actions column only exists for a manage caller, so every colSpan follows it.
-  const COLS = isAdmin ? 11 : 10;
+  const ticks = isAdmin && !!picked;
+  // The Actions and tick columns only exist for a manage caller, so every colSpan follows them.
+  const COLS = (isAdmin ? 11 : 10) + (ticks ? 1 : 0);
   return (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           <div className="overflow-x-scroll max-w-full">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wide">
                 <tr>
+                  {ticks && <th className="pl-3 pr-1 py-3 w-6"><input type="checkbox" checked={!!allPicked} onChange={() => onPickAll?.()} aria-label="Select all payable orders" /></th>}
                   <th className="px-3 py-3 w-8"></th>
                   <th className="px-3 py-3 text-left">PO No.</th>
                   <th className="px-3 py-3 text-left">Supplier</th>
@@ -243,6 +279,11 @@ export function PayableTable({ rows, isAdmin, openId, onToggle, onPay, emptyText
                     <Fragment key={r.id}>
                       {/* Overdue is the thing this screen must not let slide past, so the whole row carries it. */}
                       <tr className={r.overdue ? 'bg-red-50/60' : r.status === 'overpaid' ? 'bg-amber-50/50' : undefined}>
+                        {ticks && (
+                          <td className="pl-3 pr-1 py-3">
+                            {isPayableNow(r) && <input type="checkbox" checked={picked!.has(r.id)} onChange={() => onPick?.(r.id)} aria-label={`Select ${r.poNumber}`} data-pick={r.id} />}
+                          </td>
+                        )}
                         <td className="px-3 py-3 cursor-pointer text-gray-400" onClick={() => onToggle(r.id)}>
                           {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                         </td>
@@ -263,7 +304,7 @@ export function PayableTable({ rows, isAdmin, openId, onToggle, onPay, emptyText
                         <td className="px-3 py-3">{payableBadge(r)}</td>
                         {isAdmin && (
                           <td className={`px-3 py-3 text-right whitespace-nowrap sticky right-0 z-[1] shadow-[-6px_0_6px_-6px_rgba(0,0,0,0.25)] ${r.overdue ? 'bg-red-50' : r.status === 'overpaid' ? 'bg-amber-50' : 'bg-white'}`}>
-                            {!r.unpayable && onPay && (
+                            {isPayableNow(r) && onPay && (
                               <button onClick={() => onPay(r.id)} title="Pay this PO with a disbursement voucher"
                                 className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">
                                 <Coins className="w-3.5 h-3.5" /> Pay
@@ -289,7 +330,11 @@ export function PayableTable({ rows, isAdmin, openId, onToggle, onPay, emptyText
                                 <tbody>
                                   {r.payments.map(p => (
                                     <tr key={p.paymentId} className={p.voidedAt ? 'text-gray-400 line-through' : 'text-gray-800'}>
-                                      <td className="py-1 font-mono font-semibold">{p.serialNo || `#${p.voucherId}`}</td>
+                                      <td className="py-1 font-mono font-semibold">
+                                        {p.serialNo && onOpenVoucher
+                                          ? <button type="button" onClick={() => onOpenVoucher(p.serialNo!)} data-cv={p.serialNo} title="Open this voucher in the Disbursement Report" className="font-mono font-semibold underline text-blue-600 hover:text-blue-800">{p.serialNo}</button>
+                                          : (p.serialNo || `#${p.voucherId}`)}
+                                      </td>
                                       <td className="py-1">{p.paidOn}</td>
                                       <td className="py-1">{p.paymentMode ? MODE_LABEL[p.paymentMode] || p.paymentMode : '—'}{p.checkNo ? ` #${p.checkNo}` : ''}</td>
                                       <td className="py-1 text-right font-semibold">{peso(p.amount)}</td>

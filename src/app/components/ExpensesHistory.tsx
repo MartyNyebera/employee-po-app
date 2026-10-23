@@ -116,7 +116,7 @@ const prettyDate = (ymd: string) => {
     : d.toLocaleDateString('en-US', { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric' });
 };
 
-export function ExpensesHistory({ api, targets, isAdmin, onNewVoucher, reloadKey = 0, onChanged }: {
+export function ExpensesHistory({ api, targets, isAdmin, onNewVoucher, reloadKey = 0, onChanged, initialSearch = '' }: {
   api: <T = any>(path: string, options?: RequestInit) => Promise<T>;
   targets: TargetOption[];
   /** The caller's answer to "may this person manage vouchers" — derived from the permission matrix by
@@ -128,6 +128,8 @@ export function ExpensesHistory({ api, targets, isAdmin, onNewVoucher, reloadKey
   reloadKey?: number;
   /** Called after a void, so the portal can refresh the spend figures that just changed. */
   onChanged?: () => void;
+  /** The search box starts with this (e.g. a voucher number, from the Payable Report's CV No. link). */
+  initialSearch?: string;
 }) {
   const [rows, setRows] = useState<ExpenseHistoryRow[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -138,7 +140,7 @@ export function ExpensesHistory({ api, targets, isAdmin, onNewVoucher, reloadKey
   const [status, setStatus] = useState<'all' | 'active' | 'voided'>('all');
   // Free-text narrowing of the loaded page only — voucher no., description, payee, PO no., supplier.
   // The filters that change WHICH rows exist are the server's; this one just helps the eye.
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(initialSearch);
   const [detail, setDetail] = useState<ExpenseHistoryRow | null>(null);
   const [voiding, setVoiding] = useState<ExpenseHistoryRow | null>(null);
   const [reason, setReason] = useState('');
