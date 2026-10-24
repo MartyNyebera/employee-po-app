@@ -6,6 +6,9 @@
 // dimmed with a "Soon" tag and no click handler — there are no placeholder pages behind it, and
 // when a screen lands the only change is giving its item a `view`.
 //
+// The renderer (SidebarNav) is generic over the view ids, so the Administrator dashboard uses the very same
+// component with its own groups; AccountingNav below is just SidebarNav bound to the Accounting model.
+//
 // The model (NAV_TOP / NAV_GROUPS) and the component are deliberately hook-free: AccountingNav is
 // a pure function of its props, so the portal owns the state and the behaviour can be exercised
 // without a browser. Preferences (minimized, which groups are open) persist per browser in
@@ -30,18 +33,18 @@ export type AccountingView =
 // Which live count an item wears. The portal supplies the numbers; this file only places them.
 export type BadgeKey = 'requests' | 'orders' | 'receivables';
 
-export interface NavItem {
+export interface NavItem<V extends string = AccountingView> {
   id: string;
   label: string;
   icon: any;
   // Present = a real screen exists and the item is clickable. Absent = "Soon".
-  view?: AccountingView;
+  view?: V;
   // The native tooltip text, exactly as specified for the items that have one.
   hover?: string;
-  badge?: BadgeKey;
+  badge?: string;
 }
 
-export interface NavGroup { id: string; label: string; items: NavItem[] }
+export interface NavGroup<V extends string = AccountingView> { id: string; label: string; items: NavItem<V>[] }
 
 // The single item above the groups: the Overview screen, which is also the portal's landing page.
 export const NAV_TOP: NavItem = { id: 'overview', label: 'OVERVIEW SYSTEM', icon: LayoutDashboard, view: 'overview' };
@@ -108,48 +111,57 @@ export interface NavPrefs {
 export const NAV_PREFS_KEY = 'kimoel.accounting.nav.v1';
 const EMPTY_PREFS: NavPrefs = { minimized: false, groups: {} };
 
-export function loadNavPrefs(): NavPrefs {
+// Generic over the groups and the storage key, so each portal remembers its own menu.
+export function loadNavPrefsFor(key: string, groups: NavGroup<any>[]): NavPrefs {
   try {
-    const raw = localStorage.getItem(NAV_PREFS_KEY);
+    const raw = localStorage.getItem(key);
     if (!raw) return { ...EMPTY_PREFS, groups: {} };
     const p = JSON.parse(raw);
-    const groups: Record<string, boolean> = {};
-    for (const g of NAV_GROUPS) if (p && p.groups && typeof p.groups[g.id] === 'boolean') groups[g.id] = p.groups[g.id];
-    return { minimized: !!(p && p.minimized === true), groups };
+    const saved: Record<string, boolean> = {};
+    for (const g of groups) if (p && p.groups && typeof p.groups[g.id] === 'boolean') saved[g.id] = p.groups[g.id];
+    return { minimized: !!(p && p.minimized === true), groups: saved };
   } catch {
     // Storage blocked, absent, or holding something unparseable: start from defaults.
     return { ...EMPTY_PREFS, groups: {} };
   }
 }
 
-export function saveNavPrefs(prefs: NavPrefs): void {
-  try { localStorage.setItem(NAV_PREFS_KEY, JSON.stringify(prefs)); } catch { /* keep working in memory */ }
+export function saveNavPrefsTo(key: string, prefs: NavPrefs): void {
+  try { localStorage.setItem(key, JSON.stringify(prefs)); } catch { /* keep working in memory */ }
 }
 
-export function groupForView(view: AccountingView): string | null {
-  for (const g of NAV_GROUPS) if (g.items.some(i => i.view === view)) return g.id;
+export function groupForViewIn<V extends string>(groups: NavGroup<V>[], view: V): string | null {
+  for (const g of groups) if (g.items.some(i => i.view === view)) return g.id;
   return null;
 }
 
-export function isGroupOpen(prefs: NavPrefs, groupId: string, activeView: AccountingView): boolean {
+export function isGroupOpenIn<V extends string>(groups: NavGroup<V>[], prefs: NavPrefs, groupId: string, activeView: V): boolean {
   const saved = prefs.groups[groupId];
-  return typeof saved === 'boolean' ? saved : groupForView(activeView) === groupId;
+  return typeof saved === 'boolean' ? saved : groupForViewIn(groups, activeView) === groupId;
 }
 
 // State transitions, kept pure so the portal only has to hold the result and the behaviour can be
 // tested without a browser.
-export function toggleGroup(prefs: NavPrefs, groupId: string, activeView: AccountingView): NavPrefs {
-  return { ...prefs, groups: { ...prefs.groups, [groupId]: !isGroupOpen(prefs, groupId, activeView) } };
+export function toggleGroupIn<V extends string>(groups: NavGroup<V>[], prefs: NavPrefs, groupId: string, activeView: V): NavPrefs {
+  return { ...prefs, groups: { ...prefs.groups, [groupId]: !isGroupOpenIn(groups, prefs, groupId, activeView) } };
 }
 
 // Landing in a screen opens the group that holds it, so the active screen is never hidden inside a
 // collapsed one. Returns the SAME object when nothing changes, so a state setter that receives it
 // does not re-render.
-export function revealGroupFor(prefs: NavPrefs, view: AccountingView): NavPrefs {
-  const gid = groupForView(view);
+export function revealGroupForIn<V extends string>(groups: NavGroup<V>[], prefs: NavPrefs, view: V): NavPrefs {
+  const gid = groupForViewIn(groups, view);
   if (!gid || prefs.groups[gid] === true) return prefs;
   return { ...prefs, groups: { ...prefs.groups, [gid]: true } };
 }
+
+// The Accounting portal's bindings of the above (names and behaviour unchanged).
+export const loadNavPrefs = (): NavPrefs => loadNavPrefsFor(NAV_PREFS_KEY, NAV_GROUPS);
+export const saveNavPrefs = (prefs: NavPrefs): void => saveNavPrefsTo(NAV_PREFS_KEY, prefs);
+export const groupForView = (view: AccountingView): string | null => groupForViewIn(NAV_GROUPS, view);
+export const isGroupOpen = (prefs: NavPrefs, groupId: string, activeView: AccountingView): boolean => isGroupOpenIn(NAV_GROUPS, prefs, groupId, activeView);
+export const toggleGroup = (prefs: NavPrefs, groupId: string, activeView: AccountingView): NavPrefs => toggleGroupIn(NAV_GROUPS, prefs, groupId, activeView);
+export const revealGroupFor = (prefs: NavPrefs, view: AccountingView): NavPrefs => revealGroupForIn(NAV_GROUPS, prefs, view);
 
 export function setMinimized(prefs: NavPrefs, minimized: boolean): NavPrefs {
   return prefs.minimized === minimized ? prefs : { ...prefs, minimized };
@@ -157,7 +169,7 @@ export function setMinimized(prefs: NavPrefs, minimized: boolean): NavPrefs {
 
 // The native tooltip. Expanded, only items with specified hover text (and the dimmed ones) get
 // one; minimized, the label is not visible so the name has to be in the tooltip.
-export function itemTitle(it: NavItem, minimized: boolean): string | undefined {
+export function itemTitle(it: NavItem<any>, minimized: boolean): string | undefined {
   const soon = !it.view;
   if (minimized) return [it.label, it.hover, soon ? 'Soon' : null].filter(Boolean).join(' — ');
   if (it.hover) return it.hover;
@@ -166,23 +178,31 @@ export function itemTitle(it: NavItem, minimized: boolean): string | undefined {
 
 // ---------------------------------------------------------------- component
 
-export interface AccountingNavProps {
-  activeView: AccountingView;
+export interface SidebarNavProps<V extends string> {
+  /** Items above the groups (Accounting has one, the Administrator has two). */
+  tops: NavItem<V>[];
+  groups: NavGroup<V>[];
+  ariaLabel: string;
+  activeView: V;
   minimized: boolean;
   prefs: NavPrefs;
-  badges: Partial<Record<BadgeKey, number>>;
-  onNavigate: (view: AccountingView) => void;
+  /** Live counts by badge key; an item wears the count named by its `badge`. */
+  badges: Partial<Record<string, number>>;
+  onNavigate: (view: V) => void;
   onToggleGroup: (groupId: string) => void;
 }
 
-export function AccountingNav({ activeView, minimized, prefs, badges, onNavigate, onToggleGroup }: AccountingNavProps) {
-  const countOf = (it: NavItem) => (it.badge ? (badges[it.badge] ?? 0) : 0);
+// crm-nav-item / crm-nav-group are inert in the Accounting portal. In the Administrator dashboard a blanket
+// `.admin-portal button` rule pins every button to 14px/500 with !important, and these two classes (see
+// professional-design-complete.css) put the menu's own 13px / 11px sizes back, so both portals look alike.
+export function SidebarNav<V extends string>({ tops, groups, ariaLabel, activeView, minimized, prefs, badges, onNavigate, onToggleGroup }: SidebarNavProps<V>) {
+  const countOf = (it: NavItem<V>) => (it.badge ? (badges[it.badge] ?? 0) : 0);
 
-  const renderItem = (it: NavItem, nested: boolean): ReactNode => {
+  const renderItem = (it: NavItem<V>, nested: boolean): ReactNode => {
     const Icon = it.icon;
     const title = itemTitle(it, minimized);
     const pad = minimized ? 'justify-center px-3 py-2.5' : nested ? 'pl-4 pr-3 py-2' : 'px-3 py-2.5';
-    const base = `relative w-full flex items-center gap-3 rounded-lg text-[13px] font-medium transition-colors ${pad}`;
+    const base = `crm-nav-item relative w-full flex items-center gap-3 rounded-lg text-[13px] font-medium transition-colors ${pad}`;
 
     // Not built yet: a plain div. No handler, not focusable, not a button — there is nothing to click.
     if (!it.view) {
@@ -218,9 +238,9 @@ export function AccountingNav({ activeView, minimized, prefs, badges, onNavigate
   // group would otherwise make its screens unreachable from the strip. Thin rules separate groups.
   if (minimized) {
     return (
-      <nav aria-label="Accounting" data-minimized="true" className="flex-1 overflow-y-auto py-4 px-3 space-y-0.5">
-        {renderItem(NAV_TOP, false)}
-        {NAV_GROUPS.map(g => (
+      <nav aria-label={ariaLabel} data-minimized="true" className="flex-1 overflow-y-auto py-4 px-3 space-y-0.5">
+        {tops.map(t => renderItem(t, false))}
+        {groups.map(g => (
           <div key={g.id} data-group={g.id}>
             <div className="my-2 border-t border-gray-200" />
             {g.items.map(it => renderItem(it, false))}
@@ -231,16 +251,16 @@ export function AccountingNav({ activeView, minimized, prefs, badges, onNavigate
   }
 
   return (
-    <nav aria-label="Accounting" data-minimized="false" className="flex-1 overflow-y-auto py-4 px-3 space-y-0.5">
-      {renderItem(NAV_TOP, false)}
-      {NAV_GROUPS.map(g => {
-        const open = isGroupOpen(prefs, g.id, activeView);
+    <nav aria-label={ariaLabel} data-minimized="false" className="flex-1 overflow-y-auto py-4 px-3 space-y-0.5">
+      {tops.map(t => renderItem(t, false))}
+      {groups.map(g => {
+        const open = isGroupOpenIn(groups, prefs, g.id, activeView);
         // A collapsed group still has to show that something inside it wants attention.
         const hidden = g.items.reduce((n, it) => n + countOf(it), 0);
         return (
           <div key={g.id} data-group={g.id}>
             <button type="button" data-group-toggle={g.id} aria-expanded={open} onClick={() => onToggleGroup(g.id)}
-              className="w-full flex items-center gap-2 px-3 pt-4 pb-1.5 text-[11px] font-semibold tracking-wider text-gray-400 hover:text-gray-600 transition-colors">
+              className="crm-nav-group w-full flex items-center gap-2 px-3 pt-4 pb-1.5 text-[11px] font-semibold tracking-wider text-gray-400 hover:text-gray-600 transition-colors">
               {open ? <ChevronDown className="w-3.5 h-3.5 flex-shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 flex-shrink-0" />}
               <span className="flex-1 min-w-0 truncate text-left">{g.label}</span>
               {!open && <NavBadge count={hidden} />}
@@ -251,4 +271,17 @@ export function AccountingNav({ activeView, minimized, prefs, badges, onNavigate
       })}
     </nav>
   );
+}
+
+export interface AccountingNavProps {
+  activeView: AccountingView;
+  minimized: boolean;
+  prefs: NavPrefs;
+  badges: Partial<Record<BadgeKey, number>>;
+  onNavigate: (view: AccountingView) => void;
+  onToggleGroup: (groupId: string) => void;
+}
+
+export function AccountingNav(props: AccountingNavProps) {
+  return <SidebarNav<AccountingView> tops={[NAV_TOP]} groups={NAV_GROUPS} ariaLabel="Accounting" {...props} />;
 }

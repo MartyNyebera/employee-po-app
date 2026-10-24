@@ -3,7 +3,7 @@ import { getStoredAuth, fetchApi } from '../api/client';
 import { useAutoLogout } from '../hooks/useAutoLogout';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { Button } from './ui/button';
-import { LogOut, Home, FileText, Receipt, Menu, X, Check, XCircle, Clock, ShoppingCart, Package, User, UserCheck, MessageSquare, Users, Factory, UserCog, Briefcase, ClipboardCheck, PackageMinus, ChevronRight, ChevronDown, Warehouse, Activity, Calculator, Truck, PenTool, PanelLeftClose, PanelLeftOpen, IdCard, ScanLine, CalendarCheck, SlidersHorizontal, CalendarDays, ReceiptText, Coins } from 'lucide-react';
+import { LogOut, Home, FileText, Receipt, Menu, X, Check, XCircle, Clock, ShoppingCart, Package, User, UserCheck, MessageSquare, Users, Factory, UserCog, Briefcase, ClipboardCheck, PackageMinus, Warehouse, Calculator, Truck, PenTool, PanelLeftClose, PanelLeftOpen, IdCard, ScanLine, CalendarCheck, SlidersHorizontal, CalendarDays, ReceiptText, Coins, LayoutDashboard, HandCoins, CreditCard, FileOutput, Wallet, Gift, BookOpen } from 'lucide-react';
 import { SuppliersList } from './crm/SuppliersList';
 import { CustomersList } from './crm/CustomersList';
 import { DeliveryReceipts } from './crm/DeliveryReceipts';
@@ -29,7 +29,16 @@ import { PageErrorFallback } from './PageErrorFallback';
 import { AssetDetails } from './AssetDetails';
 import { PurchaseOrdersList } from './PurchaseOrdersList';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
-import { NavBadge } from './NavBadge';
+import {
+  SidebarNav, loadNavPrefsFor, saveNavPrefsTo, toggleGroupIn, revealGroupForIn, setMinimized, type NavItem, type NavGroup, type NavPrefs,
+} from './AccountingSidebarNav';
+import { AccountingOverview, type OverviewLink } from './AccountingOverview';
+import { CollectionsReport } from './CollectionsReport';
+import { PurchasesReport } from './PurchasesReport';
+import { PayableReport } from './PayableReport';
+import { GlAccountsScreen } from './GlAccountsScreen';
+import { ThirteenthMonth } from './crm/ThirteenthMonth';
+import { AdminDisbursement, AdminPcf } from './AdminAccountingScreens';
 import { AttentionCard } from './AttentionCard';
 
 // Heavy pages (charts, maps, and large data tables) are code-split and loaded only
@@ -49,66 +58,70 @@ interface AdminDashboardProps {
   onLogout: () => void;
 }
 
-type View = 'home' | 'orders' | 'transactions' | 'material-requests' | 'employee-accounts' | 'purchasing-accounts' | 'warehouse-accounts' | 'accounting-accounts' | 'sales-accounts' | 'logistics-accounts' | 'projects' | 'purchase-requests' | 'withdrawal-requests' | 'purchase-orders' | 'discrepancies' | 'inventory' | 'miscellaneous' | 'request-form' | 'suppliers' | 'customers' | 'delivery-receipts' | 'billing-invoices' | 'receivables' | 'inquiries' | 'staff' | 'signature' | 'roster' | 'stations' | 'timesheet' | 'payroll-settings' | 'holidays' | 'payroll';
+type View = 'home' | 'orders' | 'transactions' | 'material-requests' | 'employee-accounts' | 'purchasing-accounts' | 'warehouse-accounts' | 'accounting-accounts' | 'sales-accounts' | 'logistics-accounts' | 'projects' | 'purchase-requests' | 'withdrawal-requests' | 'purchase-orders' | 'discrepancies' | 'inventory' | 'miscellaneous' | 'request-form' | 'suppliers' | 'customers' | 'delivery-receipts' | 'billing-invoices' | 'receivables' | 'inquiries' | 'staff' | 'signature' | 'roster' | 'stations' | 'timesheet' | 'payroll-settings' | 'holidays' | 'payroll'
+  // Accounting screens, mounted here with the admin fetcher (view id = permissions.ts module id).
+  | 'overview' | 'collections' | 'purchases-report' | 'payables' | 'expenses' | 'pcf' | 'gl-accounts' | 'thirteenth';
 
-// Sidebar entries, in display order. An entry is either a leaf (navigates to a view) or a
-// group (a collapsible dropdown holding leaves). Visibility + write access come from MODULE_ACCESS.
-type NavLeaf = { view: View; label: string; icon: any; module: string };
-type NavGroup = { group: string; label: string; icon: any; children: NavLeaf[] };
-type NavEntry = NavLeaf | NavGroup;
-const isGroup = (e: NavEntry): e is NavGroup => 'children' in e;
+// Sidebar model: the same grouped design as the Accounting portal (components/AccountingSidebarNav -> SidebarNav).
+// An item's `module` is its id in permissions.ts (visibility + write access); every view id equals its module id,
+// which is what the renderContent guard below relies on. A group with no visible item is dropped (no empty heading).
+type AdminItem = NavItem<View> & { module: string };
+type AdminGroup = Omit<NavGroup<View>, 'items'> & { items: AdminItem[] };
 
-// Attention badge for a sidebar item. Two shapes:
-//   expanded rail → a red count pill pushed to the row's end (ml-auto);
-//   collapsed rail → a small corner dot on the icon-only button (the button is `relative`).
-// Renders nothing at 0. Class is `crm-nav-badge` — deliberately NOT containing the substrings
-// primary/secondary/outline, which professional-design-complete.css matches on and would
-// hijack (the same trap that once broke the nav pill). It's a <span>, so the blanket
-// `.admin-portal button` rule never touches it.
-// NavBadge now lives in components/NavBadge.tsx — one bubble style system-wide (#16).
-
-// Ordered by importance/workflow: Dashboard → operational flows (Orders, Requests) →
-// reference/master data → administrative account management last.
-const NAV_ENTRIES: NavEntry[] = [
-  { view: 'home', label: 'Dashboard', icon: Home, module: 'home' },
-  { group: 'orders', label: 'Orders', icon: FileText, children: [
-    { view: 'orders', label: 'Sales Orders', icon: FileText, module: 'orders' },
-    { view: 'purchase-orders', label: 'Purchase Orders', icon: Package, module: 'purchase-orders' },
-    { view: 'discrepancies', label: 'Delivery Discrepancies', icon: PackageMinus, module: 'discrepancies' },
-  ] },
-  { group: 'requests', label: 'Requests', icon: ClipboardCheck, children: [
-    { view: 'purchase-requests', label: 'Purchase Requests', icon: ClipboardCheck, module: 'purchase-requests' },
-    { view: 'withdrawal-requests', label: 'Withdrawal Requests', icon: PackageMinus, module: 'withdrawal-requests' },
-  ] },
-  { group: 'monitoring', label: 'Monitoring', icon: Activity, children: [
-    { view: 'customers', label: 'Clients', icon: Users, module: 'customers' },
-    { view: 'delivery-receipts', label: 'Delivery Receipts', icon: Truck, module: 'delivery-receipts' },
-    { view: 'billing-invoices', label: 'Billing Invoices', icon: ReceiptText, module: 'billing-invoices' },
-    { view: 'receivables', label: 'Receivables', icon: Coins, module: 'receivables' },
-    { view: 'suppliers', label: 'Suppliers', icon: Factory, module: 'suppliers' },
-    { view: 'projects', label: 'Projects', icon: Briefcase, module: 'projects' },
-    { view: 'inquiries', label: 'Quotation', icon: MessageSquare, module: 'inquiries' },
-  ] },
-  { view: 'inventory', label: 'Inventory Management', icon: Package, module: 'inventory' },
-  { view: 'roster', label: 'Roster', icon: IdCard, module: 'roster' },
-  { view: 'stations', label: 'Time Stations', icon: ScanLine, module: 'stations' },
-  { view: 'timesheet', label: 'Attendance Sheet', icon: CalendarCheck, module: 'timesheet' },
-  { view: 'payroll', label: 'Payroll', icon: Calculator, module: 'payroll' },
-  { view: 'holidays', label: 'Holidays', icon: CalendarDays, module: 'holidays' },
-  { view: 'payroll-settings', label: 'Payroll Settings', icon: SlidersHorizontal, module: 'payroll-settings' },
-  { group: 'accounts', label: 'Accounts', icon: UserCog, children: [
-    // Labels only — `view` and `module` ids are the contract with permissions.ts and the
-    // canView guard below, which passes currentView where a module key is expected.
-    { view: 'employee-accounts', label: 'Production Accounts', icon: Users, module: 'employee-accounts' },
-    { view: 'purchasing-accounts', label: 'Purchasing Accounts', icon: UserCog, module: 'purchasing-accounts' },
-    { view: 'warehouse-accounts', label: 'Warehouse Accounts', icon: Warehouse, module: 'warehouse-accounts' },
-    { view: 'accounting-accounts', label: 'Accounting Accounts', icon: Calculator, module: 'accounting-accounts' },
-    { view: 'sales-accounts', label: 'Sales Accounts', icon: ShoppingCart, module: 'sales-accounts' },
-    { view: 'logistics-accounts', label: 'Logistics Accounts', icon: Truck, module: 'logistics-accounts' },
-    { view: 'staff', label: 'Administrator Accounts', icon: UserCog, module: 'staff' },
-  ] },
-  { view: 'signature', label: 'My Signature', icon: PenTool, module: 'signature' },
+const ADMIN_TOPS: AdminItem[] = [
+  { id: 'dashboard', label: 'DASHBOARD', icon: Home, view: 'home', module: 'home' },
+  { id: 'overview', label: 'OVERVIEW SYSTEM', icon: LayoutDashboard, view: 'overview', module: 'overview' },
 ];
+
+const ADMIN_GROUPS: AdminGroup[] = [
+  { id: 'procurements', label: 'PROCUREMENTS', items: [
+    { id: 'pr-request', label: 'PR REQUEST', icon: ClipboardCheck, view: 'purchase-requests', module: 'purchase-requests', badge: 'pr' },
+    { id: 'po-request', label: 'PO REQUEST', icon: Package, view: 'purchase-orders', module: 'purchase-orders', badge: 'po' },
+    { id: 'suppliers', label: 'SUPPLIERS', icon: Factory, view: 'suppliers', module: 'suppliers' },
+    { id: 'inventory', label: 'INVENTORY', icon: Package, view: 'inventory', module: 'inventory', hover: 'Inventory management' },
+    { id: 'withdrawals', label: 'WITHDRAWALS REQUEST', icon: PackageMinus, view: 'withdrawal-requests', module: 'withdrawal-requests', badge: 'wd' },
+    { id: 'discrepancies', label: 'DELIVERY DISCREPANCIES', icon: PackageMinus, view: 'discrepancies', module: 'discrepancies' },
+    // Signs the PR/PO prints, so it lives with them (as in the Accounting portal).
+    { id: 'signature', label: 'MY SIGNATURE', icon: PenTool, view: 'signature', module: 'signature' },
+  ] },
+  { id: 'sales', label: 'SALES DISTRIBUTIONS', items: [
+    { id: 'clients', label: 'CLIENTS', icon: Users, view: 'customers', module: 'customers' },
+    { id: 'quotation', label: 'QUOTATION', icon: MessageSquare, view: 'inquiries', module: 'inquiries' },
+    { id: 'sales-orders', label: 'SALES ORDERS', icon: FileText, view: 'orders', module: 'orders' },
+    { id: 'contract-services', label: 'CONTRACT SERVICES', icon: Briefcase, view: 'projects', module: 'projects' },
+    { id: 'delivery-receipt', label: 'DELIVERY RECEIPT', icon: Truck, view: 'delivery-receipts', module: 'delivery-receipts' },
+    { id: 'customers-billing', label: "CUSTOMER'S BILLING", icon: ReceiptText, view: 'billing-invoices', module: 'billing-invoices' },
+  ] },
+  { id: 'hr', label: 'HUMAN RESOURCES', items: [
+    { id: 'attendance-sheet', label: 'ATTENDANCE SHEET', icon: CalendarCheck, view: 'timesheet', module: 'timesheet' },
+    { id: 'payroll-payout', label: 'PAYROLL PAY-OUT', icon: Calculator, view: 'payroll', module: 'payroll' },
+    { id: 'thirteenth-month', label: '13TH MONTH PAY', icon: Gift, view: 'thirteenth', module: 'thirteenth', hover: 'Basic earned ÷ 12, post to payroll' },
+    { id: 'employee-profiles', label: 'EMPLOYEE PROFILES', icon: IdCard, view: 'roster', module: 'roster' },
+    { id: 'holidays', label: 'HOLIDAYS', icon: CalendarDays, view: 'holidays', module: 'holidays' },
+  ] },
+  { id: 'accounting', label: 'ACCOUNTING', items: [
+    { id: 'collections-report', label: 'COLLECTIONS REPORT', icon: HandCoins, view: 'collections', module: 'collections', hover: 'Payments received on billing invoices' },
+    { id: 'receivable-report', label: 'RECEIVABLE REPORT', icon: Coins, view: 'receivables', module: 'receivables', hover: 'Billing invoice − collection', badge: 'rec' },
+    { id: 'purchases', label: 'PURCHASES', icon: ShoppingCart, view: 'purchases-report', module: 'purchases-report', hover: 'Summary of PO requests' },
+    { id: 'payable-report', label: 'PAYABLE REPORT', icon: CreditCard, view: 'payables', module: 'payables', hover: 'Purchases − payments' },
+    { id: 'disbursement-report', label: 'DISBURSEMENT REPORT', icon: FileOutput, view: 'expenses', module: 'expenses', hover: 'Manual voucher' },
+    { id: 'pcf', label: 'PCF', icon: Wallet, view: 'pcf', module: 'pcf', hover: 'Petty cash fund' },
+    { id: 'gl-accounts', label: 'GL ACCOUNTS', icon: BookOpen, view: 'gl-accounts', module: 'gl-accounts', hover: 'Accounts an expense line can be coded to' },
+  ] },
+  { id: 'administration', label: 'ADMINISTRATION', items: [
+    { id: 'production-accounts', label: 'PRODUCTION ACCTS', icon: Users, view: 'employee-accounts', module: 'employee-accounts', hover: 'Production portal accounts' },
+    { id: 'purchasing-accounts', label: 'PURCHASING ACCTS', icon: UserCog, view: 'purchasing-accounts', module: 'purchasing-accounts', hover: 'Purchasing portal accounts' },
+    { id: 'warehouse-accounts', label: 'WAREHOUSE ACCTS', icon: Warehouse, view: 'warehouse-accounts', module: 'warehouse-accounts', hover: 'Warehouse portal accounts' },
+    { id: 'accounting-accounts', label: 'ACCOUNTING ACCTS', icon: Calculator, view: 'accounting-accounts', module: 'accounting-accounts', hover: 'Accounting portal accounts' },
+    { id: 'sales-accounts', label: 'SALES ACCTS', icon: ShoppingCart, view: 'sales-accounts', module: 'sales-accounts', hover: 'Sales portal accounts' },
+    { id: 'logistics-accounts', label: 'LOGISTICS ACCTS', icon: Truck, view: 'logistics-accounts', module: 'logistics-accounts', hover: 'Logistics portal accounts' },
+    { id: 'administrator-accounts', label: 'ADMIN ACCTS', icon: UserCog, view: 'staff', module: 'staff', hover: 'Administrator accounts' },
+    { id: 'time-stations', label: 'TIME STATIONS', icon: ScanLine, view: 'stations', module: 'stations' },
+    { id: 'payroll-settings', label: 'PAYROLL SETTINGS', icon: SlidersHorizontal, view: 'payroll-settings', module: 'payroll-settings' },
+  ] },
+];
+
+const ADMIN_NAV_KEY = 'kimoel.admin.nav.v1';
 
 export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogout }: AdminDashboardProps) {
   // Enable auto-logout when app is closed
@@ -118,27 +131,26 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
   // Effective role drives module visibility. Super admin = owner; default to admin for safety.
   const role: Role = isSuperAdmin ? 'owner' : (roleProp || 'admin');
 
-  // Build the visible sidebar tree: leaves the role can see, and groups keeping only their
-  // visible children. A group with no visible children is dropped entirely (no empty header).
-  const visibleNav: NavEntry[] = NAV_ENTRIES
-    .map(entry => isGroup(entry)
-      ? { ...entry, children: entry.children.filter(c => canView(role, c.module)) }
-      : entry)
-    .filter(entry => isGroup(entry) ? entry.children.length > 0 : canView(role, entry.module));
+  // Build the visible sidebar tree: items the role can see, and groups keeping only their visible items.
+  const visibleTops = ADMIN_TOPS.filter(i => canView(role, i.module));
+  const visibleGroups = ADMIN_GROUPS
+    .map(g => ({ ...g, items: g.items.filter(i => canView(role, i.module)) }))
+    .filter(g => g.items.length > 0);
 
-  // First view the role is allowed to see, scanning leaves and group children in order.
-  const firstAllowedView: View = (() => {
-    for (const entry of visibleNav) {
-      if (isGroup(entry)) { if (entry.children[0]) return entry.children[0].view; }
-      else return entry.view;
-    }
-    return 'home';
-  })();
+  // First view the role is allowed to see, scanning the top items then each group in order.
+  const firstAllowedView: View = visibleTops[0]?.view ?? visibleGroups[0]?.items[0]?.view ?? 'home';
 
   const [currentView, setCurrentView] = useState<View>(firstAllowedView);
-  // Which dropdown groups are manually expanded/collapsed. Undefined = follow the default
-  // (open the group that owns the active view). Keyed by group id.
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  // Menu preferences (minimized strip + which groups are open), remembered per browser. Loading and saving are
+  // wrapped, so the menu works with storage unavailable -- it just forgets between visits.
+  const [navPrefs, setNavPrefs] = useState<NavPrefs>(() => loadNavPrefsFor(ADMIN_NAV_KEY, ADMIN_GROUPS));
+  useEffect(() => { saveNavPrefsTo(ADMIN_NAV_KEY, navPrefs); }, [navPrefs]);
+  // Landing on a screen (a click, the attention card, a link from the Overview) opens the group that holds it.
+  useEffect(() => { setNavPrefs(p => revealGroupForIn(ADMIN_GROUPS, p, currentView)); }, [currentView]);
+  // Where Overview / Payable Report links land: a receivable, a PO number, a voucher number.
+  const [receivablesFocus, setReceivablesFocus] = useState<number | null>(null);
+  const [payableSearch, setPayableSearch] = useState('');
+  const [voucherFocus, setVoucherFocus] = useState('');
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
 
   // Listen for navigation events from child components
@@ -151,7 +163,6 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
     window.addEventListener('navigateToView', handleNavigation as EventListener);
     return () => window.removeEventListener('navigateToView', handleNavigation as EventListener);
   }, []);
-  const [menuOpen, setMenuOpen] = useState(true);
   // Separate from menuOpen: that is the desktop collapse (w-64 ↔ w-20), this is the mobile
   // drawer being shown at all. The admin had no mobile drawer before.
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -186,23 +197,29 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
   useEffect(() => { loadCounts(); }, [currentView]);
   useLiveRefresh(loadCounts);
 
-  // The badge count for a given nav view (0 = no badge).
-  const badgeForView = (view: View): number => {
-    if (view === 'purchase-requests') return counts.purchaseRequests;
-    if (view === 'purchase-orders') return counts.purchaseOrders;
-    if (view === 'withdrawal-requests') return counts.withdrawals;
-    return 0;
-  };
-  // A collapsed group hides its children, so its header carries the sum of their badges.
-  const badgeForGroup = (group: string): number => {
-    if (group === 'orders') return counts.purchaseOrders;
-    if (group === 'requests') return counts.purchaseRequests + counts.withdrawals;
-    return 0;
-  };
+  // The live counts the nav items wear, by the `badge` key on each item. A collapsed group's heading shows the sum
+  // of its items' badges (done inside SidebarNav).
+  const navBadges = { pr: counts.purchaseRequests, po: counts.purchaseOrders, wd: counts.withdrawals, rec: counts.overdueInvoices };
 
   // [removed] Admin Requests tab, its render branch, and the effect that fetched
   // adminRequests — the data was never passed to the component (it fetched its own), so the
   // request was pure duplication. AdminRequests-Professional.tsx is now unreferenced.
+
+  // Where a click on the Overview (alert, card, calendar item) goes. Contract Trading and Facilities have no
+  // Administrator screen yet, so those links say so instead of doing nothing.
+  const goTo = (view: View) => { setCurrentView(view); setMobileOpen(false); };
+  const openFromOverview = (l: OverviewLink) => {
+    setReceivablesFocus(null); setPayableSearch(''); setVoucherFocus('');
+    const map: Record<string, View> = {
+      receivables: 'receivables', payables: 'payables', collections: 'collections', expenses: 'expenses', pcf: 'pcf',
+      orders: 'purchase-orders', projects: 'projects', payroll: 'payroll',
+    };
+    const target = map[l.view];
+    if (!target) { toast.info('Contract Trading and Facilities are in the Accounting portal.'); return; }
+    if (l.view === 'receivables' && l.id !== undefined) setReceivablesFocus(Number(l.id));
+    if (l.view === 'payables' && l.search) setPayableSearch(l.search);
+    goTo(target);
+  };
 
   const renderContent = () => {
     // Role guard: never render a module this role can't see (e.g. via stale state).
@@ -210,13 +227,25 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
       return <div style={{ padding: '40px', color: '#5a5a5a' }}>You don't have access to this section.</div>;
     }
 
+    // Accounting screens: the same components the Accounting portal mounts, handed the admin fetcher.
+    if (currentView === 'overview') return <AccountingOverview api={fetchApi} userKey={`admin:${userEmail || userName}`} onOpen={openFromOverview} />;
+    if (currentView === 'collections') return <CollectionsReport api={fetchApi} isAdmin={canManage(role, 'collections')}
+      onOpenInvoice={(id) => { setReceivablesFocus(id); goTo('receivables'); }} />;
+    if (currentView === 'purchases-report') return <PurchasesReport api={fetchApi} isAdmin={canManage(role, 'purchases-report')} onOpenPo={() => goTo('purchase-orders')} />;
+    if (currentView === 'payables') return <PayableReport key={payableSearch || 'all'} initialSearch={payableSearch} api={fetchApi}
+      onOpenVoucher={(serialNo) => { setVoucherFocus(serialNo); goTo('expenses'); }} />;
+    if (currentView === 'expenses') return <AdminDisbursement key={voucherFocus || 'all'} initialSearch={voucherFocus} api={fetchApi} isAdmin={canManage(role, 'expenses')} />;
+    if (currentView === 'pcf') return <AdminPcf api={fetchApi} isAdmin={canManage(role, 'pcf')} />;
+    if (currentView === 'gl-accounts') return <GlAccountsScreen api={fetchApi} />;
+    if (currentView === 'thirteenth') return <ThirteenthMonth api={fetchApi} isAdmin={canManage(role, 'thirteenth')} />;
+
     // New CRM / pipeline / planning modules
     if (currentView === 'suppliers') return <SuppliersList isAdmin={canManage(role, 'suppliers')} />;
     if (currentView === 'customers') return <CustomersList isAdmin={canManage(role, 'customers')} />;
     // fetchApi (admin token) is the default this screen expects; the Accounting portal passes its own.
     if (currentView === 'delivery-receipts') return <DeliveryReceipts api={fetchApi} isAdmin={canManage(role, 'delivery-receipts')} />;
     if (currentView === 'billing-invoices') return <BillingInvoices api={fetchApi} isAdmin={canManage(role, 'billing-invoices')} />;
-    if (currentView === 'receivables') return <Receivables api={fetchApi} isAdmin={canManage(role, 'receivables')} />;
+    if (currentView === 'receivables') return <Receivables key={receivablesFocus ?? 'all'} api={fetchApi} isAdmin={canManage(role, 'receivables')} focusId={receivablesFocus} />;
     if (currentView === 'inquiries') return <InquiriesList isAdmin={canManage(role, 'inquiries')} />;
     if (currentView === 'staff') return <StaffAccountsList />;
     if (currentView === 'signature') return <AdminSignature />;
@@ -319,40 +348,11 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
     return <div>View not found</div>;
   };
 
-  // Renders a single navigable leaf button. `nested` = it lives inside an expanded group,
-  // so its label indents slightly to read as a child of the group header.
-  // The portals' nav item: a SOLID accent pill when active, muted grey at rest. bg-blue-600 is
-  // the brand gold (--color-blue-600: #d1b01b in tailwind.css) — same class the portals use, so
-  // the two stay in step. crm-nav-btn is the escape hatch: `.admin-portal button` forces
-  // border-radius and transition with !important, which inline styles cannot beat.
-  //
-  // 🔴 NO `focus:outline-none` HERE. professional-design-complete.css has
-  // `.admin-portal button[class*="outline"]` — a SUBSTRING match on the whole class attribute,
-  // meant for a `btn-outline` class. `focus:outline-none` contains "outline", so it matched,
-  // and that rule forces `background: transparent`, a border and 10px/16px padding — which is
-  // why this pill rendered as a bordered ghost instead of solid gold. The utility is redundant
-  // anyway: `.admin-portal button` already sets `outline: none !important`.
-  const renderLeaf = (item: NavLeaf, nested: boolean) => {
-    const Icon = item.icon;
-    const active = currentView === item.view;
-    const count = badgeForView(item.view);
-    return (
-      <button
-        key={item.view}
-        onClick={() => { setCurrentView(item.view); setMobileOpen(false); }}
-        title={item.label}
-        className={`crm-nav-btn relative w-full flex items-center gap-3 rounded-lg text-sm font-medium transition-colors ${
-          nested ? 'px-3 py-2' : 'px-3 py-2.5'
-        } ${!menuOpen ? 'justify-center' : ''} ${
-          active ? 'bg-blue-600 text-white hover:bg-blue-700' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'
-        }`}
-      >
-        <Icon className="w-4 h-4 flex-shrink-0" />
-        {menuOpen && <span className="truncate">{item.label}</span>}
-        <NavBadge count={count} collapsed={!menuOpen} />
-      </button>
-    );
-  };
+  // Sidebar state. The mobile drawer is never icon-only: a 'minimized' saved on a desktop must not turn the phone
+  // menu into a column of bare icons.
+  const mini = navPrefs.minimized && !mobileOpen;
+  const menuOpen = !mini;
+  const toggleNavGroup = (groupId: string) => setNavPrefs(p => toggleGroupIn(ADMIN_GROUPS, p, groupId, currentView));
 
   return (
     <ErrorBoundary fallback={<PageErrorFallback />}>
@@ -392,7 +392,7 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
             {/* Purpose-built sidebar icons: the panel glyph shows which way it will move.
                 text-gray-500 (#5A5A5A) matches the resting nav tabs below. */}
             <button
-              onClick={() => setMenuOpen(!menuOpen)}
+              onClick={() => setNavPrefs(p => setMinimized(p, !p.minimized))}
               title={menuOpen ? 'Collapse sidebar' : 'Expand sidebar'}
               className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 transition-colors flex-shrink-0"
             >
@@ -409,57 +409,11 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
           </div>
         </div>
 
-        {/* Navigation — py-4 px-3 space-y-0.5, matching the portals exactly. */}
-        <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-0.5">
-          {visibleNav.map((entry) => {
-            // Leaf item — navigates directly to a view.
-            if (!isGroup(entry)) return renderLeaf(entry, false);
-
-            // Group — collapsible dropdown of leaves.
-            const holdsActive = entry.children.some(c => c.view === currentView);
-            const expanded = openGroups[entry.group] ?? holdsActive;
-            const GroupIcon = entry.icon;
-            const toggle = () => {
-              if (!menuOpen) { setMenuOpen(true); setOpenGroups(p => ({ ...p, [entry.group]: true })); return; }
-              setOpenGroups(p => ({ ...p, [entry.group]: !expanded }));
-            };
-            return (
-              <div key={entry.group}>
-                {/* A group header never gets the solid pill — that belongs to the one item you
-                    are actually on. Collapsed-while-holding-the-active-child just tints gold,
-                    so the pill stays unique on screen. */}
-                <button
-                  onClick={toggle}
-                  title={entry.label}
-                  className={`crm-nav-btn relative w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                    !menuOpen ? 'justify-center' : ''
-                  } ${holdsActive ? 'text-brand-gold hover:bg-gray-100' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'}`}
-                >
-                  <GroupIcon className="w-4 h-4 flex-shrink-0" />
-                  {menuOpen && (
-                    <>
-                      <span className="flex-1 text-left truncate">{entry.label}</span>
-                      {/* When the group is expanded its children show their own badges, so the
-                          header rollup is redundant — only show it while collapsed. */}
-                      <NavBadge count={expanded ? 0 : badgeForGroup(entry.group)} collapsed={false} />
-                      {expanded
-                        ? <ChevronDown className="w-4 h-4 flex-shrink-0 text-gray-400" />
-                        : <ChevronRight className="w-4 h-4 flex-shrink-0 text-gray-400" />}
-                    </>
-                  )}
-                  {/* Collapsed rail: children and label are hidden, so a corner dot on the
-                      group icon is the only place the rollup can show. */}
-                  {!menuOpen && <NavBadge count={badgeForGroup(entry.group)} collapsed />}
-                </button>
-                {menuOpen && expanded && (
-                  <div className="mt-1 space-y-1" style={{ marginLeft: '12px', paddingLeft: '12px', borderLeft: '1px solid #ececec' }}>
-                    {entry.children.map(child => renderLeaf(child, true))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </nav>
+        {/* Navigation: the grouped menu shared with the Accounting portal. */}
+        <SidebarNav<View> tops={visibleTops} groups={visibleGroups} ariaLabel="Administrator"
+          activeView={currentView} minimized={mini} prefs={navPrefs} badges={navBadges}
+          onNavigate={(v) => { goTo(v); setReceivablesFocus(null); setPayableSearch(''); setVoucherFocus(''); }}
+          onToggleGroup={toggleNavGroup} />
 
         {/* User Menu — border-t px-3 py-3 space-y-1, matching the portals exactly. */}
         <div className="border-t border-gray-200 px-3 py-3 space-y-1">

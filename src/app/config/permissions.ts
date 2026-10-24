@@ -49,6 +49,16 @@ const BASE_ACCESS: Record<string, Partial<Record<Role, Access>>> = {
   'payroll-settings':   { owner: 'manage', admin: 'manage' },
   holidays:             { owner: 'manage', admin: 'manage' },
   payroll:              { owner: 'manage', admin: 'manage' },
+  // Accounting screens mounted in the Administrator dashboard (the same components the Accounting portal uses).
+  // Owner/admin only here; the routes behind them already admit owner/admin (reportRoles / payablesRoles / thirteenthRoles).
+  overview:             { owner: 'manage', admin: 'manage' },
+  collections:          { owner: 'manage', admin: 'manage' },
+  'purchases-report':   { owner: 'manage', admin: 'manage' },
+  payables:             { owner: 'manage', admin: 'manage' },
+  expenses:             { owner: 'manage', admin: 'manage' },
+  pcf:                  { owner: 'manage', admin: 'manage' },
+  'gl-accounts':        { owner: 'manage', admin: 'manage' },
+  thirteenth:           { owner: 'manage', admin: 'manage' },
   'employee-accounts':  { owner: 'manage', admin: 'manage' },
   'purchasing-accounts':{ owner: 'manage', admin: 'manage' },
   'warehouse-accounts': { owner: 'manage', admin: 'manage' },

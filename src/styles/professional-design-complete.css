@@ -497,6 +497,25 @@ body {
   transition: background-color var(--transition-fast), color var(--transition-fast) !important;
 }
 
+/* The shared grouped sidebar (components/AccountingSidebarNav -> SidebarNav) as it appears in the
+   Administrator dashboard. The blanket `.admin-portal button` rule pins every button to 14px/500 with
+   !important, so the menu's own sizes are restored here -- 13px items and 11px group headings, exactly
+   as in the Accounting portal. Like .crm-nav-btn above, these set no background/padding/border. */
+.admin-portal button.crm-nav-item {
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  line-height: 1.5 !important;
+  border-radius: 0.5rem !important;
+  transition: background-color var(--transition-fast), color var(--transition-fast) !important;
+}
+.admin-portal button.crm-nav-group {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  line-height: 1.5 !important;
+  border-radius: 0 !important;
+  transition: color var(--transition-fast) !important;
+}
+
 /* Primary Button */
 .admin-portal .btn-primary, .admin-portal button[class*="primary"] {
   background-color: var(--color-primary) !important;
