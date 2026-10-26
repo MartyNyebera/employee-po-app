@@ -24,7 +24,7 @@ export const ALERT_TYPES = ['receivable', 'payable', 'project', 'trading', 'payd
 export const NEXT_DAYS = 14;
 
 export function registerAccountingOverview(app, d) {
-  const { query, requireRole, reportRoles, BI_SELECT, mapBillingInvoice, PAYABLE_SELECT, mapPayable, collectionsWhere, pcfData, backToWorkdayYMD } = d;
+  const { query, requireRole, reportRoles, BI_SELECT, mapBillingInvoice, PAYABLE_SELECT, mapPayable, collectionsWhere, pcfData, backToWorkdayYMD, revenueIncVat } = d;
 
   const manilaToday = async () => (await query(`SELECT to_char((NOW() AT TIME ZONE 'Asia/Manila')::date, 'YYYY-MM-DD') AS d`)).rows[0].d;
 
@@ -265,21 +265,60 @@ export function registerAccountingOverview(app, d) {
       const pcf = await pcfData({});
       const charts = await buildCharts(today, A);
 
-      // TOTAL SALES: the billing invoice's "Total Sales" -- the sum of its line amounts, as printed on the invoice
-      // (billingInvoicePrint.ts) -- over non-voided invoices by invoice date. This month = the Manila calendar month;
-      // year-to-date = January 1 through the end of this month, so it is never smaller than the month.
-      const salesC = (r) => (Array.isArray(r.items) ? r.items : []).reduce((n, it) => {
+      // TOTAL SALES: the value of the work sold -- every project's contract price and every trading deal's selling price,
+      // each resolved to its VAT-INCLUSIVE figure with the same rule the dual-basis profit view uses (revenueIncVat: an
+      // 'exclusive' price is grossed up by 12%, 'inclusive' and 'exempt' stand as entered), so it compares with invoices.
+      // A contract belongs to a period by its contract date: a project's START DATE if it has one, otherwise its created
+      // date; a trading deal's CREATED DATE (all in Manila time). Completed contracts still count in "This month" and
+      // "This year"; "All active" leaves them out (Completed status). A price of 0 / blank = not priced yet: left out of
+      // the total and counted instead.
+      // Billed = "Total Sales" (sum of line amounts, as printed) of the NON-VOIDED billing invoices on those contracts'
+      // Delivery Receipts. Not yet billed = Total Sales - Billed, floored at 0.
+      const salesC = (items) => (Array.isArray(items) ? items : []).reduce((n, it) => {
         const v = Number(String(it && it.amount != null ? it.amount : '').replace(/,/g, ''));
         return n + (Number.isFinite(v) ? Math.round(v * 100) : 0);
       }, 0);
-      const yearStart = `${today.slice(0, 4)}-01-01`;
-      const inMonth = liveInv.filter((r) => r.biDate >= first && r.biDate <= last);
-      const inYear = liveInv.filter((r) => r.biDate >= yearStart && r.biDate <= last);
+      const billedBy = new Map();
+      for (const b of (await query(
+        `SELECT dr.project_id, dr.trading_id, bi.items FROM billing_invoices bi JOIN delivery_receipts dr ON dr.id = bi.delivery_receipt_id WHERE bi.voided_at IS NULL`)).rows) {
+        const k = b.project_id ? `project:${b.project_id}` : `trading:${b.trading_id}`;
+        billedBy.set(k, (billedBy.get(k) || 0) + salesC(b.items));
+      }
+      const contracts = [
+        ...(await query(`SELECT p.id, p.name, p.status, ${revenueIncVat('p.contract_price', 'p.contract_price_vat')} AS value_inc,
+                to_char(COALESCE(p.start_date, (p.created_at AT TIME ZONE 'Asia/Manila')::date), 'YYYY-MM-DD') AS cdate,
+                CASE WHEN p.start_date IS NOT NULL THEN 'start date' ELSE 'created date' END AS cbasis FROM projects p`)).rows.map((r) => ({ kind: 'project', ...r })),
+        ...(await query(`SELECT t.id, t.name, t.status, ${revenueIncVat('t.selling_price', 't.selling_price_vat')} AS value_inc,
+                to_char((t.created_at AT TIME ZONE 'Asia/Manila')::date, 'YYYY-MM-DD') AS cdate, 'created date' AS cbasis FROM tradings t`)).rows.map((r) => ({ kind: 'trading', ...r })),
+      ];
+      const yearFirst = `${today.slice(0, 4)}-01-01`, yearLast = `${today.slice(0, 4)}-12-31`;
+      const inPeriod = {
+        month: (c) => c.cdate >= first && c.cdate <= last,
+        year: (c) => c.cdate >= yearFirst && c.cdate <= yearLast,
+        active: (c) => c.status !== 'Completed',
+      };
+      const salesPeriod = (pred) => {
+        const rows = []; const unpriced = []; let totalC = 0, billedC = 0, deals = 0, projs = 0;
+        for (const c of contracts.filter(pred)) {
+          const billed = billedBy.get(`${c.kind}:${c.id}`) || 0;
+          if (c.value_inc === null || c.value_inc === undefined) {
+            if (c.kind === 'trading') deals++; else projs++;
+            unpriced.push({ kind: c.kind, id: c.id, name: c.name, status: c.status || '', contractDate: c.cdate, billed: money(billed), link: { view: c.kind === 'trading' ? 'tradings' : 'projects', id: c.id } });
+            continue;
+          }
+          const v = cents(c.value_inc);
+          totalC += v; billedC += billed;
+          rows.push({ kind: c.kind, id: c.id, name: c.name, status: c.status || '', contractDate: c.cdate, dateBasis: c.cbasis, value: money(v), billed: money(billed), notBilled: money(Math.max(v - billed, 0)), link: { view: c.kind === 'trading' ? 'tradings' : 'projects', id: c.id } });
+        }
+        rows.sort((a, b) => cents(b.value) - cents(a.value) || a.name.localeCompare(b.name));
+        return { amount: money(totalC), billed: money(billedC), notBilled: money(Math.max(totalC - billedC, 0)), count: rows.length, unpricedDeals: deals, unpricedProjects: projs, rows, unpriced };
+      };
+      const totalSales = { default: 'month', periods: { month: salesPeriod(inPeriod.month), year: salesPeriod(inPeriod.year), active: salesPeriod(inPeriod.active) }, dateRule: 'project start date, else created date; deal created date' };
 
       res.json({
         today, month: monthOf(today),
         cards: {
-          totalSales: { amount: money(inMonth.reduce((n, r) => n + salesC(r), 0)), count: inMonth.length, ytd: money(inYear.reduce((n, r) => n + salesC(r), 0)), ytdCount: inYear.length, month: monthOf(today), from: first, to: last, view: 'billing-invoices' },
+          totalSales,
           receivables: { outstanding: money(recvOut), overdue: money(recvOverdue.reduce((n, r) => n + cents(r.amountOverdue), 0)), overdueCount: recvOverdue.length, openCount: liveInv.filter((r) => cents(r.balance) > 0).length, view: 'receivables' },
           payables: { outstanding: money(payOut), overdue: money(payOverdue.reduce((n, x) => n + cents(x.balance), 0)), overdueCount: payOverdue.length, openCount: A.payables.filter((x) => cents(x.balance) > 0).length, view: 'payables' },
           collected: { amount: money(cents(col.total)), count: col.n, from: first, to: last, view: 'collections' },

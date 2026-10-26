@@ -19,7 +19,7 @@ import { OverviewCharts, type ChartsData } from './OverviewCharts';
 
 type Api = <T = any>(path: string, options?: RequestInit) => Promise<T>;
 
-export interface OverviewLink { view: string; id?: string | number; search?: string; /** YYYY-MM: open the target filtered to that month (Customer's Billing). */ month?: string }
+export interface OverviewLink { view: string; id?: string | number; search?: string }
 export type AlertType = 'receivable' | 'payable' | 'project' | 'trading' | 'payday';
 export type Severity = 'overdue' | 'today' | 'upcoming';
 
@@ -27,13 +27,21 @@ export interface OverviewAlert {
   id: string; type: AlertType; severity: Severity; title: string; subtitle: string; date: string;
   amount: string | null; days: number; daysLeft: number; daysLate: number; link: OverviewLink;
 }
+export type SalesPeriod = 'month' | 'year' | 'active';
+export interface SalesRow { kind: 'project' | 'trading'; id: string; name: string; status: string; contractDate: string; dateBasis?: string; value?: string; billed: string; notBilled?: string; link: OverviewLink }
+export interface SalesPeriodData {
+  amount: string; billed: string; notBilled: string; count: number; unpricedDeals: number; unpricedProjects: number;
+  rows: SalesRow[]; unpriced: SalesRow[];
+}
+export interface TotalSalesData { default: SalesPeriod; periods: Record<SalesPeriod, SalesPeriodData>; dateRule: string }
+export const PERIOD_LABEL: Record<SalesPeriod, string> = { month: 'This month', year: 'This year', active: 'All active' };
 export interface NoDueItem { type: AlertType; id: string; title: string; subtitle: string; amount: string | null; link: OverviewLink }
 interface Counts { overdue: number; today: number; upcoming: number; total: number }
 
 export interface OverviewData {
   today: string; month: string;
   cards: {
-    totalSales: { amount: string; count: number; ytd: string; ytdCount: number; month: string; from: string; to: string; view: string };
+    totalSales: TotalSalesData;
     receivables: { outstanding: string; overdue: string; overdueCount: number; openCount: number; view: string };
     payables: { outstanding: string; overdue: string; overdueCount: number; openCount: number; view: string };
     collected: { amount: string; count: number; from: string; to: string; view: string };
@@ -89,6 +97,9 @@ export function AccountingOverview({ api, userKey, onOpen }: {
   const [listType, setListType] = useState<AlertType | 'all' | null>(null);
   const [noDueOpen, setNoDueOpen] = useState(false);
   const [popup, setPopup] = useState(false);
+  // Total Sales card: which period it shows, and whether its breakdown is open.
+  const [period, setPeriod] = useState<SalesPeriod>('month');
+  const [breakdown, setBreakdown] = useState(false);
   // The month on the calendar. Changing it asks the same endpoint for that month; only its calendar part is used.
   const [calMonth, setCalMonth] = useState<string | null>(null);
   const [cal, setCal] = useState<CalendarData | null>(null);
@@ -129,8 +140,8 @@ export function AccountingOverview({ api, userKey, onOpen }: {
   const card = (key: string, title: string, big: string, sub: React.ReactNode, link: OverviewLink, tone?: string) => (
     <button key={key} type="button" data-card={key} onClick={() => onOpen(link)}
       className="h-full min-w-0 flex flex-col text-left bg-white rounded-xl border border-gray-200 p-4 hover:border-gray-300 hover:shadow-sm transition">
-      <span className="text-xs font-medium text-gray-400 leading-4">{title}</span>
-      <span data-figure className={`mt-2 text-2xl leading-8 font-bold tabular-nums truncate ${tone || 'text-gray-900'}`}>{big}</span>
+      <span className="flex items-center min-h-[22px] text-xs font-medium text-gray-400 leading-4">{title}</span>
+      <span data-figure className={`mt-1 text-2xl leading-8 font-bold tabular-nums truncate ${tone || 'text-gray-900'}`}>{big}</span>
       <span className="mt-1 text-[11px] leading-4 text-gray-400 min-h-[32px]">{sub}</span>
     </button>
   );
@@ -184,9 +195,35 @@ export function AccountingOverview({ api, userKey, onOpen }: {
 
       {/* ---- 2. cards: three to a row on a wide screen, two on a tablet, one on a phone; all the same height ---- */}
       <div className="[display:grid] sm:grid-cols-2 lg:grid-cols-3 gap-4 auto-rows-fr" data-cards>
-        {card('totalSales', 'Total Sales', peso(c.totalSales.amount),
-          `${peso(c.totalSales.ytd)} year to date · ${plural(c.totalSales.count, 'invoice')} this month`,
-          { view: c.totalSales.view, month: c.totalSales.month })}
+        {(() => {
+          const ts = c.totalSales.periods[period];
+          const noteBtn = (n: number, one: string, view: string, key: string) => n > 0 && (
+            <button type="button" data-unpriced={key} onClick={e => { e.stopPropagation(); onOpen({ view }); }} className="text-amber-700 underline hover:text-amber-800">
+              {n} {one}{n === 1 ? '' : 's'} not priced yet</button>);
+          return (
+            <div data-card="totalSales" role="button" tabIndex={0} onClick={() => setBreakdown(true)}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setBreakdown(true); } }}
+              className="h-full min-w-0 flex flex-col text-left bg-white rounded-xl border border-gray-200 p-4 cursor-pointer hover:border-gray-300 hover:shadow-sm transition">
+              <span className="flex items-center min-h-[22px] text-xs font-medium text-gray-400 leading-4">Total Sales</span>
+              <span data-figure className="mt-1 text-2xl leading-8 font-bold tabular-nums truncate text-gray-900">{peso(ts.amount)}</span>
+              <span className="mt-1 text-[11px] leading-4 text-gray-400 min-h-[32px]" data-sales-sub>
+                <span data-billed>Billed {peso(ts.billed)}</span> · <span data-notbilled>Not yet billed {peso(ts.notBilled)}</span>
+                {(ts.unpricedDeals > 0 || ts.unpricedProjects > 0) && (
+                  <span className="block">{noteBtn(ts.unpricedDeals, 'deal', 'tradings', 'deals')}{ts.unpricedDeals > 0 && ts.unpricedProjects > 0 && ' · '}{noteBtn(ts.unpricedProjects, 'project', 'projects', 'projects')}</span>
+                )}
+              </span>
+              {/* the period toggle sits on the card's bottom edge, full width, so it never competes with the label for room */}
+              <span className="mt-auto pt-3 flex w-full rounded-md" data-period-toggle>
+                <span className="flex w-full rounded-md border border-gray-200 overflow-hidden">
+                  {(['month', 'year', 'active'] as SalesPeriod[]).map(p => (
+                    <button key={p} type="button" data-period={p} aria-pressed={period === p} onClick={e => { e.stopPropagation(); setPeriod(p); }}
+                      className={`crm-seg-btn flex-1 px-1 py-1 text-[11px] leading-4 font-medium whitespace-nowrap ${period === p ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'}`}>{PERIOD_LABEL[p]}</button>
+                  ))}
+                </span>
+              </span>
+            </div>
+          );
+        })()}
         {card('receivables', 'Receivables outstanding', peso(c.receivables.outstanding),
           c.receivables.overdueCount > 0 ? <span className="text-red-600">{peso(c.receivables.overdue)} overdue · {c.receivables.overdueCount}</span> : `${c.receivables.openCount} open · none overdue`,
           { view: c.receivables.view })}
@@ -242,7 +279,73 @@ export function AccountingOverview({ api, userKey, onOpen }: {
         )}
       </div>
 
+      {breakdown && <TotalSalesBreakdown period={period} data={c.totalSales.periods[period]} dateRule={c.totalSales.dateRule} onClose={() => setBreakdown(false)}
+        onOpen={l => { setBreakdown(false); onOpen(l); }} />}
+
       {popup && <DailyPopup data={data} onOpen={open} onGotIt={gotIt} onDismiss={() => setPopup(false)} />}
+    </div>
+  );
+}
+
+// The Total Sales breakdown: every contract in the chosen period with its VAT-inclusive value, what has been billed
+// against it and what is not yet billed. Everything shown arrives from the server; nothing is added up here.
+export function TotalSalesBreakdown({ period, data, dateRule, onClose, onOpen }: {
+  period: SalesPeriod; data: SalesPeriodData; dateRule: string; onClose: () => void; onOpen: (l: OverviewLink) => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const TH = 'px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-gray-400';
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" data-breakdown onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="w-full max-w-3xl bg-white rounded-2xl shadow-xl max-h-[88vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-gray-200 flex items-start justify-between gap-3">
+          <div>
+            <h3 className="font-bold text-gray-900">Total Sales · {PERIOD_LABEL[period]}</h3>
+            <p className="text-xs text-gray-500">Contract price of each project and selling price of each trading deal, VAT included. By {dateRule}.</p>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" className="p-1 text-gray-400 hover:bg-gray-100 rounded-md"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="overflow-auto">
+          <table className="w-full text-sm" data-breakdown-table>
+            <thead className="bg-gray-50"><tr>
+              <th className={`${TH} text-left`}>Contract</th><th className={`${TH} text-left`}>Date</th>
+              <th className={`${TH} text-right`}>Contract value</th><th className={`${TH} text-right`}>Billed</th><th className={`${TH} text-right`}>Not yet billed</th>
+            </tr></thead>
+            <tbody className="divide-y divide-gray-100">
+              {data.rows.length === 0 && <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-400">No priced contracts in this period.</td></tr>}
+              {data.rows.map(r => (
+                <tr key={r.kind + r.id} data-bd-row={r.kind + ':' + r.id} onClick={() => onOpen(r.link)} className="hover:bg-gray-50 cursor-pointer">
+                  <td className="px-3 py-2 max-w-[260px]"><div className="truncate text-gray-900" title={r.name}>{r.name}</div>
+                    <div className="text-[11px] text-gray-400">{r.kind === 'project' ? 'Project' : 'Trading deal'}{r.status ? ` · ${r.status}` : ''}</div></td>
+                  <td className="px-3 py-2 whitespace-nowrap text-gray-500 text-xs">{shortDate(r.contractDate)}<div className="text-[11px] text-gray-400">{r.dateBasis}</div></td>
+                  <td className="px-3 py-2 text-right whitespace-nowrap font-semibold text-gray-900 tabular-nums">{peso(r.value)}</td>
+                  <td className="px-3 py-2 text-right whitespace-nowrap text-gray-700 tabular-nums">{peso(r.billed)}</td>
+                  <td className="px-3 py-2 text-right whitespace-nowrap text-gray-700 tabular-nums">{peso(r.notBilled)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot><tr className="bg-gray-50 font-semibold border-t border-gray-200" data-bd-total>
+              <td className="px-3 py-2 text-gray-900" colSpan={2}>Total · {data.count} contract{data.count === 1 ? '' : 's'}</td>
+              <td className="px-3 py-2 text-right tabular-nums">{peso(data.amount)}</td>
+              <td className="px-3 py-2 text-right tabular-nums">{peso(data.billed)}</td>
+              <td className="px-3 py-2 text-right tabular-nums">{peso(data.notBilled)}</td>
+            </tr></tfoot>
+          </table>
+          {data.unpriced.length > 0 && (
+            <div className="border-t border-gray-200 px-4 py-3" data-bd-unpriced>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-amber-700 mb-1">Not priced yet · left out of the total</p>
+              {data.unpriced.map(u => (
+                <button key={u.kind + u.id} type="button" onClick={() => onOpen(u.link)} className="w-full flex items-center justify-between gap-3 py-1.5 text-left text-sm hover:bg-gray-50">
+                  <span className="min-w-0 truncate text-gray-800">{u.name} <span className="text-[11px] text-gray-400">· {u.kind === 'project' ? 'Project' : 'Trading deal'}</span></span>
+                  {Number(u.billed) > 0 && <span className="text-xs text-gray-500 whitespace-nowrap">billed {peso(u.billed)}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

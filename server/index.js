@@ -12792,7 +12792,7 @@ registerListExports(app, {
 // The Accounting Overview screen's data (server/accountingOverview.js): cards, alerts, calendar, charts.
 registerAccountingOverview(app, {
   query, requireRole, reportRoles, BI_SELECT, mapBillingInvoice, PAYABLE_SELECT, mapPayable,
-  collectionsWhere, pcfData, backToWorkdayYMD,
+  collectionsWhere, pcfData, backToWorkdayYMD, revenueIncVat,
 });
 
 // Create new tables before starting server

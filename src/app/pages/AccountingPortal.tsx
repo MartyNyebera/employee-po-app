@@ -1119,8 +1119,6 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const [voucherFocus, setVoucherFocus] = useState('');
   // A PO number an Overview alert sent us to (the Payable Report opens searched to it), and a project / trading row to highlight.
   const [payableSearch, setPayableSearch] = useState('');
-  // The month the Overview's Total Sales card sent us to: Customer's Billing opens filtered to it.
-  const [billingMonth, setBillingMonth] = useState('');
   const [rowFocus, setRowFocus] = useState<string | null>(null);
   useEffect(() => {
     if (!rowFocus || (view !== 'projects' && view !== 'tradings')) return;
@@ -1129,8 +1127,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   }, [view, rowFocus]);
   // Where an Overview click goes. Each target is an existing screen; nothing new is fetched here.
   const openFromOverview = (l: OverviewLink) => {
-    setVoucherFocus(''); setReceivablesFocus(null); setPoFocus(null); setPayableSearch(''); setRowFocus(null); setBillingMonth('');
-    if (l.view === 'billing-invoices') setBillingMonth(l.month || '');
+    setVoucherFocus(''); setReceivablesFocus(null); setPoFocus(null); setPayableSearch(''); setRowFocus(null);
     if (l.view === 'receivables' && l.id !== undefined) setReceivablesFocus(Number(l.id));
     if (l.view === 'payables' && l.search) setPayableSearch(l.search);
     if (l.view === 'orders' && l.id !== undefined) { setPoFocus(String(l.id)); setPoAlloc(''); }
@@ -1372,7 +1369,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
       <AccountingNav
         activeView={view} minimized={mini} prefs={navPrefs}
         badges={{ requests: pendingCount, orders: pendingOrderCount, receivables: overdueInvoiceCount }}
-        onNavigate={(v) => { setVoucherFocus(''); setReceivablesFocus(null); setPoFocus(null); setPayableSearch(''); setRowFocus(null); setBillingMonth(''); setView(v); setMobileOpen(false); }}
+        onNavigate={(v) => { setVoucherFocus(''); setReceivablesFocus(null); setPoFocus(null); setPayableSearch(''); setRowFocus(null); setView(v); setMobileOpen(false); }}
         onToggleGroup={toggleGroup} />
       <div className="border-t border-gray-200 px-3 py-3 space-y-1">
         <div className={`flex items-center gap-3 px-3 py-2 ${mini ? 'justify-center' : ''}`}>
@@ -1432,7 +1429,7 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
 
           {view === 'delivery-receipts' && <DeliveryReceipts api={aFetch} isAdmin />}
 
-          {view === 'billing-invoices' && <BillingInvoices key={billingMonth || 'all'} monthFilter={billingMonth} api={aFetch} isAdmin />}
+          {view === 'billing-invoices' && <BillingInvoices api={aFetch} isAdmin />}
 
           {view === 'receivables' && <Receivables key={receivablesFocus ?? 'all'} api={aFetch} isAdmin focusId={receivablesFocus} />}
 

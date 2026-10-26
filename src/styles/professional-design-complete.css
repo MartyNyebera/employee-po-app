@@ -516,6 +516,15 @@ body {
   transition: color var(--transition-fast) !important;
 }
 
+/* The Overview's small segmented control (the Total Sales period toggle): keep its own 11px size inside the admin portal. */
+.admin-portal button.crm-seg-btn {
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  line-height: 16px !important;
+  border-radius: 0 !important;
+  transition: background-color var(--transition-fast), color var(--transition-fast) !important;
+}
+
 /* Primary Button */
 .admin-portal .btn-primary, .admin-portal button[class*="primary"] {
   background-color: var(--color-primary) !important;
