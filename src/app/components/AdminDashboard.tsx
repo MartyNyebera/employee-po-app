@@ -150,6 +150,7 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
   // Where Overview / Payable Report links land: a receivable, a PO number, a voucher number.
   const [receivablesFocus, setReceivablesFocus] = useState<number | null>(null);
   const [payableSearch, setPayableSearch] = useState('');
+  const [billingMonth, setBillingMonth] = useState('');
   const [voucherFocus, setVoucherFocus] = useState('');
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
 
@@ -209,13 +210,14 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
   // Administrator screen yet, so those links say so instead of doing nothing.
   const goTo = (view: View) => { setCurrentView(view); setMobileOpen(false); };
   const openFromOverview = (l: OverviewLink) => {
-    setReceivablesFocus(null); setPayableSearch(''); setVoucherFocus('');
+    setReceivablesFocus(null); setPayableSearch(''); setVoucherFocus(''); setBillingMonth('');
     const map: Record<string, View> = {
-      receivables: 'receivables', payables: 'payables', collections: 'collections', expenses: 'expenses', pcf: 'pcf',
+      'billing-invoices': 'billing-invoices', receivables: 'receivables', payables: 'payables', collections: 'collections', expenses: 'expenses', pcf: 'pcf',
       orders: 'purchase-orders', projects: 'projects', payroll: 'payroll',
     };
     const target = map[l.view];
     if (!target) { toast.info('Contract Trading and Facilities are in the Accounting portal.'); return; }
+    if (l.view === 'billing-invoices') setBillingMonth(l.month || '');
     if (l.view === 'receivables' && l.id !== undefined) setReceivablesFocus(Number(l.id));
     if (l.view === 'payables' && l.search) setPayableSearch(l.search);
     goTo(target);
@@ -244,7 +246,7 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
     if (currentView === 'customers') return <CustomersList isAdmin={canManage(role, 'customers')} />;
     // fetchApi (admin token) is the default this screen expects; the Accounting portal passes its own.
     if (currentView === 'delivery-receipts') return <DeliveryReceipts api={fetchApi} isAdmin={canManage(role, 'delivery-receipts')} />;
-    if (currentView === 'billing-invoices') return <BillingInvoices api={fetchApi} isAdmin={canManage(role, 'billing-invoices')} />;
+    if (currentView === 'billing-invoices') return <BillingInvoices key={billingMonth || 'all'} monthFilter={billingMonth} api={fetchApi} isAdmin={canManage(role, 'billing-invoices')} />;
     if (currentView === 'receivables') return <Receivables key={receivablesFocus ?? 'all'} api={fetchApi} isAdmin={canManage(role, 'receivables')} focusId={receivablesFocus} />;
     if (currentView === 'inquiries') return <InquiriesList isAdmin={canManage(role, 'inquiries')} />;
     if (currentView === 'staff') return <StaffAccountsList />;
@@ -385,7 +387,7 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
       {/* Sidebar. Matches the portal shell: a fixed drawer under lg, an in-flow rail above it.
           The admin previously had no mobile behaviour at all — the sidebar simply ate the
           screen on a phone, with no way to dismiss it. */}
-      <div className={`bg-white border-r border-gray-200 flex-shrink-0 z-30 flex flex-col transition-all duration-300 ${menuOpen ? 'w-64' : 'w-20'} ${mobileOpen ? 'fixed inset-y-0 left-0' : 'hidden lg:flex'}`}>
+      <div className={`bg-white border-r border-gray-200 flex-shrink-0 z-30 flex-col transition-all duration-300 ${menuOpen ? 'w-64' : 'w-20'} ${mobileOpen ? 'flex fixed inset-y-0 left-0' : 'hidden lg:flex'}`}>
         {/* Header: expand/collapse toggle + portal title, with the logo below */}
         <div className="border-b border-gray-200">
           <div className={`flex items-center gap-2 px-3 py-3 ${!menuOpen ? 'justify-center' : ''}`}>
@@ -412,7 +414,7 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
         {/* Navigation: the grouped menu shared with the Accounting portal. */}
         <SidebarNav<View> tops={visibleTops} groups={visibleGroups} ariaLabel="Administrator"
           activeView={currentView} minimized={mini} prefs={navPrefs} badges={navBadges}
-          onNavigate={(v) => { goTo(v); setReceivablesFocus(null); setPayableSearch(''); setVoucherFocus(''); }}
+          onNavigate={(v) => { goTo(v); setReceivablesFocus(null); setPayableSearch(''); setVoucherFocus(''); setBillingMonth(''); }}
           onToggleGroup={toggleNavGroup} />
 
         {/* User Menu — border-t px-3 py-3 space-y-1, matching the portals exactly. */}

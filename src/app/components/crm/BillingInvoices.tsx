@@ -122,7 +122,12 @@ const BI_TERMS_PRESETS = ['COD', '7 days', '15 days', '30 days', '60 days', '50%
 // ============================================================================
 // `isAdmin` — see the note on DeliveryReceipts: the caller derives it from the permission
 // matrix, view-only keeps the list and the print, and the server stays the real gate.
-export function BillingInvoices({ api, isAdmin }: { api: Api; isAdmin: boolean }) {
+export function BillingInvoices({ api, isAdmin, monthFilter }: {
+  api: Api; isAdmin: boolean;
+  /** Open showing only the invoices dated in this month (YYYY-MM) -- the Overview's Total Sales card sends it. */
+  monthFilter?: string;
+}) {
+  const [month, setMonth] = useState(monthFilter || '');
   const [rows, setRows] = useState<Bi[]>([]);
   const [drs, setDrs] = useState<DrOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -151,13 +156,14 @@ export function BillingInvoices({ api, isAdmin }: { api: Api; isAdmin: boolean }
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(r =>
+    const inMonth = month ? rows.filter(r => dayOnly(r.biDate).slice(0, 7) === month) : rows;
+    if (!q) return inMonth;
+    return inMonth.filter(r =>
       r.biNumber.toLowerCase().includes(q) ||
       r.billedTo.toLowerCase().includes(q) ||
       (r.drNumber || '').toLowerCase().includes(q) ||
       (r.sourceName || '').toLowerCase().includes(q));
-  }, [rows, search]);
+  }, [rows, search, month]);
 
   const confirmVoid = async () => {
     if (!voiding) return;
@@ -202,6 +208,13 @@ export function BillingInvoices({ api, isAdmin }: { api: Api; isAdmin: boolean }
         </div>
       </div>
 
+      {month && (
+        <div data-month-filter={month} style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', marginBottom: '12px', padding: '6px 12px', border: '1px solid #e5e5e5', borderRadius: '999px', fontSize: '13px', background: '#fff' }}>
+          <span>Invoices dated <b>{new Date(month + '-01T00:00:00').toLocaleDateString('en-PH', { month: 'long', year: 'numeric' })}</b> &middot; {filtered.length} shown</span>
+          <button type="button" onClick={() => setMonth('')} style={{ border: 'none', background: 'none', color: '#2563eb', cursor: 'pointer', fontSize: '13px', padding: 0 }}>Show all</button>
+        </div>
+      )}
+
       <div style={{ position: 'relative', maxWidth: '340px', marginBottom: '20px' }}>
         <Search size={16} style={{ position: 'absolute', left: '12px', top: '11px', color: '#8a8a8a' }} />
         <input placeholder="Search BI no., client, DR no.…" value={search} onChange={e => setSearch(e.target.value)} style={{ ...S.input, paddingLeft: '36px' }} />
@@ -219,7 +232,7 @@ export function BillingInvoices({ api, isAdmin }: { api: Api; isAdmin: boolean }
             {loading ? <tr><td style={S.td} colSpan={8}>Loading…</td></tr>
               : filtered.length === 0 ? (
                 <tr><td style={{ ...S.td, color: '#8a8a8a' }} colSpan={8}>
-                  {rows.length === 0 ? 'No billing invoices issued yet.' : 'No billing invoices match that search.'}
+                  {rows.length === 0 ? 'No billing invoices issued yet.' : month && !search.trim() ? 'No billing invoices are dated in that month.' : 'No billing invoices match that search.'}
                 </td></tr>
               ) : filtered.map(bi => (
                 <tr key={bi.id} style={bi.voidedAt ? { opacity: 0.6 } : undefined}>

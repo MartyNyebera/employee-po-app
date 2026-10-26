@@ -11,3 +11,8 @@ export const pesoShort = (v: unknown) => {
 };
 export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 export const shortDate = (ymd: string) => { const [y, m, d] = ymd.split('-').map(Number); return `${MONTHS[m - 1]} ${d}${y !== new Date().getFullYear() ? `, ${y}` : ''}`; };
+/** Whole pesos with thousands separators (₱18,500), for chart axes and tight labels where centavos are noise. */
+export const pesoWhole = (v: unknown) => {
+  const n = Math.round(num(v));
+  return `${n < 0 ? '−' : ''}₱${Math.abs(n).toLocaleString('en-PH')}`;
+};

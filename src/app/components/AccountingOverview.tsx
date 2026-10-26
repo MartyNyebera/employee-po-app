@@ -19,7 +19,7 @@ import { OverviewCharts, type ChartsData } from './OverviewCharts';
 
 type Api = <T = any>(path: string, options?: RequestInit) => Promise<T>;
 
-export interface OverviewLink { view: string; id?: string | number; search?: string }
+export interface OverviewLink { view: string; id?: string | number; search?: string; /** YYYY-MM: open the target filtered to that month (Customer's Billing). */ month?: string }
 export type AlertType = 'receivable' | 'payable' | 'project' | 'trading' | 'payday';
 export type Severity = 'overdue' | 'today' | 'upcoming';
 
@@ -33,6 +33,7 @@ interface Counts { overdue: number; today: number; upcoming: number; total: numb
 export interface OverviewData {
   today: string; month: string;
   cards: {
+    totalSales: { amount: string; count: number; ytd: string; ytdCount: number; month: string; from: string; to: string; view: string };
     receivables: { outstanding: string; overdue: string; overdueCount: number; openCount: number; view: string };
     payables: { outstanding: string; overdue: string; overdueCount: number; openCount: number; view: string };
     collected: { amount: string; count: number; from: string; to: string; view: string };
@@ -123,85 +124,96 @@ export function AccountingOverview({ api, userKey, onOpen }: {
   const open = (l: OverviewLink) => { setPopup(false); onOpen(l); };
   const gotIt = () => { rememberPopup(userKey, data.today); setPopup(false); };
 
+  // Every card has the same structure and sizes (label · figure · two-line subline), so the figures share a baseline
+  // across a row and all the cards are the same height.
   const card = (key: string, title: string, big: string, sub: React.ReactNode, link: OverviewLink, tone?: string) => (
     <button key={key} type="button" data-card={key} onClick={() => onOpen(link)}
-      className="text-left bg-white rounded-xl border border-gray-200 px-4 py-3 hover:border-gray-300 hover:shadow-sm transition">
-      <p className="text-xs font-medium text-gray-400">{title}</p>
-      <p className={`mt-1 text-xl font-bold ${tone || 'text-gray-900'}`}>{big}</p>
-      <p className="mt-0.5 text-[11px] text-gray-400 min-h-[16px]">{sub}</p>
+      className="h-full min-w-0 flex flex-col text-left bg-white rounded-xl border border-gray-200 p-4 hover:border-gray-300 hover:shadow-sm transition">
+      <span className="text-xs font-medium text-gray-400 leading-4">{title}</span>
+      <span data-figure className={`mt-2 text-2xl leading-8 font-bold tabular-nums truncate ${tone || 'text-gray-900'}`}>{big}</span>
+      <span className="mt-1 text-[11px] leading-4 text-gray-400 min-h-[32px]">{sub}</span>
     </button>
   );
+  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
+  // One page grid: 24px between sections, 16px inside them.
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-end justify-between gap-2">
-        <div>
-          <h2 className="font-semibold text-gray-900">Overview</h2>
-          <p className="text-sm text-gray-500">What needs attention today, {shortDate(data.today)}.</p>
-        </div>
+    <div className="flex flex-col gap-[24px]" data-overview>
+      <div>
+        <h2 className="font-semibold text-gray-900">Overview</h2>
+        <p className="text-sm text-gray-500">What needs attention today, {shortDate(data.today)}.</p>
       </div>
 
-      {/* ---- alert strip ---- */}
-      <div className="flex flex-wrap gap-2" data-alert-strip>
-        {TYPE_ORDER.map(t => {
-          const n = data.counts[t];
-          return (
-            <button key={t} type="button" data-strip={t} onClick={() => setListType(listType === t ? null : t)}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm bg-white hover:bg-gray-50 ${listType === t ? 'border-gray-900' : 'border-gray-200'}`}>
-              <span className="font-medium text-gray-800">{TYPE_LABEL[t]}</span>
-              {n.total === 0 ? <span className="text-xs text-gray-300">none</span> : (
-                <span className="flex items-center gap-1">
-                  {n.overdue > 0 && <span data-sev="overdue" className="px-1.5 py-px rounded-full text-xs font-bold text-red-700 bg-red-50 border border-red-200">{n.overdue} overdue</span>}
-                  {n.today > 0 && <span data-sev="today" className="px-1.5 py-px rounded-full text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200">{n.today} today</span>}
-                  {n.upcoming > 0 && <span data-sev="upcoming" className="px-1.5 py-px rounded-full text-xs font-semibold text-gray-600 bg-gray-100 border border-gray-200">{n.upcoming} soon</span>}
-                </span>
-              )}
+      {/* ---- 1. alert strip (and the list a chip opens) ---- */}
+      <div className="space-y-4">
+        <div className="flex flex-wrap gap-2" data-alert-strip>
+          {TYPE_ORDER.map(t => {
+            const n = data.counts[t];
+            return (
+              <button key={t} type="button" data-strip={t} onClick={() => setListType(listType === t ? null : t)}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm bg-white hover:bg-gray-50 ${listType === t ? 'border-gray-900' : 'border-gray-200'}`}>
+                <span className="font-medium text-gray-800">{TYPE_LABEL[t]}</span>
+                {n.total === 0 ? <span className="text-xs text-gray-300">none</span> : (
+                  <span className="flex items-center gap-1">
+                    {n.overdue > 0 && <span data-sev="overdue" className="px-1.5 py-px rounded-full text-xs font-bold text-red-700 bg-red-50 border border-red-200">{n.overdue} overdue</span>}
+                    {n.today > 0 && <span data-sev="today" className="px-1.5 py-px rounded-full text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200">{n.today} today</span>}
+                    {n.upcoming > 0 && <span data-sev="upcoming" className="px-1.5 py-px rounded-full text-xs font-semibold text-gray-600 bg-gray-100 border border-gray-200">{n.upcoming} soon</span>}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+          {data.totals.total > 0 && (
+            <button type="button" data-strip="all" onClick={() => setListType(listType === 'all' ? null : 'all')}
+              className="px-3 py-2 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 bg-white hover:bg-gray-50">
+              All {data.totals.total}
             </button>
-          );
-        })}
-        {data.totals.total > 0 && (
-          <button type="button" data-strip="all" onClick={() => setListType(listType === 'all' ? null : 'all')}
-            className="px-3 py-2 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 bg-white hover:bg-gray-50">
-            All {data.totals.total}
-          </button>
+          )}
+        </div>
+
+        {listType && (
+          <div className="bg-white rounded-xl border border-gray-200" data-alert-list>
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100">
+              <p className="text-sm font-semibold text-gray-800">{listType === 'all' ? 'All alerts' : TYPE_LABEL[listType]} <span className="font-normal text-gray-400">· {shown.length}</span></p>
+              <button type="button" onClick={() => setListType(null)} className="p-1 text-gray-400 hover:bg-gray-100 rounded-md" aria-label="Close list"><X className="w-4 h-4" /></button>
+            </div>
+            {shown.length === 0 ? <p className="px-4 py-6 text-sm text-gray-400">Nothing needs attention here.</p> : <AlertRows alerts={shown} onOpen={open} showType={listType === 'all'} />}
+          </div>
         )}
       </div>
 
-      {listType && (
-        <div className="bg-white rounded-xl border border-gray-200" data-alert-list>
-          <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100">
-            <p className="text-sm font-semibold text-gray-800">{listType === 'all' ? 'All alerts' : TYPE_LABEL[listType]} <span className="font-normal text-gray-400">· {shown.length}</span></p>
-            <button type="button" onClick={() => setListType(null)} className="p-1 text-gray-400 hover:bg-gray-100 rounded-md" aria-label="Close list"><X className="w-4 h-4" /></button>
-          </div>
-          {shown.length === 0 ? <p className="px-4 py-6 text-sm text-gray-400">Nothing needs attention here.</p> : <AlertRows alerts={shown} onOpen={open} showType={listType === 'all'} />}
-        </div>
-      )}
-
-      {/* ---- five cards ---- */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3" data-cards>
+      {/* ---- 2. cards: three to a row on a wide screen, two on a tablet, one on a phone; all the same height ---- */}
+      <div className="[display:grid] sm:grid-cols-2 lg:grid-cols-3 gap-4 auto-rows-fr" data-cards>
+        {card('totalSales', 'Total Sales', peso(c.totalSales.amount),
+          `${peso(c.totalSales.ytd)} year to date · ${plural(c.totalSales.count, 'invoice')} this month`,
+          { view: c.totalSales.view, month: c.totalSales.month })}
         {card('receivables', 'Receivables outstanding', peso(c.receivables.outstanding),
           c.receivables.overdueCount > 0 ? <span className="text-red-600">{peso(c.receivables.overdue)} overdue · {c.receivables.overdueCount}</span> : `${c.receivables.openCount} open · none overdue`,
           { view: c.receivables.view })}
         {card('payables', 'Payables outstanding', peso(c.payables.outstanding),
           c.payables.overdueCount > 0 ? <span className="text-red-600">{peso(c.payables.overdue)} overdue · {c.payables.overdueCount}</span> : `${c.payables.openCount} open · none overdue`,
           { view: c.payables.view })}
-        {card('collected', 'Collected this month', peso(c.collected.amount), `${c.collected.count} payment${c.collected.count === 1 ? '' : 's'}`, { view: c.collected.view })}
-        {card('disbursed', 'Disbursed this month', peso(c.disbursed.amount), `${c.disbursed.count} voucher${c.disbursed.count === 1 ? '' : 's'} · petty cash included`, { view: c.disbursed.view })}
+        {card('collected', 'Collected this month', peso(c.collected.amount), plural(c.collected.count, 'payment'), { view: c.collected.view })}
+        {card('disbursed', 'Disbursed this month', peso(c.disbursed.amount), `${plural(c.disbursed.count, 'voucher')} · petty cash included`, { view: c.disbursed.view })}
         {card('pcf', 'PCF current balance', c.pcf.configured ? peso(c.pcf.balance) : '—', c.pcf.configured ? 'petty cash fund' : 'fund not set up',
           { view: c.pcf.view }, c.pcf.balanceNegative ? 'text-amber-600' : undefined)}
       </div>
 
-      {/* ---- calendar + next 14 days: side by side on a wide screen, stacked under it on a phone ---- */}
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] gap-4 items-start" data-calendar-row>
-        <OverviewCalendar month={calMonth ?? data.calendar.month} events={(calMonth && cal ? cal : data.calendar).events} today={data.today}
-          selected={selDay} onSelect={setSelDay} onMonth={goMonth} onOpen={onOpen} loading={calLoading} />
-        <Next14 data={data.next14} onOpen={onOpen} />
-      </div>
-
-      {/* ---- charts: cash in vs out, aging, spending by GL account ---- */}
+      {/* ---- 3. charts: cash in vs out, aging (receivables | payables), spending by GL account ---- */}
       <OverviewCharts charts={data.charts} />
 
-      {/* ---- no due date set ---- */}
+      {/* ---- 4. calendar (about two thirds) + next 14 days (one third): same height, tops aligned; stacked on a phone ---- */}
+      <div className="[display:grid] lg:grid-cols-3 gap-4 items-stretch" data-calendar-row>
+        <div className="lg:col-span-2 min-w-0">
+          <OverviewCalendar month={calMonth ?? data.calendar.month} events={(calMonth && cal ? cal : data.calendar).events} today={data.today}
+            selected={selDay} onSelect={setSelDay} onMonth={goMonth} onOpen={onOpen} loading={calLoading} />
+        </div>
+        <div className="relative min-w-0" data-next14-host>
+          <Next14 data={data.next14} onOpen={onOpen} />
+        </div>
+      </div>
+
+      {/* ---- 5. no due date set ---- */}
       <div className="bg-white rounded-xl border border-gray-200" data-nodue>
         <button type="button" onClick={() => setNoDueOpen(!noDueOpen)} aria-expanded={noDueOpen}
           className="w-full flex items-center gap-2 px-4 py-3 text-left">

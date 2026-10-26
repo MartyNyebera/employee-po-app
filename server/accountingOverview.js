@@ -265,9 +265,21 @@ export function registerAccountingOverview(app, d) {
       const pcf = await pcfData({});
       const charts = await buildCharts(today, A);
 
+      // TOTAL SALES: the billing invoice's "Total Sales" -- the sum of its line amounts, as printed on the invoice
+      // (billingInvoicePrint.ts) -- over non-voided invoices by invoice date. This month = the Manila calendar month;
+      // year-to-date = January 1 through the end of this month, so it is never smaller than the month.
+      const salesC = (r) => (Array.isArray(r.items) ? r.items : []).reduce((n, it) => {
+        const v = Number(String(it && it.amount != null ? it.amount : '').replace(/,/g, ''));
+        return n + (Number.isFinite(v) ? Math.round(v * 100) : 0);
+      }, 0);
+      const yearStart = `${today.slice(0, 4)}-01-01`;
+      const inMonth = liveInv.filter((r) => r.biDate >= first && r.biDate <= last);
+      const inYear = liveInv.filter((r) => r.biDate >= yearStart && r.biDate <= last);
+
       res.json({
         today, month: monthOf(today),
         cards: {
+          totalSales: { amount: money(inMonth.reduce((n, r) => n + salesC(r), 0)), count: inMonth.length, ytd: money(inYear.reduce((n, r) => n + salesC(r), 0)), ytdCount: inYear.length, month: monthOf(today), from: first, to: last, view: 'billing-invoices' },
           receivables: { outstanding: money(recvOut), overdue: money(recvOverdue.reduce((n, r) => n + cents(r.amountOverdue), 0)), overdueCount: recvOverdue.length, openCount: liveInv.filter((r) => cents(r.balance) > 0).length, view: 'receivables' },
           payables: { outstanding: money(payOut), overdue: money(payOverdue.reduce((n, x) => n + cents(x.balance), 0)), overdueCount: payOverdue.length, openCount: A.payables.filter((x) => cents(x.balance) > 0).length, view: 'payables' },
           collected: { amount: money(cents(col.total)), count: col.n, from: first, to: last, view: 'collections' },
