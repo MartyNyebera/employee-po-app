@@ -24,9 +24,10 @@
 // ============================================================================
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { Receipt, Search, Ban, Split, X, Printer, Plus, FileText, ChevronDown, ChevronRight } from 'lucide-react';
+import { Receipt, Search, Ban, Split, X, Printer, Plus, FileText, ChevronDown, ChevronRight, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { printVoucher } from '../lib/voucherPrint';
+import { CheckDetailsFields } from './DisbursementVoucher';
 import { ExportXlsxButton } from './ExportXlsxButton';
 
 export interface ExpenseHistoryAllocation {
@@ -108,6 +109,96 @@ const MODE_LABEL: Record<string, string> = { cash: 'Cash', check: 'Check', bank_
 export const modeText = (r: Pick<ExpenseHistoryRow, 'paymentMode' | 'checkNo'>) =>
   r.paymentMode ? `${MODE_LABEL[r.paymentMode] || r.paymentMode}${r.paymentMode === 'check' && r.checkNo ? ` #${r.checkNo}` : ''}` : '—';
 
+export interface VoucherEdit { id: number; field: string; oldValue: string | null; newValue: string | null; editedBy: string | null; editedAt: string; reason: string | null }
+const FIELD_LABEL: Record<string, string> = { payment_mode: 'Payment mode', check_no: 'Check no.', bank: 'Bank', check_date: 'Check date' };
+const fieldValue = (field: string, v: string | null) =>
+  v == null || v === '' ? '—' : field === 'payment_mode' ? (MODE_LABEL[v] || v) : field === 'check_date' ? prettyDate(v) : v;
+const pesoSigned = (s: string) => `${Number(s) < 0 ? '−' : '+'}${peso(Math.abs(Number(s)))}`;
+
+interface PaymentPreview { changes: unknown[]; pcf: { direction: 'in' | 'out' | null; balanceChange: string; counts: boolean } }
+
+// "Edit payment": the mode and, for a check, its details. Everything else on the voucher is fixed.
+// When the change moves the voucher into or out of Petty cash, the Petty Cash Fund consequence is
+// fetched from the server (which owns the figure) and shown before the save button does anything.
+function EditPaymentModal({ row, api, onClose, onSaved }: {
+  row: ExpenseHistoryRow; api: <T = any>(path: string, options?: RequestInit) => Promise<T>;
+  onClose: () => void; onSaved: () => void;
+}) {
+  const [mode, setMode] = useState(row.paymentMode || '');
+  const [checkNo, setCheckNo] = useState(row.checkNo || '');
+  const [bank, setBank] = useState(row.bank || '');
+  const [checkDate, setCheckDate] = useState(row.checkDate || '');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<PaymentPreview | null>(null);
+  const [err, setErr] = useState('');
+  const body = () => JSON.stringify({ paymentMode: mode, ...(mode === 'check' ? { checkNo, bank, checkDate } : {}), reason: reason.trim() || undefined });
+  const touchesPcf = (mode === 'petty_cash') !== (row.paymentMode === 'petty_cash');
+
+  useEffect(() => {
+    setPreview(null); setErr('');
+    if (!mode || !touchesPcf) return;
+    let live = true;
+    api<PaymentPreview>(`/expenses/${row.expenseId}/payment/preview`, { method: 'POST', body: JSON.stringify({ paymentMode: mode, ...(mode === 'check' ? { checkNo, bank, checkDate } : {}) }) })
+      .then(r => { if (live) setPreview(r); }).catch(() => { /* the save reports any real problem */ });
+    return () => { live = false; };
+  }, [mode, touchesPcf]);
+
+  const save = async () => {
+    if (!mode) { setErr('Choose a payment mode'); return; }
+    if (mode === 'check' && !checkNo.trim()) { setErr('A check payment needs the check number'); return; }
+    setBusy(true); setErr('');
+    try {
+      await api(`/expenses/${row.expenseId}/payment`, { method: 'PATCH', body: body() });
+      toast.success(`Payment details of ${row.serialNo || row.expenseId} updated`);
+      onSaved();
+    } catch (e: any) { setErr(e.message || 'Could not save'); } finally { setBusy(false); }
+  };
+
+  const into = mode === 'petty_cash';
+  const field = 'w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500';
+  return (
+    <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4" data-edit-payment-modal onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl max-h-[90vh] overflow-y-auto">
+        <div className="px-5 py-4 border-b border-gray-200">
+          <h3 className="font-bold text-gray-900">Edit payment — {row.serialNo}</h3>
+          <p className="mt-1 text-xs text-gray-500">Lines, amounts, Project For and GL accounts can't be changed here — void the voucher and enter it again for those.</p>
+        </div>
+        <div className="p-5 space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Payment mode</label>
+            <select value={mode} onChange={e => setMode(e.target.value)} className={field} data-edit-mode>
+              <option value="">Select…</option>
+              <option value="cash">Cash</option>
+              <option value="check">Check</option>
+              <option value="bank_transfer">Bank transfer</option>
+              <option value="petty_cash">Petty cash</option>
+            </select>
+          </div>
+          <CheckDetailsFields mode={mode as any} checkNo={checkNo} bank={bank} checkDate={checkDate}
+            onChange={(k, v) => (k === 'checkNo' ? setCheckNo(v) : k === 'bank' ? setBank(v) : setCheckDate(v))} />
+          {touchesPcf && preview && (
+            <div data-pcf-warning className="p-3 text-xs rounded-lg bg-amber-50 border border-amber-200 text-amber-800">
+              This voucher will be {into ? 'added to' : 'removed from'} the Petty Cash Fund, and the PCF balance will change by{' '}
+              <strong>{pesoSigned(preview.pcf.balanceChange)}</strong>.
+              {!preview.pcf.counts && ' (This voucher is dated before the fund opened, so the balance does not actually move.)'}
+            </div>
+          )}
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Reason <span className="text-gray-400">(optional)</span></label>
+            <input value={reason} onChange={e => setReason(e.target.value)} maxLength={500} className={field} placeholder="e.g. Paid by check instead of cash" />
+          </div>
+          {err && <p className="text-xs text-red-600" data-edit-error>{err}</p>}
+        </div>
+        <div className="flex justify-end gap-2 px-5 py-4 border-t border-gray-200">
+          <button onClick={onClose} className="px-4 py-2 text-sm font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">Cancel</button>
+          <button onClick={save} disabled={busy} data-edit-save className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">{busy ? 'Saving…' : 'Save'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const prettyDate = (ymd: string) => {
   // Parsed as UTC deliberately: a bare YYYY-MM-DD parsed as local time shifts a day backwards in
   // some zones, which would print the wrong voucher date.
@@ -143,6 +234,7 @@ export function ExpensesHistory({ api, targets, isAdmin, onNewVoucher, reloadKey
   const [search, setSearch] = useState(initialSearch);
   const [detail, setDetail] = useState<ExpenseHistoryRow | null>(null);
   const [voiding, setVoiding] = useState<ExpenseHistoryRow | null>(null);
+  const [editing, setEditing] = useState<ExpenseHistoryRow | null>(null);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -319,8 +411,24 @@ export function ExpensesHistory({ api, targets, isAdmin, onNewVoucher, reloadKey
         )}
 
       {detail && (
-        <VoucherDetail detail={detail} isAdmin={isAdmin} onPrint={onPrint}
+        <VoucherDetail detail={detail} isAdmin={isAdmin} onPrint={onPrint} api={api} onEditPayment={setEditing}
           onVoid={r => { setVoiding(r); setReason(''); }} onClose={() => setDetail(null)} />
+      )}
+
+      {editing && (
+        <EditPaymentModal row={editing} api={api} onClose={() => setEditing(null)}
+          onSaved={async () => {
+            const id = editing.expenseId;
+            setEditing(null);
+            await load();
+            onChanged?.();
+            // Reopen the detail on the refreshed row so the new mode and the history show.
+            setDetail(null);
+            try {
+              const r = await api<HistoryResponse>('/expenses');
+              setDetail((r.expenses || []).find(x => x.expenseId === id) || null);
+            } catch { /* the list is already refreshed */ }
+          }} />
       )}
 
       {voiding && (
@@ -549,10 +657,20 @@ export function VoucherTable({ rows, onOpen }: { rows: ExpenseHistoryRow[]; onOp
 
 // One voucher in full: payment details, the POs it paid, what it was charged to. Print is open to
 // everyone who can see the voucher; Void only to a manage caller, and only while it is still active.
-export function VoucherDetail({ detail, isAdmin, onPrint, onVoid, onClose }: {
+export function VoucherDetail({ detail, isAdmin, onPrint, onVoid, onClose, api, onEditPayment }: {
   detail: ExpenseHistoryRow; isAdmin: boolean;
   onPrint: (r: ExpenseHistoryRow) => void; onVoid: (r: ExpenseHistoryRow) => void; onClose: () => void;
+  /** With `api`, the edit history is shown at the bottom; with `onEditPayment` a manage caller gets "Edit payment". */
+  api?: <T = any>(path: string, options?: RequestInit) => Promise<T>;
+  onEditPayment?: (r: ExpenseHistoryRow) => void;
 }) {
+  const [edits, setEdits] = useState<VoucherEdit[]>([]);
+  useEffect(() => {
+    if (!api) return;
+    let live = true;
+    api<{ edits: VoucherEdit[] }>(`/expenses/${detail.expenseId}/edits`).then(r => { if (live) setEdits(r.edits || []); }).catch(() => { if (live) setEdits([]); });
+    return () => { live = false; };
+  }, [api, detail.expenseId, detail.paymentMode, detail.checkNo, detail.bank, detail.checkDate]);
   return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
           <div className="bg-white rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
@@ -617,6 +735,21 @@ export function VoucherDetail({ detail, isAdmin, onPrint, onVoid, onClose }: {
                 </div>
               )}
 
+              {edits.length > 0 && (
+                <div data-edit-history>
+                  <p className="text-xs text-gray-400 mb-1">Edit history</p>
+                  <div className="border border-gray-200 rounded-lg divide-y divide-gray-100">
+                    {edits.map(e => (
+                      <div key={e.id} className="px-3 py-2 text-xs">
+                        <p className="text-gray-900"><span className="font-semibold">{FIELD_LABEL[e.field] || e.field}</span>:{' '}
+                          {fieldValue(e.field, e.oldValue)} → {fieldValue(e.field, e.newValue)}</p>
+                        <p className="text-[11px] text-gray-400">{e.editedBy || 'Unknown'} · {new Date(e.editedAt).toLocaleString()}{e.reason ? ` · ${e.reason}` : ''}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {detail.status === 'voided' && (
                 <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2">
                   <p className="text-xs font-semibold text-red-700 flex items-center gap-1"><Ban className="w-3.5 h-3.5" /> Voided — counts as no payment and no spend</p>
@@ -633,6 +766,12 @@ export function VoucherDetail({ detail, isAdmin, onPrint, onVoid, onClose }: {
                   className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">
                   <Printer className="w-4 h-4" /> Print
                 </button>
+                {isAdmin && onEditPayment && detail.status === 'active' && (
+                  <button onClick={() => onEditPayment(detail)} data-edit-payment
+                    className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">
+                    <Pencil className="w-4 h-4" /> Edit payment
+                  </button>
+                )}
                 {isAdmin && detail.status === 'active' && (
                   <button onClick={() => onVoid(detail)}
                     className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium border border-red-200 text-red-700 rounded-lg hover:bg-red-50">

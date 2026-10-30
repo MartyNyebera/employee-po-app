@@ -1187,6 +1187,21 @@ async function runMigrations() {
       await query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS check_no TEXT`);
       await query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS bank TEXT`);
       await query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS check_date DATE`);
+      // Edit history for a saved voucher's payment details: one row per field that changed.
+      await query(`
+        CREATE TABLE IF NOT EXISTS voucher_edit_log (
+          id BIGSERIAL PRIMARY KEY,
+          expense_id BIGINT NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+          field TEXT NOT NULL,
+          old_value TEXT,
+          new_value TEXT,
+          edited_by TEXT,
+          edited_by_id TEXT,
+          edited_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          reason TEXT
+        )
+      `);
+      await query(`CREATE INDEX IF NOT EXISTS voucher_edit_log_expense_idx ON voucher_edit_log (expense_id)`);
       // Existing rows are all NULL here, so both constraints validate trivially.
       await query(`DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'expenses_payment_mode_check') THEN
@@ -11006,6 +11021,92 @@ app.post('/api/expenses/:id/void', requireRole(['owner', 'admin', 'accounting'])
     await client.query('ROLLBACK').catch(() => {});
     res.status(500).json({ error: err.message });
   } finally { client.release(); }
+});
+
+// EDIT PAYMENT DETAILS of a saved voucher. Only the payment mode and its check details can change;
+// lines, amounts, PO payments, Project For, GL accounts and the number still need void + re-entry.
+// A mode change moves no spend and no payable (those read lines, never the mode); the one figure it
+// does move is the Petty Cash Fund, whose Spent is the live petty_cash vouchers dated on/after its
+// opening date -- so the effect on that balance is computed here and returned for the screen to show.
+const MODE_NAME = { cash: 'Cash', check: 'Check', bank_transfer: 'Bank transfer', petty_cash: 'Petty cash' };
+const VOUCHER_EDIT_FIELDS = [['payment_mode', 'paymentMode'], ['check_no', 'checkNo'], ['bank', 'bank'], ['check_date', 'checkDate']];
+
+async function planPaymentEdit(db, id, body, lock) {
+  const cur = (await db.query(
+    `SELECT id, serial_no, amount, to_char(expense_date,'YYYY-MM-DD') AS expense_date, voided_at,
+            payment_mode, check_no, bank, to_char(check_date,'YYYY-MM-DD') AS check_date
+       FROM expenses WHERE id = $1${lock ? ' FOR UPDATE' : ''}`, [id])).rows[0];
+  if (!cur) return { status: 404, error: 'Voucher not found' };
+  if (cur.voided_at) return { status: 409, error: 'A voided voucher cannot be edited' };
+  const b = body || {};
+  if (!PAYMENT_MODES.includes(String(b.paymentMode ?? '').trim())) return { status: 400, error: "Choose a payment mode: cash, check, bank transfer or petty cash" };
+  // Leaving Check clears the check details instead of refusing them, so a stale check number can't linger.
+  const isCheck = String(b.paymentMode).trim() === 'check';
+  const h = validateVoucherHeader({ paymentMode: b.paymentMode, checkNo: isCheck ? b.checkNo : '', bank: isCheck ? b.bank : '', checkDate: isCheck ? b.checkDate : '' });
+  if (h.error) return { status: 400, error: h.error };
+  const next = { payment_mode: h.paymentMode, check_no: h.checkNo, bank: h.bank, check_date: h.checkDate };
+  const changes = VOUCHER_EDIT_FIELDS.filter(([col]) => (cur[col] ?? null) !== (next[col] ?? null))
+    .map(([col, key]) => ({ field: col, key, oldValue: cur[col] ?? null, newValue: next[col] ?? null }));
+  if (!changes.length) return { status: 400, error: 'Nothing changed' };
+  // PCF effect: into petty cash lowers the fund balance by the amount, out of it raises it -- but only
+  // when the voucher is dated on/after the fund's opening date (earlier vouchers never counted).
+  const wasPcf = cur.payment_mode === 'petty_cash', willPcf = next.payment_mode === 'petty_cash';
+  let pcf = { direction: null, balanceChange: '0.00', counts: false };
+  if (wasPcf !== willPcf) {
+    const s = await pcfSettings();
+    const counts = !!s && cur.expense_date >= s.openingDate;
+    const c = counts ? Math.round(Number(cur.amount) * 100) : 0;
+    pcf = { direction: willPcf ? 'in' : 'out', balanceChange: fromCents(willPcf ? -c : c), counts, amount: money2s(cur.amount) };
+  }
+  return { cur, next, changes, pcf };
+}
+
+app.post('/api/expenses/:id/payment/preview', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
+  if (!/^\d+$/.test(String(req.params.id))) return res.status(404).json({ error: 'Voucher not found' });
+  try {
+    const p = await planPaymentEdit({ query }, req.params.id, req.body, false);
+    if (p.error) return res.status(p.status).json({ error: p.error });
+    res.json({ changes: p.changes, pcf: p.pcf });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.patch('/api/expenses/:id/payment', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
+  if (!/^\d+$/.test(String(req.params.id))) return res.status(404).json({ error: 'Voucher not found' });
+  const reason = String(req.body?.reason ?? '').trim().slice(0, 500) || null;
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const p = await planPaymentEdit(client, req.params.id, req.body, true);
+    if (p.error) { await client.query('ROLLBACK'); return res.status(p.status).json({ error: p.error }); }
+    await client.query(
+      `UPDATE expenses SET payment_mode = $1, check_no = $2, bank = $3, check_date = $4::date, updated_at = NOW() WHERE id = $5`,
+      [p.next.payment_mode, p.next.check_no, p.next.bank, p.next.check_date, req.params.id]);
+    for (const c of p.changes) {
+      await client.query(
+        `INSERT INTO voucher_edit_log (expense_id, field, old_value, new_value, edited_by, edited_by_id, reason)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [req.params.id, c.field, c.oldValue, c.newValue, req.user?.name || null, req.user?.id != null ? String(req.user.id) : null, reason]);
+    }
+    await client.query('COMMIT');
+    res.json({ expenseId: Number(req.params.id), serialNo: p.cur.serial_no, paymentMode: p.next.payment_mode, checkNo: p.next.check_no,
+      bank: p.next.bank, checkDate: p.next.check_date, changes: p.changes, pcf: p.pcf });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('voucher payment edit error:', err);
+    res.status(500).json({ error: err.message });
+  } finally { client.release(); }
+});
+
+// The edit history shown at the bottom of a voucher's detail, newest first.
+app.get('/api/expenses/:id/edits', requireRole(['owner', 'admin', 'accounting']), async (req, res) => {
+  if (!/^\d+$/.test(String(req.params.id))) return res.status(404).json({ error: 'Voucher not found' });
+  try {
+    const r = await query(
+      `SELECT id, field, old_value, new_value, edited_by, edited_at, reason FROM voucher_edit_log WHERE expense_id = $1 ORDER BY id DESC`,
+      [req.params.id]);
+    res.json({ edits: r.rows.map(x => ({ id: Number(x.id), field: x.field, oldValue: x.old_value, newValue: x.new_value,
+      editedBy: x.edited_by, editedAt: x.edited_at, reason: x.reason })) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ============================== EXPENSES HISTORY ==============================
