@@ -7,6 +7,7 @@
 // ============================================================================
 
 import { renderPrintDocument, printBirHeaderHtml, printFooterHtml, COMPANY_BIR } from './printChrome';
+import { lineDescription, lineQty } from './units';
 
 export interface PrintableDelivery {
   deliveryNumber: string;
@@ -114,6 +115,9 @@ export interface PrintableDrLine {
   quantity: number | string;
   unit?: string | null;
   description: string;
+  loads?: number | null;
+  cubicPerLoad?: number | null;
+  loadType?: string | null;
 }
 
 export interface PrintableBirDr {
@@ -154,9 +158,9 @@ export function printBirDeliveryReceipt(dr: PrintableBirDr): { ok: boolean; erro
   const lines = Array.isArray(dr.items) ? dr.items : [];
   const rows = lines.map(it => `
     <tr>
-      <td class="c-qty">${esc(it.quantity)}</td>
+      <td class="c-qty">${esc(lineQty(it, it.quantity))}</td>
       <td class="c-unit">${esc(it.unit || '')}</td>
-      <td class="c-desc">${esc(it.description)}</td>
+      <td class="c-desc">${esc(lineDescription(it, it.description))}</td>
     </tr>`).join('');
   // Blank ruled rows to fill the pad.
   const filler = Array.from({ length: Math.max(0, MIN_ROWS - lines.length) },

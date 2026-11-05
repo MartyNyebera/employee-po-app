@@ -11,6 +11,7 @@ import { WithdrawalTab } from '../components/WithdrawalTab';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { confirmDialog } from '../lib/confirm';
 import { printSalesOrder } from '../lib/orderPrint';
+import { UNITS_SALES } from '../lib/units';
 import { CreatePurchaseRequestForm } from '../components/CreatePurchaseRequestForm';
 
 // ============================================================================
@@ -60,7 +61,6 @@ const SESSION_KEY = 'sales_session';
 // Domain vocabulary, mirroring the admin sales list.
 const SO_LINES = ['Sheet metal (panels)', 'Sheet metal (branded)', 'Trading (electrical)', 'Trading (mechanical)', 'Fabrication (subcon)'];
 const SO_SOURCES = ['Referral', 'Facebook', 'Marketplace', 'Ad', 'Walk-in', 'Website', 'Existing contact'];
-const UNITS = ['pcs', 'sets', 'units', 'Lot', 'kg', 'gallons', 'meters', 'boxes'];
 
 const peso = (n: number) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -380,7 +380,7 @@ function CreateSOModal({ session, customers, onClose, onCreated }: {
                   <input placeholder="Description" value={it.description} onChange={e => setItem(it.id, { description: e.target.value })} className={`${input} col-span-5`} />
                   <input type="number" min="0" placeholder="Qty" value={it.quantity} onChange={e => setItem(it.id, { quantity: Number(e.target.value) })} className={`${input} col-span-2`} />
                   <select value={it.unit} onChange={e => setItem(it.id, { unit: e.target.value })} className={`${input} col-span-2 bg-white`}>
-                    {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                    {UNITS_SALES.map(u => <option key={u.value} value={u.value}>{u.plain}</option>)}
                   </select>
                   <input type="number" min="0" step="0.01" placeholder="Price" value={it.unitPrice} onChange={e => setItem(it.id, { unitPrice: Number(e.target.value) })} className={`${input} col-span-2`} />
                   <button onClick={() => removeItem(it.id)} disabled={items.length === 1}

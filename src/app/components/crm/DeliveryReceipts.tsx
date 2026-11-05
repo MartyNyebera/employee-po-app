@@ -20,11 +20,13 @@ import { Plus, Printer, Ban, FileText, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { ExportXlsxButton } from '../ExportXlsxButton';
 import { printBirDeliveryReceipt } from '../../lib/deliveryReceiptPrint';
+import { cubicBreakdownText } from '../../lib/units';
+import { UnitDatalist, UNIT_DATALIST_ID } from '../CubicFields';
 import { S, Modal, Field, TextInput, TextArea, PrimaryBtn, GhostBtn, pill, TableScroll, tightTh, tightTd, stickyTh, stickyTd, shortDate, oneLine } from './crmKit';
 
 type Api = <T = any>(path: string, init?: RequestInit) => Promise<T>;
 
-interface DrLine { quantity: number | string; unit?: string | null; description: string; sourcePr?: string | null }
+interface DrLine { quantity: number | string; unit?: string | null; description: string; sourcePr?: string | null; loads?: number | null; cubicPerLoad?: number | null; loadType?: string | null }
 
 interface Dr {
   id: number; serialNo?: string | null; drNumber: string;
@@ -343,8 +345,9 @@ function CreateDrModal({ api, tradings, projects, customers, onClose, onCreated 
               {items.map((it, i) => (
                 <tr key={i}>
                   <td style={S.td}><TextInput value={String(it.quantity ?? '')} onChange={e => setLine(i, 'quantity', e.target.value)} /></td>
-                  <td style={S.td}><TextInput value={String(it.unit ?? '')} onChange={e => setLine(i, 'unit', e.target.value)} /></td>
-                  <td style={S.td}><TextInput value={it.description} onChange={e => setLine(i, 'description', e.target.value)} /></td>
+                  <td style={S.td}><TextInput value={String(it.unit ?? '')} list={UNIT_DATALIST_ID} onChange={e => setLine(i, 'unit', e.target.value)} /></td>
+                  <td style={S.td}><TextInput value={it.description} onChange={e => setLine(i, 'description', e.target.value)} />
+                    {cubicBreakdownText(it) && <div style={{ fontSize: '11px', color: '#5a5a5a', marginTop: '3px' }} data-cubic-breakdown>{cubicBreakdownText(it)}</div>}</td>
                   {/* Which PR each line came from. Shown so a merged list is traceable; never printed on the DR. */}
                   <td style={{ ...S.td, fontSize: '11px', color: '#8a8a8a' }}>{it.sourcePr || 'manual'}</td>
                   <td style={{ ...S.td, textAlign: 'right' }}>
@@ -355,6 +358,7 @@ function CreateDrModal({ api, tradings, projects, customers, onClose, onCreated 
             </tbody>
           </table>
         )}
+        <UnitDatalist />
         {sourceId && (
           <button onClick={addLine} style={{ ...S.rowBtn, marginTop: '6px' }}>+ Add a line</button>
         )}

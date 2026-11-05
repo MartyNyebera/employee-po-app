@@ -16,6 +16,7 @@
 // ============================================================================
 
 import { renderPrintDocument, printBirHeaderHtml, printFooterHtml, COMPANY_BIR } from './printChrome';
+import { lineDescription, lineQty } from './units';
 
 export interface PrintableBiLine {
   description: string;
@@ -24,6 +25,9 @@ export interface PrintableBiLine {
   // Snake_case because this is the stored JSONB shape, passed through untouched from the server.
   unit_price?: number | string | null;
   amount?: number | string | null;
+  loads?: number | null;
+  cubicPerLoad?: number | null;
+  loadType?: string | null;
 }
 
 export interface PrintableBi {
@@ -83,8 +87,8 @@ export function printBillingInvoice(bi: PrintableBi): { ok: boolean; error?: str
   const lines = Array.isArray(bi.items) ? bi.items : [];
   const rows = lines.map(it => `
     <tr>
-      <td class="c-desc">${esc(it.description)}</td>
-      <td class="c-qty">${esc(it.quantity)}</td>
+      <td class="c-desc">${esc(lineDescription(it, it.description))}</td>
+      <td class="c-qty">${esc(lineQty(it, it.quantity))}</td>
       <td class="c-unit">${esc(it.unit || '')}</td>
       <td class="c-money">${esc(amt(it.unit_price ?? null))}</td>
       <td class="c-money">${esc(amt(it.amount ?? null))}</td>

@@ -226,6 +226,9 @@ export async function createPurchaseOrder(po: {
     description: string;
     unitPrice: number;
     amount: number;
+    loads?: number;
+    cubicPerLoad?: number;
+    loadType?: string | null;
   }>;
   subTotal: number;
   otherCharges: number;

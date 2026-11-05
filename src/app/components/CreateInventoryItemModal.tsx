@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { allowedUnitsForName } from '../lib/inventoryUnits';
+import { UNITS_INVENTORY } from '../lib/units';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -159,14 +160,7 @@ export function CreateInventoryItemModal({ onClose, onCreated }: CreateInventory
                       allowedUnits.map((u) => <SelectItem key={u} value={u}>{u}</SelectItem>)
                     ) : (
                       <>
-                        <SelectItem value="pcs">Pieces</SelectItem>
-                        <SelectItem value="box">Box</SelectItem>
-                        <SelectItem value="kg">Kilograms</SelectItem>
-                        <SelectItem value="liters">Liters</SelectItem>
-                        <SelectItem value="gallons">Gallons</SelectItem>
-                        <SelectItem value="meters">Meters</SelectItem>
-                        <SelectItem value="sets">Sets</SelectItem>
-                        <SelectItem value="units">Units</SelectItem>
+                        {UNITS_INVENTORY.map((u) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
                       </>
                     )}
                   </SelectContent>

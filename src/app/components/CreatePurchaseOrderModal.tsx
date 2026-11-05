@@ -1,4 +1,6 @@
-import { useState, useEffect } from 'react';
+import { Fragment, useState, useEffect } from 'react';
+import { isCubicUnit, cubicTotal, cubicKeys } from '../lib/units';
+import { CubicLoadFields, UnitDatalist, UNIT_DATALIST_ID } from './CubicFields';
 import { fetchApi, createPurchaseOrder } from '../api/client';
 import { Button } from './ui/button';
 import { X, Plus, Trash2 } from 'lucide-react';
@@ -12,6 +14,8 @@ interface LineItem {
   unit: string;
   unitCost: number;
   amount: number;
+  // Cubic (cu.m.) lines only: quantity IS loads x cubic per load.
+  loads?: string; cubicPerLoad?: string; loadType?: string;
 }
 
 interface CreatePurchaseOrderModalProps {
@@ -113,8 +117,12 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
         const numValue = field === 'quantity' || field === 'unitCost' ? 
           (typeof value === 'string' ? parseFloat(value) || 0 : value) : value;
         
-        const updated = { ...item, [field]: numValue };
-        if (field === 'quantity' || field === 'unitCost') {
+        let updated = { ...item, [field]: numValue } as LineItem;
+        if (field === 'unit' && !isCubicUnit(value)) { updated.loads = undefined; updated.cubicPerLoad = undefined; updated.loadType = undefined; }
+        if (isCubicUnit(updated.unit)) {
+          updated = { ...updated, quantity: cubicTotal(updated.loads, updated.cubicPerLoad) ?? 0 };
+        }
+        if (field === 'quantity' || field === 'unitCost' || isCubicUnit(updated.unit)) {
           updated.amount = Number(updated.quantity) * Number(updated.unitCost);
         }
         return updated;
@@ -168,6 +176,7 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
         description: item.description,
         unitPrice: item.unitCost,
         amount: item.amount,
+        ...cubicKeys(item),
       }));
 
       const poData = {
@@ -459,7 +468,8 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
                 </thead>
                 <tbody>
                   {lineItems.map((item) => (
-                    <tr key={item.id} className="hover:bg-slate-50">
+                    <Fragment key={item.id}>
+                    <tr className="hover:bg-slate-50">
                       <td className="border border-slate-300 px-2 py-1 text-xs text-center text-slate-600">{item.no}</td>
                       <td className="border border-slate-300 px-2 py-1">
                         <input
@@ -471,17 +481,17 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
                         />
                       </td>
                       <td className="border border-slate-300 px-2 py-1">
-                        <input
+                        {isCubicUnit(item.unit) ? <div className="px-1 py-1 text-sm text-center font-medium" data-cubic-qty>{item.quantity ? item.quantity.toFixed(2) : '—'}</div> : <input
                           type="number"
                           value={item.quantity || ''}
                           onChange={e => updateLineItem(item.id, 'quantity', e.target.value)}
                           className="w-full px-1 py-1 text-sm border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-blue-400 rounded text-center"
                           min="1"
-                        />
+                        />}
                       </td>
                       <td className="border border-slate-300 px-2 py-1">
                         <input
-                          type="text"
+                          type="text" list={UNIT_DATALIST_ID}
                           value={item.unit}
                           onChange={e => updateLineItem(item.id, 'unit', e.target.value)}
                           className="w-full px-1 py-1 text-sm border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-blue-400 rounded text-center"
@@ -511,9 +521,18 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
                         </button>
                       </td>
                     </tr>
+                    {isCubicUnit(item.unit) && (
+                      <tr><td></td><td colSpan={6} className="border border-slate-300 px-2 py-2 bg-slate-50">
+                        <CubicLoadFields values={{ loads: item.loads ?? '', cubicPerLoad: item.cubicPerLoad ?? '', loadType: item.loadType ?? '' }}
+                          onChange={p => { for (const k of Object.keys(p) as (keyof typeof p)[]) updateLineItem(item.id, k, p[k] as string); }} />
+                        <p className="mt-1 text-[11px] text-slate-400">Unit cost is per cubic meter; the amount is Total cubic × unit cost.</p>
+                      </td></tr>
+                    )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
+              <UnitDatalist />
             </div>
           </div>
 

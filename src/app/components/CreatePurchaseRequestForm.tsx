@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, Trash2, X, PackagePlus } from 'lucide-react';
 import { toast } from 'sonner';
 import { onBackdropDown, backdropClose } from '../lib/backdrop';
+import { UNITS_REQUEST, isCubicUnit, cubicTotal } from '../lib/units';
+import { CubicLoadFields } from './CubicFields';
 
 // ============================================================================
 // Shared "New Purchase Request" form (#1 — every department can raise a PR).
@@ -20,7 +22,7 @@ type FetchApi = <T = any>(path: string, options?: RequestInit) => Promise<T>;
 // quantity/unitCost are strings so the fields can be fully cleared (avoids the "can't erase the
 // leading 0" bug). A line is either an inventory item (default) or a free-text `kind: 'labor'`
 // line ("supply labor") that carries its own note and is not stock.
-interface FormLine { id: string; no: number; kind?: 'labor'; description: string; laborNote?: string; inventoryId: string | null; quantity: string; unit: string; unitCost: string; amount: number; }
+interface FormLine { id: string; no: number; kind?: 'labor'; description: string; laborNote?: string; inventoryId: string | null; quantity: string; unit: string; unitCost: string; amount: number; loads?: string; cubicPerLoad?: string; loadType?: string; }
 interface InventoryItem { id: string; itemCode: string; itemName: string; quantity: number; unit: string; location?: string; }
 interface Project { id: string; name: string; status?: string; }
 interface Facility { id: string; name: string; status?: string; }
@@ -33,7 +35,6 @@ interface Trading { id: string; name: string; status?: string; }
 const isPickable = (x: { status?: string }) => x.status !== 'Completed';
 interface ItemRequest { id: string; requestNumber?: string | null; itemName: string; status: string; }
 
-const UNITS = ['pcs', 'bags', 'kg', 'liters', 'gallons', 'meters', 'boxes', 'sets', 'Lot', 'units'];
 // "For (Project)" is required; Personal use gets its own sentinel (mapped back to a null
 // projectId on submit) and '' means "nothing picked yet".
 //
@@ -190,7 +191,7 @@ function RequestItemModal({ fetchApi, initialName, onCancel, onDone }: {
             <label className="block text-sm font-medium text-gray-700 mb-1">Unit</label>
             <select value={f.unit} onChange={(e) => set('unit', e.target.value)}
               className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-              {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+              {UNITS_REQUEST.map((u) => <option key={u.value} value={u.value}>{u.plain}</option>)}
             </select>
           </div>
           <div>
@@ -261,11 +262,18 @@ export function CreatePurchaseRequestForm({ fetchApi, session, onSubmitted, allo
   const updateLineItem = (id: string, field: keyof FormLine, value: string | null) => {
     setLineItems((prev) => prev.map((li) => {
       if (li.id !== id) return li;
-      const next = { ...li, [field]: value } as FormLine;
+      let next = { ...li, [field]: value } as FormLine;
       if (field === 'quantity' || field === 'unitCost') next.amount = (Number(next.quantity) || 0) * (Number(next.unitCost) || 0);
       if (field === 'description') {
         const match = inventory.find((iv) => iv.itemName.toLowerCase() === String(value || '').trim().toLowerCase());
         if (match?.unit) next.unit = match.unit;
+      }
+      // A cubic line's quantity IS loads x cubic per load; leaving cu.m. drops the load fields.
+      if (field === 'unit' && !isCubicUnit(value)) { next.loads = undefined; next.cubicPerLoad = undefined; next.loadType = undefined; }
+      if (isCubicUnit(next.unit)) {
+        const t = cubicTotal(next.loads, next.cubicPerLoad);
+        const quantity = t === null ? '' : String(t);
+        next = { ...next, quantity, amount: (Number(quantity) || 0) * (Number(next.unitCost) || 0) };
       }
       return next;
     }));
@@ -324,6 +332,8 @@ export function CreatePurchaseRequestForm({ fetchApi, session, onSubmitted, allo
                   || inventory.find((iv) => iv.itemName.toLowerCase() === li.description.trim().toLowerCase())?.id
                   || null,
                 quantity: Number(li.quantity), unit: li.unit,
+                ...(isCubicUnit(li.unit) && cubicTotal(li.loads, li.cubicPerLoad) !== null
+                  ? { loads: Number(li.loads), cubicPerLoad: Number(li.cubicPerLoad), loadType: (li.loadType || '').trim() || null } : {}),
                 unitCost: Number(li.unitCost) || 0, amount: Number(li.amount) || 0,
               }),
         }),
@@ -399,7 +409,8 @@ export function CreatePurchaseRequestForm({ fetchApi, session, onSubmitted, allo
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {lineItems.map((li) => (
-                    <tr key={li.id}>
+                    <Fragment key={li.id}>
+                    <tr>
                       <td className="px-3 py-2 text-gray-400 align-top">{li.no}{li.kind === 'labor' && <div className="text-[10px] font-semibold text-blue-500 uppercase">Labor</div>}</td>
                       <td className="px-3 py-2">
                         {li.kind === 'labor' ? (
@@ -412,11 +423,11 @@ export function CreatePurchaseRequestForm({ fetchApi, session, onSubmitted, allo
                         )}
                       </td>
                       {/* #3 — labor has no quantity or unit; show a dash placeholder instead of inputs. */}
-                      <td className="px-3 py-2 align-top text-center text-gray-400">{li.kind === 'labor' ? '—' : <input type="number" min="0" value={li.quantity} onChange={(e) => updateLineItem(li.id, 'quantity', e.target.value)} placeholder="0" className="w-full px-2 py-1.5 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" />}</td>
+                      <td className="px-3 py-2 align-top text-center text-gray-400">{li.kind === 'labor' ? '—' : isCubicUnit(li.unit) ? <span className="font-medium text-gray-900" data-cubic-qty>{li.quantity === '' ? '—' : Number(li.quantity).toFixed(2)}</span> : <input type="number" min="0" value={li.quantity} onChange={(e) => updateLineItem(li.id, 'quantity', e.target.value)} placeholder="0" className="w-full px-2 py-1.5 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" />}</td>
                       <td className="px-3 py-2 text-center text-gray-400">
                         {li.kind === 'labor' ? '—' : (
                           <select value={li.unit} onChange={(e) => updateLineItem(li.id, 'unit', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                            {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+                            {UNITS_REQUEST.map((u) => <option key={u.value} value={u.value}>{u.plain}</option>)}
                           </select>
                         )}
                       </td>
@@ -424,6 +435,14 @@ export function CreatePurchaseRequestForm({ fetchApi, session, onSubmitted, allo
                       <td className="px-3 py-2 text-right font-medium text-gray-900 whitespace-nowrap">{peso(li.amount)}</td>
                       <td className="px-2 py-2 text-center">{lineItems.length > 1 && <button onClick={() => deleteLineItem(li.id)} className="p-1.5 rounded-md text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors" aria-label="Remove item"><Trash2 className="w-4 h-4" /></button>}</td>
                     </tr>
+                    {li.kind !== 'labor' && isCubicUnit(li.unit) && (
+                      <tr><td></td><td colSpan={5} className="px-3 pb-3">
+                        <CubicLoadFields values={{ loads: li.loads ?? '', cubicPerLoad: li.cubicPerLoad ?? '', loadType: li.loadType ?? '' }}
+                          onChange={(p) => { for (const k of Object.keys(p) as (keyof typeof p)[]) updateLineItem(li.id, k, p[k] as string); }} />
+                        <p className="mt-1 text-[11px] text-gray-400">Price is per cubic meter; the amount is Total cubic × est. cost.</p>
+                      </td></tr>
+                    )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>

@@ -11,6 +11,7 @@ import { PageErrorFallback } from '../components/PageErrorFallback';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { confirmDialog } from '../lib/confirm';
 import { allowedUnitsForName } from '../lib/inventoryUnits';
+import { UNITS_WAREHOUSE } from '../lib/units';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { printPurchaseOrder, parsePOLineItems } from '../lib/orderPrint';
 import { printReceivingReport, type ReceivedLine } from '../lib/deliveryReceiptPrint';
@@ -114,7 +115,6 @@ const WD_STATUS_LABEL: Record<string, string> = {
 const TOKEN_KEY = 'warehouse_token';
 const SESSION_KEY = 'warehouse_session';
 
-const UNITS = ['pcs', 'pieces', 'bags', 'kg', 'liters', 'gallons', 'meters', 'boxes', 'sets', 'Lot', 'units'];
 
 // Plain brand-gold text, no pill — the same treatment purchase-request statuses get in every
 // other portal. The words carry the meaning; the quantity beside them carries the detail.
@@ -269,7 +269,7 @@ function AddItemModal({ onClose, onSaved, title, subtitle, initial, save: saveOv
               <label className="block text-sm font-medium text-gray-700 mb-1">Unit</label>
               <select value={f.unit} onChange={e => set('unit', e.target.value)}
                 className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500">
-                {(allowedUnits || UNITS).map(u => <option key={u} value={u}>{u}</option>)}
+                {(allowedUnits ? allowedUnits.map(v => ({ value: v, plain: v })) : UNITS_WAREHOUSE).map(u => <option key={u.value} value={u.value}>{u.plain}</option>)}
               </select>
             </div>
             <div>
@@ -344,7 +344,7 @@ function UpdateItemModal({ item, onClose, onSaved }: { item: InventoryItem; onCl
               <label className="block text-sm font-medium text-gray-700 mb-1">Unit</label>
               <select value={f.unit} onChange={e => set('unit', e.target.value)}
                 className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500">
-                {(allowedUnits || UNITS).map(u => <option key={u} value={u}>{u}</option>)}
+                {(allowedUnits ? allowedUnits.map(v => ({ value: v, plain: v })) : UNITS_WAREHOUSE).map(u => <option key={u.value} value={u.value}>{u.plain}</option>)}
               </select>
             </div>
             <div>

@@ -20,6 +20,8 @@ import { Plus, Printer, Ban, FileText, Search, Coins, ChevronDown, ChevronRight,
 import { toast } from 'sonner';
 import { printBillingInvoice } from '../../lib/billingInvoicePrint';
 import { ExportXlsxButton } from '../ExportXlsxButton';
+import { cubicKeys, cubicBreakdownText } from '../../lib/units';
+import { UnitDatalist, UNIT_DATALIST_ID } from '../CubicFields';
 import { computeBiTotals, type BiBox, type VatTreatment, type Withholding } from '../../lib/biTotals';
 import { S, Modal, Field, TextInput, TextArea, PrimaryBtn, GhostBtn, pill, peso, TableScroll, tightTh, tightTd, stickyTh, stickyTd, shortDate, oneLine } from './crmKit';
 
@@ -32,6 +34,10 @@ export interface BiLine {
   unit?: string | null;
   unit_price?: number | string | null;
   amount?: number | string | null;
+  // Cubic (cu.m.) lines only; copied from the DR, which copied them from the PR/PO.
+  loads?: number | null;
+  cubicPerLoad?: number | null;
+  loadType?: string | null;
 }
 
 export interface Payment {
@@ -395,6 +401,7 @@ function CreateBiModal({ api, drs, onClose, onCreated }: {
         items: items.map(it => ({
           description: String(it.description || '').trim(),
           quantity: it.quantity, unit: it.unit || '', unit_price: it.unit_price,
+          ...cubicKeys(it),
         })),
         ...shown,
         lessDiscount: t.lessDiscount,
@@ -478,9 +485,10 @@ function CreateBiModal({ api, drs, onClose, onCreated }: {
             <tbody>
               {items.map((it, i) => (
                 <tr key={i}>
-                  <td style={S.td}><TextInput value={String(it.description ?? '')} onChange={e => setLine(i, 'description', e.target.value)} /></td>
+                  <td style={S.td}><TextInput value={String(it.description ?? '')} onChange={e => setLine(i, 'description', e.target.value)} />
+                    {cubicBreakdownText(it) && <div style={{ fontSize: '11px', color: '#5a5a5a', marginTop: '3px' }} data-cubic-breakdown>{cubicBreakdownText(it)}</div>}</td>
                   <td style={S.td}><TextInput value={String(it.quantity ?? '')} onChange={e => setLine(i, 'quantity', e.target.value)} /></td>
-                  <td style={S.td}><TextInput value={String(it.unit ?? '')} onChange={e => setLine(i, 'unit', e.target.value)} /></td>
+                  <td style={S.td}><TextInput value={String(it.unit ?? '')} list={UNIT_DATALIST_ID} onChange={e => setLine(i, 'unit', e.target.value)} /></td>
                   <td style={S.td}><TextInput value={String(it.unit_price ?? '')} onChange={e => setLine(i, 'unit_price', e.target.value)} inputMode="decimal" placeholder="0.00" /></td>
                   {/* qty x unit price — the one multiply, recomputed server-side on save. */}
                   <td style={{ ...S.td, textAlign: 'right', color: '#5a5a5a' }}>
@@ -494,6 +502,7 @@ function CreateBiModal({ api, drs, onClose, onCreated }: {
             </tbody>
           </table>
         )}
+        <UnitDatalist />
         {drId && !pulling && (
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '6px' }}>
             <button onClick={addLine} style={S.rowBtn}>+ Add a line</button>

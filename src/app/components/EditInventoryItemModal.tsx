@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { X } from 'lucide-react';
 import { toast } from 'sonner';
 import { fetchApi } from '../api/client';
+import { UNITS_INVENTORY } from '../lib/units';
 
 interface EditInventoryItemModalProps {
   item: {
@@ -146,14 +147,7 @@ export function EditInventoryItemModal({ item, onClose, onUpdated }: EditInvento
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="pcs">Pieces</SelectItem>
-                    <SelectItem value="box">Box</SelectItem>
-                    <SelectItem value="kg">Kilograms</SelectItem>
-                    <SelectItem value="liters">Liters</SelectItem>
-                    <SelectItem value="gallons">Gallons</SelectItem>
-                    <SelectItem value="meters">Meters</SelectItem>
-                    <SelectItem value="sets">Sets</SelectItem>
-                    <SelectItem value="units">Units</SelectItem>
+                    {UNITS_INVENTORY.map((u) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>

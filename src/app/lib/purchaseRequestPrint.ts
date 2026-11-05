@@ -1,6 +1,7 @@
 import { toast } from 'sonner';
 import { esc } from './orderPrint';
 import { renderPrintDocument } from './printChrome';
+import { lineDescription, lineQty } from './units';
 
 // The printable purchase-request document, extracted so BOTH the production portal
 // (src/app/pages/RequestsPage.tsx, via empFetch) and the admin Purchase-Requests review
@@ -19,6 +20,7 @@ export interface PrintablePRItem {
   laborNote?: string | null;
   quantity?: number | string | null;
   unit?: string | null;
+  loads?: number | null; cubicPerLoad?: number | null; loadType?: string | null;
   unitCost?: number | null;
   amount?: number | null;
   finalUnitCost?: number | null;
@@ -82,8 +84,8 @@ export async function printPurchaseRequest(
     return `
       <tr>
         <td>${i + 1}</td>
-        <td>${esc(it.description || '')}${it.kind === 'labor' ? ' <span style="font-size:8pt;color:#555;font-style:italic">(labor)</span>' : ''}${it.laborNote ? `<div style="font-size:8pt;color:#555;white-space:pre-wrap">${esc(it.laborNote)}</div>` : ''}</td>
-        <td style="text-align:center">${it.kind === 'labor' ? '—' : esc(it.quantity ?? '')}</td>
+        <td>${esc(lineDescription(it, it.description || ''))}${it.kind === 'labor' ? ' <span style="font-size:8pt;color:#555;font-style:italic">(labor)</span>' : ''}${it.laborNote ? `<div style="font-size:8pt;color:#555;white-space:pre-wrap">${esc(it.laborNote)}</div>` : ''}</td>
+        <td style="text-align:center">${it.kind === 'labor' ? '—' : esc(lineQty(it, it.quantity ?? ''))}</td>
         <td style="text-align:center">${it.kind === 'labor' ? '—' : esc(it.unit || '')}</td>
         <td style="text-align:right">${peso(unitCost)}</td>
         <td style="text-align:right">${peso(amount)}</td>

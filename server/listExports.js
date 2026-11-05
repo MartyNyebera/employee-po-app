@@ -13,6 +13,7 @@
 // frozen with a filter, and a total row follows where the screen has totals.
 // ============================================================================
 import { buildWorkbook, STYLE, dateSerial, colName } from './xlsx.js';
+import { lineDescription } from './cubic.js';
 
 const T = STYLE;
 const MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -310,7 +311,7 @@ export function registerScreenExports(app, d) {
       if (effectiveRole(req.user) === 'purchasing') rows = rows.filter((x) => x.status !== 'pending');
       const main = rows.map((x) => {
         const items = Array.isArray(x.items) ? x.items : [];
-        return [x.pr_number, x.d, x.employee_name || '', x.project_name || 'Personal use', items.length, items.map((i) => i.description).join(', '),
+        return [x.pr_number, x.d, x.employee_name || '', x.project_name || 'Personal use', items.length, items.map((i) => lineDescription(i, i.description)).join(', '),
           x.checked_by || '', x.needed_by || '', cap(x.status), nextDept(x.status, 'pr'), x.total == null ? '' : Number(x.total).toFixed(2)];
       });
       const { from, to } = span(req, rows.map((x) => x.d));

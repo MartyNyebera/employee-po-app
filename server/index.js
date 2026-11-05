@@ -56,6 +56,7 @@ import { hashPassword, comparePassword, signToken, requireAuth, requireAdmin, re
 import { buildXlsx, STYLE, colName } from './xlsx.js';
 import { registerListExports, listWorkbookJson } from './listExports.js';
 import { registerAccountingOverview } from './accountingOverview.js';
+import { cubicLineError, withCubicKeys, cubicKeys } from './cubic.js';
 // The SAME module src/app/lib/payslipPrint.ts reads, so the exported breakdown and the printed
 // payslip cannot disagree. Plain .js outside src/ precisely so both sides can import it.
 import { payrollBand, payslipEarnings, payslipDeductions, adjustmentsOf } from '../shared/payrollLines.js';
@@ -3811,7 +3812,7 @@ app.patch('/api/assets/:id', requireAdmin, async (req, res) => {
 // POST /api/purchase-orders (admin only)
 app.post('/api/purchase-orders', requireRole(['admin','purchasing','office_admin']), async (req, res) => {
   try {
-    const { 
+    let { 
       client, 
       description, 
       amount, 
@@ -3840,6 +3841,13 @@ app.post('/api/purchase-orders', requireRole(['admin','purchasing','office_admin
       supplierId
     } = req.body;
     const id = `PO-${Date.now()}`;
+
+    // Cubic (cu.m.) lines must agree with themselves, and carry only consistent breakdown keys.
+    if (Array.isArray(lineItems)) {
+      const cubicErr = lineItems.map((it) => cubicLineError(it)).find(Boolean);
+      if (cubicErr) return res.status(400).json({ error: cubicErr });
+      lineItems = lineItems.map((it) => (it && typeof it === 'object' ? withCubicKeys(it) : it));
+    }
 
     // A PO raised against a purchase request may only follow Accounting's review, and a
     // request may only have one PO. Enforced here so the flow can't be skipped or doubled.
@@ -4143,6 +4151,7 @@ function parsePOLineItems(description) {
 // are zeroed on the remainder (a deliberate simplification — the reduced PO tracks what the
 // supplier still owes, not a fresh tax computation). All other blob lines (Address, Contact, PO
 // Type, Payment Terms, Terms & Conditions) are preserved untouched.
+const withCubicKeysIfWhole = (li, outstanding) => (Math.abs((Number(li.quantity) || 0) - outstanding) < 0.005 ? li : withCubicKeys({ ...li, loads: null }));
 function rewritePOOutstanding(description, parsedLines, receivedLines) {
   const outLines = [];
   let subTotal = 0;
@@ -4154,7 +4163,8 @@ function rewritePOOutstanding(description, parsedLines, receivedLines) {
     if (outstanding <= 0) return;
     const unitCost = Number(li.unitCost ?? li.unitPrice) || 0;
     subTotal += outstanding * unitCost;
-    outLines.push({ ...li, quantity: outstanding, amount: outstanding * unitCost });
+    // A short receipt leaves a remainder that is no longer loads x cubic-per-load, so the remainder line drops the breakdown.
+    outLines.push({ ...withCubicKeysIfWhole(li, outstanding), quantity: outstanding, amount: outstanding * unitCost });
   });
   const money = (n) => (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
   const setLine = (text, label, value) => text.split('\n')
@@ -9697,13 +9707,16 @@ app.get('/api/delivery-receipts/source-items', requireRole(drRoles), async (req,
       SELECT pr.pr_number,
              btrim(COALESCE(it->>'description', ''))                    AS description,
              COALESCE(NULLIF(btrim(COALESCE(it->>'unit', '')), ''), '')  AS unit,
-             COALESCE(NULLIF(btrim(COALESCE(it->>'quantity', '')), ''), '0') AS quantity
+             COALESCE(NULLIF(btrim(COALESCE(it->>'quantity', '')), ''), '0') AS quantity,
+             it->>'loads' AS loads, it->>'cubicPerLoad' AS cubic_per_load, it->>'loadType' AS load_type
         FROM purchase_requests pr, jsonb_array_elements(pr.items) it
        WHERE pr.${col} = $1
          AND btrim(COALESCE(it->>'description', '')) <> ''
        ORDER BY pr.pr_number, COALESCE((it->>'no')::int, 0)`, [hasT ? tradingId : projectId]);
     res.json(r.rows.map(x => ({
       quantity: x.quantity, unit: x.unit, description: x.description, sourcePr: x.pr_number,
+      // Cubic lines keep their breakdown so the DR (and the invoice after it) need no retyping.
+      ...cubicKeys({ unit: x.unit, quantity: x.quantity, loads: x.loads, cubicPerLoad: x.cubic_per_load, loadType: x.load_type }),
     })));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -9745,6 +9758,8 @@ function normalizeDrItems(raw) {
       unit: String((it && it.unit) ?? '').trim().slice(0, 30),
       description,
       sourcePr: (it && it.sourcePr) ? String(it.sourcePr).trim().slice(0, 40) : null,
+      // Kept only while it still agrees with the quantity (an edited quantity drops the breakdown).
+      ...cubicKeys({ unit: it.unit, quantity: Number(qtyStr), loads: it.loads, cubicPerLoad: it.cubicPerLoad, loadType: it.loadType }),
     });
   }
   return { items };
@@ -9911,6 +9926,7 @@ function normalizeBiItems(raw) {
       unit: String((it && it.unit) ?? '').trim().slice(0, 30),
       unit_price: Number(price.value),
       amount: biRound2(Number(qtyStr) * Number(price.value)),
+      ...cubicKeys({ unit: it.unit, quantity: Number(qtyStr), loads: it.loads, cubicPerLoad: it.cubicPerLoad, loadType: it.loadType }),
     });
   }
   return { items };
@@ -10038,6 +10054,7 @@ app.get('/api/billing-invoices/source-dr/:drId', requireRole(biRoles), async (re
       // Typed by the accountant from the PO — never guessed, and the DR has no prices to guess from.
       unit_price: '',
       amount: '',
+      ...cubicKeys({ unit: it.unit, quantity: it.quantity, loads: it.loads, cubicPerLoad: it.cubicPerLoad, loadType: it.loadType }),
     }));
     res.json({
       drId: Number(dr.id), drNumber: dr.dr_number, drDate: dr.dr_date_text,
@@ -11727,6 +11744,10 @@ app.post('/api/purchase-requests', requireAuth, async (req, res) => {
     const b = req.body;
     const items = Array.isArray(b.items) ? b.items.filter((it) => it && String(it.description || '').trim() && Number(it.quantity) > 0) : [];
     if (items.length === 0) return res.status(400).json({ error: 'At least one item with a description and quantity is required' });
+    // A cubic (cu.m.) line must agree with itself: quantity = loads x cubic per load.
+    const cubicErr = items.map((it) => cubicLineError(it)).find(Boolean);
+    if (cubicErr) return res.status(400).json({ error: cubicErr });
+    items.forEach((it, i) => { items[i] = withCubicKeys(it); });
     const total = items.reduce((t, it) => t + (Number(it.quantity) || 0) * (Number(it.unitCost) || 0), 0);
 
     // Requester identity comes from the token, never the client body. The PR form is shared across
@@ -11848,6 +11869,9 @@ app.patch('/api/purchase-requests/:id', requireRole(['admin']), async (req, res)
     if (!items || items.length === 0) {
       return res.status(400).json({ error: 'At least one item with a description and quantity is required' });
     }
+    const cubicErr = items.map((it) => cubicLineError(it)).find(Boolean);
+    if (cubicErr) return res.status(400).json({ error: cubicErr });
+    items.forEach((it, i) => { items[i] = withCubicKeys(it); });
     const total = items.reduce((t, it) => t + (Number(it.quantity) || 0) * (Number(it.unitCost) || 0), 0);
     const r = await query(
       `UPDATE purchase_requests

@@ -3,6 +3,7 @@ import { X, Package, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { fetchApi } from '../api/client';
 import { allowedUnitsForName } from '../lib/inventoryUnits';
+import { UnitDatalist, UNIT_DATALIST_ID } from './CubicFields';
 
 interface EditInventoryModalSimpleProps {
   isOpen: boolean;
@@ -196,13 +197,14 @@ export function EditInventoryModalSimple({ isOpen, onClose, item, onSuccess }: E
                 </select>
               ) : (
                 <input
-                  type="text"
+                  type="text" list={UNIT_DATALIST_ID}
                   value={formData.unit}
                   onChange={(e) => handleChange('unit', e.target.value)}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="mm, pcs, kg…"
                 />
               )}
+              <UnitDatalist />
             </div>
           </div>
 

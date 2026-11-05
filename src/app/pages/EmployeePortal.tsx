@@ -5,6 +5,7 @@ import { PageErrorFallback } from '../components/PageErrorFallback';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { NavBadge } from '../components/NavBadge';
 import { CreatePurchaseRequestForm } from '../components/CreatePurchaseRequestForm';
+import { UNITS_EMPLOYEE } from "../lib/units";
 
 export type EmployeeView = 'inventory' | 'requests' | 'purchase-request' | 'history' | 'notifications';
 
@@ -482,13 +483,7 @@ export function EmployeePortal() {
                         className={`w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${formErrors.unit ? 'border-red-400' : 'border-gray-200'}`}
                       >
                         <option value="">Select unit</option>
-                        <option value="pcs">Pieces</option>
-                        <option value="kg">Kilograms</option>
-                        <option value="liters">Liters</option>
-                        <option value="gallons">Gallons</option>
-                        <option value="meters">Meters</option>
-                        <option value="boxes">Boxes</option>
-                        <option value="sets">Sets</option>
+                        {UNITS_EMPLOYEE.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
                       </select>
                       {formErrors.unit && <p className="text-red-500 text-xs mt-1">{formErrors.unit}</p>}
                     </div>

@@ -17,6 +17,7 @@ import { renderPrintDocument } from '../lib/printChrome';
 import { NavBadge } from '../components/NavBadge';
 import { CreatePurchaseRequestForm } from '../components/CreatePurchaseRequestForm';
 import { AttentionCard } from '../components/AttentionCard';
+import { cubicKeys, lineDescription, lineQty } from '../lib/units';
 
 // Common payment arrangements offered as one-click presets on the PO form; "Custom…" reveals a
 // free-text box. The stored value is always the plain free-text string, whichever way entered.
@@ -47,7 +48,7 @@ type PortalView = 'new-pr' | 'requests' | 'orders' | 'suppliers' | 'withdrawals'
 // `inventoryId` is the inventory row this line actually refers to (the employee picked it from
 // the inventory list). It must survive onto the purchase order's line items — it is what lets a
 // delivered order add stock back to the right row instead of guessing from the name.
-interface PRItem { no?: number; description: string; inventoryId?: string | null; quantity: number; unit: string; unitCost: number; amount: number; finalUnitCost?: number | null; finalAmount?: number | null; }
+interface PRItem { no?: number; description: string; inventoryId?: string | null; quantity: number; unit: string; unitCost: number; amount: number; finalUnitCost?: number | null; finalAmount?: number | null; loads?: number | null; cubicPerLoad?: number | null; loadType?: string | null; }
 interface PurchaseRequest {
   id: string; prNumber: string; employeeName?: string; projectName?: string | null;
   neededBy?: string; supplier?: string; notes?: string; items: PRItem[]; total: number; finalTotal?: number | null;
@@ -351,8 +352,8 @@ async function printCheckReport(pr: PurchaseRequest) {
   const rows = pr.items.map((it, i) => `
     <tr>
       <td>${i + 1}</td>
-      <td>${esc(it.description || '')}</td>
-      <td style="text-align:center">${esc(it.quantity ?? '')}</td>
+      <td>${esc(lineDescription(it, it.description || ''))}</td>
+      <td style="text-align:center">${esc(lineQty(it, it.quantity ?? ''))}</td>
       <td style="text-align:center">${esc(it.unit || '')}</td>
       <td style="text-align:right">${peso(it.unitCost)}</td>
       <td style="text-align:right">${peso(it.amount)}</td>
@@ -670,6 +671,8 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
             // Carried through from the request so the delivery can find the inventory row.
             inventoryId: it.inventoryId ?? null,
             quantity: it.quantity, unit: it.unit, unitCost: num(prices[i] ?? '0'), amount: lineAmount(i),
+            // Cubic lines keep their loads x cubic-per-load breakdown on the order (price stays per cu.m.).
+            ...cubicKeys(it),
           })),
           // subTotal carries the Net of VAT (VAT-exclusive) figure for the printout.
           subTotal: netOfVat,
@@ -817,8 +820,8 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
                 <tbody className="divide-y divide-gray-100">
                   {pr.items.map((it, i) => (
                     <tr key={i}>
-                      <td className="px-3 py-2 text-gray-700">{it.description}</td>
-                      <td className="px-2 py-2 text-center text-gray-500">{it.quantity} {it.unit}</td>
+                      <td className="px-3 py-2 text-gray-700">{lineDescription(it, it.description)}</td>
+                      <td className="px-2 py-2 text-center text-gray-500">{lineQty(it, it.quantity)} {it.unit}</td>
                       <td className="px-2 py-2 text-right text-gray-400 tabular-nums">{peso(it.unitCost)}</td>
                       <td className="px-2 py-2">
                         <input type="number" min="0" step="0.01" value={prices[i] ?? ''}
@@ -935,8 +938,8 @@ function DetailModal({ pr, onCreatePO, onPrint, onClose }: {
                   {pr.items.map((it, i) => (
                     <tr key={i}>
                       <td className="px-3 py-2 text-gray-400">{i + 1}</td>
-                      <td className="px-3 py-2 text-gray-900">{it.description}</td>
-                      <td className="px-3 py-2 text-right">{it.quantity}</td>
+                      <td className="px-3 py-2 text-gray-900">{lineDescription(it, it.description)}</td>
+                      <td className="px-3 py-2 text-right">{lineQty(it, it.quantity)}</td>
                       <td className="px-3 py-2">{it.unit}</td>
                       {/* Once priced, the estimate greys out — it is history, not the number to act on. */}
                       <td className={`px-3 py-2 text-right ${priced ? 'text-gray-400' : ''}`}>{peso(it.unitCost)}</td>
