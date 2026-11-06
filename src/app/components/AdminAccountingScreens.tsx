@@ -21,8 +21,11 @@ export function useVoucherTargets(api: Api, reloadKey = 0) {
   const [facilities, setFacilities] = useState<VoucherTargetItem[]>([]);
   useEffect(() => {
     let off = false;
-    const load = (path: string, set: (x: VoucherTargetItem[]) => void) =>
-      api<VoucherTargetItem[]>(path).then(r => { if (!off) set(Array.isArray(r) ? r : []); }).catch(() => { /* leave empty */ });
+    // Retried once after a short wait: a database timeout must not leave a whole group out of the picker.
+    const load = (path: string, set: (x: VoucherTargetItem[]) => void) => {
+      const once = () => api<VoucherTargetItem[]>(path).then(r => { if (!off && Array.isArray(r)) set(r); });
+      once().catch(() => new Promise(r => setTimeout(r, 1500)).then(once).catch(() => { /* leave the list as it was */ }));
+    };
     load('/projects', setProjects); load('/tradings', setTradings); load('/facilities', setFacilities);
     return () => { off = true; };
   }, [reloadKey]);

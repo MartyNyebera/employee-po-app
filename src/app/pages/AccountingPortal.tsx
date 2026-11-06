@@ -721,6 +721,8 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
   // nothing is stored, and logging a payment clears it on the next load.
   const [overdueInvoiceCount, setOverdueInvoiceCount] = useState(0);
 
+  // One retry after a short wait, for the lists a database timeout would otherwise drop out of every picker.
+  const retryOnce = <T,>(fn: () => Promise<T>) => fn().catch(() => new Promise(r => setTimeout(r, 1500)).then(fn));
   // silent: background poll — no spinner, no toast on a blip (see useLiveRefresh).
   const loadAll = async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!silent) setLoading(true);
@@ -729,8 +731,10 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
         aFetch<PurchaseRequest[]>('/purchase-requests'),
         aFetch<PurchaseOrder[]>('/purchase-orders').catch(() => [] as PurchaseOrder[]),
         aFetch<Project[]>('/projects'),
-        aFetch<Facility[]>('/facilities').catch(() => [] as Facility[]),
-        aFetch<Trading[]>('/tradings').catch(() => [] as Trading[]),
+        // A failed load (a database timeout) is null, and keeps the list already on screen: an empty list here
+        // used to wipe Facilities / Trading deals out of every picker until the next successful refresh.
+        retryOnce(() => aFetch<Facility[]>('/facilities')).catch(() => null),
+        retryOnce(() => aFetch<Trading[]>('/tradings')).catch(() => null),
         aFetch<{ signature: string | null }>('/accounting/signature').catch(() => ({ signature: null })),
         aFetch<ProjectSpend[]>('/projects/spend').catch(() => null),
         aFetch<FacilitySpend[]>('/facilities/spend').catch(() => null),
@@ -744,13 +748,13 @@ function Portal({ session, onSignOut }: { session: Session; onSignOut: () => voi
       setFacilitySpend(fSpend ? Object.fromEntries(fSpend.map(s => [s.facilityId, s])) : null);
       setTradingSpend(tSpend ? Object.fromEntries(tSpend.map(s => [s.tradingId, s])) : null);
       setRollup(roll ?? null);
-      setTradings(trd || []);
+      if (trd) setTradings(trd);
       setRequests(prs || []);
       // Only real purchase orders (the table is shared with Sales Orders, discriminated by
       // order_type — accounting reviews purchases, not sales).
       setOrders((pos || []).filter(o => (o as any).orderType !== 'sales'));
       setProjects(prj || []);
-      setFacilities(fac || []);
+      if (fac) setFacilities(fac);
       setSignature(sig?.signature || null);
       setOverdueInvoiceCount((bis || []).filter(b => b.overdue && !b.voidedAt).length);
     } catch (e: any) {

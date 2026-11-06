@@ -42,7 +42,21 @@ const peso = (n: number | string) =>
 const input = 'w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500';
 const label = 'block text-sm font-medium text-gray-700 mb-1';
 
-export function DisbursementVoucherModal({ api, projects, tradings, facilities, initialTarget, initialPoId, initialPoIds, pettyCash, onClose, onSaved }: {
+// A host hands the form its lists. If one of them is empty (the host's load hit a database timeout, which the hosts
+// turn into an empty list), the form fetches that list itself, so the picker never silently loses a whole group.
+function useEnsuredList(api: Api, given: VoucherTargetItem[], path: string): VoucherTargetItem[] {
+  const [own, setOwn] = useState<VoucherTargetItem[] | null>(null);
+  useEffect(() => {
+    if (given.length > 0) return;
+    let off = false;
+    const once = () => api<VoucherTargetItem[]>(path).then(r => { if (!off && Array.isArray(r)) setOwn(r); });
+    once().catch(() => new Promise(r => setTimeout(r, 1500)).then(once).catch(() => { /* still empty: nothing to offer */ }));
+    return () => { off = true; };
+  }, [given.length, path]);
+  return given.length > 0 ? given : (own ?? given);
+}
+
+export function DisbursementVoucherModal({ api, projects: projectsIn, tradings: tradingsIn, facilities: facilitiesIn, initialTarget, initialPoId, initialPoIds, pettyCash, onClose, onSaved }: {
   api: Api;
   projects: VoucherTargetItem[]; tradings: VoucherTargetItem[]; facilities: VoucherTargetItem[];
   /** Opened from a project/trading/facility: its first expense line is pre-pointed at it. */
@@ -55,6 +69,9 @@ export function DisbursementVoucherModal({ api, projects, tradings, facilities, 
   pettyCash?: boolean;
   onClose: () => void; onSaved: () => void;
 }) {
+  const projects = useEnsuredList(api, projectsIn, '/projects');
+  const tradings = useEnsuredList(api, tradingsIn, '/tradings');
+  const facilities = useEnsuredList(api, facilitiesIn, '/facilities');
   const today = manilaToday();
   const nextKey = useRef(100);
   const [d, setD] = useState<VoucherDraft>(() => ({

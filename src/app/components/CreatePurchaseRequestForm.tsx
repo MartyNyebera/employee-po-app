@@ -245,9 +245,10 @@ export function CreatePurchaseRequestForm({ fetchApi, session, onSubmitted, allo
     try {
       const [inv, prj, fac, trd] = await Promise.all([
         fetchApi<InventoryItem[]>('/inventory'),
-        fetchApi<Project[]>('/projects?active=1').catch(() => [] as Project[]),
-        fetchApi<Facility[]>('/facilities').catch(() => [] as Facility[]),
-        fetchApi<Trading[]>('/tradings').catch(() => [] as Trading[]),
+        // Each list is retried once: a database timeout must not drop a whole group out of the "For" picker.
+        fetchApi<Project[]>('/projects?active=1').catch(() => new Promise((r) => setTimeout(r, 1500)).then(() => fetchApi<Project[]>('/projects?active=1'))).catch(() => [] as Project[]),
+        fetchApi<Facility[]>('/facilities').catch(() => new Promise((r) => setTimeout(r, 1500)).then(() => fetchApi<Facility[]>('/facilities'))).catch(() => [] as Facility[]),
+        fetchApi<Trading[]>('/tradings').catch(() => new Promise((r) => setTimeout(r, 1500)).then(() => fetchApi<Trading[]>('/tradings'))).catch(() => [] as Trading[]),
       ]);
       setInventory(inv || []);
       setProjects((prj || []).filter(isPickable));

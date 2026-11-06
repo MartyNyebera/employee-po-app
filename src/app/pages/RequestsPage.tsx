@@ -744,7 +744,8 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
       const [inv, prj, fac, mine, wds, irs, sig] = await Promise.all([
         empFetch<InventoryItem[]>('/inventory'),
         empFetch<Project[]>('/projects?active=1'),
-        empFetch<Facility[]>('/facilities').catch(() => [] as Facility[]),
+        // Retried once: a database timeout must not drop Facilities out of the "For" picker.
+        empFetch<Facility[]>('/facilities').catch(() => new Promise((r) => setTimeout(r, 1500)).then(() => empFetch<Facility[]>('/facilities'))).catch(() => [] as Facility[]),
         empFetch<PurchaseRequest[]>('/purchase-requests/mine'),
         empFetch<WithdrawalRequest[]>('/inventory-withdrawals/mine').catch(() => []),
         empFetch<ItemRequest[]>('/item-requests/mine').catch(() => []),
