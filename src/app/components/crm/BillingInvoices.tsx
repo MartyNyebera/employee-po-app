@@ -20,8 +20,8 @@ import { Plus, Printer, Ban, FileText, Search, Coins, ChevronDown, ChevronRight,
 import { toast } from 'sonner';
 import { printBillingInvoice } from '../../lib/billingInvoicePrint';
 import { ExportXlsxButton } from '../ExportXlsxButton';
-import { cubicKeys, cubicBreakdownText } from '../../lib/units';
-import { UnitDatalist, UNIT_DATALIST_ID } from '../CubicFields';
+import { cubicKeys, cubicBreakdownText, isLoadBasis, perLoadAmount } from '../../lib/units';
+import { UnitDatalist, UNIT_DATALIST_ID, PriceBasisSelect } from '../CubicFields';
 import { computeBiTotals, type BiBox, type VatTreatment, type Withholding } from '../../lib/biTotals';
 import { S, Modal, Field, TextInput, TextArea, PrimaryBtn, GhostBtn, pill, peso, TableScroll, tightTh, tightTd, stickyTh, stickyTd, shortDate, oneLine } from './crmKit';
 
@@ -38,6 +38,8 @@ export interface BiLine {
   loads?: number | null;
   cubicPerLoad?: number | null;
   loadType?: string | null;
+  price_basis?: string | null;
+  price_per_load?: number | null;
 }
 
 export interface Payment {
@@ -357,8 +359,12 @@ function CreateBiModal({ api, drs, onClose, onCreated }: {
 
   // The line sum — shown ONLY as a cross-check against the PO. It is never sent as the total.
   // Each line is rounded to the centavo first, as the server rounds it, so the sum matches what is stored.
+  // A cubic line priced PER LOAD is No. of loads x the typed price per load (exact); every other line is qty x unit price.
+  const lineAmt = (it: BiLine) => (isLoadBasis(it)
+    ? (perLoadAmount(it.loads, it.unit_price) ?? 0)
+    : Math.round((num(it.quantity) * num(it.unit_price) + Number.EPSILON) * 100) / 100);
   const lineSum = useMemo(
-    () => items.reduce((n, it) => n + Math.round((num(it.quantity) * num(it.unit_price) + Number.EPSILON) * 100) / 100, 0),
+    () => items.reduce((n, it) => n + lineAmt(it), 0),
     [items]);
 
   // The totals block: computed from the lines, an edited box wins, the total follows the boxes shown.
@@ -401,7 +407,7 @@ function CreateBiModal({ api, drs, onClose, onCreated }: {
         items: items.map(it => ({
           description: String(it.description || '').trim(),
           quantity: it.quantity, unit: it.unit || '', unit_price: it.unit_price,
-          ...cubicKeys(it),
+          ...cubicKeys({ ...it, price_per_load: it.unit_price }),
         })),
         ...shown,
         lessDiscount: t.lessDiscount,
@@ -486,13 +492,14 @@ function CreateBiModal({ api, drs, onClose, onCreated }: {
               {items.map((it, i) => (
                 <tr key={i}>
                   <td style={S.td}><TextInput value={String(it.description ?? '')} onChange={e => setLine(i, 'description', e.target.value)} />
-                    {cubicBreakdownText(it) && <div style={{ fontSize: '11px', color: '#5a5a5a', marginTop: '3px' }} data-cubic-breakdown>{cubicBreakdownText(it)}</div>}</td>
+                    {cubicBreakdownText(it) && <div style={{ fontSize: '11px', color: '#5a5a5a', marginTop: '3px' }} data-cubic-breakdown>{cubicBreakdownText(it)}
+                      <div style={{ marginTop: '3px', maxWidth: '170px' }}><PriceBasisSelect value={isLoadBasis(it) ? 'load' : 'cum'} onChange={v => setLine(i, 'price_basis', v)} /></div></div>}</td>
                   <td style={S.td}><TextInput value={String(it.quantity ?? '')} onChange={e => setLine(i, 'quantity', e.target.value)} /></td>
                   <td style={S.td}><TextInput value={String(it.unit ?? '')} list={UNIT_DATALIST_ID} onChange={e => setLine(i, 'unit', e.target.value)} /></td>
-                  <td style={S.td}><TextInput value={String(it.unit_price ?? '')} onChange={e => setLine(i, 'unit_price', e.target.value)} inputMode="decimal" placeholder="0.00" /></td>
+                  <td style={S.td}><TextInput value={String(it.unit_price ?? '')} onChange={e => setLine(i, 'unit_price', e.target.value)} inputMode="decimal" placeholder={isLoadBasis(it) ? 'Price per load' : '0.00'} title={isLoadBasis(it) ? 'Price per load' : undefined} /></td>
                   {/* qty x unit price — the one multiply, recomputed server-side on save. */}
                   <td style={{ ...S.td, textAlign: 'right', color: '#5a5a5a' }}>
-                    {String(it.unit_price ?? '').trim() === '' ? '—' : peso(num(it.quantity) * num(it.unit_price))}
+                    {String(it.unit_price ?? '').trim() === '' ? '—' : peso(lineAmt(it))}
                   </td>
                   <td style={{ ...S.td, textAlign: 'right' }}>
                     <button title="Remove this line" style={{ ...S.rowBtn, color: '#b91c1c' }} onClick={() => removeLine(i)}>×</button>

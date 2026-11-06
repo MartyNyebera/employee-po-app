@@ -16,7 +16,7 @@ import { printPurchaseRequest } from '../lib/purchaseRequestPrint';
 import { printBlankJobOrder } from '../lib/jobOrderPrint';
 import { esc } from '../lib/orderPrint';
 import { renderPrintDocument } from '../lib/printChrome';
-import { UNITS_REQUEST, isCubicUnit, cubicTotal } from '../lib/units';
+import { UNITS_REQUEST, isCubicUnit, recalcCubicLine, cubicPayload, type CubicFormLine, type PriceBasis } from '../lib/units';
 import { CubicLoadFields } from '../components/CubicFields';
 
 // ============================================================================
@@ -36,10 +36,10 @@ type RequestView = 'new' | 'history' | 'withdrawals' | 'itemRequests' | 'jobOrde
 // Section H — #6: a line is either an inventory item (default) or a `kind: 'labor'` line —
 // "supply labor" — which carries its own free-text description + laborNote and is NOT an
 // inventory item (no picker, no stock row).
-interface LineItem { id: string; no: number; kind?: 'labor'; description: string; laborNote?: string; inventoryId?: string | null; quantity: number; unit: string; unitCost: number; amount: number; loads?: number | null; cubicPerLoad?: number | null; loadType?: string | null; }
+interface LineItem { id: string; no: number; kind?: 'labor'; description: string; laborNote?: string; inventoryId?: string | null; quantity: number; unit: string; unitCost: number; amount: number; loads?: number | null; cubicPerLoad?: number | null; loadType?: string | null; price_basis?: string | null; price_per_load?: number | null; finalPricePerLoad?: number | null; }
 // Editable line in the New Request form. quantity/unitCost are kept as strings so the
 // fields can be fully cleared (empty), which avoids the "can't erase the leading 0" bug.
-interface FormLine { id: string; no: number; kind?: 'labor'; description: string; laborNote?: string; inventoryId: string | null; quantity: string; unit: string; unitCost: string; amount: number; loads?: string; cubicPerLoad?: string; loadType?: string; }
+interface FormLine { id: string; no: number; kind?: 'labor'; description: string; laborNote?: string; inventoryId: string | null; quantity: string; unit: string; unitCost: string; amount: number; loads?: string; cubicPerLoad?: string; loadType?: string; priceBasis?: PriceBasis; pricePerLoad?: string; }
 interface PurchaseRequest {
   id: string; prNumber: string; employeeName?: string; projectId?: string | null; projectName?: string | null;
   neededBy?: string; supplier?: string; notes?: string; items: LineItem[]; total: number;
@@ -782,12 +782,13 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
         const match = inventory.find((iv) => iv.itemName.toLowerCase() === String(value || '').trim().toLowerCase());
         if (match?.unit) next.unit = match.unit;
       }
-      // A cubic line's quantity IS loads x cubic per load; leaving cu.m. drops the load fields.
-      if (field === 'unit' && !isCubicUnit(value)) { next.loads = undefined; next.cubicPerLoad = undefined; next.loadType = undefined; }
+      // A cubic line's quantity IS loads x cubic per load, and it is priced per load (default) or per cu.m.;
+      // leaving cu.m. drops the cubic fields.
+      if (field === 'unit' && !isCubicUnit(value)) { next.loads = undefined; next.cubicPerLoad = undefined; next.loadType = undefined; next.priceBasis = undefined; next.pricePerLoad = undefined; }
       if (isCubicUnit(next.unit)) {
-        const t = cubicTotal(next.loads, next.cubicPerLoad);
-        const quantity = t === null ? '' : String(t);
-        next = { ...next, quantity, amount: (Number(quantity) || 0) * (Number(next.unitCost) || 0) };
+        if (!next.priceBasis) next.priceBasis = 'load';
+        const r = recalcCubicLine(next as CubicFormLine);
+        next = { ...next, quantity: r.quantity, amount: r.amount, unitCost: r.unitCost };
       }
       return next;
     }));
@@ -847,8 +848,7 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
                   || inventory.find((iv) => iv.itemName.toLowerCase() === li.description.trim().toLowerCase())?.id
                   || null,
                 quantity: Number(li.quantity), unit: li.unit,
-                ...(isCubicUnit(li.unit) && cubicTotal(li.loads, li.cubicPerLoad) !== null
-                  ? { loads: Number(li.loads), cubicPerLoad: Number(li.cubicPerLoad), loadType: (li.loadType || '').trim() || null } : {}),
+                ...cubicPayload(li as CubicFormLine),
                 unitCost: Number(li.unitCost) || 0, amount: Number(li.amount) || 0,
               }),
         }),
@@ -1028,15 +1028,15 @@ function Portal({ session, onLogout }: { session: Session; onLogout: () => void 
                                   </select>
                                 )}
                               </td>
-                              <td className="px-3 py-2"><input type="number" min="0" step="0.01" value={li.unitCost} onChange={(e) => updateLineItem(li.id, 'unitCost', e.target.value)} placeholder="0.00" className="w-full px-2 py-1.5 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" /></td>
+                              <td className="px-3 py-2">{isCubicUnit(li.unit) && li.priceBasis === 'load' ? <span className="text-xs text-gray-500 whitespace-nowrap" data-derived-cost>{li.unitCost ? `${peso(Number(li.unitCost))} / cu.m.` : '—'}</span> : <input type="number" min="0" step="0.01" value={li.unitCost} onChange={(e) => updateLineItem(li.id, 'unitCost', e.target.value)} placeholder="0.00" className="w-full px-2 py-1.5 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" />}</td>
                               <td className="px-3 py-2 text-right font-medium text-gray-900 whitespace-nowrap">{peso(li.amount)}</td>
                               <td className="px-2 py-2 text-center">{lineItems.length > 1 && <button onClick={() => deleteLineItem(li.id)} className="p-1.5 rounded-md text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors" aria-label="Remove item"><Trash2 className="w-4 h-4" /></button>}</td>
                             </tr>
                             {li.kind !== 'labor' && isCubicUnit(li.unit) && (
                               <tr><td></td><td colSpan={5} className="px-3 pb-3">
-                                <CubicLoadFields values={{ loads: li.loads ?? '', cubicPerLoad: li.cubicPerLoad ?? '', loadType: li.loadType ?? '' }}
+                                <CubicLoadFields values={{ loads: li.loads ?? '', cubicPerLoad: li.cubicPerLoad ?? '', loadType: li.loadType ?? '', priceBasis: li.priceBasis ?? 'load', pricePerLoad: li.pricePerLoad ?? '' }}
                                   onChange={(p) => { for (const k of Object.keys(p) as (keyof typeof p)[]) updateLineItem(li.id, k, p[k] as string); }} />
-                                <p className="mt-1 text-[11px] text-gray-400">Price is per cubic meter; the amount is Total cubic × est. cost.</p>
+                                <p className="mt-1 text-[11px] text-gray-400">Per load: amount = No. of loads × price per load. Per cu.m.: amount = Total cubic × est. cost.</p>
                               </td></tr>
                             )}
                             </Fragment>

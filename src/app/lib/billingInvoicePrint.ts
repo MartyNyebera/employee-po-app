@@ -16,7 +16,7 @@
 // ============================================================================
 
 import { renderPrintDocument, printBirHeaderHtml, printFooterHtml, COMPANY_BIR } from './printChrome';
-import { lineDescription, lineQty } from './units';
+import { lineDescription, lineQty, lineUnit, linePrice } from './units';
 
 export interface PrintableBiLine {
   description: string;
@@ -28,6 +28,8 @@ export interface PrintableBiLine {
   loads?: number | null;
   cubicPerLoad?: number | null;
   loadType?: string | null;
+  price_basis?: string | null;
+  price_per_load?: number | null;
 }
 
 export interface PrintableBi {
@@ -89,8 +91,8 @@ export function printBillingInvoice(bi: PrintableBi): { ok: boolean; error?: str
     <tr>
       <td class="c-desc">${esc(lineDescription(it, it.description))}</td>
       <td class="c-qty">${esc(lineQty(it, it.quantity))}</td>
-      <td class="c-unit">${esc(it.unit || '')}</td>
-      <td class="c-money">${esc(amt(it.unit_price ?? null))}</td>
+      <td class="c-unit">${esc(lineUnit(it, it.unit || ''))}</td>
+      <td class="c-money">${esc(amt(linePrice(it, it.unit_price ?? null)))}</td>
       <td class="c-money">${esc(amt(it.amount ?? null))}</td>
     </tr>`).join('');
   const filler = Array.from({ length: Math.max(0, MIN_ROWS - lines.length) },

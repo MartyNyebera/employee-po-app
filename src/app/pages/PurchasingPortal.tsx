@@ -17,7 +17,7 @@ import { renderPrintDocument } from '../lib/printChrome';
 import { NavBadge } from '../components/NavBadge';
 import { CreatePurchaseRequestForm } from '../components/CreatePurchaseRequestForm';
 import { AttentionCard } from '../components/AttentionCard';
-import { cubicKeys, lineDescription, lineQty } from '../lib/units';
+import { cubicKeys, lineDescription, lineQty, lineUnit, linePrice, isPerLoad, perLoadAmount, derivedUnitCost } from '../lib/units';
 
 // Common payment arrangements offered as one-click presets on the PO form; "Custom…" reveals a
 // free-text box. The stored value is always the plain free-text string, whichever way entered.
@@ -48,7 +48,7 @@ type PortalView = 'new-pr' | 'requests' | 'orders' | 'suppliers' | 'withdrawals'
 // `inventoryId` is the inventory row this line actually refers to (the employee picked it from
 // the inventory list). It must survive onto the purchase order's line items — it is what lets a
 // delivered order add stock back to the right row instead of guessing from the name.
-interface PRItem { no?: number; description: string; inventoryId?: string | null; quantity: number; unit: string; unitCost: number; amount: number; finalUnitCost?: number | null; finalAmount?: number | null; loads?: number | null; cubicPerLoad?: number | null; loadType?: string | null; }
+interface PRItem { no?: number; description: string; inventoryId?: string | null; quantity: number; unit: string; unitCost: number; amount: number; finalUnitCost?: number | null; finalAmount?: number | null; loads?: number | null; cubicPerLoad?: number | null; loadType?: string | null; price_basis?: string | null; price_per_load?: number | null; finalPricePerLoad?: number | null; }
 interface PurchaseRequest {
   id: string; prNumber: string; employeeName?: string; projectName?: string | null;
   neededBy?: string; supplier?: string; notes?: string; items: PRItem[]; total: number; finalTotal?: number | null;
@@ -354,8 +354,8 @@ async function printCheckReport(pr: PurchaseRequest) {
       <td>${i + 1}</td>
       <td>${esc(lineDescription(it, it.description || ''))}</td>
       <td style="text-align:center">${esc(lineQty(it, it.quantity ?? ''))}</td>
-      <td style="text-align:center">${esc(it.unit || '')}</td>
-      <td style="text-align:right">${peso(it.unitCost)}</td>
+      <td style="text-align:center">${esc(lineUnit(it, it.unit || ''))}</td>
+      <td style="text-align:right">${peso(linePrice(it, it.unitCost))}</td>
       <td style="text-align:right">${peso(it.amount)}</td>
     </tr>`).join('');
   const checkedDate = pr.checkedAt ? new Date(pr.checkedAt).toLocaleString() : '—';
@@ -605,12 +605,17 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
   // Final pricing. Seeded from the employee's estimate so the common case (the estimate was
   // right) is a no-op, but every line is editable — this is the buyer's real supplier price.
   // Held as strings: a number state would fight the user mid-typing ("6." -> 6).
-  const [prices, setPrices] = useState<string[]>(() => pr.items.map(it => String(it.unitCost ?? 0)));
+  const [prices, setPrices] = useState<string[]>(() => pr.items.map(it => String(isPerLoad(it) ? (it.price_per_load ?? 0) : (it.unitCost ?? 0))));
   const [vatType, setVatType] = useState<'vatable' | 'non-vatable'>('vatable');
 
   const num = (s: string) => { const n = parseFloat(s); return isNaN(n) ? 0 : n; };
   const round2 = (n: number) => Math.round(n * 100) / 100;
-  const lineAmount = (i: number) => (Number(pr.items[i]?.quantity) || 0) * num(prices[i] ?? '0');
+  // A cubic line priced PER LOAD is No. of loads x the price per load (exact); its price box is then the price per load.
+  const lineAmount = (i: number) => {
+    const it = pr.items[i];
+    if (isPerLoad(it)) return perLoadAmount(it.loads, num(prices[i] ?? '0')) ?? 0;
+    return (Number(it?.quantity) || 0) * num(prices[i] ?? '0');
+  };
   // Entered unit prices are treated as VAT-INCLUSIVE. The gross (sum of line amounts) is the
   // total payable and is never inflated. For a VATable PO we break the gross into Net of VAT
   // (gross ÷ 1.12) and 12% VAT (gross − net); Non-VAT has no breakdown (Net = Total, VAT = 0).
@@ -670,9 +675,11 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
             id: String(i + 1), no: i + 1, description: it.description,
             // Carried through from the request so the delivery can find the inventory row.
             inventoryId: it.inventoryId ?? null,
-            quantity: it.quantity, unit: it.unit, unitCost: num(prices[i] ?? '0'), amount: lineAmount(i),
+            quantity: it.quantity, unit: it.unit,
+            // Per-load cubic line: unitCost is the derived per-cu.m. figure (costing only); the amount stays loads x price per load.
+            unitCost: isPerLoad(it) ? derivedUnitCost(lineAmount(i), Number(it.quantity)) : num(prices[i] ?? '0'), amount: lineAmount(i),
             // Cubic lines keep their loads x cubic-per-load breakdown on the order (price stays per cu.m.).
-            ...cubicKeys(it),
+            ...cubicKeys(isPerLoad(it) ? { ...it, price_per_load: num(prices[i] ?? '0') } : it),
           })),
           // subTotal carries the Net of VAT (VAT-exclusive) figure for the printout.
           subTotal: netOfVat,
@@ -821,12 +828,13 @@ function PurchaseOrderModal({ pr, session, onClose, onCreated }: {
                   {pr.items.map((it, i) => (
                     <tr key={i}>
                       <td className="px-3 py-2 text-gray-700">{lineDescription(it, it.description)}</td>
-                      <td className="px-2 py-2 text-center text-gray-500">{lineQty(it, it.quantity)} {it.unit}</td>
-                      <td className="px-2 py-2 text-right text-gray-400 tabular-nums">{peso(it.unitCost)}</td>
+                      <td className="px-2 py-2 text-center text-gray-500">{lineQty(it, it.quantity)} {lineUnit(it, it.unit)}</td>
+                      <td className="px-2 py-2 text-right text-gray-400 tabular-nums">{peso(linePrice(it, it.unitCost))}</td>
                       <td className="px-2 py-2">
                         <input type="number" min="0" step="0.01" value={prices[i] ?? ''}
                           onChange={e => setPrices(p => p.map((v, j) => (j === i ? e.target.value : v)))}
                           className="w-full px-2 py-1 text-sm text-right border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500 tabular-nums" />
+                        {isPerLoad(it) && <div className="text-[10px] text-gray-400 text-right mt-0.5" data-per-load-label>Price per load</div>}
                       </td>
                       <td className="px-3 py-2 text-right font-medium text-gray-900 tabular-nums">{peso(lineAmount(i))}</td>
                     </tr>
@@ -940,10 +948,10 @@ function DetailModal({ pr, onCreatePO, onPrint, onClose }: {
                       <td className="px-3 py-2 text-gray-400">{i + 1}</td>
                       <td className="px-3 py-2 text-gray-900">{lineDescription(it, it.description)}</td>
                       <td className="px-3 py-2 text-right">{lineQty(it, it.quantity)}</td>
-                      <td className="px-3 py-2">{it.unit}</td>
+                      <td className="px-3 py-2">{lineUnit(it, it.unit)}</td>
                       {/* Once priced, the estimate greys out — it is history, not the number to act on. */}
-                      <td className={`px-3 py-2 text-right ${priced ? 'text-gray-400' : ''}`}>{peso(it.unitCost)}</td>
-                      {priced && <td className="px-3 py-2 text-right">{peso(it.finalUnitCost ?? 0)}</td>}
+                      <td className={`px-3 py-2 text-right ${priced ? 'text-gray-400' : ''}`}>{peso(linePrice(it, it.unitCost))}</td>
+                      {priced && <td className="px-3 py-2 text-right">{peso(linePrice(it, it.finalUnitCost ?? 0, it.finalPricePerLoad))}</td>}
                       <td className="px-3 py-2 text-right font-medium text-gray-900">{peso(priced ? (it.finalAmount ?? 0) : it.amount)}</td>
                     </tr>
                   ))}

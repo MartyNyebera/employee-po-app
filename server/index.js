@@ -56,7 +56,7 @@ import { hashPassword, comparePassword, signToken, requireAuth, requireAdmin, re
 import { buildXlsx, STYLE, colName } from './xlsx.js';
 import { registerListExports, listWorkbookJson } from './listExports.js';
 import { registerAccountingOverview } from './accountingOverview.js';
-import { cubicLineError, withCubicKeys, cubicKeys } from './cubic.js';
+import { cubicLineError, withCubicKeys, cubicKeys, lineAmountOf, isPerLoad, perLoadAmount, derivedUnitCost } from './cubic.js';
 // The SAME module src/app/lib/payslipPrint.ts reads, so the exported breakdown and the printed
 // payslip cannot disagree. Plain .js outside src/ precisely so both sides can import it.
 import { payrollBand, payslipEarnings, payslipDeductions, adjustmentsOf } from '../shared/payrollLines.js';
@@ -335,6 +335,13 @@ async function runMigrations() {
       )
     `);
     console.log('✅ inventory table ready');
+    // A per-load cubic line is costed per cu.m. as amount / total cubic (1,923.076923...), so the cost needs more than 2
+    // decimals for the stock value (qty x cost) to come back to the line amount. Widening only; existing values keep.
+    await query(`DO $$ BEGIN
+      IF (SELECT numeric_scale FROM information_schema.columns WHERE table_name = 'inventory' AND column_name = 'unit_cost') < 6 THEN
+        ALTER TABLE inventory ALTER COLUMN unit_cost TYPE NUMERIC(14,6);
+      END IF;
+    END $$`);
 
     // Create miscellaneous table
     await query(`
@@ -3877,6 +3884,8 @@ app.post('/api/purchase-orders', requireRole(['admin','purchasing','office_admin
         ...it,
         finalUnitCost: Number(lines[i]?.unitCost) || 0,
         finalAmount: Number(lines[i]?.amount) || 0,
+        // The price Purchasing agreed per load, kept beside the estimate (per-load cubic lines only).
+        ...(isPerLoad(lines[i]) ? { finalPricePerLoad: Number(lines[i].price_per_load) } : {}),
       }));
     }
 
@@ -4161,10 +4170,15 @@ function rewritePOOutstanding(description, parsedLines, receivedLines) {
     const arrived = rl?.received != null ? Number(rl.received) : (Number(rl?.added) || 0);
     const outstanding = Math.max(0, ordered - arrived);
     if (outstanding <= 0) return;
-    const unitCost = Number(li.unitCost ?? li.unitPrice) || 0;
-    subTotal += outstanding * unitCost;
+    // A per-load cubic line's amount is authoritative: untouched when the whole quantity is still outstanding,
+    // otherwise the remainder is priced at the exact per-cu.m. cost (amount / ordered) and rounded to the centavo.
+    const perLoad = isPerLoad(li);
+    const unitCost = perLoad ? (Number(li.amount) || 0) / (ordered || 1) : (Number(li.unitCost ?? li.unitPrice) || 0);
+    const whole = Math.abs(ordered - outstanding) < 0.005;
+    const lineAmt = perLoad ? (whole ? Number(li.amount) : Math.round(outstanding * unitCost * 100) / 100) : outstanding * unitCost;
+    subTotal += lineAmt;
     // A short receipt leaves a remainder that is no longer loads x cubic-per-load, so the remainder line drops the breakdown.
-    outLines.push({ ...withCubicKeysIfWhole(li, outstanding), quantity: outstanding, amount: outstanding * unitCost });
+    outLines.push({ ...withCubicKeysIfWhole(li, outstanding), quantity: outstanding, amount: lineAmt, ...(perLoad && !whole ? { unitCost: Math.round(unitCost * 1e6) / 1e6 } : {}) });
   });
   const money = (n) => (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
   const setLine = (text, label, value) => text.split('\n')
@@ -4205,7 +4219,8 @@ async function receiveLinesIntoInventory(client, lines, clientLines) {
     const line = lines[i];
     const name = String(line?.description || '').trim();
     const ordered = Number(line?.quantity) || 0;
-    const cost = Number(line?.unitCost ?? line?.unitPrice) || 0;
+    // A per-load cubic line is costed from its authoritative amount (amount / total cubic), so inventory value = the line amount.
+    const cost = isPerLoad(line) ? (Number(line.amount) || 0) / (ordered || 1) : (Number(line?.unitCost ?? line?.unitPrice) || 0);
     if (!name) continue;
 
     const cl = Array.isArray(clientLines) ? clientLines[i] : null;
@@ -9708,7 +9723,7 @@ app.get('/api/delivery-receipts/source-items', requireRole(drRoles), async (req,
              btrim(COALESCE(it->>'description', ''))                    AS description,
              COALESCE(NULLIF(btrim(COALESCE(it->>'unit', '')), ''), '')  AS unit,
              COALESCE(NULLIF(btrim(COALESCE(it->>'quantity', '')), ''), '0') AS quantity,
-             it->>'loads' AS loads, it->>'cubicPerLoad' AS cubic_per_load, it->>'loadType' AS load_type
+             it->>'loads' AS loads, it->>'cubicPerLoad' AS cubic_per_load, it->>'loadType' AS load_type, it->>'price_basis' AS price_basis
         FROM purchase_requests pr, jsonb_array_elements(pr.items) it
        WHERE pr.${col} = $1
          AND btrim(COALESCE(it->>'description', '')) <> ''
@@ -9716,7 +9731,8 @@ app.get('/api/delivery-receipts/source-items', requireRole(drRoles), async (req,
     res.json(r.rows.map(x => ({
       quantity: x.quantity, unit: x.unit, description: x.description, sourcePr: x.pr_number,
       // Cubic lines keep their breakdown so the DR (and the invoice after it) need no retyping.
-      ...cubicKeys({ unit: x.unit, quantity: x.quantity, loads: x.loads, cubicPerLoad: x.cubic_per_load, loadType: x.load_type }),
+      // The price basis rides along, the price never does (a DR carries no money).
+      ...cubicKeys({ unit: x.unit, quantity: x.quantity, loads: x.loads, cubicPerLoad: x.cubic_per_load, loadType: x.load_type, price_basis: x.price_basis }),
     })));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -9759,7 +9775,7 @@ function normalizeDrItems(raw) {
       description,
       sourcePr: (it && it.sourcePr) ? String(it.sourcePr).trim().slice(0, 40) : null,
       // Kept only while it still agrees with the quantity (an edited quantity drops the breakdown).
-      ...cubicKeys({ unit: it.unit, quantity: Number(qtyStr), loads: it.loads, cubicPerLoad: it.cubicPerLoad, loadType: it.loadType }),
+      ...cubicKeys({ unit: it.unit, quantity: Number(qtyStr), loads: it.loads, cubicPerLoad: it.cubicPerLoad, loadType: it.loadType, price_basis: it.price_basis }),
     });
   }
   return { items };
@@ -9916,6 +9932,24 @@ function normalizeBiItems(raw) {
     if (!/^\d+(\.\d{1,3})?$/.test(qtyStr) || !(Number(qtyStr) > 0)) {
       return { error: `Quantity for "${description}" must be a number greater than zero` };
     }
+    const cubicIn = { unit: it.unit, quantity: Number(qtyStr), loads: it.loads, cubicPerLoad: it.cubicPerLoad, loadType: it.loadType, price_basis: it.price_basis };
+    // A cubic line priced PER LOAD: the typed price is the price per load and the amount is loads x that price,
+    // exactly. Quantity stays the total cubic; unit_price is the derived per-cu.m. figure (the amount is authoritative).
+    if (cubicIn.price_basis === 'load' && cubicKeys(cubicIn).loads !== undefined) {
+      const ppl = moneyField(it.price_per_load ?? it.unit_price ?? it.unitPrice, `Price per load for "${description}"`);
+      if (ppl.error) return { error: ppl.error };
+      if (ppl.value === null) return { error: `Price per load for "${description}" is required` };
+      const amount = perLoadAmount(cubicIn.loads, ppl.value);
+      items.push({
+        description,
+        quantity: Number(qtyStr),
+        unit: String((it && it.unit) ?? '').trim().slice(0, 30),
+        unit_price: derivedUnitCost(amount, Number(qtyStr)),
+        amount,
+        ...cubicKeys({ ...cubicIn, price_per_load: Number(ppl.value) }),
+      });
+      continue;
+    }
     const priceRaw = (it && (it.unit_price ?? it.unitPrice));
     const price = moneyField(priceRaw, `Unit price for "${description}"`);
     if (price.error) return { error: price.error };
@@ -9926,7 +9960,7 @@ function normalizeBiItems(raw) {
       unit: String((it && it.unit) ?? '').trim().slice(0, 30),
       unit_price: Number(price.value),
       amount: biRound2(Number(qtyStr) * Number(price.value)),
-      ...cubicKeys({ unit: it.unit, quantity: Number(qtyStr), loads: it.loads, cubicPerLoad: it.cubicPerLoad, loadType: it.loadType }),
+      ...cubicKeys(cubicIn),
     });
   }
   return { items };
@@ -10054,7 +10088,7 @@ app.get('/api/billing-invoices/source-dr/:drId', requireRole(biRoles), async (re
       // Typed by the accountant from the PO — never guessed, and the DR has no prices to guess from.
       unit_price: '',
       amount: '',
-      ...cubicKeys({ unit: it.unit, quantity: it.quantity, loads: it.loads, cubicPerLoad: it.cubicPerLoad, loadType: it.loadType }),
+      ...cubicKeys({ unit: it.unit, quantity: it.quantity, loads: it.loads, cubicPerLoad: it.cubicPerLoad, loadType: it.loadType, price_basis: it.price_basis }),
     }));
     res.json({
       drId: Number(dr.id), drNumber: dr.dr_number, drDate: dr.dr_date_text,
@@ -11748,7 +11782,8 @@ app.post('/api/purchase-requests', requireAuth, async (req, res) => {
     const cubicErr = items.map((it) => cubicLineError(it)).find(Boolean);
     if (cubicErr) return res.status(400).json({ error: cubicErr });
     items.forEach((it, i) => { items[i] = withCubicKeys(it); });
-    const total = items.reduce((t, it) => t + (Number(it.quantity) || 0) * (Number(it.unitCost) || 0), 0);
+    // A per-load cubic line totals loads x price per load (authoritative); every other line is qty x unit cost as before.
+    const total = items.reduce((t, it) => t + lineAmountOf(it), 0);
 
     // Requester identity comes from the token, never the client body. The PR form is shared across
     // portals (admin, warehouse, logistics, accounting, production), but purchase_requests.employee_id
@@ -11872,7 +11907,8 @@ app.patch('/api/purchase-requests/:id', requireRole(['admin']), async (req, res)
     const cubicErr = items.map((it) => cubicLineError(it)).find(Boolean);
     if (cubicErr) return res.status(400).json({ error: cubicErr });
     items.forEach((it, i) => { items[i] = withCubicKeys(it); });
-    const total = items.reduce((t, it) => t + (Number(it.quantity) || 0) * (Number(it.unitCost) || 0), 0);
+    // A per-load cubic line totals loads x price per load (authoritative); every other line is qty x unit cost as before.
+    const total = items.reduce((t, it) => t + lineAmountOf(it), 0);
     const r = await query(
       `UPDATE purchase_requests
           SET items = $1::jsonb, total = $2, needed_by = $3, project_id = $4, notes = $5,

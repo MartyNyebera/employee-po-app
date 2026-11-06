@@ -15,7 +15,7 @@
 // ============================================================================
 
 import { renderPrintDocument } from './printChrome';
-import { lineDescription, lineQty } from './units';
+import { lineDescription, lineQty, lineUnit, linePrice } from './units';
 
 export interface PrintableLineItem {
   no?: number | string;
@@ -30,6 +30,8 @@ export interface PrintableLineItem {
   loads?: number | null;
   cubicPerLoad?: number | null;
   loadType?: string | null;
+  price_basis?: string | null;
+  price_per_load?: number | null;
 }
 
 export interface PrintablePO {
@@ -342,8 +344,8 @@ export async function printPurchaseOrder(
       <td class="number-col">${esc(it.no ?? it.id ?? i + 1)}</td>
       <td class="description-col">${esc(lineDescription(it, it.description || ''))}</td>
       <td class="quantity-col">${esc(lineQty(it, it.quantity ?? 1))}</td>
-      <td class="unit-col">${esc(it.unit || 'Lot')}</td>
-      <td class="unit-cost-col">${peso(Number(it.unitCost ?? it.unitPrice ?? it.amount ?? 0))}</td>
+      <td class="unit-col">${esc(lineUnit(it, it.unit || 'Lot'))}</td>
+      <td class="unit-cost-col">${peso(linePrice(it, Number(it.unitCost ?? it.unitPrice ?? it.amount ?? 0)))}</td>
       <td class="amount-col">${peso(Number(it.amount ?? 0))}</td>
     </tr>`).join('');
 

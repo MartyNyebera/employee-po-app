@@ -43,7 +43,7 @@ import { AccountingOverview, type OverviewLink } from '../components/AccountingO
 import { ExportXlsxButton } from '../components/ExportXlsxButton';
 import { GlAccountsScreen } from '../components/GlAccountsScreen';
 import { PayrollReview } from '../components/crm/PayrollReview';
-import { lineDescription, lineQty } from '../lib/units';
+import { lineDescription, lineQty, lineUnit, linePrice } from '../lib/units';
 
 // ============================================================================
 // Accounting portal (/accounting). Fully independent of the admin dashboard:
@@ -75,7 +75,7 @@ interface PurchaseOrder {
   allocationType?: AllocType | null; allocationName?: string | null; allocationId?: string | null; allocationKey?: string | null;
 }
 
-interface PRItem { no?: number; description: string; quantity: number; unit: string; unitCost: number; amount: number; loads?: number | null; cubicPerLoad?: number | null; loadType?: string | null; }
+interface PRItem { no?: number; description: string; quantity: number; unit: string; unitCost: number; amount: number; loads?: number | null; cubicPerLoad?: number | null; loadType?: string | null; price_basis?: string | null; price_per_load?: number | null; finalPricePerLoad?: number | null; }
 interface PurchaseRequest {
   id: string; prNumber: string; employeeName?: string; projectName?: string | null;
   projectId?: string | null; facilityId?: string | null; facilityName?: string | null; finalTotal?: number | null;
@@ -302,8 +302,8 @@ async function printReviewReport(pr: PurchaseRequest) {
       <td>${i + 1}</td>
       <td>${esc(lineDescription(it, it.description || ''))}</td>
       <td style="text-align:center">${esc(lineQty(it, it.quantity ?? ''))}</td>
-      <td style="text-align:center">${esc(it.unit || '')}</td>
-      <td style="text-align:right">${peso(it.unitCost)}</td>
+      <td style="text-align:center">${esc(lineUnit(it, it.unit || ''))}</td>
+      <td style="text-align:right">${peso(linePrice(it, it.unitCost))}</td>
       <td style="text-align:right">${peso(it.amount)}</td>
     </tr>`).join('');
   const checkedDate = pr.checkedAt ? new Date(pr.checkedAt).toLocaleString() : '—';
@@ -522,8 +522,8 @@ function DetailModal({ pr, busy, onReview, onReject, onPrint, onClose }: {
                     <tr key={i}>
                       <td className="px-3 py-2 text-gray-900">{lineDescription(it, it.description)}</td>
                       <td className="px-3 py-2 text-gray-500">{lineQty(it, it.quantity)}</td>
-                      <td className="px-3 py-2 text-gray-500">{it.unit}</td>
-                      <td className="px-3 py-2 text-right text-gray-500">{peso(it.unitCost)}</td>
+                      <td className="px-3 py-2 text-gray-500">{lineUnit(it, it.unit)}</td>
+                      <td className="px-3 py-2 text-right text-gray-500">{peso(linePrice(it, it.unitCost))}</td>
                       <td className="px-3 py-2 text-right font-medium text-gray-900">{peso(it.amount)}</td>
                     </tr>
                   ))}

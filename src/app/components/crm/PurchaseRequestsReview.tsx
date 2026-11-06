@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from 'react';
-import { isCubicUnit, cubicTotal, cubicKeys, lineDescription, lineQty } from '../../lib/units';
+import { isCubicUnit, recalcCubicLine, cubicPayload, type CubicFormLine, type PriceBasis } from '../../lib/units';
 import { CubicLoadFields, UnitDatalist, UNIT_DATALIST_ID } from '../CubicFields';
 import { Check, X, Trash2, Printer, Pencil, Plus } from 'lucide-react';
 import { toast } from 'sonner';
@@ -13,7 +13,7 @@ import { SummaryStats } from '../SummaryStats';
 
 // unitCost/amount are the employee's ESTIMATE; the final* fields are what Purchasing priced
 // the line at when they raised the order. Both are kept, so the gap stays auditable.
-interface PRItem { no?: number; description: string; quantity: number; unit: string; unitCost: number; amount: number; loads?: number | null; cubicPerLoad?: number | null; loadType?: string | null; finalUnitCost?: number | null; finalAmount?: number | null; kind?: string | null; laborNote?: string | null; }
+interface PRItem { no?: number; description: string; quantity: number; unit: string; unitCost: number; amount: number; loads?: number | null; cubicPerLoad?: number | null; loadType?: string | null; price_basis?: string | null; price_per_load?: number | null; finalPricePerLoad?: number | null; finalUnitCost?: number | null; finalAmount?: number | null; kind?: string | null; laborNote?: string | null; }
 type PRStatus = 'pending' | 'reviewed' | 'verified' | 'ordered' | 'approved' | 'disapproved';
 interface PurchaseRequest {
   id: string; prNumber: string; employeeName?: string; projectId?: string | null; projectName?: string | null;
@@ -199,7 +199,7 @@ export function PurchaseRequestsReview() {
 // #3 — correct a DISAPPROVED request's lines, needed-by and notes, then re-submit. Saving PATCHes
 // the request, which the server resets to 'pending' so it re-enters the review pipeline. The
 // project link is preserved (sent back unchanged). Labor lines keep their kind/note.
-interface EditLine { description: string; quantity: string; unit: string; unitCost: string; kind?: string | null; laborNote?: string | null; loads?: string; cubicPerLoad?: string; loadType?: string; }
+interface EditLine { description: string; quantity: string; unit: string; unitCost: string; kind?: string | null; laborNote?: string | null; loads?: string; cubicPerLoad?: string; loadType?: string; priceBasis?: PriceBasis; pricePerLoad?: string; }
 function PREditModal({ pr, onClose, onSaved }: { pr: PurchaseRequest; onClose: () => void; onSaved: () => void }) {
   const [neededBy, setNeededBy] = useState((pr.neededBy || '').slice(0, 10));
   const [notes, setNotes] = useState(pr.notes || '');
@@ -207,6 +207,9 @@ function PREditModal({ pr, onClose, onSaved }: { pr: PurchaseRequest; onClose: (
     description: it.description, quantity: String(it.quantity ?? ''), unit: it.unit || (it.kind === 'labor' ? 'lot' : 'pcs'),
     unitCost: String(it.unitCost ?? ''), kind: it.kind ?? null, laborNote: it.laborNote ?? null,
     loads: it.loads != null ? String(it.loads) : '', cubicPerLoad: it.cubicPerLoad != null ? String(it.cubicPerLoad) : '', loadType: it.loadType ?? '',
+    // A line saved before the price basis existed stays priced per cu.m.
+    priceBasis: it.loads != null ? (it.price_basis === 'load' ? 'load' : 'cum') : undefined,
+    pricePerLoad: it.price_per_load != null ? String(it.price_per_load) : '',
   })));
   const [saving, setSaving] = useState(false);
 
@@ -214,12 +217,18 @@ function PREditModal({ pr, onClose, onSaved }: { pr: PurchaseRequest; onClose: (
   const setCell = (i: number, k: keyof EditLine, v: string) => setLines(g => g.map((r, idx) => {
     if (idx !== i) return r;
     let n = { ...r, [k]: v };
-    if (k === 'unit' && !isCubicUnit(v)) n = { ...n, loads: '', cubicPerLoad: '', loadType: '' };
-    if (isCubicUnit(n.unit)) { const t = cubicTotal(n.loads, n.cubicPerLoad); n = { ...n, quantity: t === null ? '' : String(t) }; }
+    if (k === 'unit' && !isCubicUnit(v)) n = { ...n, loads: '', cubicPerLoad: '', loadType: '', priceBasis: undefined, pricePerLoad: '' };
+    if (isCubicUnit(n.unit)) {
+      if (!n.priceBasis) n.priceBasis = 'load';
+      const r = recalcCubicLine(n as CubicFormLine);
+      n = { ...n, quantity: r.quantity, unitCost: r.unitCost };
+    }
     return n;
   }));
   const removeLine = (i: number) => setLines(g => g.filter((_, idx) => idx !== i));
-  const total = lines.reduce((t, l) => t + (Number(l.quantity) || 0) * (Number(l.unitCost) || 0), 0);
+  // A per-load cubic line is loads x price per load (authoritative); every other line is qty x unit cost.
+  const lineAmt = (l: EditLine) => (isCubicUnit(l.unit) && l.priceBasis === 'load' ? recalcCubicLine(l as CubicFormLine).amount : (Number(l.quantity) || 0) * (Number(l.unitCost) || 0));
+  const total = lines.reduce((t, l) => t + lineAmt(l), 0);
 
   const save = async () => {
     const items = lines
@@ -228,8 +237,8 @@ function PREditModal({ pr, onClose, onSaved }: { pr: PurchaseRequest; onClose: (
         no: i + 1, kind: l.kind || undefined, description: l.description.trim(),
         laborNote: l.kind === 'labor' ? ((l.laborNote || '').trim() || null) : undefined,
         quantity: Number(l.quantity) || 0, unit: l.unit,
-        ...cubicKeys({ unit: l.unit, quantity: Number(l.quantity) || 0, loads: l.loads, cubicPerLoad: l.cubicPerLoad, loadType: l.loadType }),
-        unitCost: Number(l.unitCost) || 0, amount: (Number(l.quantity) || 0) * (Number(l.unitCost) || 0),
+        ...cubicPayload(l as CubicFormLine),
+        unitCost: Number(l.unitCost) || 0, amount: lineAmt(l),
       }));
     if (items.length === 0) { toast.error('At least one item with a description and quantity is required'); return; }
     if (!neededBy) { toast.error('Set the needed-by date'); return; }
@@ -272,15 +281,15 @@ function PREditModal({ pr, onClose, onSaved }: { pr: PurchaseRequest; onClose: (
                 </td>
                 <td style={{ ...S.td, textAlign: 'right' }}>{l.kind === 'labor' ? <span style={{ color: '#8a8a8a' }}>—</span> : isCubicUnit(l.unit) ? <span style={{ fontWeight: 600 }}>{l.quantity === '' ? '—' : Number(l.quantity).toFixed(2)}</span> : <TextInput type="number" value={l.quantity} onChange={e => setCell(i, 'quantity', e.target.value)} />}</td>
                 <td style={S.td}>{l.kind === 'labor' ? <span style={{ color: '#8a8a8a' }}>lot</span> : <TextInput value={l.unit} list={UNIT_DATALIST_ID} onChange={e => setCell(i, 'unit', e.target.value)} />}</td>
-                <td style={{ ...S.td, textAlign: 'right' }}><TextInput type="number" value={l.unitCost} onChange={e => setCell(i, 'unitCost', e.target.value)} /></td>
-                <td style={{ ...S.td, textAlign: 'right', fontWeight: 600, color: '#000000' }}>{peso((Number(l.quantity) || 0) * (Number(l.unitCost) || 0))}</td>
+                <td style={{ ...S.td, textAlign: 'right' }}>{isCubicUnit(l.unit) && l.priceBasis === 'load' ? <span style={{ fontSize: '11px', color: '#5a5a5a' }} data-derived-cost>{l.unitCost ? `${peso(Number(l.unitCost))} / cu.m.` : '—'}</span> : <TextInput type="number" value={l.unitCost} onChange={e => setCell(i, 'unitCost', e.target.value)} />}</td>
+                <td style={{ ...S.td, textAlign: 'right', fontWeight: 600, color: '#000000' }}>{peso(lineAmt(l))}</td>
                 <td style={{ ...S.td, textAlign: 'center' }}>
                   {lines.length > 1 && <button title="Remove line" style={{ ...S.rowBtn, marginLeft: 0, color: '#b91c1c' }} onClick={() => removeLine(i)}><Trash2 size={13} /></button>}
                 </td>
               </tr>
               {l.kind !== 'labor' && isCubicUnit(l.unit) && (
                 <tr><td colSpan={6} style={{ padding: '0 8px 10px' }}>
-                  <CubicLoadFields values={{ loads: l.loads ?? '', cubicPerLoad: l.cubicPerLoad ?? '', loadType: l.loadType ?? '' }}
+                  <CubicLoadFields values={{ loads: l.loads ?? '', cubicPerLoad: l.cubicPerLoad ?? '', loadType: l.loadType ?? '', priceBasis: l.priceBasis ?? 'load', pricePerLoad: l.pricePerLoad ?? '' }}
                     onChange={p => { for (const k of Object.keys(p) as (keyof typeof p)[]) setCell(i, k, p[k] as string); }} />
                 </td></tr>
               )}

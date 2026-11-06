@@ -1,5 +1,5 @@
 import { Fragment, useState, useEffect } from 'react';
-import { isCubicUnit, cubicTotal, cubicKeys } from '../lib/units';
+import { isCubicUnit, recalcCubicLine, cubicPayload, type CubicFormLine, type PriceBasis } from '../lib/units';
 import { CubicLoadFields, UnitDatalist, UNIT_DATALIST_ID } from './CubicFields';
 import { fetchApi, createPurchaseOrder } from '../api/client';
 import { Button } from './ui/button';
@@ -15,7 +15,7 @@ interface LineItem {
   unitCost: number;
   amount: number;
   // Cubic (cu.m.) lines only: quantity IS loads x cubic per load.
-  loads?: string; cubicPerLoad?: string; loadType?: string;
+  loads?: string; cubicPerLoad?: string; loadType?: string; priceBasis?: PriceBasis; pricePerLoad?: string;
 }
 
 interface CreatePurchaseOrderModalProps {
@@ -118,11 +118,13 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
           (typeof value === 'string' ? parseFloat(value) || 0 : value) : value;
         
         let updated = { ...item, [field]: numValue } as LineItem;
-        if (field === 'unit' && !isCubicUnit(value)) { updated.loads = undefined; updated.cubicPerLoad = undefined; updated.loadType = undefined; }
+        if (field === 'unit' && !isCubicUnit(value)) { updated.loads = undefined; updated.cubicPerLoad = undefined; updated.loadType = undefined; updated.priceBasis = undefined; updated.pricePerLoad = undefined; }
         if (isCubicUnit(updated.unit)) {
-          updated = { ...updated, quantity: cubicTotal(updated.loads, updated.cubicPerLoad) ?? 0 };
-        }
-        if (field === 'quantity' || field === 'unitCost' || isCubicUnit(updated.unit)) {
+          // quantity = total cubic; priced per load (default: amount = loads x price per load) or per cu.m.
+          if (!updated.priceBasis) updated.priceBasis = 'load';
+          const r = recalcCubicLine({ unit: updated.unit, loads: updated.loads, cubicPerLoad: updated.cubicPerLoad, priceBasis: updated.priceBasis, pricePerLoad: updated.pricePerLoad, unitCost: String(updated.unitCost || '') });
+          updated = { ...updated, quantity: Number(r.quantity) || 0, amount: r.amount, unitCost: Number(r.unitCost) || 0 };
+        } else if (field === 'quantity' || field === 'unitCost') {
           updated.amount = Number(updated.quantity) * Number(updated.unitCost);
         }
         return updated;
@@ -176,7 +178,7 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
         description: item.description,
         unitPrice: item.unitCost,
         amount: item.amount,
-        ...cubicKeys(item),
+        ...cubicPayload({ unit: item.unit, loads: item.loads, cubicPerLoad: item.cubicPerLoad, loadType: item.loadType, priceBasis: item.priceBasis, pricePerLoad: item.pricePerLoad, unitCost: String(item.unitCost) } as CubicFormLine),
       }));
 
       const poData = {
@@ -498,6 +500,9 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
                         />
                       </td>
                       <td className="border border-slate-300 px-2 py-1">
+                        {isCubicUnit(item.unit) && item.priceBasis === 'load' ? (
+                          <div className="text-xs text-right text-slate-500 whitespace-nowrap" data-derived-cost>{item.unitCost ? `₱${item.unitCost.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / cu.m.` : '—'}</div>
+                        ) : (
                         <input
                           type="number"
                           value={item.unitCost || ''}
@@ -506,6 +511,7 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
                           min="0"
                           step="0.01"
                         />
+                        )}
                       </td>
                       <td className="border border-slate-300 px-2 py-1 text-sm text-right font-medium">
                         ₱{item.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
@@ -523,9 +529,9 @@ export function CreatePurchaseOrderModal({ onClose, onCreated }: CreatePurchaseO
                     </tr>
                     {isCubicUnit(item.unit) && (
                       <tr><td></td><td colSpan={6} className="border border-slate-300 px-2 py-2 bg-slate-50">
-                        <CubicLoadFields values={{ loads: item.loads ?? '', cubicPerLoad: item.cubicPerLoad ?? '', loadType: item.loadType ?? '' }}
+                        <CubicLoadFields values={{ loads: item.loads ?? '', cubicPerLoad: item.cubicPerLoad ?? '', loadType: item.loadType ?? '', priceBasis: item.priceBasis ?? 'load', pricePerLoad: item.pricePerLoad ?? '' }}
                           onChange={p => { for (const k of Object.keys(p) as (keyof typeof p)[]) updateLineItem(item.id, k, p[k] as string); }} />
-                        <p className="mt-1 text-[11px] text-slate-400">Unit cost is per cubic meter; the amount is Total cubic × unit cost.</p>
+                        <p className="mt-1 text-[11px] text-slate-400">Per load: amount = No. of loads × price per load. Per cu.m.: amount = Total cubic × unit cost.</p>
                       </td></tr>
                     )}
                     </Fragment>
