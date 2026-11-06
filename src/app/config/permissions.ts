@@ -59,6 +59,9 @@ const BASE_ACCESS: Record<string, Partial<Record<Role, Access>>> = {
   pcf:                  { owner: 'manage', admin: 'manage' },
   'gl-accounts':        { owner: 'manage', admin: 'manage' },
   thirteenth:           { owner: 'manage', admin: 'manage' },
+  // Contract Trading and Facilities (components/CostCentres); their routes already admit owner/admin.
+  tradings:             { owner: 'manage', admin: 'manage' },
+  facilities:           { owner: 'manage', admin: 'manage' },
   'employee-accounts':  { owner: 'manage', admin: 'manage' },
   'purchasing-accounts':{ owner: 'manage', admin: 'manage' },
   'warehouse-accounts': { owner: 'manage', admin: 'manage' },

@@ -69,7 +69,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { id: 'delivery-receipt', label: 'DELIVERY RECEIPT', icon: Truck, view: 'delivery-receipts' },
       { id: 'customers-billing', label: "CUSTOMER'S BILLING", icon: ReceiptText, view: 'billing-invoices' },
       { id: 'clients', label: 'CLIENTS', icon: Users, view: 'clients' },
-      { id: 'facilities', label: 'FACILITIES', icon: Building2, view: 'facilities' },
     ],
   },
   {
@@ -91,6 +90,8 @@ export const NAV_GROUPS: NavGroup[] = [
       // The voucher list IS the old Expenses History screen, extended: a voucher is the same record,
       // and now can also pay POs. One screen for everything that went out, so no second nav entry.
       { id: 'disbursement-report', label: 'DISBURSEMENT REPORT', icon: FileOutput, view: 'expenses', hover: 'Manual voucher' },
+      // Facilities are internal spending, not sales, so they sit with the money going out.
+      { id: 'facilities', label: 'FACILITIES', icon: Building2, view: 'facilities' },
       { id: 'pcf', label: 'PCF', icon: Wallet, view: 'pcf', hover: 'Petty cash fund' },
       { id: 'gl-accounts', label: 'GL ACCOUNTS', icon: BookOpen, view: 'gl-accounts', hover: 'Accounts an expense line can be coded to' },
     ],

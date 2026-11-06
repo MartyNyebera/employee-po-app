@@ -15,7 +15,7 @@ import { PcfScreen } from './PcfScreen';
 type Api = <T = any>(path: string, options?: RequestInit) => Promise<T>;
 
 /** What a voucher can be charged to: projects, trading deals and facilities. A list that cannot load is simply empty. */
-function useVoucherTargets(api: Api) {
+export function useVoucherTargets(api: Api, reloadKey = 0) {
   const [projects, setProjects] = useState<VoucherTargetItem[]>([]);
   const [tradings, setTradings] = useState<VoucherTargetItem[]>([]);
   const [facilities, setFacilities] = useState<VoucherTargetItem[]>([]);
@@ -25,7 +25,7 @@ function useVoucherTargets(api: Api) {
       api<VoucherTargetItem[]>(path).then(r => { if (!off) set(Array.isArray(r) ? r : []); }).catch(() => { /* leave empty */ });
     load('/projects', setProjects); load('/tradings', setTradings); load('/facilities', setFacilities);
     return () => { off = true; };
-  }, []);
+  }, [reloadKey]);
   const targets: TargetOption[] = useMemo(() => [
     ...projects.map(p => ({ kind: 'project' as const, id: p.id, name: p.name })),
     ...tradings.map(t => ({ kind: 'trading' as const, id: t.id, name: t.name })),

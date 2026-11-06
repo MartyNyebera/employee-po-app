@@ -3,7 +3,7 @@ import { getStoredAuth, fetchApi } from '../api/client';
 import { useAutoLogout } from '../hooks/useAutoLogout';
 import { useLiveRefresh } from '../hooks/useLiveRefresh';
 import { Button } from './ui/button';
-import { LogOut, Home, FileText, Receipt, Menu, X, Check, XCircle, Clock, ShoppingCart, Package, User, UserCheck, MessageSquare, Users, Factory, UserCog, Briefcase, ClipboardCheck, PackageMinus, Warehouse, Calculator, Truck, PenTool, PanelLeftClose, PanelLeftOpen, IdCard, ScanLine, CalendarCheck, SlidersHorizontal, CalendarDays, ReceiptText, Coins, LayoutDashboard, HandCoins, CreditCard, FileOutput, Wallet, Gift, BookOpen } from 'lucide-react';
+import { LogOut, Home, FileText, Receipt, Menu, X, Check, XCircle, Clock, ShoppingCart, Package, User, UserCheck, MessageSquare, Users, Factory, UserCog, Briefcase, ClipboardCheck, PackageMinus, Warehouse, Calculator, Truck, PenTool, PanelLeftClose, PanelLeftOpen, IdCard, ScanLine, CalendarCheck, SlidersHorizontal, CalendarDays, ReceiptText, Coins, LayoutDashboard, HandCoins, CreditCard, FileOutput, Wallet, Gift, BookOpen, ArrowLeftRight, Building2 } from 'lucide-react';
 import { SuppliersList } from './crm/SuppliersList';
 import { CustomersList } from './crm/CustomersList';
 import { DeliveryReceipts } from './crm/DeliveryReceipts';
@@ -39,6 +39,7 @@ import { PayableReport } from './PayableReport';
 import { GlAccountsScreen } from './GlAccountsScreen';
 import { ThirteenthMonth } from './crm/ThirteenthMonth';
 import { AdminDisbursement, AdminPcf } from './AdminAccountingScreens';
+import { AdminTradings, AdminFacilities } from './AdminCostCentres';
 import { AttentionCard } from './AttentionCard';
 
 // Heavy pages (charts, maps, and large data tables) are code-split and loaded only
@@ -60,7 +61,8 @@ interface AdminDashboardProps {
 
 type View = 'home' | 'orders' | 'transactions' | 'material-requests' | 'employee-accounts' | 'purchasing-accounts' | 'warehouse-accounts' | 'accounting-accounts' | 'sales-accounts' | 'logistics-accounts' | 'projects' | 'purchase-requests' | 'withdrawal-requests' | 'purchase-orders' | 'discrepancies' | 'inventory' | 'miscellaneous' | 'request-form' | 'suppliers' | 'customers' | 'delivery-receipts' | 'billing-invoices' | 'receivables' | 'inquiries' | 'staff' | 'signature' | 'roster' | 'stations' | 'timesheet' | 'payroll-settings' | 'holidays' | 'payroll'
   // Accounting screens, mounted here with the admin fetcher (view id = permissions.ts module id).
-  | 'overview' | 'collections' | 'purchases-report' | 'payables' | 'expenses' | 'pcf' | 'gl-accounts' | 'thirteenth';
+  | 'overview' | 'collections' | 'purchases-report' | 'payables' | 'expenses' | 'pcf' | 'gl-accounts' | 'thirteenth'
+  | 'tradings' | 'facilities';
 
 // Sidebar model: the same grouped design as the Accounting portal (components/AccountingSidebarNav -> SidebarNav).
 // An item's `module` is its id in permissions.ts (visibility + write access); every view id equals its module id,
@@ -89,6 +91,7 @@ const ADMIN_GROUPS: AdminGroup[] = [
     { id: 'quotation', label: 'QUOTATION', icon: MessageSquare, view: 'inquiries', module: 'inquiries' },
     { id: 'sales-orders', label: 'SALES ORDERS', icon: FileText, view: 'orders', module: 'orders' },
     { id: 'contract-services', label: 'CONTRACT SERVICES', icon: Briefcase, view: 'projects', module: 'projects' },
+    { id: 'contract-trading', label: 'CONTRACT TRADING', icon: ArrowLeftRight, view: 'tradings', module: 'tradings' },
     { id: 'delivery-receipt', label: 'DELIVERY RECEIPT', icon: Truck, view: 'delivery-receipts', module: 'delivery-receipts' },
     { id: 'customers-billing', label: "CUSTOMER'S BILLING", icon: ReceiptText, view: 'billing-invoices', module: 'billing-invoices' },
   ] },
@@ -105,6 +108,8 @@ const ADMIN_GROUPS: AdminGroup[] = [
     { id: 'purchases', label: 'PURCHASES', icon: ShoppingCart, view: 'purchases-report', module: 'purchases-report', hover: 'Summary of PO requests' },
     { id: 'payable-report', label: 'PAYABLE REPORT', icon: CreditCard, view: 'payables', module: 'payables', hover: 'Purchases − payments' },
     { id: 'disbursement-report', label: 'DISBURSEMENT REPORT', icon: FileOutput, view: 'expenses', module: 'expenses', hover: 'Manual voucher' },
+    // Internal spending, not sales -- so it sits with the money going out, as in the Accounting portal.
+    { id: 'facilities', label: 'FACILITIES', icon: Building2, view: 'facilities', module: 'facilities' },
     { id: 'pcf', label: 'PCF', icon: Wallet, view: 'pcf', module: 'pcf', hover: 'Petty cash fund' },
     { id: 'gl-accounts', label: 'GL ACCOUNTS', icon: BookOpen, view: 'gl-accounts', module: 'gl-accounts', hover: 'Accounts an expense line can be coded to' },
   ] },
@@ -151,6 +156,8 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
   const [receivablesFocus, setReceivablesFocus] = useState<number | null>(null);
   const [payableSearch, setPayableSearch] = useState('');
   const [voucherFocus, setVoucherFocus] = useState('');
+  // The trading deal an Overview link sent us to (highlighted in Contract Trading); cleared on any menu click.
+  const [tradingFocus, setTradingFocus] = useState<string | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
 
   // Listen for navigation events from child components
@@ -205,17 +212,17 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
   // adminRequests — the data was never passed to the component (it fetched its own), so the
   // request was pure duplication. AdminRequests-Professional.tsx is now unreferenced.
 
-  // Where a click on the Overview (alert, card, calendar item) goes. Contract Trading and Facilities have no
-  // Administrator screen yet, so those links say so instead of doing nothing.
+  // Where a click on the Overview (alert, card, calendar item) goes: the same screens, mounted here.
   const goTo = (view: View) => { setCurrentView(view); setMobileOpen(false); };
   const openFromOverview = (l: OverviewLink) => {
-    setReceivablesFocus(null); setPayableSearch(''); setVoucherFocus('');
+    setReceivablesFocus(null); setPayableSearch(''); setVoucherFocus(''); setTradingFocus(null);
     const map: Record<string, View> = {
       receivables: 'receivables', payables: 'payables', collections: 'collections', expenses: 'expenses', pcf: 'pcf',
-      orders: 'purchase-orders', projects: 'projects', payroll: 'payroll',
+      orders: 'purchase-orders', projects: 'projects', payroll: 'payroll', tradings: 'tradings', facilities: 'facilities',
     };
     const target = map[l.view];
-    if (!target) { toast.info('Contract Trading and Facilities are in the Accounting portal.'); return; }
+    if (!target) return;
+    if (l.view === 'tradings' && l.id !== undefined) setTradingFocus(String(l.id));
     if (l.view === 'receivables' && l.id !== undefined) setReceivablesFocus(Number(l.id));
     if (l.view === 'payables' && l.search) setPayableSearch(l.search);
     goTo(target);
@@ -238,6 +245,8 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
     if (currentView === 'pcf') return <AdminPcf api={fetchApi} isAdmin={canManage(role, 'pcf')} />;
     if (currentView === 'gl-accounts') return <GlAccountsScreen api={fetchApi} />;
     if (currentView === 'thirteenth') return <ThirteenthMonth api={fetchApi} isAdmin={canManage(role, 'thirteenth')} />;
+    if (currentView === 'tradings') return <AdminTradings key={tradingFocus || 'all'} api={fetchApi} isAdmin={canManage(role, 'tradings')} focusId={tradingFocus} />;
+    if (currentView === 'facilities') return <AdminFacilities api={fetchApi} isAdmin={canManage(role, 'facilities')} />;
 
     // New CRM / pipeline / planning modules
     if (currentView === 'suppliers') return <SuppliersList isAdmin={canManage(role, 'suppliers')} />;
@@ -412,7 +421,7 @@ export function AdminDashboard({ userName, isSuperAdmin, role: roleProp, onLogou
         {/* Navigation: the grouped menu shared with the Accounting portal. */}
         <SidebarNav<View> tops={visibleTops} groups={visibleGroups} ariaLabel="Administrator"
           activeView={currentView} minimized={mini} prefs={navPrefs} badges={navBadges}
-          onNavigate={(v) => { goTo(v); setReceivablesFocus(null); setPayableSearch(''); setVoucherFocus(''); }}
+          onNavigate={(v) => { goTo(v); setReceivablesFocus(null); setPayableSearch(''); setVoucherFocus(''); setTradingFocus(null); }}
           onToggleGroup={toggleNavGroup} />
 
         {/* User Menu — border-t px-3 py-3 space-y-1, matching the portals exactly. */}
